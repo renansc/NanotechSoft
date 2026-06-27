@@ -1,0 +1,24 @@
+{
+  "app_key": "riob-xml",
+  "nome": "Importar XML RioB",
+  "descricao": "Importador XML de estoque e abastecimentos do RioB.",
+  "url": "/apps/riob-xml/riob",
+  "standalone_url": "/apps/riob-xml/riob",
+  "icone": "xml",
+  "ordem": 97,
+  "ativo": true,
+  "origem": "riob",
+  "source_dir": "/srv/nanotechSoft/apps/riob-xml/source",
+  "menu_groups": {
+    "import_export": [
+      {
+        "nome": "Importar XML",
+        "url": "/apps/riob-xml/riob"
+      },
+      {
+        "nome": "NF-e RioB",
+        "url": "/apps/riob#config:nfe"
+      }
+    ]
+  }
+}

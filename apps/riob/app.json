@@ -1,0 +1,40 @@
+{
+  "app_key": "riob",
+  "nome": "RioB",
+  "descricao": "Aplicacao RioB completa integrada como backend operacional.",
+  "url": "/apps/riob",
+  "standalone_url": "/apps/riob",
+  "icone": "riob",
+  "ordem": 90,
+  "ativo": true,
+  "origem": "riob",
+  "source_dir": "/srv/riob",
+  "menu_groups": {
+    "dashboards": [
+      {
+        "nome": "Painel RioB",
+        "url": "/apps/riob#dashboard"
+      }
+    ],
+    "compras": [
+      {
+        "nome": "Estoque RioB",
+        "url": "/apps/riob#estoque"
+      }
+    ],
+    "relatorios": [
+      {
+        "nome": "Vendas RioB",
+        "url": "/apps/riob#vendas"
+      }
+    ]
+  },
+  "config_groups": {
+    "riob": [
+      {
+        "nome": "Status RioB",
+        "url": "/apps/riob#config:status"
+      }
+    ]
+  }
+}

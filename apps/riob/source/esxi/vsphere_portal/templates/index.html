@@ -1,0 +1,885 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section id="login-screen" class="auth-shell{% if logged_in %} hidden{% endif %}">
+    <div class="auth-card">
+        <p class="section-kicker">Acesso protegido</p>
+        <h1>Monitor vSphere</h1>
+        <p class="auth-copy">
+            Entre com o usuario do painel ou com a credencial administrativa configurada para o monitor.
+        </p>
+        <form id="login-form" class="stack-form auth-form">
+            <label>
+                <span>Usuario</span>
+                <input type="text" name="username" placeholder="admin" autocomplete="username" required>
+            </label>
+            <label>
+                <span>Senha</span>
+                <input type="password" name="password" placeholder="senha" autocomplete="current-password" required>
+            </label>
+            <div class="button-row">
+                <button class="button button-primary" type="submit">Entrar</button>
+            </div>
+        </form>
+        <p id="login-state" class="hint">Sessao do monitor isolada do restante do portal.</p>
+    </div>
+</section>
+
+<div id="app-shell" class="shell{% if not logged_in %} hidden{% endif %}">
+    <header class="hero">
+        <div>
+            <p class="eyebrow">ESXi / vCenter</p>
+            <h1>Painel de Controle Nanotech</h1>
+            <p class="hero-copy">
+                Interface HTML para administrar hosts e maquinas virtuais sem depender do cliente Windows legado.
+            </p>
+        </div>
+        <div class="hero-actions">
+            <div class="hero-badge">
+                <span>API + UI</span>
+                <strong>pyVmomi</strong>
+            </div>
+            <button id="ui-logout-button" class="button button-secondary" type="button">Sair</button>
+        </div>
+    </header>
+
+    <nav class="view-switch" aria-label="Navegacao do monitor">
+        <button class="view-switch-button is-active" type="button" data-vsphere-target="infra">Infra vSphere</button>
+        <button class="view-switch-button" type="button" data-vsphere-target="vms">Maquinas virtuais</button>
+        <button class="view-switch-button" type="button" data-vsphere-target="operations">Operacoes VM</button>
+        <button class="view-switch-button" type="button" data-vsphere-target="storage">ISO / Nova VM</button>
+        <button class="view-switch-button" type="button" data-vsphere-target="host">Diagnostico Host</button>
+        <button class="view-switch-button" type="button" data-page-target="containers">Containers</button>
+    </nav>
+
+    <section id="page-vsphere" class="page-shell">
+    <main class="workspace">
+        <aside class="sidebar">
+            <section class="panel" data-vsphere-panel="infra">
+                <div class="panel-heading">
+                    <div>
+                        <p class="section-kicker">Sessao</p>
+                        <h2>Conexao</h2>
+                    </div>
+                    <span id="connection-chip" class="chip chip-offline">offline</span>
+                </div>
+
+                <form id="connect-form" class="stack-form">
+                    <label>
+                        <span>Host / IP</span>
+                        <input type="text" name="host" placeholder="esxi.local ou 10.0.0.10" value="{{ default_host }}" required>
+                    </label>
+
+                    <div class="field-row">
+                        <label>
+                            <span>Porta</span>
+                            <input type="number" name="port" placeholder="443" min="1" max="65535" value="{{ default_port }}">
+                        </label>
+
+                        <label>
+                            <span>Usuario</span>
+                            <input type="text" name="username" placeholder="root ou administrator@vsphere.local" value="{{ default_username }}" required>
+                        </label>
+                    </div>
+
+                    <label>
+                        <span>Senha</span>
+                        <input type="password" name="password" required>
+                    </label>
+
+                    <label class="checkbox">
+                        <input type="checkbox" name="verify_ssl"{% if default_verify_ssl %} checked{% endif %}>
+                        <span>Validar SSL</span>
+                    </label>
+
+                    <div class="button-row">
+                        <button class="button button-primary" type="submit">Conectar</button>
+                        <button class="button button-secondary" type="button" id="disconnect-button">Desconectar</button>
+                    </div>
+                </form>
+
+                <dl id="connection-meta" class="meta-list">
+                    <div>
+                        <dt>Endpoint</dt>
+                        <dd>Sem conexao ativa</dd>
+                    </div>
+                    <div>
+                        <dt>API</dt>
+                        <dd>-</dd>
+                    </div>
+                    <div>
+                        <dt>Usuario</dt>
+                        <dd>-</dd>
+                    </div>
+                </dl>
+            </section>
+
+            <section class="panel" data-vsphere-panel="infra">
+                <div class="panel-heading">
+                    <div>
+                        <p class="section-kicker">Resumo</p>
+                        <h2>Ambiente</h2>
+                    </div>
+                    <button class="button button-ghost" id="refresh-button" type="button">Atualizar</button>
+                </div>
+                <div id="summary-cards" class="metric-grid"></div>
+            </section>
+
+            <section class="panel" data-vsphere-panel="infra">
+                <div class="panel-heading">
+                    <div>
+                        <p class="section-kicker">Hosts</p>
+                        <h2>Infraestrutura</h2>
+                    </div>
+                    <span class="hint">Clique em um host para abrir diagnostico.</span>
+                </div>
+                <div class="table-wrap compact">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Host</th>
+                                <th>Status</th>
+                                <th>Manutencao</th>
+                                <th>Acoes</th>
+                            </tr>
+                        </thead>
+                        <tbody id="host-table-body">
+                            <tr>
+                                <td colspan="4" class="empty">Conecte para carregar os hosts.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+        </aside>
+
+        <section class="main-column">
+            <section class="panel" data-vsphere-panel="vms">
+                <div class="panel-heading">
+                    <div>
+                        <p class="section-kicker">Inventario</p>
+                        <h2>Maquinas virtuais</h2>
+                    </div>
+                    <span class="hint">Clique em uma VM para abrir o painel de operacoes.</span>
+                </div>
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>VM</th>
+                                <th>Power</th>
+                                <th>Guest</th>
+                                <th>CPU</th>
+                                <th>RAM</th>
+                                <th>Host</th>
+                                <th>IP</th>
+                            </tr>
+                        </thead>
+                        <tbody id="vm-table-body">
+                            <tr>
+                                <td colspan="7" class="empty">Conecte para listar as VMs.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <section class="panel" data-vsphere-panel="operations storage">
+                <div class="panel-heading">
+                    <div>
+                        <p class="section-kicker">Operacoes</p>
+                        <h2 id="selected-vm-title">Nenhuma VM selecionada</h2>
+                    </div>
+                    <span id="selected-vm-subtitle" class="hint">Selecione uma VM para habilitar as acoes.</span>
+                </div>
+
+                <div class="operations-grid">
+                    <section class="operation-card operation-card-wide" data-vsphere-card="operations">
+                        <h3>Resumo operacional</h3>
+                        <div id="vm-overview-cards" class="metric-grid metric-grid-wide"></div>
+                        <div class="detail-columns">
+                            <div class="detail-column">
+                                <h4>Rede</h4>
+                                <div id="vm-network-list" class="stack-list">
+                                    <p class="empty-card">Selecione uma VM para ver interfaces e uso de rede.</p>
+                                </div>
+                            </div>
+                            <div class="detail-column">
+                                <h4>Discos guest</h4>
+                                <div id="vm-storage-list" class="stack-list">
+                                    <p class="empty-card">Selecione uma VM para ver espaco e volumes.</p>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section class="operation-card operation-card-wide" data-vsphere-card="operations">
+                        <h3>Acesso remoto</h3>
+                        <div id="remote-access-summary" class="stack-list">
+                            <p class="empty-card">Selecione uma VM para montar os atalhos de acesso remoto.</p>
+                        </div>
+
+                        <form id="remote-access-form" class="stack-form remote-access-form">
+                            <div class="field-row">
+                                <label>
+                                    <span>Usuario do guest</span>
+                                    <input type="text" name="guest_username" id="remote-guest-username" placeholder="root ou Administrator">
+                                </label>
+
+                                <label>
+                                    <span>Host / IP SSH</span>
+                                    <input type="text" id="remote-guest-ip" placeholder="IP detectado da VM ou host manual">
+                                </label>
+                            </div>
+
+                            <div class="field-row">
+                                <label>
+                                    <span>Senha SSH</span>
+                                    <input type="password" name="guest_password" id="remote-guest-password" placeholder="Usada apenas no terminal web">
+                                </label>
+
+                                <label>
+                                    <span>Porta SSH</span>
+                                    <input type="number" name="guest_port" id="remote-guest-port" value="22" min="1" max="65535">
+                                </label>
+                            </div>
+
+                            <label class="checkbox">
+                                <input type="checkbox" name="legacy_compat" id="remote-legacy-compat" checked>
+                                <span>Compatibilidade legada SSH (`ssh-rsa`)</span>
+                            </label>
+
+                            <div class="button-grid remote-button-grid">
+                                <a id="open-vmrc-link" class="button button-primary button-link" href="#" target="_blank" rel="noopener noreferrer">Abrir VMRC externo</a>
+                                <button class="button button-ghost" id="open-web-ssh-button" type="button">Terminal web SSH</button>
+                                <button class="button button-ghost" id="close-web-ssh-button" type="button">Encerrar terminal</button>
+                                <button class="button button-ghost" id="copy-ssh-button" type="button">Copiar SSH</button>
+                                <button class="button button-secondary" id="download-rdp-button" type="button">Baixar RDP externo</button>
+                            </div>
+                        </form>
+
+                        <div id="remote-access-notes" class="stack-list">
+                            <p class="empty-card">VMRC exige o cliente VMware Remote Console instalado. VNC depende de servidor dentro da VM.</p>
+                        </div>
+
+                        <div class="terminal-shell">
+                            <div class="terminal-toolbar">
+                                <strong>SSH embutido</strong>
+                                <span id="web-ssh-status" class="hint">Selecione uma VM Linux/Unix com IP e informe a senha para abrir o terminal.</span>
+                            </div>
+                            <div id="web-ssh-terminal" class="web-ssh-terminal"></div>
+                        </div>
+                    </section>
+
+                    <section class="operation-card" data-vsphere-card="operations">
+                        <h3>Energia</h3>
+                        <div class="button-grid">
+                            <button class="button button-primary vm-action" data-action="power_on" type="button">Power On</button>
+                            <button class="button button-secondary vm-action" data-action="power_off" type="button">Power Off</button>
+                            <button class="button button-secondary vm-action" data-action="reset" type="button">Reset</button>
+                            <button class="button button-secondary vm-action" data-action="suspend" type="button">Suspend</button>
+                            <button class="button button-ghost vm-action" data-action="shutdown_guest" type="button">Shutdown Guest</button>
+                            <button class="button button-ghost vm-action" data-action="reboot_guest" type="button">Reboot Guest</button>
+                            <button class="button button-danger vm-action" data-action="delete" type="button">Excluir VM</button>
+                        </div>
+                    </section>
+
+                    <section class="operation-card" data-vsphere-card="operations">
+                        <h3>Rename</h3>
+                        <form id="rename-form" class="stack-form">
+                            <label>
+                                <span>Novo nome</span>
+                                <input type="text" name="name" placeholder="vm-app-01">
+                            </label>
+                            <button class="button button-primary" type="submit">Renomear</button>
+                        </form>
+                    </section>
+
+                    <section class="operation-card" data-vsphere-card="operations">
+                        <h3>CPU / RAM</h3>
+                        <form id="hardware-form" class="stack-form">
+                            <div class="field-row">
+                                <label>
+                                    <span>vCPU</span>
+                                    <input type="number" name="cpu" min="1" placeholder="4">
+                                </label>
+                                <label>
+                                    <span>Memoria MB</span>
+                                    <input type="number" name="memory_mb" min="4" placeholder="8192">
+                                </label>
+                            </div>
+                            <button class="button button-primary" type="submit">Aplicar hardware</button>
+                        </form>
+                    </section>
+
+                    <section class="operation-card" data-vsphere-card="operations">
+                        <h3>Snapshot</h3>
+                        <form id="snapshot-form" class="stack-form">
+                            <label>
+                                <span>Nome</span>
+                                <input type="text" name="name" placeholder="antes-do-update">
+                            </label>
+                            <label>
+                                <span>Descricao</span>
+                                <textarea name="description" rows="3" placeholder="Ponto de restauracao antes da manutencao"></textarea>
+                            </label>
+                            <div class="field-row">
+                                <label class="checkbox">
+                                    <input type="checkbox" name="include_memory">
+                                    <span>Salvar memoria</span>
+                                </label>
+                                <label class="checkbox">
+                                    <input type="checkbox" name="quiesce">
+                                    <span>Quiesce</span>
+                                </label>
+                            </div>
+                            <button class="button button-primary" type="submit">Criar snapshot</button>
+                        </form>
+
+                        <div id="snapshot-list" class="snapshot-list">
+                            <p class="empty-card">Selecione uma VM para listar snapshots.</p>
+                        </div>
+                    </section>
+
+                    <section class="operation-card operation-card-wide" data-vsphere-card="operations">
+                        <h3>Clone</h3>
+                        <form id="clone-form" class="stack-form">
+                            <div class="field-row">
+                                <label>
+                                    <span>Nome do clone</span>
+                                    <input type="text" name="name" placeholder="vm-clone-01">
+                                </label>
+                                <label>
+                                    <span>Datastore</span>
+                                    <select name="datastore_moid" id="clone-datastore">
+                                        <option value="">Padrao da VM origem</option>
+                                    </select>
+                                </label>
+                            </div>
+
+                            <div class="field-row">
+                                <label>
+                                    <span>Folder</span>
+                                    <select name="folder_moid" id="clone-folder">
+                                        <option value="">Pasta atual</option>
+                                    </select>
+                                </label>
+                                <label>
+                                    <span>Resource Pool</span>
+                                    <select name="resource_pool_moid" id="clone-pool">
+                                        <option value="">Pool atual</option>
+                                    </select>
+                                </label>
+                            </div>
+
+                            <div class="field-row">
+                                <label class="checkbox">
+                                    <input type="checkbox" name="power_on">
+                                    <span>Ligar apos clone</span>
+                                </label>
+                                <label class="checkbox">
+                                    <input type="checkbox" name="as_template">
+                                    <span>Criar como template</span>
+                                </label>
+                            </div>
+
+                            <button class="button button-primary" type="submit">Clonar VM</button>
+                        </form>
+                    </section>
+
+                    <section class="operation-card operation-card-wide" data-vsphere-card="storage">
+                        <h3>Nova VM por ISO</h3>
+                        <form id="create-vm-form" class="stack-form">
+                            <div class="field-row">
+                                <label>
+                                    <span>Nome da VM</span>
+                                    <input type="text" name="name" id="create-vm-name" placeholder="vm-linux-01">
+                                </label>
+                                <label>
+                                    <span>Guest ID</span>
+                                    <select name="guest_id" id="create-vm-guest-id">
+                                        <option value="otherGuest64">Generico 64-bit</option>
+                                        <option value="ubuntu64Guest">Ubuntu 64-bit</option>
+                                        <option value="debian10_64Guest">Debian 64-bit</option>
+                                        <option value="centos7_64Guest">CentOS 7 64-bit</option>
+                                        <option value="rhel8_64Guest">RHEL 8 64-bit</option>
+                                        <option value="windows9_64Guest">Windows 10/11 64-bit</option>
+                                        <option value="windows9Server64Guest">Windows Server 2016+ 64-bit</option>
+                                    </select>
+                                </label>
+                            </div>
+
+                            <div class="field-row">
+                                <label>
+                                    <span>Host</span>
+                                    <select name="host_moid" id="create-vm-host">
+                                        <option value="">Selecione um host</option>
+                                    </select>
+                                </label>
+                                <label>
+                                    <span>Datastore</span>
+                                    <select name="datastore_moid" id="create-vm-datastore">
+                                        <option value="">Selecione um datastore</option>
+                                    </select>
+                                </label>
+                            </div>
+
+                            <div class="field-row">
+                                <label>
+                                    <span>Folder</span>
+                                    <select name="folder_moid" id="create-vm-folder">
+                                        <option value="">Padrao do host/datacenter</option>
+                                    </select>
+                                </label>
+                                <label>
+                                    <span>Resource Pool</span>
+                                    <select name="resource_pool_moid" id="create-vm-pool">
+                                        <option value="">Padrao do host</option>
+                                    </select>
+                                </label>
+                            </div>
+
+                            <div class="field-row">
+                                <label>
+                                    <span>Rede</span>
+                                    <select name="network_moid" id="create-vm-network">
+                                        <option value="">Sem placa de rede inicial</option>
+                                    </select>
+                                </label>
+                                <label>
+                                    <span>ISO selecionada</span>
+                                    <input type="text" name="iso_path" id="create-vm-iso-path" placeholder="Nenhuma ISO selecionada">
+                                </label>
+                            </div>
+
+                            <div class="field-row">
+                                <label>
+                                    <span>Datastore da ISO</span>
+                                    <select name="iso_datastore_moid" id="create-vm-iso-datastore">
+                                        <option value="">Mesmo datastore da VM</option>
+                                    </select>
+                                </label>
+                                <label>
+                                    <span>vCPU / RAM / Disco</span>
+                                    <div class="inline-split triple-input">
+                                        <input type="number" name="cpu" id="create-vm-cpu" min="1" value="2" placeholder="vCPU">
+                                        <input type="number" name="memory_mb" id="create-vm-memory" min="256" value="4096" placeholder="RAM MB">
+                                        <input type="number" name="disk_gb" id="create-vm-disk" min="1" value="40" placeholder="Disco GB">
+                                    </div>
+                                </label>
+                            </div>
+
+                            <div class="field-row">
+                                <label class="checkbox">
+                                    <input type="checkbox" name="power_on" id="create-vm-power-on">
+                                    <span>Criar e ligar para o primeiro boot</span>
+                                </label>
+                                <button class="button button-ghost" id="clear-create-vm-iso-button" type="button">Limpar ISO</button>
+                            </div>
+
+                            <button class="button button-primary" type="submit">Criar nova VM</button>
+                        </form>
+                    </section>
+
+                    <section class="operation-card operation-card-wide" data-vsphere-card="storage">
+                        <h3>ISO / Datastore</h3>
+                        <form id="iso-upload-form" class="stack-form" enctype="multipart/form-data">
+                            <div class="field-row">
+                                <label>
+                                    <span>Datastore</span>
+                                    <select name="datastore_moid" id="iso-datastore-select">
+                                        <option value="">Selecione um datastore</option>
+                                    </select>
+                                </label>
+                                <label>
+                                    <span>Pasta no datastore</span>
+                                    <input type="text" name="folder" id="iso-folder-path" value="iso" placeholder="iso">
+                                </label>
+                            </div>
+
+                            <div class="field-row">
+                                <label>
+                                    <span>Arquivo ISO</span>
+                                    <input type="file" name="file" id="iso-file-input" accept=".iso,application/octet-stream">
+                                </label>
+                                <label>
+                                    <span>URL da ISO</span>
+                                    <input type="url" name="source_url" id="iso-source-url" placeholder="https://mirror.exemplo.local/imagens/ubuntu.iso">
+                                </label>
+                            </div>
+
+                            <div class="field-row">
+                                <label class="checkbox">
+                                    <input type="checkbox" name="overwrite" id="iso-overwrite">
+                                    <span>Sobrescrever se existir</span>
+                                </label>
+                                <span class="hint">Use arquivo local ou URL HTTP/HTTPS. Se os dois vierem preenchidos, o arquivo local tem prioridade.</span>
+                            </div>
+
+                            <div class="button-row">
+                                <button class="button button-primary" type="submit">Enviar ISO</button>
+                                <button class="button button-ghost" id="refresh-iso-button" type="button">Atualizar lista</button>
+                            </div>
+                        </form>
+
+                        <div id="vm-media-summary" class="stack-list">
+                            <p class="empty-card">Selecione uma VM para ver o CD/DVD atual ou use a lista abaixo para montar uma ISO.</p>
+                        </div>
+
+                        <div id="iso-library-list" class="stack-list stack-list-separated">
+                            <p class="empty-card">Selecione um datastore e clique em atualizar para listar as ISOs.</p>
+                        </div>
+                    </section>
+                </div>
+            </section>
+
+            <section class="panel" data-vsphere-panel="host">
+                <div class="panel-heading">
+                    <div>
+                        <p class="section-kicker">Host</p>
+                        <h2 id="selected-host-title">Nenhum host selecionado</h2>
+                    </div>
+                    <span id="selected-host-subtitle" class="hint">Selecione um host para ver rede, licenca e consumo.</span>
+                </div>
+
+                <div id="host-overview-cards" class="metric-grid metric-grid-wide"></div>
+
+                <div class="operations-grid diagnostics-grid">
+                    <section class="operation-card">
+                        <h3>Licenca</h3>
+                        <div id="host-license-summary" class="stack-list">
+                            <p class="empty-card">Selecione um host para ver a licenca.</p>
+                        </div>
+                    </section>
+
+                    <section class="operation-card">
+                        <h3>Rede do host</h3>
+                        <div id="host-network-summary" class="stack-list">
+                            <p class="empty-card">Selecione um host para ver vmnic, vmk e uplinks.</p>
+                        </div>
+                    </section>
+
+                    <section class="operation-card operation-card-wide">
+                        <h3>vmnic / uplinks</h3>
+                        <div class="table-wrap compact">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Interface</th>
+                                        <th>Link</th>
+                                        <th>Velocidade</th>
+                                        <th>Switch</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="host-uplink-body">
+                                    <tr>
+                                        <td colspan="4" class="empty">Selecione um host para listar uplinks.</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </section>
+
+                    <section class="operation-card">
+                        <h3>vSwitch / Portgroups</h3>
+                        <div id="host-switch-list" class="stack-list">
+                            <p class="empty-card">Selecione um host para ver balanceamento e uplinks.</p>
+                        </div>
+                    </section>
+
+                    <section class="operation-card">
+                        <h3>Datastores / VMs</h3>
+                        <div id="host-datastore-list" class="stack-list">
+                            <p class="empty-card">Selecione um host para ver espaco em disco.</p>
+                        </div>
+                        <div id="host-vm-list" class="stack-list stack-list-separated">
+                            <p class="empty-card">Selecione um host para ver as VMs vinculadas.</p>
+                        </div>
+                    </section>
+                </div>
+            </section>
+        </section>
+    </main>
+    </section>
+
+    <section id="page-containers" class="page-shell page-shell-hidden">
+        <div class="workspace">
+            <aside class="sidebar">
+                <section class="panel">
+                    <div class="panel-heading">
+                        <div>
+                            <p class="section-kicker">Containers</p>
+                            <h2>Conexao Docker</h2>
+                        </div>
+                        <span id="docker-connection-chip" class="chip chip-offline">offline</span>
+                    </div>
+
+                    <form id="docker-connect-form" class="stack-form">
+                        <label>
+                            <span>Host / IP</span>
+                            <input type="text" name="host" placeholder="docker.local ou 10.0.0.20" required>
+                        </label>
+
+                        <div class="field-row">
+                            <label>
+                                <span>Porta SSH</span>
+                                <input type="number" name="port" value="22" min="1" max="65535">
+                            </label>
+
+                            <label>
+                                <span>Usuario</span>
+                                <input type="text" name="username" placeholder="root ou dockeradmin" required>
+                            </label>
+                        </div>
+
+                        <label>
+                            <span>Senha SSH</span>
+                            <input type="password" name="password" required>
+                        </label>
+
+                        <label class="checkbox">
+                            <input type="checkbox" name="legacy_compat" checked>
+                            <span>Compatibilidade legada SSH (`ssh-rsa`)</span>
+                        </label>
+
+                        <div class="button-row">
+                            <button class="button button-primary" type="submit">Conectar Docker</button>
+                            <button class="button button-secondary" type="button" id="docker-disconnect-button">Desconectar</button>
+                        </div>
+                    </form>
+
+                    <dl id="docker-connection-meta" class="meta-list">
+                        <div>
+                            <dt>Host</dt>
+                            <dd>Sem conexao Docker</dd>
+                        </div>
+                        <div>
+                            <dt>Engine</dt>
+                            <dd>-</dd>
+                        </div>
+                        <div>
+                            <dt>SO</dt>
+                            <dd>-</dd>
+                        </div>
+                    </dl>
+                </section>
+
+                <section class="panel">
+                    <div class="panel-heading">
+                        <div>
+                            <p class="section-kicker">Docker</p>
+                            <h2>Resumo do host</h2>
+                        </div>
+                        <button class="button button-ghost" id="docker-refresh-button" type="button">Atualizar</button>
+                    </div>
+                    <div id="docker-overview-cards" class="metric-grid">
+                        <p class="empty-card metric-empty">Conecte em um host Docker para carregar o resumo.</p>
+                    </div>
+                </section>
+            </aside>
+
+            <section class="main-column">
+                <section class="panel">
+                    <div class="panel-heading">
+                        <div>
+                            <p class="section-kicker">Docker</p>
+                            <h2>Containers</h2>
+                        </div>
+                        <span class="hint">Clique em um container para abrir o painel detalhado.</span>
+                    </div>
+
+                    <div class="table-wrap">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Container</th>
+                                    <th>Status</th>
+                                    <th>Imagem</th>
+                                    <th>CPU</th>
+                                    <th>RAM</th>
+                                    <th>Portas</th>
+                                </tr>
+                            </thead>
+                            <tbody id="docker-container-table-body">
+                                <tr>
+                                    <td colspan="6" class="empty">Conecte em um host Docker para listar os containers.</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+
+                <section class="panel">
+                    <div class="panel-heading">
+                        <div>
+                            <p class="section-kicker">Detalhe</p>
+                            <h2 id="selected-container-title">Nenhum container selecionado</h2>
+                        </div>
+                        <span id="selected-container-subtitle" class="hint">Selecione um container para ver redes, mounts e logs.</span>
+                    </div>
+
+                    <div class="operations-grid">
+                        <section class="operation-card operation-card-wide">
+                            <h3>Comandos Docker</h3>
+                            <div class="detail-columns">
+                                <div class="detail-column">
+                                    <h4>Criar novo container</h4>
+                                    <form id="docker-create-form" class="stack-form">
+                                        <div class="field-row">
+                                            <label>
+                                                <span>Imagem</span>
+                                                <input type="text" name="image" placeholder="nginx:latest" required>
+                                            </label>
+                                            <label>
+                                                <span>Nome</span>
+                                                <input type="text" name="name" placeholder="site-nginx">
+                                            </label>
+                                        </div>
+
+                                        <div class="field-row">
+                                            <label>
+                                                <span>Rede</span>
+                                                <input type="text" name="network" placeholder="bridge ou app_net">
+                                            </label>
+                                            <label>
+                                                <span>Restart</span>
+                                                <select name="restart_policy">
+                                                    <option value="unless-stopped" selected>unless-stopped</option>
+                                                    <option value="always">always</option>
+                                                    <option value="on-failure">on-failure</option>
+                                                    <option value="no">no</option>
+                                                </select>
+                                            </label>
+                                        </div>
+
+                                        <div class="field-row">
+                                            <label>
+                                                <span>Portas</span>
+                                                <textarea name="ports" rows="4" placeholder="8080:80&#10;8443:443"></textarea>
+                                            </label>
+                                            <label>
+                                                <span>Variaveis de ambiente</span>
+                                                <textarea name="environment" rows="4" placeholder="TZ=America/Sao_Paulo&#10;APP_ENV=production"></textarea>
+                                            </label>
+                                        </div>
+
+                                        <div class="field-row">
+                                            <label>
+                                                <span>Volumes</span>
+                                                <textarea name="volumes" rows="4" placeholder="/srv/app:/app&#10;/etc/localtime:/etc/localtime:ro"></textarea>
+                                            </label>
+                                            <label>
+                                                <span>Comando do container</span>
+                                                <textarea name="command" rows="4" placeholder="sh -lc &quot;python app.py&quot;"></textarea>
+                                            </label>
+                                        </div>
+
+                                        <label>
+                                            <span>Argumentos extras</span>
+                                            <input type="text" name="extra_args" placeholder="--pull always --privileged">
+                                        </label>
+
+                                        <label class="checkbox">
+                                            <input type="checkbox" name="detach" checked>
+                                            <span>Subir em background (`docker run -d`)</span>
+                                        </label>
+
+                                        <p class="hint">Use uma opcao por linha em portas, variaveis e volumes.</p>
+
+                                        <div class="button-row">
+                                            <button class="button button-secondary" type="reset">Limpar</button>
+                                            <button class="button button-primary" type="submit">Criar container</button>
+                                        </div>
+                                    </form>
+                                </div>
+
+                                <div class="detail-column">
+                                    <h4>CLI de manutencao</h4>
+                                    <form id="docker-command-form" class="stack-form">
+                                        <label>
+                                            <span>Modelo rapido</span>
+                                            <select id="docker-command-preset">
+                                                <option value="">Selecione um exemplo</option>
+                                                <option value="list">docker ps -a</option>
+                                                <option value="images">docker images</option>
+                                                <option value="logs">docker logs --tail 200 {% raw %}{{container}}{% endraw %}</option>
+                                                <option value="inspect">docker inspect {% raw %}{{container}}{% endraw %}</option>
+                                                <option value="exec-sh">docker exec {% raw %}{{container}}{% endraw %} sh -lc &quot;ls -la&quot;</option>
+                                                <option value="compose-ps">docker compose ps</option>
+                                                <option value="system-df">docker system df</option>
+                                            </select>
+                                        </label>
+
+                                        <label>
+                                            <span>Comando Docker</span>
+                                            <textarea id="docker-command-input" name="command" rows="7" class="mono" placeholder="docker ps -a"></textarea>
+                                        </label>
+
+                                        <p id="docker-command-context" class="hint">Use {% raw %}{{container}}{% endraw %} para aproveitar o container selecionado.</p>
+
+                                        <div class="button-row">
+                                            <button class="button button-ghost" id="docker-clear-command-output-button" type="button">Limpar saida</button>
+                                            <button class="button button-primary" type="submit">Executar comando</button>
+                                        </div>
+                                    </form>
+
+                                    <pre id="docker-command-output" class="log-console docker-command-output">Conecte em um host Docker para executar comandos remotos.</pre>
+                                </div>
+                            </div>
+                        </section>
+
+                        <section class="operation-card">
+                            <h3>Acoes</h3>
+                            <div class="button-grid">
+                                <button class="button button-primary docker-action" data-docker-action="start" type="button">Start</button>
+                                <button class="button button-secondary docker-action" data-docker-action="stop" type="button">Stop</button>
+                                <button class="button button-secondary docker-action" data-docker-action="restart" type="button">Restart</button>
+                                <button class="button button-ghost docker-action" data-docker-action="remove" type="button">Remove</button>
+                            </div>
+                        </section>
+
+                        <section class="operation-card">
+                            <h3>Resumo</h3>
+                            <div id="docker-container-metrics" class="metric-grid">
+                                <p class="empty-card metric-empty">Selecione um container para ver CPU, RAM e estado.</p>
+                            </div>
+                        </section>
+
+                        <section class="operation-card">
+                            <h3>Redes</h3>
+                            <div id="docker-container-networks" class="stack-list">
+                                <p class="empty-card">Selecione um container para ver IP, gateway e aliases.</p>
+                            </div>
+                        </section>
+
+                        <section class="operation-card">
+                            <h3>Mounts</h3>
+                            <div id="docker-container-mounts" class="stack-list">
+                                <p class="empty-card">Selecione um container para ver volumes e bind mounts.</p>
+                            </div>
+                        </section>
+
+                        <section class="operation-card operation-card-wide">
+                            <h3>Ambiente e logs</h3>
+                            <div class="detail-columns">
+                                <div class="detail-column">
+                                    <h4>Variaveis</h4>
+                                    <div id="docker-container-env" class="stack-list">
+                                        <p class="empty-card">Selecione um container para ver as variaveis de ambiente.</p>
+                                    </div>
+                                </div>
+                                <div class="detail-column">
+                                    <h4>Logs recentes</h4>
+                                    <pre id="docker-container-logs" class="log-console">Selecione um container para carregar os logs.</pre>
+                                </div>
+                            </div>
+                        </section>
+                    </div>
+                </section>
+            </section>
+        </div>
+    </section>
+</div>
+
+<div id="toast" class="toast" aria-live="polite"></div>
+{% endblock %}

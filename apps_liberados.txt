@@ -1,0 +1,17 @@
+# Um app por linha. No deploy do cliente, carregue somente os apps listados aqui.
+automacao
+financeiro
+nanoponto
+zap
+nanostore
+gpsmusical
+bpa
+tatoo
+riob
+riob-cameras
+riob-telefonia
+riob-chat-ia
+riob-chat
+riob-email
+riob-esxi
+riob-xml

@@ -1,0 +1,20 @@
+{
+  "app_key": "riob-esxi",
+  "nome": "ESXi RioB",
+  "descricao": "Cliente ESXi/vSphere integrado pelo RioB.",
+  "url": "/apps/riob-esxi/riob",
+  "standalone_url": "/apps/riob-esxi/riob",
+  "icone": "server",
+  "ordem": 96,
+  "ativo": true,
+  "origem": "riob",
+  "source_dir": "/srv/nanotechSoft/apps/riob-esxi/source",
+  "menu_groups": {
+    "dashboards": [
+      {
+        "nome": "ESXi",
+        "url": "/apps/riob-esxi/riob"
+      }
+    ]
+  }
+}

@@ -1,0 +1,92 @@
+{
+  "app_key": "financeiro",
+  "nome": "Financeiro",
+  "descricao": "Gestao financeira Nanotech integrada ao NanotechSoft com dados em MySQL.",
+  "url": "/apps/financeiro",
+  "standalone_url": "/apps/financeiro/original",
+  "icone": "finance",
+  "ordem": 20,
+  "ativo": true,
+  "origem": "nanotech",
+  "source_dir": "/srv/rede/nanotech/financeiro",
+  "temas": ["rio_branco", "autoblue", "fin-blue"],
+  "menu_groups": {
+    "dashboards": [
+      {
+        "nome": "Dashboard Financeiro",
+        "url": "/apps/financeiro?view=dashboard",
+        "recurso": "dashboard"
+      }
+    ],
+    "compras": [
+      {
+        "nome": "Compras",
+        "url": "/apps/financeiro?view=compras",
+        "recurso": "compras"
+      }
+    ],
+    "cadastros": [
+      {
+        "nome": "Financeiro Categorias",
+        "url": "/apps/financeiro?view=categorias",
+        "grupo": "Financeiro",
+        "recurso": "categorias"
+      }
+    ],
+    "financeiro": [
+      {
+        "nome": "Contas",
+        "url": "/apps/financeiro?view=contas",
+        "recurso": "contas"
+      },
+      {
+        "nome": "Contas a Pagar",
+        "url": "/apps/financeiro?view=pagar",
+        "recurso": "pagar"
+      },
+      {
+        "nome": "Contas a Receber",
+        "url": "/apps/financeiro?view=receber",
+        "recurso": "receber"
+      }
+    ],
+    "relatorios": [
+      {
+        "nome": "Lançamentos Financeiro",
+        "url": "/apps/financeiro?view=lancamentos",
+        "recurso": "lancamentos"
+      }
+    ],
+    "import_export": [
+      {
+        "nome": "Importar OFX",
+        "url": "/apps/financeiro?view=importar",
+        "recurso": "importar"
+      }
+    ],
+    "workflow": [
+      {
+        "nome": "Kanban Financeiro",
+        "url": "/workflow/financeiro",
+        "recurso": "conciliacao"
+      }
+    ]
+  },
+  "workflow_cards": [
+    {
+      "nome": "Conciliação Financeiro",
+      "url": "/apps/financeiro?view=conciliacao",
+      "recurso": "conciliacao",
+      "tipo": "Financeiro"
+    }
+  ],
+  "config_groups": {
+    "financeiro": [
+      {
+        "nome": "Financeiro - Config",
+        "url": "/apps/financeiro?view=config",
+        "recurso": "config"
+      }
+    ]
+  }
+}

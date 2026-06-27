@@ -1,0 +1,562 @@
+﻿<!doctype html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Painel de cameras</title>
+  <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;600&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+  <style>
+    :root{--bg:#f4f6f9;--card:#ffffff;--muted:#64748b;--text:#1f2937;--btn:#ff9800;--btn-hover:#e68900;--danger:#c62828;--line:#e5e7eb;}
+    *{box-sizing:border-box}
+    body{margin:0;font-family:'Oswald',Arial,sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+    body.modal-open{overflow:hidden;overscroll-behavior:none}
+    header{position:sticky;top:0;background:#ffffff;border-bottom:1px solid var(--line);padding:12px 14px;z-index:10}
+    .wrap{max-width:none;width:100%;margin:0 auto;padding:14px 24px}
+    .grid{display:flex;flex-direction:column;gap:12px;min-height:calc(100vh - 96px)}
+    @media(max-width:900px){.grid{min-height:auto}}
+    .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px;display:flex;flex-direction:column}
+    .hidden{display:none !important}
+    h3{margin:0 0 8px 0;font-size:16px}
+    .row{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+    label{font-size:12px;color:var(--muted);display:block;margin-bottom:6px}
+    input,select{width:100%;padding:10px;border-radius:10px;border:1px solid var(--line);background:#fff;color:var(--text);outline:none}
+    button{padding:10px 12px;border-radius:10px;border:0;cursor:pointer;background:var(--btn);color:#fff;font-weight:700}
+    button:hover{background:var(--btn-hover)}
+    button.secondary{background:#475569}
+    button.danger{background:var(--danger)}
+    video{width:100%;height:100%;background:#000;border-radius:12px;object-fit:contain}
+    .media-box{flex:1;min-height:360px}
+    .media-box iframe{width:100%;height:100%;border:1px solid var(--line);border-radius:10px;background:#000}
+    .muted{color:var(--muted);font-size:12px}
+    .pill{display:inline-block;padding:4px 8px;border:1px solid var(--line);border-radius:999px;font-size:12px;color:var(--muted)}
+    .mode-toolbar{display:flex;align-items:center;gap:8px}
+    .title-row{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:nowrap}
+    .player-shell{display:grid;grid-template-columns:minmax(280px, 360px) minmax(0, 1fr);gap:18px;align-items:start}
+    .player-sidebar{display:flex;flex-direction:column;gap:10px;min-height:100%;position:sticky;top:88px}
+    .player-stage{display:flex;flex-direction:column;gap:10px;min-height:100%}
+    .player-stage .media-box{min-height:min(78vh, 1040px)}
+    .cams-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;max-height:70vh;overflow:auto;padding-right:4px}
+    .cam-grid-item{border:1px solid var(--line);border-radius:10px;padding:10px;background:#fff;cursor:pointer;transition:border-color .15s ease, box-shadow .15s ease, transform .15s ease}
+    .cam-grid-item:hover{border-color:#f59e0b;box-shadow:0 10px 24px rgba(15,23,42,.08);transform:translateY(-1px)}
+    .cam-grid-item.active{border-color:#f59e0b;background:#fff7ed;box-shadow:0 10px 24px rgba(245,158,11,.14)}
+    .cam-grid-item .name{font-weight:700;font-size:14px;margin-bottom:6px}
+    .cam-grid-item .url{font-size:11px;color:var(--muted);word-break:break-all;min-height:34px}
+    .cam-grid-item .meta{font-size:11px;color:var(--muted);margin-top:6px}
+    .dvr-modal{position:fixed;inset:0;background:rgba(0,0,0,.65);display:flex;align-items:center;justify-content:center;padding:16px;z-index:3000;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
+    .dvr-modal.hidden{display:none}
+    .dvr-content{width:min(1280px,100%);max-height:92vh;background:#fff;border-radius:12px;overflow:hidden;display:flex;flex-direction:column}
+    .dvr-header{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-bottom:1px solid var(--line)}
+    .dvr-grid{padding:12px;overflow:auto;display:grid;gap:8px;grid-template-columns:repeat(var(--dvr-cols,2),minmax(0,1fr))}
+    .dvr-grid.layout-1x1{--dvr-cols:1}
+    .dvr-grid.layout-2x2{--dvr-cols:2}
+    .dvr-grid.layout-3x3{--dvr-cols:3}
+    .dvr-grid.layout-4x4{--dvr-cols:4}
+    .dvr-tile{background:#000;border-radius:10px;overflow:hidden;display:flex;flex-direction:column}
+    .dvr-tile video{width:100%;aspect-ratio:16/9;background:#000;object-fit:cover}
+    .dvr-tile .cap{padding:6px 8px;background:#111;color:#fff;font-size:12px}
+    @media(max-width:900px){
+      .wrap{width:100%;padding:14px}
+      .title-row{flex-wrap:wrap}
+      .player-shell{grid-template-columns:1fr}
+      .player-sidebar{position:static}
+      .player-stage .media-box{min-height:320px}
+      .cams-grid{grid-template-columns:1fr;max-height:none}
+      .dvr-grid.layout-4x4,.dvr-grid.layout-3x3{--dvr-cols:2}
+      .dvr-grid.layout-2x2{--dvr-cols:1}
+    }
+  </style>
+</head>
+<body>
+<header>
+  <div class="wrap row" style="justify-content:space-between;">
+    <div style="font-weight:800;">Painel de cameras</div>
+    <div class="mode-toolbar">
+      <div>
+        <label style="margin:0">Exibir</label>
+        <select id="panelMode" style="min-width:150px">
+          <option value="player">Player HLS</option>
+          <option value="webcam">Webcam</option>
+        </select>
+      </div>
+      <div class="pill" id="status">Pronto</div>
+    </div>
+  </div>
+</header>
+
+<div class="wrap grid">
+  <div class="card card-player">
+    <div class="title-row">
+      <h3>Player HLS</h3>
+      <div class="row" style="gap:8px">
+        <select id="dvrGridType" style="width:auto">
+          <option value="1x1">Grid 1x1</option>
+          <option value="2x2" selected>Grid 2x2</option>
+          <option value="3x3">Grid 3x3</option>
+          <option value="4x4">Grid 4x4</option>
+        </select>
+        <button class="secondary" id="btnOpenDvr">Abrir grid DVR</button>
+      </div>
+    </div>
+    <div class="player-shell">
+      <div class="player-sidebar">
+        <div>
+          <label>Cameras cadastradas</label>
+          <div id="playerCamsGrid" class="cams-grid"></div>
+        </div>
+      </div>
+      <div class="player-stage">
+        <div class="row">
+          <div style="flex:1;min-width:240px">
+            <label>Camera selecionada</label>
+            <select id="camSelect"></select>
+          </div>
+          <div class="row" style="gap:8px">
+            <button id="btnPlay">Play</button>
+            <button class="secondary" id="btnReload">Recarregar</button>
+            <button class="secondary" id="btnRtspTcp">Forcar RTSP TCP</button>
+            <button class="danger" id="btnRemove">Remover</button>
+          </div>
+        </div>
+        <div class="media-box">
+          <video id="hlsVideo" controls autoplay muted playsinline></video>
+        </div>
+        <div class="muted">Clique em uma camera da lista para abrir no player. Quando a origem for RTSP, o sistema prioriza TCP automaticamente.</div>
+      </div>
+    </div>
+    <div style="height:8px"></div>
+    <div class="muted">RTSP/ONVIF nÃ£o abre direto no browser â€” precisa virar .m3u8 (HLS).</div>
+  </div>
+
+  <div class="card card-webcam hidden">
+    <h3>Webcam deste dispositivo</h3>
+    <div class="row">
+      <button id="btnWebcam">Ativar</button>
+      <button class="secondary" id="btnWebcamStop">Parar</button>
+      <button class="secondary" id="btnOpenVlc">Abrir no VLC</button>
+      <span class="muted" id="webcamInfo"></span>
+    </div>
+    <div style="height:8px"></div>
+    <div class="media-box">
+      <video id="webcamVideo" muted autoplay playsinline></video>
+      <div id="webcamEmbed" style="display:none; height:100%;"></div>
+    </div>
+    <div style="height:8px"></div>
+    <div class="muted">Dica: costuma funcionar melhor em <b>http://127.0.0.1:8080</b> (no mesmo aparelho).</div>
+  </div>
+
+</div>
+
+<div id="dvrModal" class="dvr-modal hidden" onclick="closeDvrModal(event)">
+  <div class="dvr-content" onclick="event.stopPropagation()">
+    <div class="dvr-header">
+      <h3 style="margin:0">Grid DVR</h3>
+      <button class="secondary" type="button" onclick="closeDvrModal()">Fechar</button>
+    </div>
+    <div id="dvrGrid" class="dvr-grid layout-2x2"></div>
+  </div>
+</div>
+
+<script>
+  const BASE_PREFIX = (() => {
+    const p = window.location.pathname || "";
+    const i = p.indexOf("/monitor/cameras");
+    return i >= 0 ? "/monitor/cameras" : "";
+  })();
+  function withBase(path){
+    if (!BASE_PREFIX) return path;
+    if (typeof path !== "string") return path;
+    if (path.startsWith("/api/") || path.startsWith("/cams/")) return BASE_PREFIX + path;
+    return path;
+  }
+
+  const statusEl = document.getElementById('status');
+  const panelMode = document.getElementById('panelMode');
+  const cardPlayer = document.querySelector('.card-player');
+  const cardWebcam = document.querySelector('.card-webcam');
+  const camSelect = document.getElementById('camSelect');
+  const hlsVideo = document.getElementById('hlsVideo');
+  const playerCamsGrid = document.getElementById('playerCamsGrid');
+  const dvrGridType = document.getElementById('dvrGridType');
+  const btnOpenDvr = document.getElementById('btnOpenDvr');
+  const dvrModal = document.getElementById('dvrModal');
+  const dvrGrid = document.getElementById('dvrGrid');
+
+  const btnPlay = document.getElementById('btnPlay');
+  const btnReload = document.getElementById('btnReload');
+  const btnRtspTcp = document.getElementById('btnRtspTcp');
+  const btnRemove = document.getElementById('btnRemove');
+
+  const webcamVideo = document.getElementById('webcamVideo');
+  const btnWebcam = document.getElementById('btnWebcam');
+  const btnWebcamStop = document.getElementById('btnWebcamStop');
+  const btnOpenVlc = document.getElementById('btnOpenVlc');
+  const webcamInfo = document.getElementById('webcamInfo');
+
+  let hls = null;
+  let webcamStream = null;
+  let hlsAutoTcpTried = false;
+  let cachedCams = [];
+  let dvrPlayers = [];
+
+  function setStatus(t){ statusEl.textContent = t; }
+
+  async function api(path, method="GET", body=null){
+    const opt = { method, headers: { "Content-Type": "application/json" } };
+    if(body) opt.body = JSON.stringify(body);
+    const r = await fetch(withBase(path), opt);
+    const j = await r.json().catch(()=> ({}));
+    if(!r.ok) throw new Error(j.error || ("HTTP " + r.status));
+    return j;
+  }
+
+  function escHtml(v){
+    return String(v || "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#39;");
+  }
+
+  function getPlayableCams(){
+    return (cachedCams || []).filter(c => c && c.hls);
+  }
+
+  function setPanelMode(mode){
+    const next = mode === "webcam" ? "webcam" : "player";
+    if (panelMode) panelMode.value = next;
+    if (cardPlayer) cardPlayer.classList.toggle("hidden", next !== "player");
+    if (cardWebcam) cardWebcam.classList.toggle("hidden", next !== "webcam");
+  }
+
+  function renderPlayerCamsGrid(){
+    if (!playerCamsGrid) return;
+    const cams = getPlayableCams().slice(0, 16);
+    if (!cams.length) {
+      playerCamsGrid.innerHTML = `<div class="muted">Nenhuma camera HLS cadastrada.</div>`;
+      return;
+    }
+    playerCamsGrid.innerHTML = cams.map((c) => `
+      <div class="cam-grid-item ${String(c.id || "") === String(camSelect.value || "") ? "active" : ""}" data-play-id="${escHtml(c.id || "")}">
+        <div class="name">${escHtml(c.name || c.id || "-")}</div>
+        <div class="url">${escHtml(c.hls || "-")}</div>
+        <div class="meta">Origem: ${escHtml((c.mode || "").toUpperCase() || "-")} | Transporte: ${escHtml((c.transport || "tcp").toUpperCase())}</div>
+      </div>
+    `).join("");
+  }
+
+  async function ensureTcpAndPlay(camId, forceReload=false){
+    const id = String(camId || "").trim();
+    if (!id) return;
+    const cam = (cachedCams || []).find(x => String(x.id || "") === id);
+    if (!cam || !cam.hls) return;
+    camSelect.value = id;
+    renderPlayerCamsGrid();
+    if (cam.mode === "rtsp" && (cam.transport || "tcp").toLowerCase() !== "tcp") {
+      try {
+        setStatus("Reiniciando stream em TCP...");
+        await api("/api/restart", "POST", { id, transport: "tcp" });
+        await refreshList(id, { autoplay:false });
+      } catch (e) {
+        alert(e.message || "Falha ao reiniciar stream em TCP.");
+        setStatus("Erro");
+        return;
+      }
+    }
+    const atualizado = (cachedCams || []).find(x => String(x.id || "") === id) || cam;
+    const url = forceReload && atualizado.hls
+      ? atualizado.hls + (atualizado.hls.includes("?") ? "&" : "?") + "t=" + Date.now()
+      : atualizado.hls;
+    if (url) playHls(url);
+    setStatus(atualizado.mode === "rtsp" ? "Tocando em TCP" : "Tocando");
+    renderPlayerCamsGrid();
+  }
+
+  function stopDvrPlayers(){
+    dvrPlayers.forEach((p) => {
+      if (p && p.hls) {
+        try { p.hls.destroy(); } catch {}
+      } else if (p && p.video) {
+        p.video.removeAttribute("src");
+        p.video.load();
+      }
+    });
+    dvrPlayers = [];
+  }
+
+  function mountDvrTile(video, hlsUrl){
+    const url = withBase(hlsUrl || "");
+    if (!url) return;
+    if (window.Hls && Hls.isSupported()) {
+      const player = new Hls({
+        lowLatencyMode:true,
+        backBufferLength:5,
+        liveSyncDurationCount:1,
+        liveMaxLatencyDurationCount:2,
+        maxLiveSyncPlaybackRate:1.5
+      });
+      player.loadSource(url);
+      player.attachMedia(video);
+      player.on(Hls.Events.MANIFEST_PARSED, () => { video.play().catch(()=>{}); });
+      dvrPlayers.push({ hls: player, video });
+      return;
+    }
+    if (video.canPlayType("application/vnd.apple.mpegurl")) {
+      video.src = url;
+      video.play().catch(()=>{});
+      dvrPlayers.push({ video });
+    }
+  }
+
+  function openDvrModal(){
+    if (!dvrModal || !dvrGrid) return;
+    const playable = getPlayableCams();
+    if (!playable.length) {
+      alert("Nenhuma camera HLS cadastrada.");
+      return;
+    }
+    const layout = (dvrGridType && dvrGridType.value) ? dvrGridType.value : "2x2";
+    const slots = { "1x1": 1, "2x2": 4, "3x3": 9, "4x4": 16 }[layout] || 4;
+    const cams = playable.slice(0, slots);
+
+    stopDvrPlayers();
+    dvrGrid.className = `dvr-grid layout-${layout}`;
+    dvrGrid.innerHTML = cams.map((c) => `
+      <div class="dvr-tile">
+        <video autoplay muted playsinline></video>
+        <div class="cap">${escHtml(c.name || c.id || "Camera")}</div>
+      </div>
+    `).join("");
+    Array.from(dvrGrid.querySelectorAll("video")).forEach((videoEl, idx) => {
+      const cam = cams[idx];
+      if (cam && cam.hls) mountDvrTile(videoEl, cam.hls);
+    });
+
+    dvrModal.classList.remove("hidden");
+    document.body.classList.add("modal-open");
+  }
+
+  function closeDvrModal(ev){
+    if (ev && ev.target && ev.target !== dvrModal) return;
+    if (!dvrModal) return;
+    dvrModal.classList.add("hidden");
+    stopDvrPlayers();
+    document.body.classList.remove("modal-open");
+  }
+
+  window.closeDvrModal = closeDvrModal;
+
+  function stopHls(){
+    if(hls){ try{ hls.destroy(); }catch(e){} hls = null; }
+    hlsVideo.removeAttribute('src');
+    hlsVideo.load();
+  }
+
+  function playHls(url){
+    url = withBase(url);
+    stopHls();
+    setStatus("Carregando...");
+    hlsAutoTcpTried = false;
+    if(window.Hls && Hls.isSupported()){
+      hls = new Hls({
+        lowLatencyMode:true,
+        backBufferLength:5,
+        liveSyncDurationCount:1,
+        liveMaxLatencyDurationCount:2,
+        maxLiveSyncPlaybackRate:1.5
+      });
+      hls.loadSource(url);
+      hls.attachMedia(hlsVideo);
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        setStatus("Tocando");
+        hlsVideo.play().catch(()=>{});
+      });
+      hls.on(Hls.Events.ERROR, async (evt, data) => {
+        setStatus("Erro HLS: " + (data && data.type ? data.type : "desconhecido"));
+        if (!hlsAutoTcpTried) {
+          hlsAutoTcpTried = true;
+          try {
+            const list = await api("/api/list");
+            const cur = (list.cams || []).find(x => x.id === camSelect.value);
+            if (cur && cur.mode === "rtsp" && (cur.transport || "udp") !== "tcp") {
+              await api("/api/restart", "POST", { id: cur.id, transport: "tcp" });
+              setStatus("Reiniciado em TCP. Recarregando...");
+              await refreshList(cur.id);
+            }
+          } catch {}
+        }
+      });
+    } else if(hlsVideo.canPlayType("application/vnd.apple.mpegurl")){
+      hlsVideo.src = url;
+      hlsVideo.play().then(()=>setStatus("Tocando")).catch(()=>setStatus("Play bloqueado"));
+    } else {
+      setStatus("Sem suporte HLS");
+    }
+  }
+
+  async function refreshList(selectId=null, options={}){
+    const data = await api("/api/list");
+    cachedCams = data.cams || [];
+    camSelect.innerHTML = "";
+    getPlayableCams().forEach(c => {
+      const opt = document.createElement("option");
+      opt.value = c.id;
+      opt.textContent = `${c.name} â€” ${c.hls || ""}`;
+      camSelect.appendChild(opt);
+    });
+    if(selectId){
+      camSelect.value = selectId;
+    } else if(camSelect.options.length){
+      camSelect.selectedIndex = 0;
+    }
+    const sel = camSelect.value;
+    renderPlayerCamsGrid();
+    const autoplay = options && Object.prototype.hasOwnProperty.call(options, "autoplay") ? !!options.autoplay : true;
+    const cam = getPlayableCams().find(x => x.id === sel) || getPlayableCams()[0];
+    if (autoplay && cam && cam.hls) await ensureTcpAndPlay(cam.id);
+  }
+
+  camSelect.addEventListener("change", async () => {
+    const cam = getPlayableCams().find(x => x.id === camSelect.value);
+    if(cam && cam.hls) await ensureTcpAndPlay(cam.id);
+  });
+
+  btnPlay.addEventListener("click", async () => {
+    const cam = getPlayableCams().find(x => x.id === camSelect.value);
+    if(cam && cam.hls) await ensureTcpAndPlay(cam.id);
+  });
+
+  btnReload.addEventListener("click", async () => {
+    const cam = getPlayableCams().find(x => x.id === camSelect.value);
+    if(cam && cam.hls){
+      await ensureTcpAndPlay(cam.id, true);
+    }
+  });
+
+  btnRtspTcp.addEventListener("click", async () => {
+    const id = camSelect.value;
+    if (!id) return;
+    try {
+      setStatus("Reiniciando stream em TCP...");
+      await api("/api/restart", "POST", { id, transport: "tcp" });
+      await refreshList(id);
+      setStatus("Stream em TCP");
+    } catch (e) {
+      alert(e.message || "Falha ao reiniciar em TCP.");
+      setStatus("Erro");
+    }
+  });
+
+  btnRemove.addEventListener("click", async () => {
+    const id = camSelect.value;
+    await api("/api/remove", "POST", { id });
+    await refreshList();
+  });
+
+  if (panelMode) {
+    panelMode.addEventListener("change", () => {
+      setPanelMode(panelMode.value);
+    });
+  }
+
+  if (playerCamsGrid) {
+    playerCamsGrid.addEventListener("click", async (ev) => {
+      const target = ev.target;
+      const item = (target && typeof target.closest === "function")
+        ? target.closest("[data-play-id]")
+        : null;
+      if (!item) return;
+      const id = item.getAttribute("data-play-id");
+      if (!id) return;
+      await ensureTcpAndPlay(id);
+    });
+  }
+
+  if (btnOpenDvr) {
+    btnOpenDvr.addEventListener("click", () => openDvrModal());
+  }
+
+  if (dvrGridType) {
+    dvrGridType.addEventListener("change", () => openDvrModal());
+  }
+
+  document.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape") closeDvrModal();
+  });
+
+  // Webcam
+  btnWebcam.addEventListener("click", async () => {
+    try{
+      setStatus("Ativando webcam...");
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error("Navegador sem suporte a webcam (getUserMedia).");
+      }
+      try {
+        webcamStream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:"environment" }, audio:false });
+      } catch {
+        webcamStream = await navigator.mediaDevices.getUserMedia({ video:true, audio:false });
+      }
+      webcamVideo.srcObject = webcamStream;
+      webcamVideo.style.display = "";
+      const t = webcamStream.getVideoTracks()[0];
+      if(t){
+        const s = t.getSettings();
+        webcamInfo.textContent = ` (${s.width||"?"}x${s.height||"?"})`;
+      }
+      setStatus("Webcam ativa");
+    }catch(e){
+      console.error(e);
+      alert("Nao foi possivel acessar a webcam: " + (e && e.message ? e.message : "erro desconhecido") + ". Dica: use http://127.0.0.1:8080 no mesmo aparelho (ou https).");
+      setStatus("Falha webcam");
+    }
+  });
+
+  btnWebcamStop.addEventListener("click", () => {
+    if(webcamStream){
+      webcamStream.getTracks().forEach(t => t.stop());
+      webcamStream = null;
+    }
+    webcamVideo.srcObject = null;
+    webcamVideo.style.display = "";
+    const embed = document.getElementById("webcamEmbed");
+    if (embed) {
+      embed.innerHTML = "";
+      embed.style.display = "none";
+    }
+    webcamInfo.textContent = "";
+    setStatus("Webcam parada");
+  });
+
+  if (btnOpenVlc) {
+    btnOpenVlc.addEventListener("click", () => {
+      const cam = (cachedCams || []).find(x => x.id === camSelect.value);
+      if (!cam || !cam.hls) {
+        alert("Selecione uma camera com URL HLS valida.");
+        return;
+      }
+      const hlsUrl = new URL(withBase(cam.hls), window.location.origin).href;
+      let opened = false;
+      const onVis = () => {
+        if (document.visibilityState === "hidden") opened = true;
+      };
+      document.addEventListener("visibilitychange", onVis, { once: true });
+      window.location.href = `vlc://${hlsUrl}`;
+      setTimeout(async () => {
+        if (!opened) {
+          try { await navigator.clipboard.writeText(hlsUrl); } catch {}
+          alert("Nao foi possivel abrir o VLC automaticamente. URL HLS copiada para a area de transferencia.");
+        }
+      }, 1200);
+      setStatus("Tentando abrir no VLC");
+    });
+  }
+
+  // Boot
+  setPanelMode("player");
+  refreshList().catch(e => { console.error(e); setStatus("Erro"); });
+</script>
+</body>
+</html>
+
+

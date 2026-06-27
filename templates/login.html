@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Login - NanotechSoft{% endblock %}
+{% block body %}
+<main class="login-page">
+  <section class="login-card" aria-label="Login">
+    <div class="brand-mark">
+      <div class="brand-logo">NS</div>
+      <div>
+        <h1>NanotechSoft</h1>
+        <p>Portal integrado</p>
+      </div>
+    </div>
+
+    <form id="loginForm" class="login-form">
+      <label>
+        Usuario
+        <input id="loginUsuario" name="login" type="text" value="admin" autocomplete="username" required>
+      </label>
+      <label>
+        Senha
+        <input id="loginSenha" name="senha" type="password" value="admin" autocomplete="current-password" required>
+      </label>
+      <button type="submit">Entrar</button>
+      <div id="loginMsg" class="form-msg" role="status"></div>
+    </form>
+  </section>
+</main>
+{% endblock %}

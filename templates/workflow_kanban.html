@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}Workflow - {{ board.app.nome }} - NanotechSoft{% endblock %}
+{% block body %}
+<div class="app-shell">
+  {% set topbar_title = "NanotechSoft" %}
+  {% set topbar_subtitle = "Workflow Kanban" %}
+  {% include "_topbar.html" %}
+  {% include "_menu.html" %}
+
+  <main class="content">
+    <section class="portal-head">
+      <div>
+        <h2>Kanban {{ board.app.nome }}</h2>
+        <p>Cards de workflow organizados por status operacional.</p>
+      </div>
+      <button type="button" data-kanban-new>Novo card</button>
+    </section>
+
+    <script type="application/json" id="kanbanSeed">
+      {{ board.cards|tojson }}
+    </script>
+
+    <section class="kanban-board" data-kanban-board data-board-key="{{ board.app.app_key }}" aria-label="Kanban {{ board.app.nome }}">
+      <div class="kanban-column" data-kanban-status="todo">
+        <h3>A fazer</h3>
+        <div class="kanban-dropzone" data-kanban-dropzone="todo"></div>
+      </div>
+      <div class="kanban-column" data-kanban-status="today">
+        <h3>Em andamento</h3>
+        <div class="kanban-dropzone" data-kanban-dropzone="today"></div>
+      </div>
+      <div class="kanban-column" data-kanban-status="waiting">
+        <h3>Aguardando</h3>
+        <div class="kanban-dropzone" data-kanban-dropzone="waiting"></div>
+      </div>
+    </section>
+
+    <div class="kanban-modal hidden" data-kanban-modal>
+      <form class="kanban-modal-card" data-kanban-form>
+        <div class="kanban-modal-head">
+          <h3 data-kanban-modal-title>Card</h3>
+          <button class="iconBtn" type="button" data-kanban-close>Fechar</button>
+        </div>
+        <input type="hidden" name="id">
+        <label>Titulo
+          <input name="nome" required>
+        </label>
+        <label>Tipo
+          <input name="tipo">
+        </label>
+        <label>Status
+          <select name="status">
+            <option value="todo">A fazer</option>
+            <option value="today">Em andamento</option>
+            <option value="waiting">Aguardando</option>
+          </select>
+        </label>
+        <label>Origem / funcao
+          <input name="url" readonly>
+        </label>
+        <label>Descricao
+          <textarea name="descricao" rows="4"></textarea>
+        </label>
+        <div class="row end gap">
+          <button class="btn danger" type="button" data-kanban-delete>Excluir</button>
+          <button class="btn primary" type="submit">Salvar</button>
+        </div>
+      </form>
+    </div>
+  </main>
+</div>
+{% endblock %}

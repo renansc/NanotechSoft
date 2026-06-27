@@ -1,0 +1,13 @@
+<header class="topo">
+  <button class="menu-toggle" type="button" data-menu-toggle aria-label="Abrir menu">☰</button>
+  <div class="brand-logo small">NS</div>
+  <div class="topo-title">
+    <h1>{{ topbar_title or "NanotechSoft" }}</h1>
+    <span>{{ topbar_subtitle or "" }}</span>
+  </div>
+  <div class="user-box">
+    {% include "_theme_switcher.html" %}
+    <span>{{ usuario.nome }}</span>
+    <button type="button" data-logout>Sair</button>
+  </div>
+</header>

@@ -1,0 +1,46 @@
+{
+  "app_key": "gpsmusical",
+  "nome": "GPS Musical",
+  "descricao": "Repertorio musical com biblioteca, editor, audio local, YouTube, Spotify e backup JSON.",
+  "url": "/apps/gpsmusical",
+  "standalone_url": "/apps/gpsmusical/original",
+  "icone": "music",
+  "ordem": 60,
+  "ativo": true,
+  "origem": "nanotech",
+  "source_dir": "/srv/rede/nanotech/gpsmusical",
+  "temas": ["rio_branco", "autoblue", "fin-blue", "pontobege", "zapgreen"],
+  "menu_groups": {
+    "dashboards": [
+      {
+        "nome": "Biblioteca GPS Musical",
+        "url": "/apps/gpsmusical"
+      }
+    ],
+    "cadastros": [
+      {
+        "nome": "Musicas GPS Musical",
+        "url": "/apps/gpsmusical#editor",
+        "grupo": "GPS Musical"
+      }
+    ],
+    "import_export": [
+      {
+        "nome": "Backup GPS Musical",
+        "url": "/apps/gpsmusical#backup"
+      }
+    ]
+  },
+  "config_groups": {
+    "gpsmusical": [
+      {
+        "nome": "GPS Musical - Config",
+        "url": "/apps/gpsmusical#config"
+      },
+      {
+        "nome": "GPS Musical - Docs",
+        "url": "/apps/gpsmusical#docs"
+      }
+    ]
+  }
+}

@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Portal - NanotechSoft{% endblock %}
+{% block body %}
+<div class="app-shell">
+  {% set topbar_title = "NanotechSoft" %}
+  {% set topbar_subtitle = "Portal de apps" %}
+  {% include "_topbar.html" %}
+  {% set active_page = 'portal' %}
+  {% include "_menu.html" %}
+
+  <main class="content">
+    <section class="portal-head">
+      <div>
+        <h2>Menu principal</h2>
+        <p>Apps instalados dinamicamente em uma base Flask e MySQL.</p>
+      </div>
+      <a class="action-link" href="{{ url_for('config_page') }}">Configurar temas</a>
+    </section>
+
+    <section class="apps-grid" aria-label="Apps instalados">
+      {% if apps %}
+        {% for item in apps %}
+          <a class="app-card" href="{{ item.standalone_url or item.url }}" target="_blank" rel="noopener noreferrer">
+            <span class="app-icon">{{ item.nome[:2].upper() }}</span>
+            <strong>{{ item.nome }}</strong>
+            <small>{{ item.descricao or "App instalado no portal" }}</small>
+            <em>{{ item.origem }}</em>
+          </a>
+        {% endfor %}
+      {% else %}
+        <div class="empty-state">
+          <strong>Nenhum app instalado ainda</strong>
+          <p>Coloque projetos dentro de <code>apps/</code> com um <code>app.json</code>, ou cadastre na tabela <code>installed_apps</code>.</p>
+        </div>
+      {% endif %}
+    </section>
+  </main>
+</div>
+{% endblock %}

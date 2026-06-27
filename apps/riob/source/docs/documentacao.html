@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Documentacao RioBranco</title>
+  <link rel="stylesheet" href="viewer.css">
+</head>
+<body data-default-doc="ARQUITETURA_SISTEMA.md">
+  <main class="docs-shell">
+    <aside class="docs-sidebar">
+      <div class="docs-brand">
+        <h1>RioBranco Docs</h1>
+        <p class="docs-muted">Viewer HTML local das documentacoes Markdown.</p>
+      </div>
+
+      <div class="docs-toolbar">
+        <a class="docs-btn" href="index.html">Inicio</a>
+        <a class="docs-btn" id="docsRawLink" href="ARQUITETURA_SISTEMA.md" target="_blank" rel="noopener">Markdown</a>
+      </div>
+
+      <nav id="docsNav" class="docs-nav"></nav>
+    </aside>
+
+    <section class="docs-main">
+      <div class="docs-muted">Arquivo atual: <code id="docsFileName">ARQUITETURA_SISTEMA.md</code></div>
+      <h1 id="docsTitle">Documentacao</h1>
+      <p id="docsDescription" class="docs-muted"></p>
+      <article id="docsContent"></article>
+    </section>
+
+    <aside class="docs-toc" id="docsToc">
+      <h2>Navegacao Interna</h2>
+      <nav id="docsTocList" class="docs-toc-list"></nav>
+    </aside>
+  </main>
+
+  <script src="vendor/marked.min.js"></script>
+  <script src="vendor/mermaid.min.js"></script>
+  <script src="viewer.js"></script>
+</body>
+</html>

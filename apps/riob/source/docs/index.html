@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Documentacao RioBranco</title>
+  <link rel="stylesheet" href="viewer.css">
+</head>
+<body>
+  <main class="docs-portal">
+    <section class="docs-main">
+      <div class="docs-brand">
+        <h1>Documentacao do RioBranco</h1>
+        <p class="docs-muted">
+          Portal HTML para abrir a arquitetura, os diagramas, a operacao/deploy e a referencia de API diretamente no navegador, incluindo o uso do kanban e do modo TV em <code>dashboards.html</code>.
+        </p>
+      </div>
+
+      <div class="docs-toolbar">
+        <a class="docs-btn" href="documentacao.html">Abrir Documentacao</a>
+        <a class="docs-btn" href="diagramas.html">Abrir Diagramas</a>
+        <a class="docs-btn" href="README.md" target="_blank" rel="noopener">Abrir README.md</a>
+      </div>
+
+      <div class="docs-portal-grid">
+        <a class="docs-portal-card" href="documentacao.html?doc=ARQUITETURA_SISTEMA.md">
+          <h2>Arquitetura</h2>
+          <p>Visao geral do sistema, servicos, modulos e integracoes.</p>
+        </a>
+
+        <a class="docs-portal-card" href="diagramas.html">
+          <h2>Diagramas e Processos</h2>
+          <p>Fluxogramas e sequencias Mermaid renderizados visualmente.</p>
+        </a>
+
+        <a class="docs-portal-card" href="documentacao.html?doc=OPERACAO_E_DEPLOY.md">
+          <h2>Operacao e Deploy</h2>
+          <p>Runbook de subida, atualizacao, certificados, backup e troubleshooting.</p>
+        </a>
+
+        <a class="docs-portal-card" href="documentacao.html?doc=NFE_RECEITA_E_INTEGRACAO.md">
+          <h2>NF-e e Receita</h2>
+          <p>Passo a passo de configuracao, portal assistido, XML oficial e limites atuais da integracao.</p>
+        </a>
+
+        <a class="docs-portal-card" href="documentacao.html?doc=API_E_DADOS.md">
+          <h2>API e Dados</h2>
+          <p>Referencia funcional da API, payloads e modelo de dados.</p>
+        </a>
+      </div>
+
+      <div class="docs-status">
+        Paginas HTML locais: <code>docs/documentacao.html</code> e <code>docs/diagramas.html</code>. Arquivo operacional relacionado: <code>dashboards.html</code>.
+      </div>
+    </section>
+  </main>
+</body>
+</html>

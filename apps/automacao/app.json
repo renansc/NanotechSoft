@@ -1,0 +1,62 @@
+{
+  "app_key": "automacao",
+  "nome": "Automacao",
+  "descricao": "Monitoramento industrial e sensores importado do sensoresMonitor.",
+  "url": "/apps/automacao",
+  "standalone_url": "/apps/automacao/original/",
+  "icone": "automation",
+  "ordem": 10,
+  "ativo": true,
+  "origem": "sensoresMonitor",
+  "source_dir": "/srv/sensoresMonitor/monitoramento-industrial-v5.0",
+  "temas": ["rio_branco", "autoblue"],
+  "menu_groups": {
+    "dashboards": [
+      {
+        "nome": "Dashboard Automacao",
+        "url": "/apps/automacao/"
+      },
+      {
+        "nome": "Tempo Real Automacao",
+        "url": "/apps/automacao/tempo-real"
+      }
+    ],
+    "cadastros": [
+      {
+        "nome": "Motores Automacao",
+        "url": "/apps/automacao/motores"
+      },
+      {
+        "nome": "Drivers Automacao",
+        "url": "/apps/automacao/sensores/drivers"
+      }
+    ],
+    "relatorios": [
+      {
+        "nome": "Historico Automacao",
+        "url": "/apps/automacao/historico"
+      }
+    ],
+    "workflow": [
+      {
+        "nome": "Kanban Automacao",
+        "url": "/workflow/automacao"
+      }
+    ]
+  },
+  "workflow_cards": [
+    {
+      "nome": "Alarmes Automacao",
+      "url": "/apps/automacao/alarmes",
+      "tipo": "Automacao"
+    }
+  ],
+  "config_groups": {
+    "automacao": [
+      {
+        "nome": "Automacao - Setores",
+        "url": "/apps/automacao/setores"
+      }
+    ]
+  }
+}

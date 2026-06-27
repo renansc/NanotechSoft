@@ -1,0 +1,67 @@
+{
+  "app_key": "nanostore",
+  "nome": "NanoStore",
+  "descricao": "ERP de farmacia com estoque, compras, vendas, financeiro e workflow.",
+  "url": "/apps/nanostore",
+  "standalone_url": "/apps/nanostore/original",
+  "icone": "store",
+  "ordem": 50,
+  "ativo": true,
+  "origem": "nanotech",
+  "source_dir": "/srv/rede/nanotech/NanoStore",
+  "temas": ["rio_branco", "autoblue", "fin-blue", "pontobege", "zapgreen"],
+  "menu_groups": {
+    "dashboards": [
+      {
+        "nome": "Dashboard NanoStore",
+        "url": "/apps/nanostore"
+      }
+    ],
+    "cadastros": [
+      {
+        "nome": "Cadastros NanoStore",
+        "url": "/apps/nanostore#cadastros",
+        "grupo": "NanoStore"
+      }
+    ],
+    "compras": [
+      {
+        "nome": "Compras NanoStore",
+        "url": "/apps/nanostore#lancamentos"
+      }
+    ],
+    "financeiro": [
+      {
+        "nome": "Financeiro NanoStore",
+        "url": "/apps/nanostore#lancamentos"
+      }
+    ],
+    "relatorios": [
+      {
+        "nome": "Relatorios NanoStore",
+        "url": "/apps/nanostore#relatorios"
+      }
+    ],
+    "workflow": [
+      {
+        "nome": "Workflow NanoStore",
+        "url": "/apps/nanostore#workflow"
+      }
+    ]
+  },
+  "workflow_cards": [
+    {
+      "nome": "Atendimento NanoStore",
+      "url": "/apps/nanostore#workflow",
+      "tipo": "NanoStore"
+    }
+  ],
+  "config_groups": {
+    "nanostore": [
+      {
+        "nome": "NanoStore - Configuracao",
+        "url": "/apps/nanostore#configuracao"
+      }
+    ]
+  }
+}

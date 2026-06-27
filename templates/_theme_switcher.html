@@ -1,0 +1,18 @@
+<div class="theme-switcher" data-theme-switcher>
+  <button class="theme-button" type="button" data-theme-toggle aria-label="Trocar tema" title="Trocar tema">
+    <span class="theme-dot dot-a"></span>
+    <span class="theme-dot dot-b"></span>
+  </button>
+  <div class="theme-menu" data-theme-menu>
+    {% for theme in themes %}
+      <button
+        class="theme-option {% if config.tema == theme.key %}active{% endif %}"
+        type="button"
+        data-theme-option="{{ theme.key }}"
+        {% if not theme.enabled %}disabled{% endif %}
+      >
+        {{ theme.nome }}{% if not theme.enabled %} - em breve{% endif %}
+      </button>
+    {% endfor %}
+  </div>
+</div>

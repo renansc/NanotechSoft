@@ -1,0 +1,20 @@
+{
+  "app_key": "riob-email",
+  "nome": "E-mail RioB",
+  "descricao": "Gestor de e-mails e anexos legado do RioB.",
+  "url": "/apps/riob-email/riob",
+  "standalone_url": "/apps/riob-email/riob",
+  "icone": "mail",
+  "ordem": 95,
+  "ativo": true,
+  "origem": "riob",
+  "source_dir": "/srv/nanotechSoft/apps/riob-email/source",
+  "menu_groups": {
+    "import_export": [
+      {
+        "nome": "Gestor de E-mails",
+        "url": "/apps/riob-email/riob"
+      }
+    ]
+  }
+}

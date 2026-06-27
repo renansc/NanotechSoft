@@ -1,0 +1,97 @@
+{
+  "app_key": "nanoponto",
+  "nome": "NanoPonto",
+  "descricao": "Registro de ponto REP-P, banco de horas, justificativas e relatórios fiscais.",
+  "url": "/apps/nanoponto",
+  "standalone_url": "/apps/nanoponto/original",
+  "icone": "clock",
+  "ordem": 30,
+  "ativo": true,
+  "origem": "nanotech",
+  "source_dir": "/srv/rede/nanotech/NanoPonto",
+  "temas": ["rio_branco", "autoblue", "fin-blue", "pontobege"],
+  "menu_groups": {
+    "ponto": [
+      {
+        "nome": "Marcar Ponto",
+        "url": "/apps/nanoponto?panel=punch-card",
+        "recurso": "punch-card"
+      },
+      {
+        "nome": "Cadastro de Usuarios",
+        "url": "/apps/nanoponto?panel=employee-card",
+        "recurso": "employee-card"
+      },
+      {
+        "nome": "Calendario RH",
+        "url": "/apps/nanoponto?panel=calendar-card",
+        "recurso": "calendar-card"
+      },
+      {
+        "nome": "Ultimas Batidas",
+        "url": "/apps/nanoponto?panel=recent-punches-card",
+        "recurso": "recent-punches-card"
+      },
+      {
+        "nome": "Banco de Horas",
+        "url": "/apps/nanoponto?panel=bank-card",
+        "recurso": "bank-card"
+      },
+      {
+        "nome": "Espelho de Ponto",
+        "url": "/apps/nanoponto?panel=hours-report-card",
+        "recurso": "hours-report-card"
+      },
+      {
+        "nome": "Exportacao Fiscal",
+        "url": "/apps/nanoponto?panel=export-card",
+        "recurso": "export-card"
+      },
+      {
+        "nome": "Conformidade",
+        "url": "/apps/nanoponto?panel=compliance-card",
+        "recurso": "compliance-card"
+      }
+    ],
+    "workflow": [
+      {
+        "nome": "Kanban Ponto",
+        "url": "/workflow/nanoponto"
+      }
+    ]
+  },
+  "workflow_cards": [
+    {
+      "nome": "Justificar Ponto",
+      "url": "/apps/nanoponto?panel=justify-card",
+      "recurso": "justify-card",
+      "tipo": "Ponto"
+    },
+    {
+      "nome": "Atestados Ponto",
+      "url": "/apps/nanoponto?panel=medical-certificate-card",
+      "recurso": "medical-certificate-card",
+      "tipo": "Ponto"
+    },
+    {
+      "nome": "Agenda RH Ponto",
+      "url": "/apps/nanoponto?panel=agenda-card",
+      "recurso": "agenda-card",
+      "tipo": "Ponto"
+    }
+  ],
+  "config_groups": {
+    "nanoponto": [
+      {
+        "nome": "NanoPonto - Configuracao Legal",
+        "url": "/apps/nanoponto?panel=settings-card",
+        "recurso": "settings-card"
+      },
+      {
+        "nome": "NanoPonto - E-mail",
+        "url": "/apps/nanoponto?panel=email-card",
+        "recurso": "email-card"
+      }
+    ]
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "cams": [
+    {
+      "id": "tablet",
+      "name": "tablet",
+      "mode": "rtsp",
+      "rtsp": "rtsp://192.168.200.104:8080/h264.sdp",
+      "transport": "tcp",
+      "hls": "/cams/tablet/live.m3u8"
+    }
+  ]
+}

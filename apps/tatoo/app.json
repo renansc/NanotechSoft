@@ -1,0 +1,58 @@
+{
+  "app_key": "tatoo",
+  "nome": "Tatoo",
+  "descricao": "Gestao de estudio com clientes, agenda, consentimentos, financeiro e assinatura digital.",
+  "url": "/apps/tatoo",
+  "standalone_url": "/apps/tatoo/original",
+  "icone": "studio",
+  "ordem": 80,
+  "ativo": true,
+  "origem": "nanotech",
+  "source_dir": "/srv/rede/nanotech/tatoo",
+  "temas": ["rio_branco", "autoblue", "fin-blue", "pontobege", "zapgreen"],
+  "menu_groups": {
+    "dashboards": [
+      {
+        "nome": "Painel Tatoo",
+        "url": "/apps/tatoo"
+      }
+    ],
+    "cadastros": [
+      {
+        "nome": "Clientes Tatoo",
+        "url": "/apps/tatoo#clientes",
+        "grupo": "Tatoo"
+      },
+      {
+        "nome": "Agenda Tatoo",
+        "url": "/apps/tatoo#sessoes",
+        "grupo": "Tatoo"
+      },
+      {
+        "nome": "Consentimentos Tatoo",
+        "url": "/apps/tatoo#consentimentos",
+        "grupo": "Tatoo"
+      }
+    ],
+    "financeiro": [
+      {
+        "nome": "Financeiro Tatoo",
+        "url": "/apps/tatoo#financeiro"
+      }
+    ],
+    "import_export": [
+      {
+        "nome": "Dados Tatoo",
+        "url": "/apps/tatoo#dados"
+      }
+    ]
+  },
+  "config_groups": {
+    "tatoo": [
+      {
+        "nome": "Tatoo - Assinatura",
+        "url": "/apps/tatoo/signature.html"
+      }
+    ]
+  }
+}

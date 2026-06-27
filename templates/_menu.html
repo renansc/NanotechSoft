@@ -1,0 +1,128 @@
+<div class="menu-overlay" data-menu-overlay></div>
+<nav class="menu" data-menu>
+  <a class="menu-item {% if active_page == 'portal' %}active{% endif %}" data-menu-section="portal" href="{{ url_for('portal') }}">Portal</a>
+
+  {% if menu.dashboards %}
+    <div class="menu-item has-submenu {% if active_page == 'dashboards' %}active{% endif %}" data-menu-section="dashboards">
+      Dashboards <span class="submenu-caret">▾</span>
+      <div class="submenu">
+        {% for item in menu.dashboards %}
+        <a class="submenu-item" href="{{ item.url }}">{{ item.nome }}</a>
+        {% endfor %}
+      </div>
+    </div>
+  {% endif %}
+
+  {% if menu.cadastros %}
+    <div class="menu-item has-submenu {% if active_page == 'cadastros' %}active{% endif %}" data-menu-section="cadastros">
+      Cadastros <span class="submenu-caret">▾</span>
+      <div class="submenu">
+        {% for group, items in menu.cadastros|groupby("grupo") %}
+          {% if group %}
+            <span class="submenu-label">{{ group }}</span>
+          {% endif %}
+          {% for item in items %}
+            <a class="submenu-item {% if group %}submenu-child{% endif %}" href="{{ item.url }}">{{ item.nome }}</a>
+          {% endfor %}
+        {% endfor %}
+      </div>
+    </div>
+  {% endif %}
+
+  {% if menu.ponto %}
+    <div class="menu-item has-submenu {% if active_page == 'ponto' %}active{% endif %}" data-menu-section="ponto">
+      Ponto <span class="submenu-caret">▾</span>
+      <div class="submenu">
+        {% for item in menu.ponto %}
+          <a class="submenu-item" href="{{ item.url }}">{{ item.nome }}</a>
+        {% endfor %}
+      </div>
+    </div>
+  {% endif %}
+
+  {% if menu.automacao %}
+    <div class="menu-item has-submenu {% if active_page == 'automacao' %}active{% endif %}" data-menu-section="automacao">
+      Automacao <span class="submenu-caret">▾</span>
+      <div class="submenu">
+        {% for item in menu.automacao %}
+          <a class="submenu-item" href="{{ item.url }}">{{ item.nome }}</a>
+        {% endfor %}
+      </div>
+    </div>
+  {% endif %}
+
+  {% if menu.financeiro %}
+    <div class="menu-item has-submenu {% if active_page == 'financeiro' %}active{% endif %}" data-menu-section="financeiro">
+      Financeiro <span class="submenu-caret">▾</span>
+      <div class="submenu">
+        {% for item in menu.financeiro %}
+          <a class="submenu-item" href="{{ item.url }}">{{ item.nome }}</a>
+        {% endfor %}
+      </div>
+    </div>
+  {% endif %}
+
+  {% if menu.workflow %}
+    <div class="menu-item has-submenu {% if active_page == 'workflow' %}active{% endif %}" data-menu-section="workflow">
+      Workflow <span class="submenu-caret">▾</span>
+      <div class="submenu">
+        {% for item in menu.workflow %}
+          <a class="submenu-item" href="{{ item.url }}">{{ item.nome }}</a>
+        {% endfor %}
+      </div>
+    </div>
+  {% endif %}
+
+  {% if menu.compras %}
+    <div class="menu-item has-submenu {% if active_page == 'compras' %}active{% endif %}" data-menu-section="compras">
+      Compras <span class="submenu-caret">▾</span>
+      <div class="submenu">
+        {% for item in menu.compras %}
+          <a class="submenu-item" href="{{ item.url }}">{{ item.nome }}</a>
+        {% endfor %}
+      </div>
+    </div>
+  {% endif %}
+
+  {% if menu.relatorios %}
+    <div class="menu-item has-submenu {% if active_page == 'relatorios' %}active{% endif %}" data-menu-section="relatorios">
+      Relatorios <span class="submenu-caret">▾</span>
+      <div class="submenu">
+        {% for item in menu.relatorios %}
+          <a class="submenu-item" href="{{ item.url }}">{{ item.nome }}</a>
+        {% endfor %}
+      </div>
+    </div>
+  {% endif %}
+
+  {% if menu.import_export %}
+    <div class="menu-item has-submenu {% if active_page == 'import_export' %}active{% endif %}" data-menu-section="import_export">
+      Import/Export <span class="submenu-caret">▾</span>
+      <div class="submenu">
+        {% for item in menu.import_export %}
+          <a class="submenu-item" href="{{ item.url }}">{{ item.nome }}</a>
+        {% endfor %}
+      </div>
+    </div>
+  {% endif %}
+
+  <div class="menu-item has-submenu {% if active_page == 'config' %}active{% endif %}" data-menu-section="config">
+    Config <span class="submenu-caret">▾</span>
+    <div class="submenu">
+      <span class="submenu-label">Portal</span>
+      <a class="submenu-item submenu-child" href="{{ url_for('config_page') }}">Temas</a>
+      {% if menu.config %}
+        {% for group, items in menu.config|groupby("app") %}
+          <span class="submenu-label">{{ group }}</span>
+          {% for item in items %}
+            <a class="submenu-item submenu-child" href="{{ item.url }}">{{ item.nome }}</a>
+          {% endfor %}
+        {% endfor %}
+      {% else %}
+        <span class="submenu-item muted">Sem configs de apps</span>
+      {% endif %}
+    </div>
+  </div>
+
+  <button class="menu-item menu-item-logout" type="button" data-logout>Sair</button>
+</nav>

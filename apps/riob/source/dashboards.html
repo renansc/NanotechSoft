@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>TV Dashboards - RioBranco (Sem Menu)</title>
+  <style>
+    html, body { height: 100%; margin: 0; background: #000; }
+    #frame { width: 100vw; height: 100vh; border: 0; display: block; background: #000; }
+
+    #titleLine{
+      position: fixed; left: 12px; top: 10px; z-index: 9999;
+      font: 12px/1.2 system-ui, -apple-system, Segoe UI, Roboto, Arial;
+      color: #fff; background: rgba(0,0,0,.35); padding: 6px 10px; border-radius: 999px;
+      backdrop-filter: blur(6px);
+      user-select: none;
+      letter-spacing: .02em;
+      pointer-events: none;
+    }
+    #badge{
+      position: fixed; right: 12px; top: 10px; z-index: 9999;
+      font: 11px/1.2 system-ui, -apple-system, Segoe UI, Roboto, Arial;
+      color: #fff; background: rgba(0,0,0,.55); padding: 6px 10px; border-radius: 999px;
+      backdrop-filter: blur(6px);
+      user-select: none;
+      letter-spacing: .02em;
+      pointer-events: none;
+    }
+    .hidden { display:none !important; }
+  </style>
+</head>
+<body>
+  <div id="titleLine"></div>
+  <div id="badge">Nanotech dev</div>
+  <iframe id="frame" src="RioBranco.html?no_login=1"></iframe>
+
+  <script>
+    // Troca a cada 15s
+    const ROTATE_EVERY_MS = 15000;
+
+    // Esconder menu/header dentro do iframe
+    const HIDE_SELECTORS = [
+      "header", ".topo", ".topbar", ".navbar",
+      ".menu", ".sidebar", ".side-menu",
+      ".menu-toggle", ".hamburger",
+      "#menu", "#sidebar", "#nav",
+      ".menu-overlay",
+      "#chatFab", "#chatWidget", ".chat-fab", ".chat-widget",
+      ".menu-item[data-tab='comunicacao']", "#comunicacao",
+      ".vendas-relatorio-tabs", ".vendas-toolbar", ".vendas-filtros-box",
+      "#vendasRelArquivoInfo", "#vendasVarArquivoInfo", "#dashVendasArquivoInfo"
+    ];
+    const EXPAND_CONTENT_SELECTORS = [
+      "body", "main", "#app", ".app", ".content", ".page", ".container", ".main-content"
+    ];
+
+    // No modo TV mostramos os dashboards operacionais e os relatorios de vendas como visoes diretas.
+    const DASHBOARDS = [
+      { label: "Dashboard - Resumo", view: "resumo" },
+      { label: "Dashboard - Frota / Manutenção", view: "frota" },
+      { label: "Dashboard - Estoque", view: "estoque" },
+      { label: "Vendas - Bonificações", view: "bonificacoes" },
+      { label: "Vendas - Variação de Preço", view: "variacao_preco" },
+      { label: "Vendas - Grupos Embalagem", view: "grupos_embalagem" },
+    ];
+
+    const iframe = document.getElementById("frame");
+    const titleLine = document.getElementById("titleLine");
+    const badge  = document.getElementById("badge");
+    let idx = 0;
+
+    function setTitle(text){ titleLine.textContent = text || ""; }
+    function setBadge(text){ badge.textContent = "Nanotech dev"; }
+
+    function injectCssToHideMenu(){
+      const cd = iframe.contentDocument;
+      if (!cd) return;
+      if (cd.getElementById("tv-hide-menu-style")) return;
+
+      const style = cd.createElement("style");
+      style.id = "tv-hide-menu-style";
+
+      const hide = HIDE_SELECTORS.map(s => `${s}{display:none !important;}`).join("\n");
+      const expand = EXPAND_CONTENT_SELECTORS.map(s => `${s}{margin-top:0 !important; padding-top:0 !important;}`).join("\n");
+
+      // Faz a área do dashboard ocupar tudo
+      style.textContent = `
+        html,body{overflow:hidden !important; height:100% !important;}
+        ${hide}
+        ${expand}
+        /* garante que a seção dashboard ocupe toda a tela */
+        #dashboard{display:block !important; padding: 12px !important;}
+      `;
+      cd.head.appendChild(style);
+    }
+
+    function switchToView(item){
+      const view = item?.view || "resumo";
+      const cw = iframe.contentWindow;
+      const cd = iframe.contentDocument;
+      if (!cw || !cd) return false;
+
+      try{
+        if (typeof cw.openDashboardView === "function"){
+          cw.openDashboardView(null, view);
+          return true;
+        }
+      }catch(e){}
+
+      // fallback: chama setDashboardView se existir
+      try{
+        if (typeof cw.setDashboardView === "function"){
+          cw.setDashboardView(view);
+          return true;
+        }
+      }catch(e){}
+
+      // fallback DOM: mostra/oculta divs do dashboard
+      try{
+        const vResumo = cd.getElementById("dashViewResumo");
+        const vFrota  = cd.getElementById("dashViewFrota");
+        const vEstoque = cd.getElementById("dashViewEstoque");
+        const vVendas = cd.getElementById("dashViewVendas");
+        if (vResumo && vFrota){
+          const isVendas = view === "bonificacoes" || view === "variacao_preco" || view === "mix_embalagens" || view === "grupos_embalagem";
+          vResumo.classList.toggle("hidden", view !== "resumo");
+          vFrota.classList.toggle("hidden", view !== "frota");
+          if (vEstoque) vEstoque.classList.toggle("hidden", view !== "estoque");
+          if (vVendas) vVendas.classList.toggle("hidden", !isVendas);
+          // dispara render do dash frota (caso o JS não tenha sido chamado)
+          if (view === "frota" && typeof cw.renderDashboardFrota === "function"){
+            cw.renderDashboardFrota();
+          }
+          if (view === "estoque" && typeof cw.renderDashboardEstoque === "function"){
+            cw.renderDashboardEstoque();
+          }
+          if (isVendas && typeof cw.recarregarDashboardVendaAtual === "function"){
+            if (typeof cw.setDashboardView === "function") {
+              cw.setDashboardView(view);
+            }
+            cw.recarregarDashboardVendaAtual();
+          }
+          return true;
+        }
+      }catch(e){}
+
+      return false;
+    }
+
+    function goTo(i){
+      idx = (i + DASHBOARDS.length) % DASHBOARDS.length;
+      const d = DASHBOARDS[idx];
+      setTitle(d.label);
+
+      const cd = iframe.contentDocument;
+      if (!iframe.contentWindow || !cd || cd.readyState !== "complete"){
+        // carrega “limpo” (evita cache/estado) e depois alterna
+        iframe.src = "RioBranco.html?tv=1&no_login=1&_=" + Date.now();
+        iframe.onload = () => {
+          try { injectCssToHideMenu(); } catch(e){}
+          switchToView(d);
+          iframe.onload = null;
+        };
+        return;
+      }
+
+      const ok = switchToView(d);
+      if (!ok){
+        // fallback final: recarrega e tenta de novo
+        iframe.src = "RioBranco.html?tv=1&no_login=1&_=" + Date.now();
+        iframe.onload = () => {
+          try { injectCssToHideMenu(); } catch(e){}
+          switchToView(d);
+          iframe.onload = null;
+        };
+      }
+    }
+
+    // Inicial: carrega e define Resumo
+    iframe.src = "RioBranco.html?tv=1&no_login=1&_=" + Date.now();
+    iframe.onload = () => {
+      try { injectCssToHideMenu(); } catch(e){}
+      setTitle(DASHBOARDS[0].label);
+      setBadge("Nanotech dev");
+      switchToView(DASHBOARDS[0]);
+      iframe.onload = null;
+    };
+
+    // Rotação
+    setInterval(() => goTo(idx + 1), ROTATE_EVERY_MS);
+
+  </script>
+</body>
+</html>

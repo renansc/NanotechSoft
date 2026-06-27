@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Config - NanotechSoft{% endblock %}
+{% block body %}
+<div class="app-shell">
+  {% set topbar_title = "Config" %}
+  {% set topbar_subtitle = "NanotechSoft" %}
+  {% include "_topbar.html" %}
+  {% set active_page = 'config' %}
+  {% include "_menu.html" %}
+
+  <main class="content">
+    <section class="portal-head">
+      <div>
+        <h2>Temas</h2>
+        <p>O tema ativo sera usado pelo portal e ficara disponivel para apps importados.</p>
+      </div>
+      <a class="action-link" href="{{ url_for('portal') }}">Voltar ao portal</a>
+    </section>
+
+    <section class="config-panel">
+      <label for="temaSelect">Tema ativo</label>
+      <select id="temaSelect" data-current-theme="{{ config.tema }}">
+        {% for theme in themes %}
+          <option value="{{ theme.key }}" {% if config.tema == theme.key %}selected{% endif %} {% if not theme.enabled %}disabled{% endif %}>
+            {{ theme.nome }}{% if not theme.enabled %} - em breve{% endif %}
+          </option>
+        {% endfor %}
+      </select>
+      <button type="button" data-save-theme>Salvar tema</button>
+      <div id="themeMsg" class="form-msg"></div>
+    </section>
+
+    <section class="theme-list">
+      {% if menu.config %}
+        <article class="theme-row">
+          <div>
+            <strong>Apps integrados</strong>
+            <p>Configuracoes tecnicas dos apps liberados para este portal.</p>
+          </div>
+          <span>{{ menu.config|length }} atalhos</span>
+        </article>
+      {% endif %}
+      {% for theme in themes %}
+        <article class="theme-row">
+          <div>
+            <strong>{{ theme.nome }}</strong>
+            <p>{{ theme.descricao }}</p>
+          </div>
+          <span>{{ "Disponivel" if theme.enabled else "Reservado" }}</span>
+        </article>
+      {% endfor %}
+    </section>
+  </main>
+</div>
+{% endblock %}

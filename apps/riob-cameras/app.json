@@ -1,0 +1,28 @@
+{
+  "app_key": "riob-cameras",
+  "nome": "Cameras RioB",
+  "descricao": "Painel de cameras e cadastro de streams do RioB.",
+  "url": "/apps/riob-cameras/riob",
+  "standalone_url": "/apps/riob-cameras/riob",
+  "icone": "camera",
+  "ordem": 91,
+  "ativo": true,
+  "origem": "riob",
+  "source_dir": "/srv/nanotechSoft/apps/riob-cameras/source",
+  "menu_groups": {
+    "dashboards": [
+      {
+        "nome": "Painel Cameras",
+        "url": "/apps/riob-cameras/riob"
+      }
+    ]
+  },
+  "config_groups": {
+    "riob-cameras": [
+      {
+        "nome": "Config Cameras",
+        "url": "/apps/riob#config:cameras"
+      }
+    ]
+  }
+}

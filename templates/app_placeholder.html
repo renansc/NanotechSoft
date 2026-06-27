@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}App - NanotechSoft{% endblock %}
+{% block body %}
+<main class="placeholder-page">
+  <section class="empty-state">
+    <strong>{{ app_key }}</strong>
+    <p>{{ mensagem if mensagem is defined else (erro if erro is defined else "Este app ainda nao possui uma URL externa configurada.") }}</p>
+    <a class="action-link" href="{{ url_for('portal') }}">Voltar ao portal</a>
+  </section>
+</main>
+{% endblock %}

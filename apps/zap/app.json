@@ -1,0 +1,52 @@
+{
+  "app_key": "zap",
+  "nome": "Zap",
+  "descricao": "Atendimento WhatsApp com kanban, agenda, etiquetas e configuracoes de integracao.",
+  "url": "/apps/zap",
+  "standalone_url": "/apps/zap/original",
+  "icone": "message",
+  "ordem": 40,
+  "ativo": true,
+  "origem": "nanotech",
+  "source_dir": "/srv/rede/nanotech/zap",
+  "temas": ["rio_branco", "autoblue", "fin-blue", "pontobege", "zapgreen"],
+  "menu_groups": {
+    "cadastros": [
+      {
+        "nome": "Agenda Zap",
+        "url": "/apps/zap/calendar",
+        "grupo": "Zap",
+        "recurso": "agenda"
+      }
+    ],
+    "workflow": [
+      {
+        "nome": "Kanban Zap",
+        "url": "/apps/zap",
+        "recurso": "workflow"
+      }
+    ]
+  },
+  "workflow_cards": [
+    {
+      "nome": "Atendimento Zap",
+      "url": "/apps/zap",
+      "recurso": "workflow",
+      "tipo": "Zap"
+    }
+  ],
+  "config_groups": {
+    "zap": [
+      {
+        "nome": "Zap - Configuracoes",
+        "url": "/apps/zap/settings",
+        "recurso": "settings"
+      },
+      {
+        "nome": "Zap - Documentacao",
+        "url": "/apps/zap/docs",
+        "recurso": "docs"
+      }
+    ]
+  }
+}

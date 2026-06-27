@@ -1,0 +1,20 @@
+{
+  "app_key": "riob-chat",
+  "nome": "Chat RioB",
+  "descricao": "Chat convencional interno do RioB com anexos e contatos.",
+  "url": "/apps/riob-chat/riob",
+  "standalone_url": "/apps/riob-chat/riob",
+  "icone": "chat",
+  "ordem": 94,
+  "ativo": true,
+  "origem": "riob",
+  "source_dir": "/srv/riob",
+  "menu_groups": {
+    "workflow": [
+      {
+        "nome": "Chat Interno",
+        "url": "/apps/riob#comunicacao"
+      }
+    ]
+  }
+}
