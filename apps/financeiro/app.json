@@ -8,7 +8,7 @@
   "ordem": 20,
   "ativo": true,
   "origem": "nanotech",
-  "source_dir": "/srv/rede/nanotech/financeiro",
+  "source_dir": "apps/financeiro",
   "temas": ["rio_branco", "autoblue", "fin-blue"],
   "menu_groups": {
     "dashboards": [

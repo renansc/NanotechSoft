@@ -5,7 +5,9 @@ import shutil
 import sys
 from pathlib import Path
 
-LOCAL = Path(os.environ.get("KANBAN_LOCAL", "/srv/riob/kanban-tasks.json")).expanduser()
+BASE_DIR = Path(__file__).resolve().parent
+
+LOCAL = Path(os.environ.get("KANBAN_LOCAL", str(BASE_DIR / "kanban-tasks.json"))).expanduser()
 REMOTE = Path(os.environ.get("KANBAN_REMOTE", "/mnt/kanban-cloud/kanban-tasks.json")).expanduser()
 
 def valid_json(path: Path) -> bool:

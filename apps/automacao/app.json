@@ -8,7 +8,7 @@
   "ordem": 10,
   "ativo": true,
   "origem": "sensoresMonitor",
-  "source_dir": "/srv/sensoresMonitor/monitoramento-industrial-v5.0",
+  "source_dir": "apps/automacao/source",
   "temas": ["rio_branco", "autoblue"],
   "menu_groups": {
     "dashboards": [

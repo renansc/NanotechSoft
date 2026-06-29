@@ -8,7 +8,7 @@
   "ordem": 50,
   "ativo": true,
   "origem": "nanotech",
-  "source_dir": "/srv/rede/nanotech/NanoStore",
+  "source_dir": "apps/nanostore/source",
   "temas": ["rio_branco", "autoblue", "fin-blue", "pontobege", "zapgreen"],
   "menu_groups": {
     "dashboards": [

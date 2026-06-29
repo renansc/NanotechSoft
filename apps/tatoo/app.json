@@ -8,7 +8,7 @@
   "ordem": 80,
   "ativo": true,
   "origem": "nanotech",
-  "source_dir": "/srv/rede/nanotech/tatoo",
+  "source_dir": "apps/tatoo/source",
   "temas": ["rio_branco", "autoblue", "fin-blue", "pontobege", "zapgreen"],
   "menu_groups": {
     "dashboards": [

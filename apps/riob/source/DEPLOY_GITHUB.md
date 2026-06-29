@@ -8,25 +8,17 @@
 4. Garanta que `80`, `443` e `3000` estejam liberadas no firewall da VM.
 5. Se quiser restore automatico em banco vazio, deixe o backup `.sql` ou `.sql.gz` em `backupsSql/`.
 6. O monitor ESXi fica versionado em `esxi/`; altere `RB_VSPHERE_CLIENT_PATH` apenas se quiser outra copia local.
-7. Garanta que `RB_AUTOMACAO_MONITOR_PATH` aponte para o projeto do monitor industrial; o Compose monta esse diretorio somente para leitura.
+7. O monitor industrial deve ficar dentro da plataforma, em `apps/automacao/source`; altere `RB_AUTOMACAO_MONITOR_PATH` apenas se quiser outra copia local.
 
-Na producao, o projeto externo precisa estar atualizado com a versao que aceita
+Na producao, o codigo de `apps/automacao/source` precisa estar atualizado com a versao que aceita
 `APP_HOST`, `APP_PORT`, `APP_DEBUG`, `DATABASE_PATH` e
 `X-Forwarded-Prefix`. A versao antiga inicia fixamente na porta `5000` e nao
 funciona sob `/monitor/automacao/`.
 
-Exemplo de estrutura:
-
-```bash
-sudo mkdir -p /srv/sensoresMonitor
-sudo git clone git@github.com:renansc/sensoresMonitor.git \
-  /srv/sensoresMonitor/monitoramento-industrial-v5.0
-```
-
-No `.env` do RioBranco:
+No `.env` do RioBranco, quando rodar o compose interno a partir de `apps/riob/source`, o default ja aponta para a pasta interna:
 
 ```env
-RB_AUTOMACAO_MONITOR_PATH=/srv/sensoresMonitor/monitoramento-industrial-v5.0
+RB_AUTOMACAO_MONITOR_PATH=../../automacao/source
 ```
 
 ## Certificados e WSS
@@ -327,8 +319,8 @@ Resumo do fluxo:
 
 Isso permite fazer `git pull` e rebuild sem perder os dados.
 
-O codigo do monitor de automacao nao fica dentro deste repositorio. O caminho
-configurado em `RB_AUTOMACAO_MONITOR_PATH` precisa existir no host antes do
+O codigo do monitor de automacao fica dentro desta plataforma em `apps/automacao/source`.
+O caminho configurado em `RB_AUTOMACAO_MONITOR_PATH` precisa existir no host antes do
 `docker compose up`.
 
 Para recuperar outro ambiente, o backup SQL isolado nao basta. Gere um pacote completo com:

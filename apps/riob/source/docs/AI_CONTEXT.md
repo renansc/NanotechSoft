@@ -42,8 +42,8 @@ If you need context fast, read these files first:
   - browser-based wrapper for the operational helper
 - `tools/riob_context.py`
   - repo-aware brief generator used to analyze a request before editing
-- `/srv/sensoresMonitor/monitoramento-industrial-v5.0`
-  - external Flask app mounted read-only by Compose and exposed at `/monitor/automacao/`
+- `apps/automacao/source`
+  - bundled Flask app mounted read-only by Compose and exposed at `/monitor/automacao/`
 
 ## Useful commands
 

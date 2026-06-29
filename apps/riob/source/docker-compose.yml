@@ -253,7 +253,7 @@ services:
       - "${RB_DB_BACKUP_PATH:-./backupsSql}:/backups"
       - ./Relatorios:/app/Relatorios:ro
       - ${RB_VSPHERE_CLIENT_PATH:-./esxi}:/opt/vsphere-flask-client:ro
-      - ${RB_AUTOMACAO_MONITOR_PATH:-../sensoresMonitor/monitoramento-industrial-v5.0}:/opt/automacao-monitor:ro
+      - ${RB_AUTOMACAO_MONITOR_PATH:-../../automacao/source}:/opt/automacao-monitor:ro
       - ./certs:/app/certs:ro
       - ./ImportarXml:/legacy/ImportarXml:ro
       - ./GestorEmails:/legacy/GestorEmails:ro

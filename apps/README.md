@@ -29,7 +29,11 @@ Para aparecer no menu dinamico, crie um arquivo `app.json` dentro da pasta do ap
 
 Tambem e possivel cadastrar apps diretamente na tabela `installed_apps`.
 
-O arquivo `/srv/nanotechSoft/apps_liberados.txt` controla quais apps entram no deploy de um cliente.
+O arquivo `apps_liberados.txt`, na raiz do projeto, controla quais apps entram no deploy de um cliente.
+
+## Regra de localizacao
+
+Cada app deve ter todo o seu codigo dentro desta arvore `apps/`, normalmente em `apps/<app>/source`. Evite apontar `source_dir` para caminhos absolutos do servidor, como `/srv/...`, porque esta plataforma deve ser autocontida.
 
 ## Metodologia de integracao
 

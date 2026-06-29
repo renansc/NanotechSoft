@@ -12,7 +12,7 @@ No primeiro acesso o sistema cria o banco `notechsoft`, as tabelas base e o usua
 ## Rodar localmente
 
 ```bash
-cd /srv/nanotechSoft
+cd NanotechSoft
 python3 -m venv .venv
 . .venv/bin/activate
 pip install -r requirements.txt
@@ -25,7 +25,7 @@ Abra `http://127.0.0.1:5600`.
 ## MySQL com Docker
 
 ```bash
-cd /srv/nanotechSoft
+cd NanotechSoft
 cp .env.example .env
 docker compose up -d mysql
 ```
@@ -36,9 +36,20 @@ Com o banco do compose, mantenha `NS_DB_PORT=3307` no `.env`.
 
 ## Apps dinamicos
 
-Os apps ficam em `/srv/nanotechSoft/apps`. Cada subpasta pode ter um `app.json`; tambem existe a tabela `installed_apps` para cadastro via banco.
+Os apps ficam dentro de `apps/`. Cada subpasta pode ter um `app.json`; tambem existe a tabela `installed_apps` para cadastro via banco.
 
-O arquivo [apps_liberados.txt](/srv/nanotechSoft/apps_liberados.txt) define quais apps aparecem no portal e devem ser carregados no deploy do cliente. Nesta etapa, os apps liberados sao `automacao` e `financeiro`.
+O arquivo `apps_liberados.txt` define quais apps aparecem no portal e devem ser carregados no deploy do cliente. Nesta etapa, os apps liberados sao `automacao` e `financeiro`.
+
+## Codigo dos apps
+
+Esta plataforma nao deve depender de codigo em outros diretorios do servidor. O codigo de cada app deve ficar dentro da propria pasta do projeto:
+
+- apps Flask/servicos: `apps/<app>/source`
+- apps estaticos: `apps/<app>/source`
+- Financeiro integrado: `apps/financeiro`
+- RioB e modulos locais: `apps/riob/source`, `apps/riob-cameras/source`, `apps/riob-email/source`, `apps/riob-esxi/source` e `apps/riob-xml/source`
+
+Arquivos operacionais gerados em uso, como bancos SQLite, anexos, XMLs enviados, uploads e streams `.m3u8`, ficam ignorados pelo Git.
 
 Os manifests podem separar atalhos em `dashboards`, `cadastros`, `workflow`, `compras`, `financeiro`, `relatorios` e `import_export`; configuracoes especificas entram em `config_groups`.
 
@@ -56,6 +67,6 @@ O menu principal e as abas internas do financeiro ocultam recursos sem permissao
 
 ## Financeiro
 
-O app financeiro foi importado de `/srv/rede/nanotech/financeiro` para `/srv/nanotechSoft/apps/financeiro` e roda integrado ao shell do NanotechSoft. Os dados foram migrados do backup JSON inicial para MySQL nas tabelas `financeiro_registros` e `financeiro_config`.
+O app financeiro fica em `apps/financeiro` e roda integrado ao shell do NanotechSoft. Os dados foram migrados do backup JSON inicial para MySQL nas tabelas `financeiro_registros` e `financeiro_config`.
 
 O tema padrao do portal continua sendo `Rio Branco`. O tema original do financeiro fica disponivel como `Fin Blue` no seletor de temas, sem ser aplicado automaticamente ao abrir o app.

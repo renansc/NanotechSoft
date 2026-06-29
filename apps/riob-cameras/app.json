@@ -8,7 +8,7 @@
   "ordem": 91,
   "ativo": true,
   "origem": "riob",
-  "source_dir": "/srv/nanotechSoft/apps/riob-cameras/source",
+  "source_dir": "apps/riob-cameras/source",
   "menu_groups": {
     "dashboards": [
       {

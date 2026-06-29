@@ -8,7 +8,7 @@
   "ordem": 96,
   "ativo": true,
   "origem": "riob",
-  "source_dir": "/srv/nanotechSoft/apps/riob-esxi/source",
+  "source_dir": "apps/riob-esxi/source",
   "menu_groups": {
     "dashboards": [
       {

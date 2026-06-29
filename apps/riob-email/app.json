@@ -8,7 +8,7 @@
   "ordem": 95,
   "ativo": true,
   "origem": "riob",
-  "source_dir": "/srv/nanotechSoft/apps/riob-email/source",
+  "source_dir": "apps/riob-email/source",
   "menu_groups": {
     "import_export": [
       {

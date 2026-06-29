@@ -8,7 +8,7 @@
   "ordem": 70,
   "ativo": true,
   "origem": "nanotech",
-  "source_dir": "/srv/rede/nanotech/bpa",
+  "source_dir": "apps/bpa/source",
   "temas": ["rio_branco", "autoblue", "fin-blue", "pontobege", "zapgreen"],
   "menu_groups": {
     "cadastros": [

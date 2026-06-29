@@ -8,7 +8,7 @@
   "ordem": 90,
   "ativo": true,
   "origem": "riob",
-  "source_dir": "/srv/riob",
+  "source_dir": "apps/riob/source",
   "menu_groups": {
     "dashboards": [
       {

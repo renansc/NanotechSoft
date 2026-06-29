@@ -3,18 +3,15 @@ import json
 import os
 import sys
 import time
-import subprocess
+import fcntl
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
 
-# Arquivo local usado pelo Conky
-# Pode alterar por variavel de ambiente, se precisar:
+# Caminho padrão atual. Pode ser trocado sem editar o script:
 # export KANBAN_TASKS_FILE="/caminho/kanban-tasks.json"
 TASKS_FILE = Path(os.environ.get("KANBAN_TASKS_FILE", str(BASE_DIR / "kanban-tasks.json"))).expanduser()
-
-# Script de sincronizacao. Sera chamado automaticamente apos salvar alteracoes.
-SYNC_SCRIPT = Path(os.environ.get("KANBAN_SYNC_SCRIPT", str(BASE_DIR / "kanban_sync.py"))).expanduser()
+LOCK_FILE = Path(os.environ.get("KANBAN_LOCK_FILE", str(TASKS_FILE) + ".lock")).expanduser()
 
 STATUSES = ("today", "todo", "waiting")
 LABELS = {
@@ -34,20 +31,16 @@ MAX_ITEMS = 6
 MAX_TEXT = 30
 
 
-def run_sync_background():
-    """Executa sync em segundo plano sem travar o Conky."""
-    if not SYNC_SCRIPT.exists():
-        return
+class FileLock:
+    def __enter__(self):
+        LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
+        self.handle = LOCK_FILE.open("w", encoding="utf-8")
+        fcntl.flock(self.handle, fcntl.LOCK_EX)
+        return self
 
-    try:
-        subprocess.Popen(
-            ["python3", str(SYNC_SCRIPT)],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
-    except Exception:
-        pass
+    def __exit__(self, exc_type, exc, tb):
+        fcntl.flock(self.handle, fcntl.LOCK_UN)
+        self.handle.close()
 
 
 def load_tasks():
@@ -55,7 +48,8 @@ def load_tasks():
         return []
 
     try:
-        data = json.loads(TASKS_FILE.read_text(encoding="utf-8"))
+        with FileLock():
+            data = json.loads(TASKS_FILE.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return []
 
@@ -65,12 +59,9 @@ def load_tasks():
     tasks = []
     changed = False
     ids = set()
-
     for item in data:
         if not isinstance(item, dict):
-            changed = True
             continue
-
         original_status = str(item.get("status", "")).strip()
         status = normalize_status(original_status)
         text = str(item.get("text", "")).strip()
@@ -87,7 +78,6 @@ def load_tasks():
             or task_id in ids
         ):
             changed = True
-            task_id = ""
 
         if original_status != status:
             changed = True
@@ -105,19 +95,17 @@ def load_tasks():
     if changed:
         for index, task in enumerate(sorted(tasks, key=lambda task: task["created"]), 1):
             task["id"] = str(index)
-        save_tasks(tasks, sync=False)
+        save_tasks(tasks)
 
     return tasks
 
 
-def save_tasks(tasks, sync=True):
+def save_tasks(tasks):
     TASKS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    tmp = TASKS_FILE.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(tasks, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    os.replace(tmp, TASKS_FILE)
-
-    if sync:
-        run_sync_background()
+    with FileLock():
+        tmp = TASKS_FILE.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(tasks, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        os.replace(tmp, TASKS_FILE)
 
 
 def next_task_id(tasks):
@@ -152,7 +140,7 @@ def normalize_status(value):
         "feito": "waiting",
         "concluido": "waiting",
     }
-    key = "".join(str(value).lower().split())
+    key = "".join(value.lower().split())
     return aliases.get(key)
 
 
@@ -317,13 +305,6 @@ def render():
     print("${font}")
 
 
-def sync_now():
-    if not SYNC_SCRIPT.exists():
-        die(f"script de sync nao encontrado: {SYNC_SCRIPT}")
-    result = subprocess.run(["python3", str(SYNC_SCRIPT)], text=True)
-    raise SystemExit(result.returncode)
-
-
 def die(message):
     print(message, file=sys.stderr)
     raise SystemExit(1)
@@ -349,8 +330,6 @@ def main():
         delete_task(args)
     elif command == "list":
         list_tasks()
-    elif command == "sync":
-        sync_now()
     else:
         print("uso:")
         print("  kanban.py render")
@@ -361,7 +340,6 @@ def main():
         print("  kanban.py done id")
         print("  kanban.py delete id")
         print("  kanban.py list")
-        print("  kanban.py sync")
 
 
 if __name__ == "__main__":

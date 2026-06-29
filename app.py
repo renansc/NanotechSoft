@@ -21,21 +21,45 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 
 BASE_DIR = Path(__file__).resolve().parent
+
+
+def load_env_file(path):
+    if not path.exists():
+        return
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key and os.environ.get(key) in (None, ""):
+            os.environ[key] = value
+
+
+load_env_file(BASE_DIR / ".env")
+
 APPS_DIR = BASE_DIR / "apps"
 ALLOWED_APPS_FILE = BASE_DIR / "apps_liberados.txt"
+
+
+def app_source_dir(app_key):
+    return APPS_DIR / app_key / "source"
+
+
 AUTOMACAO_DIR = Path(os.environ.get(
     "AUTOMACAO_APP_DIR",
-    "/srv/sensoresMonitor/monitoramento-industrial-v5.0",
+    str(app_source_dir("automacao")),
 ))
 FINANCEIRO_DIR = BASE_DIR / "apps" / "financeiro"
 FINANCEIRO_STATIC_DIR = FINANCEIRO_DIR / "static"
-NANOPONTO_DIR = Path(os.environ.get("NANOPONTO_APP_DIR", "/srv/rede/nanotech/NanoPonto"))
-ZAP_DIR = Path(os.environ.get("ZAP_APP_DIR", "/srv/rede/nanotech/zap"))
-NANOSTORE_DIR = Path(os.environ.get("NANOSTORE_APP_DIR", "/srv/rede/nanotech/NanoStore"))
-GPSMUSICAL_DIR = Path(os.environ.get("GPSMUSICAL_APP_DIR", "/srv/rede/nanotech/gpsmusical"))
-BPA_DIR = Path(os.environ.get("BPA_APP_DIR", "/srv/rede/nanotech/bpa"))
-TATOO_DIR = Path(os.environ.get("TATOO_APP_DIR", "/srv/rede/nanotech/tatoo"))
-NANOTECH_SHARED_DIR = Path(os.environ.get("NANOTECH_SHARED_DIR", "/srv/rede/nanotech/shared"))
+NANOPONTO_DIR = Path(os.environ.get("NANOPONTO_APP_DIR", str(app_source_dir("nanoponto"))))
+ZAP_DIR = Path(os.environ.get("ZAP_APP_DIR", str(app_source_dir("zap"))))
+NANOSTORE_DIR = Path(os.environ.get("NANOSTORE_APP_DIR", str(app_source_dir("nanostore"))))
+GPSMUSICAL_DIR = Path(os.environ.get("GPSMUSICAL_APP_DIR", str(app_source_dir("gpsmusical"))))
+BPA_DIR = Path(os.environ.get("BPA_APP_DIR", str(app_source_dir("bpa"))))
+TATOO_DIR = Path(os.environ.get("TATOO_APP_DIR", str(app_source_dir("tatoo"))))
+NANOTECH_SHARED_DIR = Path(os.environ.get("NANOTECH_SHARED_DIR", str(APPS_DIR / "shared")))
 FINANCEIRO_COLLECTIONS = ("contas", "categorias", "lancamentos", "imports", "reconciliations", "titulos", "compras")
 FINANCEIRO_VIEWS = {
     "dashboard",
@@ -69,7 +93,7 @@ ZAP_PORT = int(os.environ.get("ZAP_PORT", "8892"))
 ZAP_BASE_URL = f"http://127.0.0.1:{ZAP_PORT}"
 NANOSTORE_PORT = int(os.environ.get("NANOSTORE_PORT", "8893"))
 NANOSTORE_BASE_URL = f"http://127.0.0.1:{NANOSTORE_PORT}"
-RIOB_BASE_URL = os.environ.get("RIOB_BASE_URL", "http://host.docker.internal").rstrip("/")
+RIOB_BASE_URL = os.environ.get("RIOB_BASE_URL", "http://127.0.0.1:8898").rstrip("/")
 RIOB_SSL_VERIFY = str(os.environ.get("RIOB_SSL_VERIFY", "0")).strip().lower() in {"1", "true", "yes", "sim", "on"}
 RIOB_ROUTE_DEFAULTS = {
     "riob": "/",
@@ -167,25 +191,6 @@ _zap_proc = None
 _nanostore_lock = threading.Lock()
 _nanostore_proc = None
 
-
-# ---------------------------------------------------------------------------
-# Configuracao e banco
-# ---------------------------------------------------------------------------
-def load_env_file(path):
-    if not path.exists():
-        return
-    for raw in path.read_text(encoding="utf-8").splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        key = key.strip()
-        value = value.strip().strip('"').strip("'")
-        if key and os.environ.get(key) in (None, ""):
-            os.environ[key] = value
-
-
-load_env_file(BASE_DIR / ".env")
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET") or "notechsoft-dev-secret"
@@ -1213,6 +1218,9 @@ def ensure_automacao_app():
             time.sleep(0.5)
             return tcp_open("127.0.0.1", AUTOMACAO_PORT)
 
+        if not (AUTOMACAO_DIR / "app.py").exists():
+            return False
+
         python_bin = AUTOMACAO_DIR / ".venv" / "bin" / "python"
         if not python_bin.exists():
             python_bin = BASE_DIR / ".venv" / "bin" / "python"
@@ -1522,6 +1530,9 @@ def ensure_nanoponto_app():
         if _nanoponto_proc is not None and _nanoponto_proc.poll() is None:
             time.sleep(0.5)
             return tcp_open("127.0.0.1", NANOPONTO_PORT)
+
+        if not (NANOPONTO_DIR / "app.py").exists():
+            return False
 
         ensure_nanoponto_database()
         python_bin = BASE_DIR / ".venv" / "bin" / "python"
@@ -1955,13 +1966,22 @@ def ensure_zap_app():
             time.sleep(0.5)
             return tcp_open("127.0.0.1", ZAP_PORT)
 
+        if (ZAP_DIR / "zap" / "wsgi.py").exists():
+            flask_app = "zap.wsgi:app"
+            zap_cwd = ZAP_DIR
+        elif (ZAP_DIR / "wsgi.py").exists():
+            flask_app = "wsgi:app"
+            zap_cwd = ZAP_DIR
+        else:
+            return False
+
         ensure_zap_database()
         python_bin = BASE_DIR / ".venv" / "bin" / "python"
         env = os.environ.copy()
         env.pop("WERKZEUG_SERVER_FD", None)
         env.pop("WERKZEUG_RUN_MAIN", None)
         env.update({
-            "FLASK_APP": "zap.wsgi:app",
+            "FLASK_APP": flask_app,
             "SECRET_KEY": env.get("ZAP_SECRET_KEY", "zap-dev-key"),
             "SESSION_COOKIE_NAME": "zap_session",
             "ZAP_DATABASE_URL": zap_database_url(),
@@ -1979,7 +1999,7 @@ def ensure_zap_app():
         log_file = (BASE_DIR / "zap.log").open("ab")
         _zap_proc = subprocess.Popen(
             [str(python_bin), "-m", "flask", "run", "--host", "127.0.0.1", "--port", str(ZAP_PORT)],
-            cwd=str(ZAP_DIR.parent),
+            cwd=str(zap_cwd),
             env=env,
             stdout=log_file,
             stderr=subprocess.STDOUT,
@@ -2391,6 +2411,9 @@ def ensure_nanostore_app():
         if _nanostore_proc is not None and _nanostore_proc.poll() is None:
             time.sleep(0.5)
             return tcp_open("127.0.0.1", NANOSTORE_PORT)
+
+        if not (NANOSTORE_DIR / "wsgi.py").exists():
+            return False
 
         ensure_nanostore_database()
         python_bin = BASE_DIR / ".venv" / "bin" / "python"

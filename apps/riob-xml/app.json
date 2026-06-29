@@ -8,7 +8,7 @@
   "ordem": 97,
   "ativo": true,
   "origem": "riob",
-  "source_dir": "/srv/nanotechSoft/apps/riob-xml/source",
+  "source_dir": "apps/riob-xml/source",
   "menu_groups": {
     "import_export": [
       {

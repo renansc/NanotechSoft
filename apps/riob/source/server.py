@@ -132,8 +132,11 @@ _monitor_errors = {}
 _nfe_dfe_limit_lock = threading.Lock()
 _rapidocr_lock = threading.Lock()
 _rapidocr_engine = None
-VSPHERE_CLIENT_DIR = os.environ.get("RB_VSPHERE_CLIENT_CONTAINER_PATH", "/opt/vsphere-flask-client")
-AUTOMACAO_CLIENT_DIR = os.environ.get("RB_AUTOMACAO_MONITOR_CONTAINER_PATH", "/opt/automacao-monitor")
+VSPHERE_CLIENT_DIR = os.environ.get("RB_VSPHERE_CLIENT_CONTAINER_PATH", os.path.join(BASE_DIR, "esxi"))
+AUTOMACAO_CLIENT_DIR = os.environ.get(
+    "RB_AUTOMACAO_MONITOR_CONTAINER_PATH",
+    os.path.abspath(os.path.join(BASE_DIR, "..", "..", "automacao", "source")),
+)
 _MONITOR_APPS = {
     "esxi": {
         "cwd": VSPHERE_CLIENT_DIR,

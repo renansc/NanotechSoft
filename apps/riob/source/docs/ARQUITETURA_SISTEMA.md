@@ -74,9 +74,9 @@ RioBranco/
 |- RequisicoesAbastecimento/
 ```
 
-O monitor industrial fica em um projeto externo, por padrao
-`/srv/sensoresMonitor/monitoramento-industrial-v5.0`, montado somente para
-leitura no container em `/opt/automacao-monitor`.
+O monitor industrial fica dentro desta plataforma, por padrao em
+`apps/automacao/source`, montado somente para leitura no container em
+`/opt/automacao-monitor`.
 
 ## 4. Arquitetura em alto nivel
 

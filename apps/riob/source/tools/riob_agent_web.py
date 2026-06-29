@@ -39,8 +39,6 @@ except Exception:  # pragma: no cover - optional dependency in local test env
 
 
 ROOT = Path(__file__).resolve().parents[1]
-if not (ROOT / "server.py").exists() and Path("/srv/riob/server.py").exists():
-    ROOT = Path("/srv/riob")
 AGENT = ROOT / "riob-agent.sh"
 TOOLS_DIR = ROOT / "tools" if (ROOT / "tools").exists() else Path(__file__).resolve().parent
 if str(TOOLS_DIR) not in sys.path:

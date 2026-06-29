@@ -8,7 +8,7 @@
   "ordem": 30,
   "ativo": true,
   "origem": "nanotech",
-  "source_dir": "/srv/rede/nanotech/NanoPonto",
+  "source_dir": "apps/nanoponto/source",
   "temas": ["rio_branco", "autoblue", "fin-blue", "pontobege"],
   "menu_groups": {
     "ponto": [
