@@ -402,6 +402,147 @@ def ensure_schema():
         conn = get_conn()
         cur = conn.cursor()
 
+        # Base minima para bancos novos. As migracoes abaixo continuam
+        # adicionando/ajustando colunas quando a base ja vem de uma versao antiga.
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS veiculos (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            nome VARCHAR(180) NOT NULL,
+            placa VARCHAR(20) DEFAULT '',
+            modelo VARCHAR(180) DEFAULT '',
+            km_atual INT DEFAULT 0,
+            intervalo_manut_km INT DEFAULT 10000,
+            intervalo_oleo_km INT DEFAULT 5000,
+            combustivel_padrao VARCHAR(20) DEFAULT 'diesel_500',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            INDEX idx_veiculos_nome (nome),
+            INDEX idx_veiculos_placa (placa)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS motoristas (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            nome VARCHAR(255) NOT NULL,
+            is_motorista TINYINT(1) NOT NULL DEFAULT 0,
+            is_entregador TINYINT(1) NOT NULL DEFAULT 0,
+            is_ajudante TINYINT(1) NOT NULL DEFAULT 0,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            INDEX idx_motoristas_nome (nome)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS conferentes (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            nome VARCHAR(255) NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            INDEX idx_conferentes_nome (nome)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS cargas (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            nome VARCHAR(255) NOT NULL,
+            cidade VARCHAR(180) DEFAULT '',
+            rota VARCHAR(220) DEFAULT '',
+            veiculo_numero VARCHAR(40) DEFAULT '',
+            origem_csv VARCHAR(255) DEFAULT '',
+            registros_importados INT DEFAULT 0,
+            clientes_distintos INT DEFAULT 0,
+            quantidade_total DECIMAL(12,3) DEFAULT 0,
+            litros_total DECIMAL(12,3) DEFAULT 0,
+            peso_total DECIMAL(12,3) DEFAULT 0,
+            valor_total DECIMAL(14,2) DEFAULT 0,
+            arquivo_origem VARCHAR(255) DEFAULT '',
+            tipo_importacao VARCHAR(30) DEFAULT 'manual',
+            mapa_numero VARCHAR(80) DEFAULT '',
+            data_carga DATE NULL,
+            numero_entregas INT DEFAULT 0,
+            volumes_total DECIMAL(12,3) DEFAULT 0,
+            valor_bonificacao DECIMAL(14,2) DEFAULT 0,
+            estoque_baixado_em DATETIME NULL,
+            estoque_baixado_por VARCHAR(180) DEFAULT '',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            atualizado_em DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            INDEX idx_cargas_nome (nome),
+            INDEX idx_cargas_cidade (cidade),
+            INDEX idx_cargas_veiculo_numero (veiculo_numero),
+            INDEX idx_cargas_tipo_importacao (tipo_importacao),
+            INDEX idx_cargas_mapa_numero (mapa_numero),
+            INDEX idx_cargas_estoque_baixado_em (estoque_baixado_em)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS fretes (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            nome VARCHAR(255) NOT NULL,
+            cidade VARCHAR(180) DEFAULT '',
+            data_carga DATE NULL,
+            status VARCHAR(40) DEFAULT 'liberado',
+            motorista_id INT NULL,
+            entregador_id INT NULL,
+            colaborador_motorista_id INT NULL,
+            colaborador_entregador_id INT NULL,
+            veiculo_id INT NULL,
+            carga_id INT NULL,
+            observacao VARCHAR(1000) DEFAULT '',
+            km_atual INT DEFAULT 0,
+            peso DECIMAL(10,3) DEFAULT 0,
+            qtd_entregas INT DEFAULT 0,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            finalizado_em DATETIME NULL,
+            arquivado TINYINT(1) NOT NULL DEFAULT 0,
+            INDEX idx_fretes_status (status),
+            INDEX idx_fretes_motorista (motorista_id),
+            INDEX idx_fretes_entregador (entregador_id),
+            INDEX idx_fretes_colaborador_motorista (colaborador_motorista_id),
+            INDEX idx_fretes_colaborador_entregador (colaborador_entregador_id),
+            INDEX idx_fretes_veiculo (veiculo_id),
+            INDEX idx_fretes_carga (carga_id),
+            INDEX idx_fretes_finalizado_em (finalizado_em)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS devolucoes (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            frete_id INT NULL,
+            veiculo_id INT NULL,
+            conferente_id INT NULL,
+            colaborador_conferente_id INT NULL,
+            c24 DECIMAL(12,3) DEFAULT 0,
+            c48 DECIMAL(12,3) DEFAULT 0,
+            pet2l DECIMAL(12,3) DEFAULT 0,
+            pet600 DECIMAL(12,3) DEFAULT 0,
+            pet200 DECIMAL(12,3) DEFAULT 0,
+            agua_com_gas DECIMAL(12,3) DEFAULT 0,
+            agua_sem_gas DECIMAL(12,3) DEFAULT 0,
+            cx_600 DECIMAL(12,3) DEFAULT 0,
+            obs_c24 VARCHAR(255) DEFAULT '',
+            obs_c48 VARCHAR(255) DEFAULT '',
+            obs_pet2l VARCHAR(255) DEFAULT '',
+            obs_pet600 VARCHAR(255) DEFAULT '',
+            obs_pet200 VARCHAR(255) DEFAULT '',
+            obs_agua_com_gas VARCHAR(255) DEFAULT '',
+            obs_agua_sem_gas VARCHAR(255) DEFAULT '',
+            obs_cx_600 VARCHAR(255) DEFAULT '',
+            fotos LONGTEXT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            INDEX idx_devolucoes_frete (frete_id),
+            INDEX idx_devolucoes_veiculo (veiculo_id),
+            INDEX idx_devolucoes_conferente (conferente_id),
+            INDEX idx_devolucoes_colaborador_conferente (colaborador_conferente_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+
         # 1) Novas colunas em veiculos para intervalos (se não existirem)
         # - intervalo_manut_km: quantos KM entre manutenções
         # - intervalo_oleo_km: quantos KM entre trocas de óleo

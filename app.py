@@ -252,6 +252,23 @@ def get_conn():
     return mysql.connector.connect(**DB_CONFIG)
 
 
+def ensure_mysql_database(database_name):
+    database_name = str(database_name or "").strip()
+    if not database_name:
+        return
+    if not re.fullmatch(r"[A-Za-z0-9_]+", database_name):
+        raise ValueError(f"nome de banco invalido: {database_name}")
+
+    conn = get_server_conn()
+    cur = conn.cursor()
+    cur.execute(
+        f"CREATE DATABASE IF NOT EXISTS `{database_name}` "
+        "CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+    )
+    cur.close()
+    conn.close()
+
+
 def ensure_database():
     global _db_ready
     if _db_ready:
@@ -259,14 +276,7 @@ def ensure_database():
 
     db_name = DB_CONFIG["database"]
     try:
-        server_conn = get_server_conn()
-        cur = server_conn.cursor()
-        cur.execute(
-            f"CREATE DATABASE IF NOT EXISTS `{db_name}` "
-            "CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
-        )
-        cur.close()
-        server_conn.close()
+        ensure_mysql_database(db_name)
     except mysql.connector.Error:
         raise
 
@@ -996,6 +1006,15 @@ def ensure_local_riob_app(app_key):
             log_app_startup_error(app_key, f"codigo nao encontrado em {script}")
             return False
 
+        app_env = {key: str(value) for key, value in (cfg.get("env") or {}).items()}
+        database_name = app_env.get("DB_NAME")
+        if database_name:
+            try:
+                ensure_mysql_database(database_name)
+            except Exception as exc:
+                log_app_startup_error(app_key, f"falha ao preparar banco {database_name}: {exc}")
+                return False
+
         python_bin = BASE_DIR / ".venv" / "bin" / "python"
         if not python_bin.exists():
             python_bin = Path(sys.executable)
@@ -1003,7 +1022,7 @@ def ensure_local_riob_app(app_key):
         env = os.environ.copy()
         env.pop("WERKZEUG_SERVER_FD", None)
         env.pop("WERKZEUG_RUN_MAIN", None)
-        env.update({key: str(value) for key, value in (cfg.get("env") or {}).items()})
+        env.update(app_env)
         env.setdefault("PYTHONUNBUFFERED", "1")
 
         try:
