@@ -67,11 +67,13 @@ function bindMenu() {
 
 function syncMenuSection() {
   let section = null;
+  const hash = (location.hash || "").replace("#", "");
   if (location.pathname === "/") section = "portal";
   if (location.pathname.startsWith("/config")) section = "config";
+  if (location.pathname.startsWith("/workflow/")) section = "workflow";
   if (location.pathname.startsWith("/apps/financeiro")) {
     const params = new URLSearchParams(location.search);
-    const view = params.get("view") || (location.hash || "#dashboard").replace("#", "");
+    const view = params.get("view") || hash || "dashboard";
     const financeSections = {
       dashboard: "dashboards",
       categorias: "cadastros",
@@ -86,6 +88,31 @@ function syncMenuSection() {
     };
     section = financeSections[view] || "dashboards";
   }
+  if (location.pathname.startsWith("/apps/automacao")) {
+    if (location.pathname.includes("/motores") || location.pathname.includes("/motor") || location.pathname.includes("/sensores/drivers")) {
+      section = "cadastros";
+    } else if (location.pathname.includes("/alarmes")) {
+      section = "workflow";
+    } else if (location.pathname.includes("/historico")) {
+      section = "relatorios";
+    } else if (location.pathname.includes("/setores")) {
+      section = "config";
+    } else {
+      section = "dashboards";
+    }
+  }
+  if (location.pathname.startsWith("/apps/nanoponto")) {
+    const params = new URLSearchParams(location.search);
+    const panel = params.get("panel") || "";
+    const pointSections = {
+      "justify-card": "workflow",
+      "medical-certificate-card": "workflow",
+      "agenda-card": "workflow",
+      "settings-card": "config",
+      "email-card": "config",
+    };
+    section = pointSections[panel] || "ponto";
+  }
   if (location.pathname.startsWith("/apps/zap")) {
     if (location.pathname.startsWith("/apps/zap/settings") || location.pathname.startsWith("/apps/zap/docs")) {
       section = "config";
@@ -94,6 +121,55 @@ function syncMenuSection() {
     } else {
       section = "workflow";
     }
+  }
+  if (location.pathname.startsWith("/apps/nanostore")) {
+    const nanostoreSections = {
+      workflow: "workflow",
+      cadastros: "cadastros",
+      lancamentos: "compras",
+      compras: "compras",
+      financeiro: "financeiro",
+      relatorios: "relatorios",
+      config: "config",
+      configuracao: "config",
+    };
+    section = nanostoreSections[hash] || "dashboards";
+  }
+  if (location.pathname.startsWith("/apps/gpsmusical")) {
+    const gpsSections = {
+      editor: "cadastros",
+      backup: "import_export",
+      config: "config",
+      docs: "config",
+    };
+    section = gpsSections[hash] || "dashboards";
+  }
+  if (location.pathname.startsWith("/apps/bpa")) section = "cadastros";
+  if (location.pathname.startsWith("/apps/tatoo")) {
+    const tatooSections = {
+      clientes: "cadastros",
+      sessoes: "cadastros",
+      consentimentos: "cadastros",
+      financeiro: "financeiro",
+      dados: "import_export",
+    };
+    section = tatooSections[hash] || "dashboards";
+  }
+  if (location.pathname.startsWith("/apps/riob")) {
+    const riobSections = {
+      dashboard: "dashboards",
+      estoque: "compras",
+      vendas: "relatorios",
+      agentia: "dashboards",
+      comunicacao: "workflow",
+      "config:status": "config",
+      "config:cameras": "config",
+      "config:sip": "config",
+      "config:nfe": "config",
+      "monitor:cameras": "dashboards",
+      "monitor:esxi": "dashboards",
+    };
+    section = riobSections[hash] || section;
   }
   if (!section) return;
   document.querySelectorAll("[data-menu-section]").forEach((item) => {

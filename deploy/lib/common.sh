@@ -132,6 +132,125 @@ if errors:
 PY
 }
 
+validate_portal_integrations() {
+  local py
+  py="$(python_cmd)" || die "python nao encontrado para validar integracoes do portal"
+
+  "$py" - <<'PY'
+import importlib
+import json
+import sys
+from pathlib import Path
+from urllib.parse import parse_qs, urlparse
+
+root = Path.cwd().resolve()
+errors = []
+
+try:
+    portal = importlib.import_module("app")
+except Exception as exc:
+    print(f"- nao foi possivel importar app.py para validar o portal: {exc}", file=sys.stderr)
+    sys.exit(1)
+
+allowed = portal.allowed_app_keys()
+manifest_keys = set()
+
+for manifest in sorted((root / "apps").glob("*/app.json")):
+    try:
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+    except Exception as exc:
+        errors.append(f"{manifest.relative_to(root)}: JSON invalido ({exc})")
+        continue
+
+    app_key = str(data.get("app_key") or manifest.parent.name).strip()
+    manifest_keys.add(app_key)
+    if allowed is not None and app_key not in allowed:
+        errors.append(f"{app_key}: app ativo fora de apps_liberados.txt")
+
+    for field in ("url", "standalone_url"):
+        url = str(data.get(field) or "").strip()
+        if not url:
+            errors.append(f"{app_key}: {field} vazio")
+        elif not url.startswith("/"):
+            errors.append(f"{app_key}: {field} deve apontar para rota interna: {url}")
+
+    for group_name in ("menu_groups", "config_groups"):
+        groups = data.get(group_name) or {}
+        if not isinstance(groups, dict):
+            errors.append(f"{app_key}: {group_name} deve ser objeto")
+            continue
+        if group_name == "menu_groups":
+            for section in groups:
+                if section not in portal.MENU_SECTIONS:
+                    errors.append(f"{app_key}: secao de menu desconhecida: {section}")
+        for section, items in groups.items():
+            if not isinstance(items, list):
+                errors.append(f"{app_key}: {group_name}.{section} deve ser lista")
+                continue
+            for index, item in enumerate(items):
+                url = item.get("url") if isinstance(item, dict) else ""
+                if not url:
+                    errors.append(f"{app_key}: {group_name}.{section}[{index}] sem url")
+                    continue
+                parsed = urlparse(url)
+                if parsed.scheme or parsed.netloc or not parsed.path.startswith("/"):
+                    errors.append(f"{app_key}: link de menu nao interno: {url}")
+                if parsed.path.startswith("/apps/financeiro"):
+                    view = parse_qs(parsed.query).get("view", ["dashboard"])[0]
+                    if view not in portal.FINANCEIRO_VIEWS:
+                        errors.append(f"{app_key}: view financeira invalida em {url}")
+                if parsed.path.startswith("/workflow/"):
+                    target = parsed.path.split("/", 2)[2]
+                    if target not in manifest_keys and not (root / "apps" / target / "app.json").exists():
+                        errors.append(f"{app_key}: workflow aponta para app inexistente: {url}")
+
+    cards = data.get("workflow_cards") or []
+    if not isinstance(cards, list):
+        errors.append(f"{app_key}: workflow_cards deve ser lista")
+    else:
+        for index, item in enumerate(cards):
+            if not isinstance(item, dict) or not item.get("url"):
+                errors.append(f"{app_key}: workflow_cards[{index}] sem url")
+
+sample = b'<!doctype html><html><head><title>x</title></head><body class="legacy"><a href="/api/test">x</a><script src="/app.js"></script></body></html>'
+
+def assert_theme(app_key, html):
+    if "window.NOTECHSOFT_THEME" not in html or "theme-rio_branco" not in html:
+        errors.append(f"{app_key}: janela externa/original sem tema NanotechSoft")
+
+with portal.app.test_request_context("/"):
+    standalone_checks = {
+        "automacao": portal.apply_standalone_theme(portal.rewrite_automacao_html(sample, prefix="/apps/automacao/original").decode("utf-8")),
+        "financeiro": portal.apply_standalone_theme(sample.decode("utf-8")),
+        "nanoponto": portal.rewrite_nanoponto_html(sample, integrated=False),
+        "zap": portal.rewrite_zap_document(sample, integrated=False),
+        "nanostore": portal.rewrite_nanostore_html(sample, integrated=False),
+        "gpsmusical": portal.rewrite_static_app_html(sample.decode("utf-8"), "gpsmusical", integrated=False),
+        "bpa": portal.rewrite_static_app_html(sample.decode("utf-8"), "bpa", integrated=False),
+        "tatoo": portal.rewrite_static_app_html(sample.decode("utf-8"), "tatoo", integrated=False),
+        "riob-remoto": portal.rewrite_riob_html(sample).decode("utf-8"),
+    }
+    for app_key, html in standalone_checks.items():
+        assert_theme(app_key, html)
+
+    for app_key in sorted(portal.LOCAL_RIOB_APPS):
+        html = portal.rewrite_local_riob_text(sample, app_key, apply_theme=True).decode("utf-8")
+        assert_theme(app_key, html)
+
+    if "UI_showTab" not in standalone_checks["gpsmusical"]:
+        errors.append("gpsmusical: ponte de hash para abas nao encontrada")
+    if "activateFromHash" not in standalone_checks["nanostore"]:
+        errors.append("nanostore: ponte de hash para visoes nao encontrada")
+    if "openFromHash" not in standalone_checks["riob-remoto"]:
+        errors.append("riob: ponte de hash para modulos nao encontrada")
+
+if errors:
+    for item in errors:
+        print(f"- {item}", file=sys.stderr)
+    sys.exit(1)
+PY
+}
+
 wait_for_app() {
   local tries="${1:-45}"
   local delay="${2:-2}"

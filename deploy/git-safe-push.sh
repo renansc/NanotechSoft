@@ -172,6 +172,7 @@ git diff --check
 PYTHON_CMD="$(python_cmd)" || die "python nao encontrado"
 "$PYTHON_CMD" -m py_compile app.py
 validate_app_sources
+validate_portal_integrations
 if [[ "$SKIP_COMPOSE" != "1" ]]; then
   compose config >/tmp/nanotechsoft-compose-config.yml
 else

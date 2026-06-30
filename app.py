@@ -525,6 +525,11 @@ body.theme-zapgreen {{
   --radius: 8px;
 }}
 body[class*="theme-"] {{
+  --card: var(--panel);
+  --btn: var(--accent);
+  --btn-hover: var(--accent-dark);
+  --bg-2: var(--panel2);
+  background: var(--bg);
   color: var(--text);
 }}
 body[class*="theme-"] .topbar,
@@ -569,6 +574,15 @@ body[class*="theme-"] textarea {{
 </style>
 <script>window.NOTECHSOFT_THEME = {json.dumps(theme)};</script>
 """
+
+
+def inject_before_body_close(document, snippet):
+    if not snippet:
+        return document
+    match = re.search(r"</body\s*>", document, flags=re.I)
+    if not match:
+        return document + "\n" + snippet
+    return document[: match.start()] + snippet + "\n" + document[match.start() :]
 
 
 def apply_standalone_theme(document):
@@ -849,41 +863,41 @@ def rewrite_riob_html(content, prefix="/apps/riob"):
     for source, target in replacements.items():
         text = text.replace(source, target)
 
-    boot = f"""
+    text = inject_before_body_close(text, riob_hash_bridge_script())
+    return apply_standalone_theme(text).encode("utf-8")
+
+
+def riob_hash_bridge_script():
+    return """
 <script>
-(function() {{
-  function openFromHash() {{
+(function() {
+  function openFromHash() {
     var hash = (window.location.hash || "").replace(/^#/, "");
     if (!hash) return;
     var parts = hash.split(":");
     var section = parts[0] || "";
     var view = parts[1] || "";
-    try {{
-      if (section === "config" && view && typeof window.openConfigView === "function") {{
+    try {
+      if (section === "config" && view && typeof window.openConfigView === "function") {
         window.openConfigView(null, view);
         return;
-      }}
-      if (section === "monitor" && view && typeof window.openMonitorView === "function") {{
+      }
+      if (section === "monitor" && view && typeof window.openMonitorView === "function") {
         window.openMonitorView(null, view);
         return;
-      }}
-      if (section && typeof window.showTab === "function") {{
+      }
+      if (section && typeof window.showTab === "function") {
         window.showTab(section, document.querySelector('[data-tab="' + section + '"]'));
-      }}
-    }} catch (err) {{
+      }
+    } catch (err) {
       console.warn("NanotechSoft RioB hash bridge:", err);
-    }}
-  }}
-  window.addEventListener("load", function() {{ setTimeout(openFromHash, 250); }});
+    }
+  }
+  window.addEventListener("load", function() { setTimeout(openFromHash, 250); });
   window.addEventListener("hashchange", openFromHash);
-}})();
+})();
 </script>
 """
-    if "</body>" in text:
-        text = text.replace("</body>", boot + "\n</body>", 1)
-    else:
-        text += boot
-    return text.encode("utf-8")
 
 
 def rewrite_riob_javascript(content, prefix="/apps/riob"):
@@ -930,7 +944,7 @@ def rewrite_local_riob_location(value, app_key):
     return value
 
 
-def rewrite_local_riob_text(content, app_key):
+def rewrite_local_riob_text(content, app_key, apply_theme=False):
     prefix = local_riob_prefix(app_key)
     text = content.decode("utf-8", errors="replace")
     replacements = {
@@ -947,6 +961,10 @@ def rewrite_local_riob_text(content, app_key):
     }
     for source, target in replacements.items():
         text = text.replace(source, target)
+    if apply_theme:
+        if app_key == "riob":
+            text = inject_before_body_close(text, riob_hash_bridge_script())
+        text = apply_standalone_theme(text)
     return text.encode("utf-8")
 
 
@@ -1063,7 +1081,9 @@ def local_riob_proxy_response(app_key, subpath=""):
         ), 502
 
     content_type = resp_headers.get("Content-Type") or mimetypes.guess_type(upstream_path)[0] or "application/octet-stream"
-    if "text/html" in content_type or "javascript" in content_type or upstream_path.endswith((".js", ".css")):
+    if "text/html" in content_type:
+        body = rewrite_local_riob_text(body, app_key, apply_theme=True)
+    elif "javascript" in content_type or upstream_path.endswith((".js", ".css")):
         body = rewrite_local_riob_text(body, app_key)
 
     response = Response(body, status=status, content_type=content_type)
@@ -2595,6 +2615,39 @@ def rewrite_nanostore_location(value, prefix):
     return value
 
 
+def nanostore_navigation_bridge():
+    return """
+<script>
+(function() {
+  var aliases = {
+    dashboard: "inicio",
+    inicio: "inicio",
+    workflow: "workflow",
+    cadastros: "cadastros",
+    compras: "lancamentos",
+    financeiro: "lancamentos",
+    lancamentos: "lancamentos",
+    relatorios: "relatorios",
+    config: "configuracao",
+    configuracao: "configuracao"
+  };
+
+  function activateFromHash() {
+    var raw = (window.location.hash || "").replace(/^#/, "");
+    if (!raw) return;
+    var key = raw.split(":")[0];
+    var target = aliases[key] || key;
+    var button = document.querySelector('.menu-link[data-target="' + target + '"]');
+    if (button) button.click();
+  }
+
+  window.addEventListener("load", function() { setTimeout(activateFromHash, 80); });
+  window.addEventListener("hashchange", activateFromHash);
+})();
+</script>
+"""
+
+
 def rewrite_nanostore_html(content, integrated=True):
     prefix = "/apps/nanostore" if integrated else "/apps/nanostore/original"
     text = content.decode("utf-8", errors="replace")
@@ -2614,6 +2667,7 @@ def rewrite_nanostore_html(content, integrated=True):
     }
     for source, target in replacements.items():
         text = text.replace(source, target)
+    text = inject_before_body_close(text, nanostore_navigation_bridge())
     return apply_standalone_theme(text)
 
 
@@ -2832,8 +2886,45 @@ def rewrite_static_app_paths(text, app_key, integrated=True):
     return text
 
 
+def static_app_navigation_bridge(app_key):
+    if app_key != "gpsmusical":
+        return ""
+    return """
+<script>
+(function() {
+  var tabs = {
+    biblioteca: "biblioteca",
+    editor: "editor",
+    view: "view",
+    docs: "docs",
+    config: "config",
+    backup: "backup"
+  };
+
+  function activateFromHash() {
+    var raw = (window.location.hash || "").replace(/^#/, "");
+    if (!raw) return;
+    var key = raw.indexOf("docs") === 0 ? "docs" : raw.split(":")[0];
+    var target = tabs[key];
+    if (!target) return;
+    if (typeof window.UI_showTab === "function") {
+      window.UI_showTab(target);
+      return;
+    }
+    var button = document.querySelector('[data-tab="' + target + '"]');
+    if (button) button.click();
+  }
+
+  window.addEventListener("load", function() { setTimeout(activateFromHash, 80); });
+  window.addEventListener("hashchange", activateFromHash);
+})();
+</script>
+"""
+
+
 def rewrite_static_app_html(text, app_key, integrated=True):
     text = rewrite_static_app_paths(text, app_key, integrated=integrated)
+    text = inject_before_body_close(text, static_app_navigation_bridge(app_key))
     return apply_standalone_theme(text)
 
 
