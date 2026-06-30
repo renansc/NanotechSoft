@@ -21,11 +21,6 @@ Este documento consolida:
 
 Todas as rotas `/api/*` recebem cabecalhos `no-store/no-cache` no backend.
 
-Atualizacao operacional importante:
-
-- o mesmo tratamento agora tambem cobre `/`, `/RioBranco.html`, `/script.js` e `/style.css`
-- isso reduz risco de o navegador manter frontend antigo logo apos deploy ou rebuild do container
-
 ### 2.3 Identificacao do usuario
 
 O frontend envia cabecalhos como:
@@ -76,8 +71,8 @@ Payload:
 
 ```json
 {
-  "login": "renan",
-  "senha": "Luis@2024"
+  "login": "usuario",
+  "senha": "senha-do-usuario"
 }
 ```
 
@@ -88,8 +83,8 @@ Resposta:
   "ok": true,
   "usuario": {
     "id": 1,
-    "nome": "Renan",
-    "login": "renan"
+    "nome": "Usuario",
+    "login": "usuario"
   }
 }
 ```
@@ -113,7 +108,6 @@ Observacao critica:
 - `GET /api/frota_relatorio`
 - `GET /api/relatorio`
 - `GET /api/backup`
-- `GET /api/backup/full`
 - `GET /api/logs_exclusoes`
 
 ### `GET /api/status`
@@ -133,29 +127,6 @@ Retorna:
 
 - arquivo SQL do dump
 - cabecalhos com nome e caminho armazenado
-
-Uso esperado:
-
-- backup rapido do MariaDB
-- restore automatico por `db-restore`
-- sincronizacao producao -> homologacao
-
-### `GET /api/backup/full`
-
-Retorna:
-
-- pacote `backup_full_YYYYMMDD_HHMMSS.tar.gz`
-- `manifest.json`
-- `db/backup.sql`
-- `app_data`
-- `cameras_data`
-- `relatorios`
-
-Uso esperado:
-
-- recuperacao em outra VM
-- migracao completa de ambiente
-- contingencia quando tambem e necessario preservar fotos, anexos, PDFs, XML/cache, uploads/configuracoes locais e dados do monitor de cameras
 
 ## 5.1 Vendas e cache de importacao
 
@@ -195,12 +166,9 @@ Observacoes:
 
 - o modo funcional atual e `csv_relatorios_dir`
 - em homologacao/producao, a pasta `Relatorios/` precisa estar montada no container `app` para que `Importar do diretorio` leia o CSV atualizado do host
-- o arquivo `Relatorios/config-rel-vendas` contem regras operacionais da importacao do CSV e agora faz parte da assinatura do cache; se ele mudar, o proximo import gera um novo cache
-- as regras aplicadas hoje normalizam os grupos de embalagem, descartam registros como `52 - Materiais` e `003 - Vasilhames` e ignoram colunas fora do conjunto necessario do cache; quando a mesma coluna aparece nas listas de uso e descarte, o descarte vence
 - o modo `firebird` ja existe na configuracao, mas esta reservado para a integracao futura
 - cada importacao gera um registro identificavel por `id`, com `source_path`, `rows_importadas`, `importado_em` e os itens persistidos em `vendas_relatorio_itens`
 - o endpoint `PUT /api/vendas/cache/<id>/ativar` define qual import passa a ser usado pelo relatorio de vendas
-- `GET /api/vendas/config` tambem devolve `regras_importacao`, usado pela tela `Config -> Vendas` para documentar no proprio sistema quais grupos e descartes estao ativos
 
 ## 5.2 Estoque, NF-e e OCR por foto
 
@@ -298,27 +266,6 @@ Endpoints:
 Observacao:
 
 - `veiculos` tem tratamento especial para `placa`, `modelo`, `km_atual`, `intervalo_manut_km`, `intervalo_oleo_km`
-- `motoristas` continua sendo o nome tecnico da rota e da tabela, mas a funcao operacional agora e de cadastro de colaboradores
-- `cargas` ganhou apoio para importacao de CSV com agrupamento por veiculo, persistindo `veiculo_numero`, `origem_csv`, totais consolidados e as linhas brutas da importacao
-
-### 6.2.1 Importacao de cargas
-
-Endpoints:
-
-- `POST /api/cargas/importar_csv`
-- `GET /api/cargas/<carga_id>/detalhes`
-
-Objetivo:
-
-- importar o CSV externo da operacao em grupos por veiculo
-- reaproveitar a mesma carga quando o mesmo veiculo aparece novamente no arquivo
-- expor no detalhe da carga as linhas importadas, as cidades consolidadas e o frete vinculado
-
-Observacoes:
-
-- o nome exibido da carga/frete passa a ser consolidado com todas as cidades daquele veiculo quando existirem linhas suficientes para isso
-- o frontend usa o numero do veiculo e a lista de cidades para montar os cards e a escala sem separar o mesmo veiculo em cards diferentes
-- a importacao atualiza os totais de registros, clientes distintos, quantidade, litros, peso e valor no proprio cadastro de carga
 
 ### 6.3 Configuracao NF-e
 
@@ -386,23 +333,10 @@ Campos principais:
 
 - `nome`
 - `motorista_id`
-- `entregador_id`
 - `veiculo_id`
 - `carga_id`
 - `status`
 - `observacao`
-- `data_carga`
-- `km_atual`
-- `peso`
-- `qtd_entregas`
-
-Regras operacionais recentes:
-
-- `POST /api/fretes` cria o frete novo com status inicial `liberado`
-- todo frete precisa ter motorista valido
-- o frete pode seguir com o mesmo colaborador em `motorista_id` e `entregador_id` apenas quando ele estiver marcado tambem como entregador
-- quando o motorista nao acumula entrega, o apoio precisa estar marcado como entregador ou ajudante; para operar sem pendencia de equipe, o apoio precisa cobrir a necessidade de entrega
-- nos status `chegada`, `descarregado` e `liberado`, o backend bloqueia colaborador duplicado em dois veiculos ao mesmo tempo
 
 Valores de `status` usados no sistema:
 
@@ -468,9 +402,6 @@ sequenceDiagram
 - `GET /api/estoque/produtos`
 - `GET /api/estoque/conferencias`
 - `GET /api/estoque/conferencias/<id>`
-- `GET /api/estoque/importacoes-xml`
-- `POST /api/estoque/importacoes-xml/lote/preparar`
-- `POST /api/estoque/importacoes-xml/confirmar`
 - `POST /api/estoque/nfe/import`
 - `POST /api/estoque/conferencias/<id>/confirmar`
 - `GET /api/nfe/config`
@@ -516,16 +447,6 @@ Exemplo de criacao manual:
 ```
 
 ### 8.2 Importacao de XML da NF-e e conferencia
-
-Na tela `Estoque > Lancar Estoque`, a selecao em massa nao possui limite total.
-As NF-e selecionadas sao divididas automaticamente em lotes tecnicos de ate
-500 notas. A interface mostra o total processado, o lote atual, a quantidade de
-lotes e a NF-e em andamento. Exemplo: `Importando 501 / 1500 notas - lote 2 de
-3`.
-
-`GET /api/estoque/importacoes-xml` informa `meta.lote_maximo`. Cada chamada de
-`POST /api/estoque/importacoes-xml/lote/preparar` respeita esse tamanho; a tela
-percorre todos os lotes antes de iniciar as confirmacoes.
 
 Fluxo principal:
 
@@ -604,12 +525,9 @@ Observacoes:
 - `GET /api/abastecimentos`
 - `POST /api/abastecimentos/liberar`
 - `PUT /api/abastecimentos/<id>/abastecer`
-- `PUT /api/abastecimentos/<id>`
 - `POST /api/abastecimentos/<id>/importar_nfe`
 - `DELETE /api/abastecimentos/<id>`
 - `GET /api/abastecimentos/<id>/pdf`
-- `GET /api/abastecimentos/importacoes-xml`
-- `POST /api/abastecimentos/importacoes-xml/sincronizar`
 - `POST /api/manutencoes`
 - `GET /api/manutencoes`
 - `POST /api/trocas_oleo`
@@ -644,30 +562,9 @@ Regras:
 
 - `liberar` cria o registro com status `liberado`
 - `abastecer` conclui o registro como `abastecido`
-- `veiculos.combustivel_padrao` aceita `diesel_s10` ou `diesel_500`
-- veiculos Diesel S10 permitem lancamentos `diesel_s10` e `arla`
-- veiculos Diesel 500 permitem somente lancamentos `diesel_500`
-- quando o frontend nao envia o tipo, o backend usa o combustivel padrao do veiculo
-- `PUT /api/abastecimentos/<id>` edita um lancamento concluido
 - `POST /api/abastecimentos/<id>/importar_nfe` consome o XML da nota e preenche automaticamente combustivel, nota, emitente, litros e valor
 - o PDF da requisicao pode ser regenerado via API
 - ao concluir abastecimento, manutencao, troca, lavagem ou importacao de NF-e, o backend pode atualizar `veiculos.km_atual` quando o KM informado for maior
-
-### Pendencias da importacao XML
-
-O painel `Importar XML > Abastecimentos` lista os vinculos com status
-`pendente` antes do historico geral. A rota
-`GET|POST /importar-xml/abastecimentos/<xml_id>` permite:
-
-- selecionar o veiculo correto
-- corrigir KM, combustivel, quantidade, valor, data, posto e motorista
-- salvar e executar novamente a sincronizacao com o modulo de frota
-- ignorar itens que nao representam abastecimento, mantendo-os fora das
-  proximas sincronizacoes automaticas
-
-Ao finalizar, o vinculo muda para `criado` ou `vinculado`. Se alguma regra
-continuar invalida, o registro permanece `pendente` e a tela apresenta o novo
-motivo.
 
 ### `manutencoes`
 
@@ -721,7 +618,7 @@ Campos:
 
 ### `GET /api/frota_relatorio`
 
-Retorna o relatório solicitado em PDF inline por `tipo`.
+Retorna PDF inline por `tipo`.
 
 Tipos suportados hoje:
 
@@ -730,17 +627,8 @@ Tipos suportados hoje:
 - `trocas_oleo`
 - `trocas_pneu`
 - `abastecimentos`
-- `abastecimentos_criticos`
 - `lavagens`
 - `historico_fretes`
-
-O tipo `abastecimentos_criticos` usa os filtros opcionais `data_inicio` e
-`data_fim` e cria três seções em folhas separadas, sempre agrupadas por posto,
-com cabeçalho, logo da empresa, rodapé e paginação:
-
-- placas similares;
-- XML sem placa;
-- KM incompatível.
 
 ## 10. Chat interno
 
@@ -902,7 +790,6 @@ Rotas:
 
 - `/monitor/esxi/*`
 - `/monitor/cameras/*`
-- `/monitor/automacao/*`
 - `/docs`
 - `/docs/`
 - `/docs/index.html`
@@ -913,9 +800,6 @@ Caracteristica:
 
 - o backend principal nao replica toda a logica desses modulos
 - ele atua como proxy para apps auxiliares iniciados sob demanda
-- o monitor de automacao recebe leituras em `POST /monitor/automacao/api/leitura` e consulta a leitura mais recente em `GET /monitor/automacao/api/ultima`
-- as telas de automacao incluem motores, historico, alarmes, tempo real e setores sob o mesmo prefixo
-- o codigo externo do monitor e montado pelo caminho definido em `RB_AUTOMACAO_MONITOR_PATH`
 - o portal `/docs` serve HTML estatico versionado, sem camada separada de build
 
 ## 14. Modelo de dados
@@ -989,12 +873,6 @@ Campos centrais:
 - `nome`
 - `created_at`
 
-Detalhe importante sobre `motoristas`:
-
-- a tabela foi mantida por compatibilidade de API, mas agora representa colaboradores
-- campos adicionais: `is_motorista`, `is_entregador`, `is_ajudante`
-- `GET /api/motoristas` devolve esses papeis explicitamente para o frontend montar seletores e validacoes
-
 ### `fretes`
 
 Campos relevantes:
@@ -1012,13 +890,6 @@ Campos relevantes:
 - `created_at`
 - `updated_at`
 - `finalizado_em`
-
-Observacoes:
-
-- `entregador_id` referencia a mesma tabela de colaboradores usada por `motorista_id`
-- o frete finalizado continua persistido para historico e auditoria; a ocultacao visual do kanban acontece no frontend
-- `GET /api/fretes` agora devolve tambem dados derivados da carga, incluindo `carga_veiculo_numero`, `carga_cidades` e totais de importacao, para a interface mostrar um rotulo consolidado do veiculo
-- o dashboard de frota usa o ultimo frete por veiculo e exibe o nome consolidado com as cidades da carga quando disponivel
 
 ### `fretes_historico`
 
@@ -1248,15 +1119,8 @@ Itens salvos em disco:
 - PDFs de abastecimento
 - backups SQL
 - certificados e CA
-- SQLite e HLS das cameras no volume `cameras_data`
-- SQLite do monitor de automacao em `app_data/automacao/homologacao.db`
+- SQLite e HLS das cameras
 - XMLs e snapshots importados manualmente em `sync-import/`
-
-Na importacao automatica de e-mails, anexos `.xml` e `.zip` pendentes no disco
-sao varridos antes da consulta POP3. Remessas de remetentes configurados em
-`RB_EMAIL_XML_TRUSTED_SENDERS` usam o limite ampliado de
-`RB_EMAIL_XML_TRUSTED_ZIP_MAX_ENTRIES`, mantendo os limites por arquivo e por
-tamanho total do ZIP.
 
 ## 17. Observacoes importantes para integradores
 

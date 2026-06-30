@@ -1,0 +1,616 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GPS Musical</title>
+<link rel="stylesheet" href="./styles.css">
+<script src="../shared/remote-store.js"></script>
+<script async src="https://accounts.google.com/gsi/client"></script>
+<script async src="https://www.youtube.com/iframe_api"></script>
+<script src="https://sdk.scdn.co/spotify-player.js"></script>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <div class="logo">♪</div>
+    <div>
+      <strong>GPS Musical</strong><br>
+      <small>Repertório, sync remoto e fontes de áudio em um só lugar</small>
+    </div>
+  </div>
+
+  <nav class="tabs">
+    <button id="tabBtn-biblioteca" class="tab active" data-tab="biblioteca" type="button">Biblioteca</button>
+    <button id="tabBtn-editor" class="tab" data-tab="editor" type="button">Nova / Editar</button>
+    <button id="tabBtn-docs" class="tab" data-tab="docs" type="button">Docs</button>
+    <button id="tabBtn-config" class="tab" data-tab="config" type="button">Config</button>
+    <button id="tabBtn-backup" class="tab" data-tab="backup" type="button">Backup</button>
+  </nav>
+</header>
+
+<main class="container">
+  <section id="tab-biblioteca" class="panel active">
+    <div class="card">
+      <div class="row space-between">
+        <div>
+          <div style="font-weight:900">Sincronização</div>
+          <div id="syncStatus" class="hint small">Verificando backend...</div>
+        </div>
+        <div class="row">
+          <span id="syncBackendBadge" class="pill">Banco padrão</span>
+          <button id="refreshRemoteBtn" class="btn ghost" type="button">Sincronizar agora</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="field grow">
+        <label>Buscar</label>
+        <input id="searchInput" placeholder="nome, artista, tom, letra, cifra, tags...">
+      </div>
+
+      <div class="field">
+        <label>Ordenar</label>
+        <select id="sortSelect">
+          <option value="updated_desc">Mais recentes</option>
+          <option value="title_asc">Título (A-Z)</option>
+          <option value="artist_asc">Artista (A-Z)</option>
+        </select>
+      </div>
+
+      <div class="row">
+        <button id="newSongBtn" class="btn primary" type="button">+ Nova música</button>
+      </div>
+    </div>
+
+    <div id="songList" class="grid"></div>
+    <div class="hint">Clique em uma música para abrir, editar ou tocar no modo palco.</div>
+  </section>
+
+  <section id="tab-editor" class="panel">
+    <div class="card">
+      <div style="font-weight:900;margin-bottom:10px">Dados da música</div>
+
+      <div class="row">
+        <div class="field grow">
+          <label>Título</label>
+          <input id="titleInput" placeholder="Ex: Another Brick In The Wall">
+        </div>
+        <div class="field grow">
+          <label>Artista</label>
+          <input id="artistInput" placeholder="Ex: Pink Floyd">
+        </div>
+      </div>
+
+      <div class="row">
+        <div class="field">
+          <label>Tom</label>
+          <input id="keyInput" placeholder="Ex: G, Am, C#">
+        </div>
+        <div class="field grow">
+          <label>Tags (vírgula)</label>
+          <input id="tagsInput" placeholder="culto, louvor, rock...">
+        </div>
+      </div>
+
+      <div class="row">
+        <div class="field grow">
+          <label>Observações</label>
+          <input id="notesInput" placeholder="capotraste, ritmo, playback, observações...">
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div style="font-weight:900;margin-bottom:10px">Fonte de áudio</div>
+
+      <div class="row">
+        <div class="field grow">
+          <label>Tipo de fonte</label>
+          <select id="audioSourceType">
+            <option value="none">Sem áudio</option>
+            <option value="local">MP3 local (IndexedDB)</option>
+            <option value="youtube">YouTube</option>
+            <option value="spotify">Spotify</option>
+          </select>
+        </div>
+      </div>
+
+      <div id="editorSourceLocal" class="stack">
+        <div class="row">
+          <div class="field grow">
+            <label>Selecionar MP3</label>
+            <input id="audioFileEditor" type="file" accept="audio/*">
+            <div class="mini" id="audioEditorStatus">Nenhum áudio vinculado.</div>
+          </div>
+          <div class="row">
+            <button id="removeEditorAudioBtn" class="btn danger" type="button">Remover MP3</button>
+          </div>
+        </div>
+        <div class="hint small">O MP3 fica salvo só neste navegador. O backup JSON e o banco remoto salvam apenas os metadados da música.</div>
+      </div>
+
+      <div id="editorSourceYouTube" class="stack hidden">
+        <div class="row">
+          <div class="field grow">
+            <label>Link ou ID do vídeo</label>
+            <input id="youtubeSourceInput" placeholder="https://www.youtube.com/watch?v=...">
+          </div>
+          <div class="field grow">
+            <label>Rótulo opcional</label>
+            <input id="youtubeSourceLabel" placeholder="Ex: Playback oficial">
+          </div>
+        </div>
+        <div class="hint small">Aceita links de vídeo ou shorts. Para conteúdos privados ou buscas autenticadas, configure o YouTube na aba Config.</div>
+      </div>
+
+      <div id="editorSourceSpotify" class="stack hidden">
+        <div class="row">
+          <div class="field grow">
+            <label>Buscar no Spotify</label>
+            <input id="spotifySearchInput" placeholder="Digite nome da música, artista..." autocomplete="off">
+            <div id="spotifySearchResults" class="search-results hidden"></div>
+          </div>
+          <div class="field grow">
+            <label>ou Link/URI</label>
+            <input id="spotifySourceInput" placeholder="https://open.spotify.com/track/...">
+          </div>
+        </div>
+        <div class="row">
+          <div class="field grow">
+            <label>Rótulo opcional</label>
+            <input id="spotifySourceLabel" placeholder="Ex: Faixa oficial">
+          </div>
+        </div>
+        <div class="hint small">Busque pelo nome ou cole link/URI. A música abre incorporada no app e você também pode abrir direto no Spotify.</div>
+        <div id="spotifyEditorAuthStatus" class="hint small" style="margin-top:8px">
+          <span id="spotifyEditorAuthBadge" class="pill">Desconectado</span>
+          <span id="spotifyEditorAuthMessage"> - Conecte sua conta na aba Config para usar a busca no catálogo com mais praticidade.</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="row space-between">
+      <div style="font-weight:900">Blocos</div>
+      <div class="row">
+        <button id="addBlockBtn" class="btn" type="button">+ Adicionar bloco</button>
+        <button id="clearEditorBtn" class="btn ghost" type="button">Limpar editor</button>
+      </div>
+    </div>
+
+    <div id="blocksEditor" class="blocks"></div>
+
+    <div class="row space-between" style="margin-top:10px">
+      <div class="hint small">Para timeline, preencha <b>Tempo (s)</b> em cada bloco. Com YouTube e MP3 local também dá para marcar automaticamente.</div>
+      <div class="row">
+        <button id="deleteSongBtn" class="btn danger" type="button" disabled>Excluir</button>
+        <button id="saveSongBtn" class="btn primary" type="button">Salvar</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="tab-view" class="panel">
+    <div class="row space-between">
+      <div>
+        <div id="viewTitle" style="font-weight:950;font-size:22px">—</div>
+        <div id="viewMeta" class="hint small">—</div>
+      </div>
+      <div class="row">
+        <button id="backToLibraryBtn" class="btn ghost" type="button">← Biblioteca</button>
+        <button id="editCurrentBtn" class="btn" type="button">Editar</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="row space-between">
+        <div style="font-weight:900">Fonte de áudio</div>
+        <span id="viewSourceBadge" class="pill">Sem áudio</span>
+      </div>
+
+      <div id="audioDockView"></div>
+
+      <div id="youtubePlayerPanel" class="media-panel hidden" style="margin-top:12px">
+        <div id="youtubePlayerHost"></div>
+      </div>
+
+      <div id="spotifyPlayerPanel" class="media-panel hidden" style="margin-top:12px">
+        <iframe id="spotifyEmbedFrame" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture" loading="lazy"></iframe>
+      </div>
+
+      <div id="spotifyActions" class="row hidden" style="margin-top:10px">
+        <button id="openSpotifyExternalBtn" class="btn" type="button">Abrir no Spotify</button>
+      </div>
+
+      <div id="localAudioActions" class="row" style="margin-top:10px">
+        <label class="btn" for="audioFileView">Vincular / Trocar MP3</label>
+        <input id="audioFileView" type="file" accept="audio/*" hidden>
+        <button id="removeCurrentAudioBtn" class="btn danger" type="button">Remover MP3</button>
+      </div>
+
+      <div class="hint small" id="audioViewStatus">—</div>
+    </div>
+
+    <div class="card">
+      <div style="font-weight:900;margin-bottom:8px">Reprodução inteligente (Modo Palco)</div>
+      <div class="row">
+        <button id="openStageBtn" class="btn ok" type="button">Abrir modo Palco</button>
+        <button id="markBtn" class="btn" type="button">Marcar tempos</button>
+        <button id="finishMarkBtn" class="btn danger hidden" type="button">Finalizar marcação</button>
+        <button id="playTimelineBtn" class="btn primary" type="button">▶ Play timeline</button>
+        <button id="stopTimelineBtn" class="btn" type="button" disabled>⏹ Stop</button>
+        <div class="field" style="min-width:220px">
+          <label>Slide (segundos por bloco)</label>
+          <input id="slideSecondsInput" type="number" min="1" value="10">
+        </div>
+        <button id="playSlideBtn" class="btn primary" type="button">▶ Play slide</button>
+        <button id="stopSlideBtn" class="btn" type="button" disabled>⏹ Stop</button>
+      </div>
+
+      <div id="playerHint" class="hint small">Timeline e marcação automática funcionam com MP3 local e YouTube. Spotify fica disponível como embed para referência rápida.</div>
+    </div>
+
+    <div id="blocksView" class="grid"></div>
+  </section>
+
+  <section id="tab-docs" class="panel">
+    <section class="docs-hero card">
+      <div>
+        <div class="docs-eyebrow">Documentacao</div>
+        <h1>Guia rapido do GPS Musical</h1>
+        <p class="docs-lead">Use esta aba para orientar cadastro, audio, modo palco, sincronizacao e publicacao do repertorio sem sair do app.</p>
+      </div>
+      <nav class="docs-links">
+        <a href="#docs-visao-geral">Visao geral</a>
+        <a href="#docs-fluxo">Fluxo de uso</a>
+        <a href="#docs-fontes">Fontes de audio</a>
+        <a href="#docs-config">Configuracao</a>
+        <a href="#docs-sync">Sync e backup</a>
+        <a href="#docs-publicacao">Publicacao</a>
+      </nav>
+    </section>
+
+    <section class="docs-grid">
+      <article class="card docs-panel" id="docs-visao-geral">
+        <h2>Visao geral</h2>
+        <ul class="docs-list">
+          <li>Biblioteca central com busca, ordenacao e abertura rapida do repertorio.</li>
+          <li>Editor por blocos para organizar cifra, letra, titulo auxiliar e tempo.</li>
+          <li>Fonte de audio por musica com suporte a MP3 local, YouTube e Spotify.</li>
+          <li>Modo Palco com navegacao por bloco, progresso e timeline sincronizada.</li>
+          <li>Sincronizacao remota do repertorio e criacao de snapshots no banco atual.</li>
+        </ul>
+      </article>
+
+      <article class="card docs-panel" id="docs-fluxo">
+        <h2>Fluxo de uso</h2>
+        <div class="flowchart">
+          <div class="flow-node">Cadastra os dados basicos da musica</div>
+          <div class="flow-arrow">v</div>
+          <div class="flow-node">Define a fonte de audio</div>
+          <div class="flow-arrow">v</div>
+          <div class="flow-node">Organiza blocos com cifra, letra e tempo</div>
+          <div class="flow-arrow">v</div>
+          <div class="flow-node">Abre a visualizacao e valida a reproducao</div>
+          <div class="flow-arrow">v</div>
+          <div class="flow-node">Usa o Modo Palco para tocar e navegar ao vivo</div>
+        </div>
+      </article>
+
+      <article class="card docs-panel" id="docs-fontes">
+        <h2>Fontes de audio</h2>
+        <ul class="docs-list">
+          <li><strong>MP3 local:</strong> fica salvo apenas neste navegador via IndexedDB. Ideal para playback proprio.</li>
+          <li><strong>YouTube:</strong> aceita link ou ID e permite marcar tempos automaticamente na timeline.</li>
+          <li><strong>Spotify:</strong> incorpora track, album, playlist ou episode para referencia rapida.</li>
+          <li>Quando uma musica usa MP3 local, o JSON e o banco remoto salvam so os metadados, nao o arquivo binario.</li>
+        </ul>
+      </article>
+
+      <article class="card docs-panel">
+        <h2>Modo Palco</h2>
+        <ol class="docs-list">
+          <li>Abra uma musica na biblioteca e entre na tela de visualizacao.</li>
+          <li>Valide a fonte de audio e, se quiser, marque os tempos bloco a bloco.</li>
+          <li>Use <code>Play timeline</code> para seguir os tempos marcados.</li>
+          <li>Use <code>Play slide</code> quando preferir avancar blocos por intervalo fixo.</li>
+          <li>No palco, navegue com as setas do teclado e feche com <kbd>Esc</kbd>.</li>
+        </ol>
+      </article>
+
+      <article class="card docs-panel" id="docs-config">
+        <h2>Configuracao e integracoes</h2>
+        <ul class="docs-list">
+          <li>O menu <strong>Config</strong> concentra banco remoto, YouTube e Spotify.</li>
+          <li>Para Alwaysdata, normalmente use MySQL com host, porta, banco, usuario e senha.</li>
+          <li>YouTube pede API Key, Client ID e Redirect URI para autenticar no navegador.</li>
+          <li>Spotify usa Client ID e Redirect URI para o fluxo PKCE; o Client Secret fica opcional.</li>
+          <li>Depois de salvar, use <code>Testar conexao</code> para validar o banco antes de sincronizar.</li>
+        </ul>
+      </article>
+
+      <article class="card docs-panel" id="docs-sync">
+        <h2>Sincronizacao e backup</h2>
+        <ol class="docs-list">
+          <li>A aba <strong>Biblioteca</strong> mostra o status do backend e permite sincronizar manualmente.</li>
+          <li>A aba <strong>Backup</strong> exporta e importa JSON do repertorio local.</li>
+          <li>O botao <code>Criar backup remoto</code> gera snapshots no banco configurado para o GPS Musical.</li>
+          <li>Ao importar um JSON, os MP3 locais precisam ser vinculados novamente neste navegador.</li>
+        </ol>
+      </article>
+
+      <article class="card docs-panel" id="docs-publicacao">
+        <h2>Publicacao e operacao</h2>
+        <ul class="docs-list">
+          <li>Revise o repertorio na biblioteca antes de publicar uma nova versao.</li>
+          <li>Confirme se a conexao remota esta valida e se os backups aparecem na lista.</li>
+          <li>Teste pelo menos uma musica com YouTube, uma com Spotify e uma com MP3 local.</li>
+          <li>Quando estiver homologado, envie a revisao ao GitHub e publique a mesma versao no servidor.</li>
+        </ul>
+      </article>
+
+      <article class="card docs-panel">
+        <h2>Rotas e armazenamento</h2>
+        <ul class="docs-list">
+          <li><code>GET /gpsmusical/</code> - interface principal do app.</li>
+          <li><code>GET /api/gps/config</code> - leitura e gravacao da configuracao do GPS Musical.</li>
+          <li><code>POST /api/gps/config/test-database</code> - valida a conexao do banco configurado.</li>
+          <li><code>GET /api/gps/backups</code> e <code>POST /api/gps/backups</code> - lista e cria backups remotos.</li>
+          <li><code>localStorage</code> guarda o repertorio local e <code>IndexedDB</code> guarda os blobs de MP3.</li>
+        </ul>
+      </article>
+    </section>
+  </section>
+
+  <section id="tab-config" class="panel">
+    <div class="card">
+      <div class="row space-between">
+        <div>
+          <div style="font-weight:900">Banco do GPS Musical</div>
+          <div class="hint small">Para Alwaysdata, normalmente use <b>MySQL</b> com host, porta, banco, usuário e senha.</div>
+        </div>
+        <span id="dbStatusBadge" class="pill">Aguardando configuração</span>
+      </div>
+
+      <div class="config-grid" style="margin-top:12px">
+        <div class="field">
+          <label>Provedor</label>
+          <select id="cfgDbProvider">
+            <option value="default">Banco padrão do sistema</option>
+            <option value="mysql">MySQL / MariaDB</option>
+            <option value="postgres">PostgreSQL</option>
+            <option value="sqlite">SQLite</option>
+          </select>
+        </div>
+        <div class="field grow">
+          <label>URL completa do banco (opcional)</label>
+          <input id="cfgDbUrl" placeholder="mysql://usuario:senha@host:3306/banco">
+        </div>
+        <div class="field">
+          <label>Host</label>
+          <input id="cfgDbHost" placeholder="mysql-seuusuario.alwaysdata.net">
+        </div>
+        <div class="field">
+          <label>Porta</label>
+          <input id="cfgDbPort" placeholder="3306">
+        </div>
+        <div class="field">
+          <label>Banco</label>
+          <input id="cfgDbName" placeholder="seubanco_gps">
+        </div>
+        <div class="field">
+          <label>Usuário</label>
+          <input id="cfgDbUser" placeholder="seuusuario">
+        </div>
+        <div class="field">
+          <label>Senha</label>
+          <input id="cfgDbPassword" type="password" placeholder="••••••••">
+        </div>
+        <div class="field">
+          <label>SSL</label>
+          <select id="cfgDbSsl">
+            <option value="false">Não</option>
+            <option value="true">Sim</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="row" style="margin-top:12px">
+        <button id="cfgSaveBtn" class="btn primary" type="button">Salvar configuração</button>
+        <button id="cfgTestBtn" class="btn" type="button">Testar conexão</button>
+        <button id="cfgReloadBtn" class="btn ghost" type="button">Recarregar</button>
+      </div>
+
+      <div id="dbStatusBox" class="status-box" style="margin-top:12px">
+        <div id="dbStatusText">Sem teste recente.</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="row space-between">
+        <div>
+          <div style="font-weight:900">YouTube</div>
+          <div class="hint small">Informe as credenciais do app para autenticar sua conta e validar o cliente.</div>
+        </div>
+        <span id="youtubeAuthBadge" class="pill">Desconectado</span>
+      </div>
+
+      <div class="config-grid" style="margin-top:12px">
+        <div class="field grow">
+          <label>API Key</label>
+          <input id="cfgYoutubeApiKey" placeholder="AIza...">
+        </div>
+        <div class="field grow">
+          <label>Client ID</label>
+          <input id="cfgYoutubeClientId" placeholder="...apps.googleusercontent.com">
+        </div>
+        <div class="field grow">
+          <label>Redirect URI</label>
+          <input id="cfgYoutubeRedirectUri" placeholder="https://seudominio.com/gpsmusical/">
+        </div>
+      </div>
+
+      <div class="row" style="margin-top:12px">
+        <button id="youtubeConnectBtn" class="btn primary" type="button">Conectar YouTube</button>
+        <button id="youtubeDisconnectBtn" class="btn danger" type="button">Desconectar</button>
+      </div>
+
+      <div id="youtubeAuthStatus" class="hint small">Nenhuma conta conectada.</div>
+    </div>
+
+    <div class="card">
+      <div class="row space-between">
+        <div>
+          <div style="font-weight:900">Spotify</div>
+          <div class="hint small">Fluxo em PKCE para autenticar no navegador e validar o app.</div>
+        </div>
+        <span id="spotifyAuthBadge" class="pill">Desconectado</span>
+      </div>
+
+      <div class="config-grid" style="margin-top:12px">
+        <div class="field grow">
+          <label>Client ID</label>
+          <input id="cfgSpotifyClientId" placeholder="Client ID do Spotify">
+        </div>
+        <div class="field grow">
+          <label>Client Secret (opcional)</label>
+          <input id="cfgSpotifyClientSecret" type="password" placeholder="Opcional para uso futuro no servidor">
+        </div>
+        <div class="field grow">
+          <label>Redirect URI</label>
+          <input id="cfgSpotifyRedirectUri" placeholder="https://seudominio.com/gpsmusical/">
+        </div>
+      </div>
+
+      <div class="row" style="margin-top:12px">
+        <button id="spotifyConnectBtn" class="btn primary" type="button">Conectar Spotify</button>
+        <button id="spotifyDisconnectBtn" class="btn danger" type="button">Desconectar</button>
+      </div>
+
+      <div id="spotifyAuthStatus" class="hint small">Nenhuma conta conectada.</div>
+    </div>
+  </section>
+
+  <section id="tab-backup" class="panel">
+    <div class="card">
+      <div style="font-weight:900;margin-bottom:8px">Backup local (JSON)</div>
+      <div class="row">
+        <button id="exportJsonBtn" class="btn primary" type="button">Exportar JSON</button>
+        <label class="btn" for="importFile">Importar JSON</label>
+        <input id="importFile" type="file" accept="application/json" hidden>
+        <button id="clearLocalCacheBtn" class="btn warn" type="button">Limpar cache local</button>
+      </div>
+      <div id="backupStatus" class="hint small">O JSON não inclui o blob do MP3 local. YouTube e Spotify vão como referência da fonte.</div>
+    </div>
+
+    <div class="card">
+      <div class="row space-between">
+        <div>
+          <div style="font-weight:900">Backups remotos</div>
+          <div class="hint small">Cria snapshots do repertório salvo no banco atual do GPS Musical.</div>
+        </div>
+        <button id="refreshRemoteBackupsBtn" class="btn ghost" type="button">Atualizar lista</button>
+      </div>
+
+      <div class="row" style="margin-top:12px">
+        <button id="createRemoteBackupBtn" class="btn primary" type="button">Criar backup remoto</button>
+      </div>
+
+      <div id="remoteBackupStatus" class="hint small">Nenhuma ação executada ainda.</div>
+      <div id="remoteBackupList" class="backup-list"></div>
+    </div>
+  </section>
+</main>
+
+<div id="stage" class="stage">
+  <div class="stage-inner">
+    <div class="stage-top">
+      <div>
+        <div id="stageSongTitle" class="stage-title">GPS Musical</div>
+        <div id="stageSongSub" class="stage-sub">—</div>
+      </div>
+      <div class="row">
+        <button id="stagePrevBtn" class="btn" type="button">←</button>
+        <button id="stageNextBtn" class="btn" type="button">→</button>
+        <button id="stageCloseBtn" class="btn danger" type="button">Sair (Esc)</button>
+      </div>
+    </div>
+
+    <div class="progress"><div id="stageProgress"></div></div>
+
+    <div class="stage-card">
+      <div class="row space-between" style="align-items:center">
+        <div>
+          <div id="stageKind" class="stage-kind">—</div>
+          <div id="stageBlockTitle" class="stage-blocktitle">—</div>
+        </div>
+        <div id="stageTime" class="mini">00:00 / 00:00</div>
+      </div>
+
+      <div class="split" style="margin-top:12px">
+        <pre id="stageChords" class="bigpre">—</pre>
+        <pre id="stageLyrics" class="bigpre">—</pre>
+      </div>
+
+      <div style="margin-top:12px">
+        <div id="audioDockStage"></div>
+      </div>
+    </div>
+
+    <div id="stageFooter" class="hint small">—</div>
+  </div>
+</div>
+
+<template id="blockEditorTpl">
+  <div class="block-edit">
+    <div class="block-head">
+      <div class="row grow">
+        <div class="field grow">
+          <label>Tipo do bloco</label>
+          <select class="blockType">
+            <option>Introdução</option>
+            <option>Verso</option>
+            <option>Pré-refrão</option>
+            <option>Refrão</option>
+            <option>Ponte</option>
+            <option>Solo</option>
+            <option>Final</option>
+            <option>Outro</option>
+          </select>
+        </div>
+
+        <div class="field grow">
+          <label>Título do bloco (opcional)</label>
+          <input class="blockTitle" type="text" placeholder="Ex: Refrão 2x">
+        </div>
+
+        <div class="field" style="width:170px">
+          <label>Tempo (s)</label>
+          <input class="blockTime" type="number" min="0" step="0.1" placeholder="Ex: 25.0">
+        </div>
+      </div>
+
+      <div class="row">
+        <button class="icon-btn upBtn" title="Subir" type="button">▲</button>
+        <button class="icon-btn downBtn" title="Descer" type="button">▼</button>
+        <button class="icon-btn danger delBtn" title="Remover" type="button">✕</button>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="field grow">
+        <label>Cifra</label>
+        <textarea class="blockChords" rows="6" placeholder="Ex:&#10;G   D/F#   Em&#10;C   D      G"></textarea>
+      </div>
+      <div class="field grow">
+        <label>Letra</label>
+        <textarea class="blockLyrics" rows="6" placeholder="Ex:&#10;Minha letra aqui..."></textarea>
+      </div>
+    </div>
+  </div>
+</template>
+
+<audio id="audioMain" controls preload="metadata"></audio>
+<script src="./app.js"></script>
+</body>
+</html>

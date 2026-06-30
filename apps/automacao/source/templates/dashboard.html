@@ -1,0 +1,22 @@
+{% extends 'base.html' %}
+
+{% block content %}
+
+<h1>Monitoramento Automação RioBranco</h1>
+
+<div class="card">
+    Motores Cadastrados:
+    <b>{{ total_motores }}</b>
+</div>
+
+<div class="card">
+    Leituras Recebidas:
+    <b>{{ total_leituras }}</b>
+</div>
+
+<div class="card">
+    Alarmes Ativos:
+    <b>{{ total_alarmes }}</b>
+</div>
+
+{% endblock %}

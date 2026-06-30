@@ -1,0 +1,54 @@
+{% extends 'base.html' %}
+
+{% block content %}
+
+<h1>Setores</h1>
+
+<div class="card">
+
+<form action="/setor/novo" method="post">
+
+<input
+    type="text"
+    name="nome"
+    placeholder="Nome"
+    required>
+
+<input
+    type="text"
+    name="descricao"
+    placeholder="Descrição">
+
+<button>
+Salvar
+</button>
+
+</form>
+
+</div>
+
+<div class="card">
+
+<table>
+
+<tr>
+<th>ID</th>
+<th>Nome</th>
+<th>Descrição</th>
+</tr>
+
+{% for setor in setores %}
+
+<tr>
+<td>{{ setor.id }}</td>
+<td>{{ setor.nome }}</td>
+<td>{{ setor.descricao }}</td>
+</tr>
+
+{% endfor %}
+
+</table>
+
+</div>
+
+{% endblock %}

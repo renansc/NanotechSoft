@@ -1,12 +1,20 @@
 {
   "cams": [
     {
-      "id": "tablet",
-      "name": "tablet",
+      "id": "portao",
+      "name": "portao",
       "mode": "rtsp",
-      "rtsp": "rtsp://192.168.200.104:8080/h264.sdp",
+      "rtsp": "rtsp://usuario:senha@192.0.2.10:554/user=usuario&password=senha&channel=1&stream=0.sdp?real_stream",
+      "transport": "udp",
+      "hls": "/cams/portao/live.m3u8"
+    },
+    {
+      "id": "portao-tcp",
+      "name": "portao tcp",
+      "mode": "rtsp",
+      "rtsp": "rtsp://usuario:senha@192.0.2.10:554/user=usuario&password=senha&channel=1&stream=0.sdp?real_stream",
       "transport": "tcp",
-      "hls": "/cams/tablet/live.m3u8"
+      "hls": "/cams/portao-tcp/live.m3u8"
     }
   ]
 }

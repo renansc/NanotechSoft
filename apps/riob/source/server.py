@@ -4,12 +4,7 @@ import subprocess
 import datetime
 import base64
 import csv
-import io
-import tarfile
-import tempfile
-from collections import Counter, defaultdict
-from difflib import SequenceMatcher
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image, Table, TableStyle, PageBreak
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image, Table, TableStyle
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, landscape
@@ -17,7 +12,6 @@ from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
 import os
 import json
-import ast
 import html as html_lib
 import shutil
 import socket
@@ -29,12 +23,10 @@ import uuid
 import hashlib
 import mimetypes
 import re
-import unicodedata
 import xml.etree.ElementTree as ET
 import zlib
-import importlib.util
 from html.parser import HTMLParser
-from urllib.parse import urlparse, unquote
+from urllib.parse import urlparse
 import paramiko
 import nfe_ws
 
@@ -66,10 +58,7 @@ def _load_env_file(path):
 @app.after_request
 def add_no_cache_headers(resp):
     try:
-        if (
-            request.path.startswith("/api/")
-            or request.path in {"/", "/RioBranco.html", "/script.js", "/style.css"}
-        ):
+        if request.path.startswith("/api/"):
             resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
             resp.headers["Pragma"] = "no-cache"
             resp.headers["Expires"] = "0"
@@ -85,11 +74,9 @@ app.config["MAX_CONTENT_LENGTH"] = 200 * 1024 * 1024  # 200MB
 # =========================================================
 BASE_DIR = os.path.dirname(__file__)
 DOCS_DIR = os.path.join(BASE_DIR, "docs")
-_AGENT_IA_MODULE = None
 
 # Carrega variaveis de ambiente automaticamente (sem export manual)
 _load_env_file(os.path.join(BASE_DIR, ".env"))
-app.secret_key = os.environ.get("FLASK_SECRET") or "troque-esta-chave-agora-123"
 
 DATA_ROOT = os.environ.get("RB_DATA_DIR", BASE_DIR)
 FOTOS_DIR = os.path.join(DATA_ROOT, "FotosDevolucoes")
@@ -100,19 +87,9 @@ NFE_DFE_LIMIT_FILE = os.path.join(DATA_ROOT, "nfe-dfe-limit.json")
 VENDAS_RELATORIOS_DIR = os.path.join(BASE_DIR, "Relatorios")
 VENDAS_CACHE_DIR = os.path.join(DATA_ROOT, "vendas-cache")
 VENDAS_UPLOADS_DIR = os.path.join(VENDAS_CACHE_DIR, "uploads")
-VENDAS_REPORTS_DIR = os.path.join(VENDAS_CACHE_DIR, "reports")
+VENDAS_CACHE_INDEX_FILE = os.path.join(VENDAS_CACHE_DIR, "index.json")
 VENDAS_CONFIG_FILE = os.path.join(DATA_ROOT, "vendas-config.json")
-VENDAS_IMPORT_RULES_FILE = os.path.join(VENDAS_RELATORIOS_DIR, "config-rel-vendas")
-DB_BACKUP_DIR = os.environ.get("RB_DB_BACKUP_DIR", os.path.join(BASE_DIR, "backupsSql"))
-CAMERAS_DATA_DIR = os.environ.get("CAMERAS_DATA_DIR", os.path.join(BASE_DIR, "cameras"))
-CARGAS_IMPORT_ROOT = os.environ.get("RB_CARGAS_IMPORT_DIR", "/media/SrvWin/CARGAS")
-CARGAS_IMPORT_PDF_DIRS = [
-    os.path.join(CARGAS_IMPORT_ROOT, "cargas"),
-    CARGAS_IMPORT_ROOT,
-]
-CARGAS_IMPORT_XML_DIRS = [
-    CARGAS_IMPORT_ROOT,
-]
+DB_BACKUP_DIR = os.environ.get("RB_DB_BACKUP_DIR", os.path.join(BASE_DIR, "backups sql"))
 os.makedirs(DATA_ROOT, exist_ok=True)
 os.makedirs(FOTOS_DIR, exist_ok=True)
 os.makedirs(REQ_ABAST_DIR, exist_ok=True)
@@ -120,7 +97,6 @@ os.makedirs(CHAT_ATTACHMENTS_DIR, exist_ok=True)
 os.makedirs(NFE_XML_CACHE_DIR, exist_ok=True)
 os.makedirs(VENDAS_CACHE_DIR, exist_ok=True)
 os.makedirs(VENDAS_UPLOADS_DIR, exist_ok=True)
-os.makedirs(VENDAS_REPORTS_DIR, exist_ok=True)
 try:
     os.makedirs(DB_BACKUP_DIR, exist_ok=True)
 except Exception:
@@ -128,15 +104,10 @@ except Exception:
 
 _monitor_lock = threading.Lock()
 _monitor_procs = {}
-_monitor_errors = {}
 _nfe_dfe_limit_lock = threading.Lock()
 _rapidocr_lock = threading.Lock()
 _rapidocr_engine = None
-VSPHERE_CLIENT_DIR = os.environ.get("RB_VSPHERE_CLIENT_CONTAINER_PATH", os.path.join(BASE_DIR, "esxi"))
-AUTOMACAO_CLIENT_DIR = os.environ.get(
-    "RB_AUTOMACAO_MONITOR_CONTAINER_PATH",
-    os.path.abspath(os.path.join(BASE_DIR, "..", "..", "automacao", "source")),
-)
+VSPHERE_CLIENT_DIR = os.environ.get("RB_VSPHERE_CLIENT_CONTAINER_PATH", "/opt/vsphere-flask-client")
 _MONITOR_APPS = {
     "esxi": {
         "cwd": VSPHERE_CLIENT_DIR,
@@ -148,19 +119,7 @@ _MONITOR_APPS = {
         "cwd": os.path.join(BASE_DIR, "cameras"),
         "script": "server.py",
         "port": 8889,
-        "env": {"APP_HOST": "127.0.0.1", "CAMERAS_DATA_DIR": CAMERAS_DATA_DIR},
-    },
-    "automacao": {
-        "cwd": AUTOMACAO_CLIENT_DIR,
-        "script": "app.py",
-        "port": 8890,
-        "prefix": "/monitor/automacao",
-        "env": {
-            "APP_HOST": "127.0.0.1",
-            "APP_PORT": "8890",
-            "APP_DEBUG": "0",
-            "DATABASE_PATH": os.path.join(DATA_ROOT, "automacao", "homologacao.db"),
-        },
+        "env": {"APP_HOST": "127.0.0.1"},
     },
 }
 
@@ -171,60 +130,28 @@ def _tcp_open(host, port, timeout=0.5):
     except Exception:
         return False
 
-
-def _monitor_log_path(name):
-    return os.path.join(DATA_ROOT, "monitor-logs", f"{name}.log")
-
-
-def _monitor_log_tail(name, limit=3000):
-    try:
-        with open(_monitor_log_path(name), "rb") as f:
-            f.seek(0, os.SEEK_END)
-            size = f.tell()
-            f.seek(max(0, size - limit))
-            return f.read().decode("utf-8", errors="replace").strip()
-    except Exception:
-        return ""
-
-
 def _ensure_monitor_app(name):
     cfg = _MONITOR_APPS.get(name)
     if not cfg:
-        _monitor_errors[name] = "configuracao do monitor nao encontrada"
         return False
 
     port = int(cfg["port"])
     if _tcp_open("127.0.0.1", port):
-        _monitor_errors.pop(name, None)
         return True
 
     with _monitor_lock:
         if _tcp_open("127.0.0.1", port):
-            _monitor_errors.pop(name, None)
             return True
 
         p = _monitor_procs.get(name)
         if p is not None and p.poll() is None:
             time.sleep(0.25)
-            ok = _tcp_open("127.0.0.1", port)
-            if not ok:
-                _monitor_errors[name] = (
-                    f"processo ativo, mas a porta local {port} nao respondeu; "
-                    f"consulte {_monitor_log_path(name)}"
-                )
-            return ok
+            return _tcp_open("127.0.0.1", port)
         if p is not None and p.poll() is not None:
             _monitor_procs.pop(name, None)
 
         cwd = cfg.get("cwd") or BASE_DIR
         script = cfg.get("script") or "server.py"
-        script_path = os.path.join(cwd, script)
-        if not os.path.isdir(cwd):
-            _monitor_errors[name] = f"diretorio do monitor nao encontrado: {cwd}"
-            return False
-        if not os.path.isfile(script_path):
-            _monitor_errors[name] = f"arquivo de inicializacao nao encontrado: {script_path}"
-            return False
         _load_env_file(os.path.join(BASE_DIR, ".env"))
 
         env = os.environ.copy()
@@ -243,39 +170,21 @@ def _ensure_monitor_app(name):
             })
 
         try:
-            log_path = _monitor_log_path(name)
-            os.makedirs(os.path.dirname(log_path), exist_ok=True)
-            with open(log_path, "a", encoding="utf-8") as monitor_log:
-                monitor_log.write(f"\n=== iniciando monitor {name} ===\n")
-                monitor_log.flush()
-                proc = subprocess.Popen(
-                    [sys.executable, script],
-                    cwd=cwd,
-                    env=env,
-                    stdout=monitor_log,
-                    stderr=subprocess.STDOUT,
-                )
+            proc = subprocess.Popen(
+                [sys.executable, script],
+                cwd=cwd,
+                env=env,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
             _monitor_procs[name] = proc
-        except Exception as exc:
-            _monitor_errors[name] = f"erro ao iniciar processo: {exc}"
+        except Exception:
             return False
 
     for _ in range(20):
         if _tcp_open("127.0.0.1", port):
-            _monitor_errors.pop(name, None)
             return True
-        if proc.poll() is not None:
-            tail = _monitor_log_tail(name)
-            detail = f"processo encerrou com codigo {proc.returncode}"
-            if tail:
-                detail = f"{detail}: {tail}"
-            _monitor_errors[name] = detail
-            return False
         time.sleep(0.2)
-    _monitor_errors[name] = (
-        f"processo iniciado, mas a porta local {port} nao respondeu; "
-        f"consulte {_monitor_log_path(name)}"
-    )
     return False
 
 def _ensure_monitor_apps():
@@ -284,19 +193,7 @@ def _ensure_monitor_apps():
         cfg = _MONITOR_APPS[name]
         ok = _ensure_monitor_app(name)
         out[name] = {"running": bool(ok), "port": int(cfg["port"])}
-        if not ok and _monitor_errors.get(name):
-            out[name]["erro"] = _monitor_errors[name]
     return out
-
-def _monitor_proxy_timeout(name):
-    if name == "esxi":
-        raw = os.environ.get("ESXI_MONITOR_PROXY_TIMEOUT", os.environ.get("MONITOR_PROXY_TIMEOUT", "900"))
-    else:
-        raw = os.environ.get("MONITOR_PROXY_TIMEOUT", "30")
-    try:
-        return max(1, int(str(raw or "").strip()))
-    except Exception:
-        return 900 if name == "esxi" else 30
 
 def _proxy_monitor(name, subpath=""):
     cfg = _MONITOR_APPS.get(name)
@@ -304,11 +201,7 @@ def _proxy_monitor(name, subpath=""):
         return jsonify({"ok": False, "erro": "app monitor invalido"}), 404
 
     if not _ensure_monitor_app(name):
-        return jsonify({
-            "ok": False,
-            "erro": f"falha ao iniciar app {name}",
-            "detalhes": _monitor_errors.get(name, "motivo nao identificado"),
-        }), 503
+        return jsonify({"ok": False, "erro": f"falha ao iniciar app {name}"}), 503
 
     port = int(cfg["port"])
     path = "/" + (subpath or "")
@@ -321,10 +214,6 @@ def _proxy_monitor(name, subpath=""):
     import urllib.request
     import urllib.error
 
-    class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
-        def redirect_request(self, req, fp, code, msg, headers, newurl):
-            return None
-
     target = f"http://127.0.0.1:{port}{path}"
     body = request.get_data() if request.method in ("POST", "PUT", "PATCH", "DELETE") else None
     headers = {}
@@ -333,14 +222,10 @@ def _proxy_monitor(name, subpath=""):
         if lk in ("host", "content-length", "connection", "accept-encoding"):
             continue
         headers[k] = v
-    prefix = str(cfg.get("prefix") or "").strip()
-    if prefix:
-        headers["X-Forwarded-Prefix"] = prefix
 
     req = urllib.request.Request(target, data=body, headers=headers, method=request.method)
-    opener = urllib.request.build_opener(_NoRedirectHandler)
     try:
-        with opener.open(req, timeout=_monitor_proxy_timeout(name)) as resp:
+        with urllib.request.urlopen(req, timeout=30) as resp:
             payload = resp.read()
             out = Response(payload, status=resp.status)
             for k, v in resp.headers.items():
@@ -385,9 +270,9 @@ def _env_int(name, default):
         return int(default)
 
 db_config = {
-    "host": _env("DB_HOST", "172.19.92.122"),
+    "host": _env("DB_HOST", "127.0.0.1"),
     "user": _env("DB_USER", "root"),
-    "password": _env("DB_PASSWORD", "desde51@"),
+    "password": _env("DB_PASSWORD", ""),
     "database": _env("DB_NAME", "riobranco"),
     "port": _env_int("DB_PORT", 3306),
 }
@@ -412,62 +297,8 @@ def ensure_schema():
             cur.execute("ALTER TABLE veiculos ADD COLUMN intervalo_manut_km INT DEFAULT 10000")
         except Exception:
             pass
-
-        for ddl in (
-            "ALTER TABLE colaboradores ADD COLUMN login VARCHAR(80) DEFAULT ''",
-            "ALTER TABLE colaboradores ADD COLUMN senha VARCHAR(255) DEFAULT ''",
-            "ALTER TABLE colaboradores ADD COLUMN sip_habilitado TINYINT(1) NOT NULL DEFAULT 0",
-            "ALTER TABLE colaboradores ADD COLUMN sip_usuario VARCHAR(160) DEFAULT ''",
-            "ALTER TABLE colaboradores ADD COLUMN sip_senha VARCHAR(255) DEFAULT ''",
-            "ALTER TABLE colaboradores ADD COLUMN sip_ramal VARCHAR(160) DEFAULT ''",
-            "ALTER TABLE colaboradores ADD COLUMN codbar_modo VARCHAR(20) DEFAULT 'bip'",
-            "ALTER TABLE colaboradores ADD INDEX (login)",
-        ):
-            try:
-                cur.execute(ddl)
-            except Exception:
-                pass
         try:
             cur.execute("ALTER TABLE veiculos ADD COLUMN intervalo_oleo_km INT DEFAULT 5000")
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE veiculos ADD COLUMN combustivel_padrao VARCHAR(20) DEFAULT 'diesel_500'")
-        except Exception:
-            pass
-        try:
-            cur.execute(
-                """
-                UPDATE veiculos
-                SET combustivel_padrao='flex'
-                WHERE UPPER(TRIM(COALESCE(modelo, ''))) REGEXP
-                    '(^|[^A-Z0-9])(GOL|POLO|SAVEIRO)([^A-Z0-9]|$)'
-                """
-            )
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE motoristas ADD COLUMN is_motorista TINYINT(1) NOT NULL DEFAULT 0")
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE motoristas ADD COLUMN is_entregador TINYINT(1) NOT NULL DEFAULT 0")
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE motoristas ADD COLUMN is_ajudante TINYINT(1) NOT NULL DEFAULT 0")
-        except Exception:
-            pass
-        try:
-            cur.execute(
-                """
-                UPDATE motoristas
-                SET is_motorista = 1, is_entregador = 1
-                WHERE COALESCE(is_motorista, 0) = 0
-                  AND COALESCE(is_entregador, 0) = 0
-                  AND COALESCE(is_ajudante, 0) = 0
-                """
-            )
         except Exception:
             pass
 
@@ -479,42 +310,12 @@ def ensure_schema():
             tipo VARCHAR(120) DEFAULT '',
             km INT DEFAULT 0,
             valor DECIMAL(10,2) DEFAULT 0,
-            numero_nota VARCHAR(120) DEFAULT '',
-            emitente_nome VARCHAR(255) DEFAULT '',
-            data_documento DATE NULL,
-            itens_json LONGTEXT NULL,
-            ocr_texto LONGTEXT NULL,
-            ocr_origem VARCHAR(255) DEFAULT '',
             data_registro DATETIME DEFAULT CURRENT_TIMESTAMP,
             INDEX (veiculo_id),
             INDEX (km),
             INDEX (data_registro)
         )
         """)
-        try:
-            cur.execute("ALTER TABLE manutencoes ADD COLUMN numero_nota VARCHAR(120) DEFAULT ''")
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE manutencoes ADD COLUMN emitente_nome VARCHAR(255) DEFAULT ''")
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE manutencoes ADD COLUMN data_documento DATE NULL")
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE manutencoes ADD COLUMN itens_json LONGTEXT NULL")
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE manutencoes ADD COLUMN ocr_texto LONGTEXT NULL")
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE manutencoes ADD COLUMN ocr_origem VARCHAR(255) DEFAULT ''")
-        except Exception:
-            pass
         cur.execute("""
         CREATE TABLE IF NOT EXISTS trocas_oleo (
             id INT AUTO_INCREMENT PRIMARY KEY,
@@ -552,7 +353,7 @@ def ensure_schema():
             veiculo_id INT NOT NULL,
             km INT DEFAULT 0,
             posto VARCHAR(160) DEFAULT '',
-            combustivel_tipo VARCHAR(20) DEFAULT 'diesel_s10',
+            combustivel_tipo VARCHAR(20) DEFAULT 'diesel',
             chave_acesso_nfe VARCHAR(64) DEFAULT '',
             numero_nota VARCHAR(120) DEFAULT '',
             emitente_nome VARCHAR(255) DEFAULT '',
@@ -566,56 +367,6 @@ def ensure_schema():
             INDEX (km),
             INDEX (data_liberacao),
             INDEX (data_abastecimento)
-        )
-        """)
-        cur.execute("""
-        CREATE TABLE IF NOT EXISTS abastecimento_xml_vinculos (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            nota_key VARCHAR(255) NOT NULL,
-            importar_xml_abastecimento_id INT NULL,
-            chave_nfe VARCHAR(64) DEFAULT '',
-            numero_nota VARCHAR(120) DEFAULT '',
-            abastecimento_id INT NULL,
-            veiculo_id INT NULL,
-            placa_xml VARCHAR(20) DEFAULT '',
-            vinculacao_origem VARCHAR(40) DEFAULT '',
-            status VARCHAR(30) DEFAULT 'pendente',
-            motivo VARCHAR(500) DEFAULT '',
-            criado_em DATETIME DEFAULT CURRENT_TIMESTAMP,
-            atualizado_em DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-            UNIQUE KEY uq_abastecimento_xml_nota_key (nota_key),
-            UNIQUE KEY uq_abastecimento_xml_abastecimento (abastecimento_id),
-            INDEX idx_abastecimento_xml_status (status),
-            INDEX idx_abastecimento_xml_chave (chave_nfe),
-            INDEX idx_abastecimento_xml_veiculo (veiculo_id)
-        )
-        """)
-        cur.execute("""
-        CREATE TABLE IF NOT EXISTS manutencao_xml_pre_lancamentos (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            nota_key VARCHAR(255) NOT NULL,
-            importar_xml_abastecimento_id INT NULL,
-            chave_nfe VARCHAR(64) DEFAULT '',
-            numero_nota VARCHAR(120) DEFAULT '',
-            veiculo_id INT NULL,
-            placa_xml VARCHAR(20) DEFAULT '',
-            sugestao_confianca DECIMAL(6,4) DEFAULT 0,
-            origem_veiculo VARCHAR(40) DEFAULT '',
-            status VARCHAR(30) DEFAULT 'pendente',
-            motivo VARCHAR(500) DEFAULT '',
-            emitente_nome VARCHAR(255) DEFAULT '',
-            data_documento DATE NULL,
-            km INT DEFAULT 0,
-            valor DECIMAL(12,2) DEFAULT 0,
-            itens_json LONGTEXT NULL,
-            manutencao_id INT NULL,
-            criado_em DATETIME DEFAULT CURRENT_TIMESTAMP,
-            atualizado_em DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-            confirmado_em DATETIME NULL,
-            UNIQUE KEY uq_manutencao_xml_nota_key (nota_key),
-            INDEX idx_manutencao_xml_status (status),
-            INDEX idx_manutencao_xml_veiculo (veiculo_id),
-            INDEX idx_manutencao_xml_nota (numero_nota)
         )
         """)
         cur.execute("""
@@ -659,7 +410,6 @@ def ensure_schema():
         CREATE TABLE IF NOT EXISTS estoque_movimentos (
             id INT AUTO_INCREMENT PRIMARY KEY,
             codigo_barras VARCHAR(120) DEFAULT '',
-            codigo_produto_nfe VARCHAR(120) DEFAULT '',
             numero_nota VARCHAR(120) DEFAULT '',
             nome_produto VARCHAR(255) NOT NULL,
             quantidade DECIMAL(12,3) DEFAULT 0,
@@ -672,77 +422,10 @@ def ensure_schema():
             usuario_registro VARCHAR(180) DEFAULT '',
             data_registro DATETIME DEFAULT CURRENT_TIMESTAMP,
             INDEX (codigo_barras),
-            INDEX (codigo_produto_nfe),
             INDEX (numero_nota),
             INDEX (nome_produto),
             INDEX (tipo_movimento),
             INDEX (data_registro)
-        )
-        """)
-        cur.execute("""
-        CREATE TABLE IF NOT EXISTS estoque_xml_frete_vinculos (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            nota_key VARCHAR(255) NOT NULL,
-            chave_nfe VARCHAR(64) DEFAULT '',
-            numero_nota VARCHAR(120) DEFAULT '',
-            frete_id INT NOT NULL,
-            veiculo_id INT NULL,
-            carga_id INT NULL,
-            rota_registrada VARCHAR(220) DEFAULT '',
-            placa_xml VARCHAR(20) DEFAULT '',
-            mapa_xml VARCHAR(80) DEFAULT '',
-            numero_caminhao_xml VARCHAR(40) DEFAULT '',
-            vinculacao_origem VARCHAR(30) DEFAULT 'manual',
-            frete_sugerido_id INT NULL,
-            sugestao_confianca VARCHAR(20) DEFAULT '',
-            emitente_nome VARCHAR(255) DEFAULT '',
-            destinatario_nome VARCHAR(255) DEFAULT '',
-            data_emissao DATE NULL,
-            itens_total INT DEFAULT 0,
-            quantidade_total DECIMAL(14,3) DEFAULT 0,
-            valor_total_nota DECIMAL(14,2) DEFAULT 0,
-            usuario_registro VARCHAR(180) DEFAULT '',
-            criado_em DATETIME DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE KEY uq_estoque_xml_frete_nota (nota_key),
-            INDEX idx_estoque_xml_frete_frete (frete_id),
-            INDEX idx_estoque_xml_frete_chave (chave_nfe),
-            CONSTRAINT fk_estoque_xml_frete_frete
-                FOREIGN KEY (frete_id) REFERENCES fretes(id)
-                ON UPDATE CASCADE ON DELETE RESTRICT
-        )
-        """)
-        cur.execute("""
-        CREATE TABLE IF NOT EXISTS estoque_xml_frete_pre_vinculos (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            nota_key VARCHAR(255) NOT NULL,
-            chave_nfe VARCHAR(64) DEFAULT '',
-            numero_nota VARCHAR(120) DEFAULT '',
-            veiculo_id INT NULL,
-            frete_id INT NULL,
-            placa_xml VARCHAR(20) DEFAULT '',
-            mapa_xml VARCHAR(80) DEFAULT '',
-            numero_caminhao_xml VARCHAR(40) DEFAULT '',
-            origem_veiculo VARCHAR(30) DEFAULT '',
-            origem_frete VARCHAR(30) DEFAULT '',
-            status VARCHAR(20) DEFAULT 'pendente',
-            detalhes VARCHAR(500) DEFAULT '',
-            dispensa_frete TINYINT(1) NOT NULL DEFAULT 0,
-            tipo_transporte VARCHAR(30) DEFAULT '',
-            origem_decisao_logistica VARCHAR(30) DEFAULT '',
-            motivo_decisao_logistica VARCHAR(500) DEFAULT '',
-            usuario_decisao_logistica VARCHAR(180) DEFAULT '',
-            criado_em DATETIME DEFAULT CURRENT_TIMESTAMP,
-            atualizado_em DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-            confirmado_em DATETIME NULL,
-            UNIQUE KEY uq_estoque_xml_frete_pre_nota (nota_key),
-            INDEX idx_estoque_xml_frete_pre_frete (frete_id),
-            INDEX idx_estoque_xml_frete_pre_veiculo (veiculo_id),
-            CONSTRAINT fk_estoque_xml_frete_pre_frete
-                FOREIGN KEY (frete_id) REFERENCES fretes(id)
-                ON UPDATE CASCADE ON DELETE SET NULL,
-            CONSTRAINT fk_estoque_xml_frete_pre_veiculo
-                FOREIGN KEY (veiculo_id) REFERENCES veiculos(id)
-                ON UPDATE CASCADE ON DELETE SET NULL
         )
         """)
         cur.execute("""
@@ -751,8 +434,6 @@ def ensure_schema():
             codigo_barras VARCHAR(120) DEFAULT '',
             codigo_produto_nfe VARCHAR(120) DEFAULT '',
             nome_produto VARCHAR(255) NOT NULL,
-            grupo_estoque VARCHAR(30) DEFAULT '',
-            produto_base_nome VARCHAR(255) DEFAULT '',
             unidade VARCHAR(30) DEFAULT '',
             embalagem_tipo_padrao VARCHAR(30) DEFAULT '',
             fator_embalagem_padrao DECIMAL(12,3) DEFAULT 0,
@@ -761,9 +442,7 @@ def ensure_schema():
             atualizado_em DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             INDEX (codigo_barras),
             INDEX (codigo_produto_nfe),
-            INDEX (nome_produto),
-            INDEX (grupo_estoque),
-            INDEX (produto_base_nome)
+            INDEX (nome_produto)
         )
         """)
         cur.execute("""
@@ -816,35 +495,6 @@ def ensure_schema():
             INDEX (nome_produto)
         )
         """)
-        cur.execute("""
-        CREATE TABLE IF NOT EXISTS cargas_estoque_itens (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            carga_id INT NOT NULL,
-            produto_id INT NULL,
-            item_seq INT DEFAULT 0,
-            grupo_produto VARCHAR(120) DEFAULT '',
-            codigo_produto VARCHAR(80) DEFAULT '',
-            codigo_barras VARCHAR(120) DEFAULT '',
-            nome_produto VARCHAR(255) NOT NULL,
-            embalagem VARCHAR(60) DEFAULT '',
-            unidade_embalagem VARCHAR(20) DEFAULT '',
-            quantidade_embalagem DECIMAL(12,3) DEFAULT 0,
-            unidade_solta VARCHAR(20) DEFAULT '',
-            quantidade_solta DECIMAL(12,3) DEFAULT 0,
-            fator_embalagem DECIMAL(12,3) DEFAULT 1,
-            quantidade_total DECIMAL(12,3) DEFAULT 0,
-            estoque_movimento_id INT NULL,
-            baixado_em DATETIME NULL,
-            dados_json LONGTEXT NULL,
-            criado_em DATETIME DEFAULT CURRENT_TIMESTAMP,
-            INDEX idx_cargas_estoque_itens_carga (carga_id),
-            INDEX idx_cargas_estoque_itens_produto (produto_id),
-            INDEX idx_cargas_estoque_itens_codigo (codigo_produto),
-            INDEX idx_cargas_estoque_itens_barras (codigo_barras),
-            INDEX idx_cargas_estoque_itens_nome (nome_produto),
-            CONSTRAINT fk_cargas_estoque_itens_carga FOREIGN KEY (carga_id) REFERENCES cargas (id) ON DELETE CASCADE
-        )
-        """)
 
         cur.execute("""
         CREATE TABLE IF NOT EXISTS usuarios (
@@ -865,143 +515,6 @@ def ensure_schema():
             INDEX (sip_ramal)
         )
         """)
-
-        # 1.5) Unificar colaboradores e conferentes em tabela colaboradores
-        try:
-            cur.execute("""
-            CREATE TABLE IF NOT EXISTS colaboradores (
-                id INT AUTO_INCREMENT PRIMARY KEY,
-                nome VARCHAR(255) NOT NULL,
-                email VARCHAR(255) DEFAULT '',
-                cpf VARCHAR(14) DEFAULT '',
-                login VARCHAR(80) DEFAULT '',
-                senha VARCHAR(255) DEFAULT '',
-                sip_habilitado TINYINT(1) NOT NULL DEFAULT 0,
-                sip_usuario VARCHAR(160) DEFAULT '',
-                sip_senha VARCHAR(255) DEFAULT '',
-                sip_ramal VARCHAR(160) DEFAULT '',
-                codbar_modo VARCHAR(20) DEFAULT 'bip',
-                is_motorista TINYINT(1) NOT NULL DEFAULT 0,
-                is_entregador TINYINT(1) NOT NULL DEFAULT 0,
-                is_ajudante TINYINT(1) NOT NULL DEFAULT 0,
-                is_conferente TINYINT(1) NOT NULL DEFAULT 0,
-                is_vendedor TINYINT(1) NOT NULL DEFAULT 0,
-                usuario_id INT NULL,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                INDEX (nome),
-                INDEX (email),
-                INDEX (cpf),
-                INDEX (login),
-                INDEX (usuario_id),
-                FOREIGN KEY (usuario_id) REFERENCES usuarios(id) ON DELETE SET NULL
-            )
-            """)
-        except Exception:
-            pass
-
-        # Migrar motoristas para colaboradores (se ainda não migrados)
-        try:
-            cur.execute("""
-            INSERT INTO colaboradores (nome, is_motorista, is_entregador, is_ajudante, created_at)
-            SELECT m.nome, m.is_motorista, m.is_entregador, m.is_ajudante, m.created_at
-            FROM motoristas m
-            WHERE NOT EXISTS (
-                SELECT 1 FROM colaboradores c
-                WHERE c.nome = m.nome
-                  AND c.is_motorista = m.is_motorista
-                  AND c.is_entregador = m.is_entregador
-                  AND c.is_ajudante = m.is_ajudante
-            )
-            """)
-        except Exception:
-            pass
-
-        try:
-            cur.execute("""
-            UPDATE colaboradores c
-            JOIN usuarios u ON u.id = c.usuario_id
-            SET
-                c.login = COALESCE(u.login, c.login),
-                c.senha = COALESCE(u.senha, c.senha),
-                c.sip_habilitado = COALESCE(u.sip_habilitado, c.sip_habilitado),
-                c.sip_usuario = COALESCE(u.sip_usuario, c.sip_usuario),
-                c.sip_senha = COALESCE(u.sip_senha, c.sip_senha),
-                c.sip_ramal = COALESCE(u.sip_ramal, c.sip_ramal),
-                c.codbar_modo = COALESCE(u.codbar_modo, c.codbar_modo)
-            """)
-        except Exception:
-            pass
-
-        # Migrar conferentes para colaboradores (se ainda não migrados)
-        try:
-            cur.execute("""
-            INSERT INTO colaboradores (nome, is_conferente, created_at)
-            SELECT c.nome, 1, c.created_at
-            FROM conferentes c
-            WHERE NOT EXISTS (
-                SELECT 1 FROM colaboradores x
-                WHERE x.nome = c.nome
-                  AND x.is_conferente = 1
-            )
-            """)
-        except Exception:
-            pass
-
-        # Adicionar colunas colaborador_* nas tabelas que referenciam motoristas/conferentes
-        try:
-            cur.execute("ALTER TABLE fretes ADD COLUMN colaborador_motorista_id INT NULL")
-            cur.execute("ALTER TABLE fretes ADD COLUMN colaborador_entregador_id INT NULL")
-            cur.execute("ALTER TABLE fretes ADD INDEX (colaborador_motorista_id)")
-            cur.execute("ALTER TABLE fretes ADD INDEX (colaborador_entregador_id)")
-        except Exception:
-            pass
-
-        try:
-            cur.execute("ALTER TABLE devolucoes ADD COLUMN colaborador_conferente_id INT NULL")
-            cur.execute("ALTER TABLE devolucoes ADD INDEX (colaborador_conferente_id)")
-        except Exception:
-            pass
-
-        # Migrar FKs: mapear IDs antigos para novos
-        try:
-            # Para fretes: motorista_id -> colaborador_motorista_id
-            cur.execute("""
-            UPDATE fretes f
-            JOIN colaboradores c ON f.motorista_id IS NOT NULL AND c.id = (
-                SELECT id FROM colaboradores WHERE nome = (SELECT nome FROM motoristas WHERE id = f.motorista_id) LIMIT 1
-            )
-            SET f.colaborador_motorista_id = c.id
-            WHERE f.colaborador_motorista_id IS NULL
-            """)
-        except Exception:
-            pass
-
-        try:
-            # Para fretes: entregador_id -> colaborador_entregador_id
-            cur.execute("""
-            UPDATE fretes f
-            JOIN colaboradores c ON f.entregador_id IS NOT NULL AND c.id = (
-                SELECT id FROM colaboradores WHERE nome = (SELECT nome FROM motoristas WHERE id = f.entregador_id) LIMIT 1
-            )
-            SET f.colaborador_entregador_id = c.id
-            WHERE f.colaborador_entregador_id IS NULL
-            """)
-        except Exception:
-            pass
-
-        try:
-            # Para devolucoes: conferente_id -> colaborador_conferente_id
-            cur.execute("""
-            UPDATE devolucoes d
-            JOIN colaboradores c ON d.conferente_id IS NOT NULL AND c.id = (
-                SELECT id FROM colaboradores WHERE nome = (SELECT nome FROM conferentes WHERE id = d.conferente_id) LIMIT 1
-            )
-            SET d.colaborador_conferente_id = c.id
-            WHERE d.colaborador_conferente_id IS NULL
-            """)
-        except Exception:
-            pass
 
         cur.execute("""
         CREATE TABLE IF NOT EXISTS chat_mensagens (
@@ -1154,29 +667,6 @@ def ensure_schema():
         )
         """)
         cur.execute("""
-        CREATE TABLE IF NOT EXISTS pontos_venda (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            vendedor VARCHAR(255) NOT NULL DEFAULT '',
-            vendedor_norm VARCHAR(255) NOT NULL DEFAULT '',
-            cliente VARCHAR(255) NOT NULL DEFAULT '',
-            cliente_norm VARCHAR(255) NOT NULL DEFAULT '',
-            rota VARCHAR(255) NOT NULL DEFAULT '',
-            rota_norm VARCHAR(255) NOT NULL DEFAULT '',
-            visita_periodicidade VARCHAR(20) NOT NULL DEFAULT 'semanal',
-            dia_semana INT NOT NULL DEFAULT 0,
-            data_base DATE NULL,
-            observacao VARCHAR(255) DEFAULT '',
-            ativo TINYINT(1) NOT NULL DEFAULT 1,
-            criado_em DATETIME DEFAULT CURRENT_TIMESTAMP,
-            atualizado_em DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-            INDEX idx_pontos_venda_vendedor (vendedor_norm),
-            INDEX idx_pontos_venda_cliente (cliente_norm),
-            INDEX idx_pontos_venda_rota (rota_norm),
-            INDEX idx_pontos_venda_periodicidade (visita_periodicidade),
-            INDEX idx_pontos_venda_dia_semana (dia_semana)
-        )
-        """)
-        cur.execute("""
         CREATE TABLE IF NOT EXISTS vendas_relatorios_importados (
             id VARCHAR(32) PRIMARY KEY,
             source_type VARCHAR(40) NOT NULL DEFAULT 'csv_relatorios_dir',
@@ -1188,11 +678,6 @@ def ensure_schema():
             rows_importadas INT NOT NULL DEFAULT 0,
             status VARCHAR(30) NOT NULL DEFAULT 'pronto',
             ativo TINYINT(1) NOT NULL DEFAULT 0,
-            bonificacoes_cache_json LONGTEXT NULL,
-            variacao_preco_cache_json LONGTEXT NULL,
-            mix_embalagens_cache_json LONGTEXT NULL,
-            dashboard_vendas_json LONGTEXT NULL,
-            dashboard_vendas_painel_json LONGTEXT NULL,
             importado_em DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             INDEX idx_vendas_relatorios_importados_ativo (ativo),
@@ -1213,20 +698,14 @@ def ensure_schema():
             cliente VARCHAR(255) DEFAULT '',
             cliente_norm VARCHAR(255) DEFAULT '',
             cidade VARCHAR(180) DEFAULT '',
-            grupo_raw VARCHAR(180) DEFAULT '',
-            grupo_norm VARCHAR(180) DEFAULT '',
-            categoria_norm VARCHAR(180) DEFAULT '',
             produto VARCHAR(255) DEFAULT '',
             tipo_operacao VARCHAR(180) DEFAULT '',
             condicao VARCHAR(180) DEFAULT '',
-            tab_venda INT DEFAULT 0,
             quantidade DECIMAL(18,3) DEFAULT 0,
             litros DECIMAL(18,3) DEFAULT 0,
             caixas DECIMAL(18,3) DEFAULT 0,
-            caixa_fisica DECIMAL(18,3) DEFAULT 0,
             valor_venda DECIMAL(18,2) DEFAULT 0,
             valor_devolvido DECIMAL(18,2) DEFAULT 0,
-            bonificacao DECIMAL(18,2) DEFAULT 0,
             valor_liquido DECIMAL(18,2) DEFAULT 0,
             quantidade_devolvida DECIMAL(18,3) DEFAULT 0,
             litro_devolvido DECIMAL(18,3) DEFAULT 0,
@@ -1236,10 +715,7 @@ def ensure_schema():
             INDEX idx_vendas_relatorio_itens_vendedor (import_id, vendedor_key_upper),
             INDEX idx_vendas_relatorio_itens_data (import_id, data_ref),
             INDEX idx_vendas_relatorio_itens_nf (import_id, numero_nf),
-            INDEX idx_vendas_relatorio_itens_cliente (import_id, cliente_norm),
-            INDEX idx_vendas_relatorio_itens_data_vendedor (import_id, data_ref, vendedor_key_upper),
-            INDEX idx_vendas_relatorio_itens_data_cliente (import_id, data_ref, cliente_norm),
-            INDEX idx_vendas_relatorio_itens_data_grupo (import_id, data_ref, grupo_norm)
+            INDEX idx_vendas_relatorio_itens_cliente (import_id, cliente_norm)
         )
         """)
 
@@ -1298,32 +774,7 @@ def ensure_schema():
         except Exception:
             pass
         try:
-            cur.execute("ALTER TABLE abastecimentos ADD COLUMN combustivel_tipo VARCHAR(20) DEFAULT 'diesel_s10'")
-        except Exception:
-            pass
-        try:
-            cur.execute("""
-                UPDATE abastecimentos
-                SET combustivel_tipo = CASE
-                    WHEN LOWER(TRIM(COALESCE(combustivel_tipo, ''))) IN ('arla', 'arla32', 'arla 32') THEN 'arla'
-                    WHEN LOWER(TRIM(COALESCE(combustivel_tipo, ''))) IN (
-                        'gasolina', 'gasolina comum', 'gasolina c', 'gasolina c comum'
-                    ) THEN 'gasolina'
-                    WHEN LOWER(TRIM(COALESCE(combustivel_tipo, ''))) IN (
-                        'etanol', 'etanol comum', 'etanol hidratado',
-                        'etanol hidratado comum', 'alcool', 'álcool'
-                    ) THEN 'etanol'
-                    WHEN LOWER(TRIM(COALESCE(combustivel_tipo, ''))) IN (
-                        'diesel_500', 'diesel_s500', 'diesel 500', 'diesel s500', 'diesel s-500',
-                        'diesel500', 'diesels500', 's500', 's-500'
-                    ) THEN 'diesel_500'
-                    ELSE 'diesel_s10'
-                END
-                WHERE combustivel_tipo IS NULL
-                   OR LOWER(TRIM(combustivel_tipo)) NOT IN (
-                       'diesel_s10', 'diesel_500', 'gasolina', 'etanol', 'arla'
-                   )
-            """)
+            cur.execute("ALTER TABLE abastecimentos ADD COLUMN combustivel_tipo VARCHAR(20) DEFAULT 'diesel'")
         except Exception:
             pass
         try:
@@ -1363,10 +814,6 @@ def ensure_schema():
         except Exception:
             pass
         try:
-            cur.execute("ALTER TABLE fretes ADD INDEX idx_fretes_entregador (entregador_id)")
-        except Exception:
-            pass
-        try:
             cur.execute("ALTER TABLE fretes ADD COLUMN cidade VARCHAR(180) DEFAULT ''")
         except Exception:
             pass
@@ -1399,247 +846,11 @@ def ensure_schema():
         except Exception:
             pass
         try:
-            cur.execute("ALTER TABLE fretes ADD COLUMN arquivado TINYINT(1) NOT NULL DEFAULT 0")
-        except Exception:
-            pass
-        try:
             cur.execute("ALTER TABLE fretes ADD INDEX idx_fretes_status (status)")
         except Exception:
             pass
         try:
             cur.execute("ALTER TABLE fretes ADD INDEX idx_fretes_finalizado_em (finalizado_em)")
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE cargas ADD COLUMN cidade VARCHAR(180) DEFAULT ''")
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE cargas ADD COLUMN rota VARCHAR(220) DEFAULT ''")
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE cargas ADD COLUMN veiculo_numero VARCHAR(40) DEFAULT ''")
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE cargas ADD COLUMN origem_csv VARCHAR(255) DEFAULT ''")
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE cargas ADD COLUMN registros_importados INT DEFAULT 0")
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE cargas ADD COLUMN clientes_distintos INT DEFAULT 0")
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE cargas ADD COLUMN quantidade_total DECIMAL(12,3) DEFAULT 0")
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE cargas ADD COLUMN litros_total DECIMAL(12,3) DEFAULT 0")
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE cargas ADD COLUMN peso_total DECIMAL(12,3) DEFAULT 0")
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE cargas ADD COLUMN valor_total DECIMAL(14,2) DEFAULT 0")
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE cargas ADD COLUMN atualizado_em DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP")
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE cargas ADD COLUMN arquivo_origem VARCHAR(255) DEFAULT ''")
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE cargas ADD COLUMN tipo_importacao VARCHAR(30) DEFAULT 'manual'")
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE cargas ADD COLUMN mapa_numero VARCHAR(80) DEFAULT ''")
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE cargas ADD COLUMN data_carga DATE NULL")
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE cargas ADD COLUMN numero_entregas INT DEFAULT 0")
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE cargas ADD COLUMN volumes_total DECIMAL(12,3) DEFAULT 0")
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE cargas ADD COLUMN valor_bonificacao DECIMAL(14,2) DEFAULT 0")
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE cargas ADD COLUMN estoque_baixado_em DATETIME NULL")
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE cargas ADD COLUMN estoque_baixado_por VARCHAR(180) DEFAULT ''")
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE cargas ADD INDEX idx_cargas_cidade (cidade)")
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE cargas ADD INDEX idx_cargas_veiculo_numero (veiculo_numero)")
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE cargas ADD INDEX idx_cargas_tipo_importacao (tipo_importacao)")
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE cargas ADD INDEX idx_cargas_mapa_numero (mapa_numero)")
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE cargas ADD INDEX idx_cargas_estoque_baixado_em (estoque_baixado_em)")
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE pontos_venda ADD COLUMN vendedor_norm VARCHAR(255) NOT NULL DEFAULT ''")
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE pontos_venda ADD COLUMN cliente_norm VARCHAR(255) NOT NULL DEFAULT ''")
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE pontos_venda ADD COLUMN rota_norm VARCHAR(255) NOT NULL DEFAULT ''")
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE pontos_venda ADD COLUMN visita_periodicidade VARCHAR(20) NOT NULL DEFAULT 'semanal'")
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE pontos_venda ADD COLUMN dia_semana INT NOT NULL DEFAULT 0")
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE pontos_venda ADD COLUMN data_base DATE NULL")
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE pontos_venda ADD COLUMN observacao VARCHAR(255) DEFAULT ''")
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE pontos_venda ADD COLUMN ativo TINYINT(1) NOT NULL DEFAULT 1")
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE pontos_venda ADD COLUMN criado_em DATETIME DEFAULT CURRENT_TIMESTAMP")
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE pontos_venda ADD COLUMN atualizado_em DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP")
-        except Exception:
-            pass
-        try:
-            cur.execute("UPDATE pontos_venda SET vendedor_norm=LOWER(TRIM(vendedor)), cliente_norm=LOWER(TRIM(cliente)), rota_norm=LOWER(TRIM(rota)) WHERE COALESCE(vendedor_norm,'')='' AND COALESCE(cliente_norm,'')='' AND COALESCE(rota_norm,'')=''")
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE pontos_venda ADD INDEX idx_pontos_venda_vendedor (vendedor_norm)")
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE pontos_venda ADD INDEX idx_pontos_venda_cliente (cliente_norm)")
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE pontos_venda ADD INDEX idx_pontos_venda_rota (rota_norm)")
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE pontos_venda ADD INDEX idx_pontos_venda_periodicidade (visita_periodicidade)")
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE pontos_venda ADD INDEX idx_pontos_venda_dia_semana (dia_semana)")
-        except Exception:
-            pass
-        try:
-            cur.execute("""
-            CREATE TABLE IF NOT EXISTS cargas_import_linhas (
-                id INT NOT NULL AUTO_INCREMENT,
-                carga_id INT NOT NULL,
-                linha_num INT DEFAULT 0,
-                cliente VARCHAR(255) DEFAULT '',
-                cidade VARCHAR(180) DEFAULT '',
-                rota VARCHAR(220) DEFAULT '',
-                veiculo_numero VARCHAR(40) DEFAULT '',
-                numero_nf VARCHAR(80) DEFAULT '',
-                produto VARCHAR(255) DEFAULT '',
-                quantidade DECIMAL(12,3) DEFAULT 0,
-                litro DECIMAL(12,3) DEFAULT 0,
-                peso DECIMAL(12,3) DEFAULT 0,
-                valor_venda DECIMAL(14,2) DEFAULT 0,
-                dados_json LONGTEXT NOT NULL,
-                criado_em DATETIME DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (id),
-                KEY idx_cargas_import_linhas_carga (carga_id),
-                KEY idx_cargas_import_linhas_cidade (cidade),
-                KEY idx_cargas_import_linhas_cliente (cliente),
-                KEY idx_cargas_import_linhas_nf (numero_nf),
-                CONSTRAINT fk_cargas_import_linhas_carga FOREIGN KEY (carga_id) REFERENCES cargas (id) ON DELETE CASCADE
-            )
-            """)
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE cargas_import_linhas ADD COLUMN veiculo_numero VARCHAR(40) DEFAULT ''")
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE cargas_import_linhas ADD INDEX idx_cargas_import_linhas_veiculo (veiculo_numero)")
-        except Exception:
-            pass
-        try:
-            cur.execute("""
-            CREATE TABLE IF NOT EXISTS cargas_estoque_itens (
-                id INT AUTO_INCREMENT PRIMARY KEY,
-                carga_id INT NOT NULL,
-                produto_id INT NULL,
-                item_seq INT DEFAULT 0,
-                grupo_produto VARCHAR(120) DEFAULT '',
-                codigo_produto VARCHAR(80) DEFAULT '',
-                codigo_barras VARCHAR(120) DEFAULT '',
-                nome_produto VARCHAR(255) NOT NULL,
-                embalagem VARCHAR(60) DEFAULT '',
-                unidade_embalagem VARCHAR(20) DEFAULT '',
-                quantidade_embalagem DECIMAL(12,3) DEFAULT 0,
-                unidade_solta VARCHAR(20) DEFAULT '',
-                quantidade_solta DECIMAL(12,3) DEFAULT 0,
-                fator_embalagem DECIMAL(12,3) DEFAULT 1,
-                quantidade_total DECIMAL(12,3) DEFAULT 0,
-                estoque_movimento_id INT NULL,
-                baixado_em DATETIME NULL,
-                dados_json LONGTEXT NULL,
-                criado_em DATETIME DEFAULT CURRENT_TIMESTAMP,
-                INDEX idx_cargas_estoque_itens_carga (carga_id),
-                INDEX idx_cargas_estoque_itens_produto (produto_id),
-                INDEX idx_cargas_estoque_itens_codigo (codigo_produto),
-                INDEX idx_cargas_estoque_itens_barras (codigo_barras),
-                INDEX idx_cargas_estoque_itens_nome (nome_produto),
-                CONSTRAINT fk_cargas_estoque_itens_carga FOREIGN KEY (carga_id) REFERENCES cargas (id) ON DELETE CASCADE
-            )
-            """)
         except Exception:
             pass
         try:
@@ -1668,10 +879,6 @@ def ensure_schema():
             pass
         try:
             cur.execute("ALTER TABLE estoque_movimentos ADD COLUMN codigo_barras VARCHAR(120) DEFAULT ''")
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE estoque_movimentos ADD COLUMN codigo_produto_nfe VARCHAR(120) DEFAULT ''")
         except Exception:
             pass
         try:
@@ -1719,44 +926,6 @@ def ensure_schema():
         except Exception:
             pass
         try:
-            cur.execute("ALTER TABLE estoque_movimentos ADD INDEX idx_estoque_movimentos_codigo_produto_nfe (codigo_produto_nfe)")
-        except Exception:
-            pass
-        try:
-            cur.execute(
-                """
-                ALTER TABLE estoque_movimentos
-                ADD UNIQUE INDEX uq_estoque_movimentos_referencia
-                    (referencia_tipo, referencia_id)
-                """
-            )
-        except Exception:
-            pass
-        for ddl in (
-            "ALTER TABLE estoque_xml_frete_vinculos ADD COLUMN veiculo_id INT NULL",
-            "ALTER TABLE estoque_xml_frete_vinculos ADD COLUMN placa_xml VARCHAR(20) DEFAULT ''",
-            "ALTER TABLE estoque_xml_frete_vinculos ADD COLUMN mapa_xml VARCHAR(80) DEFAULT ''",
-            "ALTER TABLE estoque_xml_frete_vinculos ADD COLUMN numero_caminhao_xml VARCHAR(40) DEFAULT ''",
-            "ALTER TABLE estoque_xml_frete_vinculos ADD COLUMN vinculacao_origem VARCHAR(30) DEFAULT 'manual'",
-            "ALTER TABLE estoque_xml_frete_vinculos ADD COLUMN frete_sugerido_id INT NULL",
-            "ALTER TABLE estoque_xml_frete_vinculos ADD COLUMN sugestao_confianca VARCHAR(20) DEFAULT ''",
-        ):
-            try:
-                cur.execute(ddl)
-            except Exception:
-                pass
-        for ddl in (
-            "ALTER TABLE estoque_xml_frete_pre_vinculos ADD COLUMN dispensa_frete TINYINT(1) NOT NULL DEFAULT 0",
-            "ALTER TABLE estoque_xml_frete_pre_vinculos ADD COLUMN tipo_transporte VARCHAR(30) DEFAULT ''",
-            "ALTER TABLE estoque_xml_frete_pre_vinculos ADD COLUMN origem_decisao_logistica VARCHAR(30) DEFAULT ''",
-            "ALTER TABLE estoque_xml_frete_pre_vinculos ADD COLUMN motivo_decisao_logistica VARCHAR(500) DEFAULT ''",
-            "ALTER TABLE estoque_xml_frete_pre_vinculos ADD COLUMN usuario_decisao_logistica VARCHAR(180) DEFAULT ''",
-        ):
-            try:
-                cur.execute(ddl)
-            except Exception:
-                pass
-        try:
             cur.execute("ALTER TABLE estoque_produtos ADD COLUMN codigo_barras VARCHAR(120) DEFAULT ''")
         except Exception:
             pass
@@ -1766,14 +935,6 @@ def ensure_schema():
             pass
         try:
             cur.execute("ALTER TABLE estoque_produtos ADD COLUMN nome_produto VARCHAR(255) NOT NULL")
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE estoque_produtos ADD COLUMN grupo_estoque VARCHAR(30) DEFAULT ''")
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE estoque_produtos ADD COLUMN produto_base_nome VARCHAR(255) DEFAULT ''")
         except Exception:
             pass
         try:
@@ -1798,14 +959,6 @@ def ensure_schema():
             pass
         try:
             cur.execute("ALTER TABLE estoque_produtos ADD COLUMN atualizado_em DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP")
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE estoque_produtos ADD INDEX idx_estoque_produtos_grupo_estoque (grupo_estoque)")
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE estoque_produtos ADD INDEX idx_estoque_produtos_produto_base_nome (produto_base_nome)")
         except Exception:
             pass
         try:
@@ -2045,26 +1198,6 @@ def ensure_schema():
         except Exception:
             pass
         try:
-            cur.execute("ALTER TABLE vendas_relatorios_importados ADD COLUMN bonificacoes_cache_json LONGTEXT NULL")
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE vendas_relatorios_importados ADD COLUMN variacao_preco_cache_json LONGTEXT NULL")
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE vendas_relatorios_importados ADD COLUMN mix_embalagens_cache_json LONGTEXT NULL")
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE vendas_relatorios_importados ADD COLUMN dashboard_vendas_json LONGTEXT NULL")
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE vendas_relatorios_importados ADD COLUMN dashboard_vendas_painel_json LONGTEXT NULL")
-        except Exception:
-            pass
-        try:
             cur.execute("ALTER TABLE vendas_relatorios_importados ADD COLUMN source_name VARCHAR(255) NOT NULL DEFAULT ''")
         except Exception:
             pass
@@ -2078,70 +1211,6 @@ def ensure_schema():
             pass
         try:
             cur.execute("ALTER TABLE vendas_relatorio_itens ADD COLUMN cliente_norm VARCHAR(255) DEFAULT ''")
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE vendas_relatorio_itens ADD COLUMN grupo_raw VARCHAR(180) DEFAULT ''")
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE vendas_relatorio_itens ADD COLUMN grupo_norm VARCHAR(180) DEFAULT ''")
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE vendas_relatorio_itens ADD COLUMN categoria_norm VARCHAR(180) DEFAULT ''")
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE vendas_relatorio_itens ADD COLUMN caixa_fisica DECIMAL(18,3) DEFAULT 0")
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE vendas_relatorio_itens ADD COLUMN bonificacao DECIMAL(18,2) DEFAULT 0")
-        except Exception:
-            pass
-        try:
-            cur.execute("ALTER TABLE vendas_relatorio_itens ADD COLUMN tab_venda INT DEFAULT 0")
-        except Exception:
-            pass
-        for stmt in (
-            "ALTER TABLE vendas_relatorio_itens ADD INDEX idx_vendas_relatorio_itens_data_vendedor (import_id, data_ref, vendedor_key_upper)",
-            "ALTER TABLE vendas_relatorio_itens ADD INDEX idx_vendas_relatorio_itens_data_cliente (import_id, data_ref, cliente_norm)",
-            "ALTER TABLE vendas_relatorio_itens ADD INDEX idx_vendas_relatorio_itens_data_grupo (import_id, data_ref, grupo_norm)",
-        ):
-            try:
-                cur.execute(stmt)
-            except Exception:
-                pass
-        try:
-            cur.execute(
-                """
-                UPDATE vendas_relatorio_itens
-                SET tab_venda = CASE
-                    WHEN tab_venda IS NOT NULL AND tab_venda IN (1, 2, 91) THEN tab_venda
-                    WHEN UPPER(COALESCE(tipo_operacao, '')) = 'BON' OR UPPER(COALESCE(condicao, '')) = 'O' THEN 91
-                    WHEN UPPER(COALESCE(condicao, '')) = 'A' THEN 1
-                    WHEN UPPER(COALESCE(condicao, '')) = 'P' THEN 2
-                    ELSE 0
-                END
-                WHERE tab_venda IS NULL OR tab_venda = 0
-                """
-            )
-        except Exception:
-            pass
-        try:
-            cur.execute(
-                """
-                UPDATE fretes f
-                JOIN cargas c ON c.id = f.carga_id
-                LEFT JOIN veiculos v ON TRIM(COALESCE(v.nome, '')) = TRIM(COALESCE(c.veiculo_numero, ''))
-                    OR TRIM(COALESCE(v.placa, '')) = TRIM(COALESCE(c.veiculo_numero, ''))
-                SET f.veiculo_id = v.id
-                WHERE (f.veiculo_id IS NULL OR f.veiculo_id = 0)
-                  AND TRIM(COALESCE(c.veiculo_numero, '')) <> ''
-                  AND v.id IS NOT NULL
-                """
-            )
         except Exception:
             pass
         _sincronizar_usuarios_sip(conn)
@@ -2215,1574 +1284,6 @@ def _as_date(v):
     except Exception:
         return None
 
-def _normalizar_nome_local(v):
-    s = re.sub(r"\s+", " ", _as_str(v)).strip()
-    if not s:
-        return ""
-    pequenos = {"da", "de", "do", "das", "dos", "e"}
-    partes = []
-    for token in s.split(" "):
-        token_lower = token.lower()
-        if token_lower in pequenos:
-            partes.append(token_lower)
-            continue
-        subpartes = re.split(r"([-/])", token_lower)
-        reconstruido = []
-        for sub in subpartes:
-            if not sub or sub in {"-", "/"}:
-                reconstruido.append(sub)
-            else:
-                reconstruido.append(sub[:1].upper() + sub[1:])
-        partes.append("".join(reconstruido))
-    return " ".join(partes).strip()
-
-def _normalizar_chave_texto(v):
-    s = unicodedata.normalize("NFKD", _as_str(v))
-    s = "".join(ch for ch in s if not unicodedata.combining(ch))
-    return re.sub(r"\s+", " ", s).strip().casefold()
-
-PONTOS_VENDA_DIAS_SEMANA = [
-    "Segunda-feira",
-    "Terca-feira",
-    "Quarta-feira",
-    "Quinta-feira",
-    "Sexta-feira",
-    "Sabado",
-    "Domingo",
-]
-
-def _pv_texto_normalizado(v):
-    return _normalizar_chave_texto(v)
-
-def _pv_periodicidade_normalizada(v):
-    texto = _pv_texto_normalizado(v)
-    if texto in {"quinzenal", "quinzena", "biweekly", "cada 15 dias", "15 dias"}:
-        return "quinzenal"
-    return "semanal"
-
-def _pv_dia_semana_normalizado(v):
-    if v is None:
-        return None
-    if isinstance(v, bool):
-        return None
-    try:
-        n = int(str(v).strip())
-        if 1 <= n <= 7:
-            return n - 1
-        if 0 <= n <= 6:
-            return n
-    except Exception:
-        pass
-    texto = _pv_texto_normalizado(v)
-    mapa = {
-        "seg": 0,
-        "segunda": 0,
-        "segunda-feira": 0,
-        "ter": 1,
-        "terca": 1,
-        "terca-feira": 1,
-        "quarta": 2,
-        "quarta-feira": 2,
-        "qui": 3,
-        "quinta": 3,
-        "quinta-feira": 3,
-        "sex": 4,
-        "sexta": 4,
-        "sexta-feira": 4,
-        "sab": 5,
-        "sabado": 5,
-        "sábado": 5,
-        "dom": 6,
-        "domingo": 6,
-    }
-    for chave, valor in mapa.items():
-        if texto.startswith(chave):
-            return valor
-    return None
-
-def _pv_dia_semana_label(v):
-    idx = _pv_dia_semana_normalizado(v)
-    if idx is None:
-        return "Nao informado"
-    return PONTOS_VENDA_DIAS_SEMANA[idx]
-
-def _pv_csv_row_map(row):
-    out = {}
-    for k, v in (row or {}).items():
-        out[_pv_texto_normalizado(k)] = _as_str(v).strip()
-    return out
-
-def _pv_csv_val(row_map, *keys, default=""):
-    for key in keys:
-        k = _pv_texto_normalizado(key)
-        if k in row_map and row_map[k] != "":
-            return row_map[k]
-    return default
-
-def _pv_chave_composta(vendedor="", cliente="", rota=""):
-    partes = [_pv_texto_normalizado(vendedor), _pv_texto_normalizado(cliente), _pv_texto_normalizado(rota)]
-    return " | ".join([p for p in partes if p])
-
-def _pv_similaridade(texto_a, texto_b):
-    a = _pv_texto_normalizado(texto_a)
-    b = _pv_texto_normalizado(texto_b)
-    if not a or not b:
-        return 0.0
-    if a == b:
-        return 1.0
-    if a in b or b in a:
-        return 0.95
-    return SequenceMatcher(None, a, b).ratio()
-
-def _pv_data_base_normalizada(v):
-    if not v:
-        return None
-    if isinstance(v, datetime.date):
-        return v
-    texto = _as_str(v).strip()
-    if not texto:
-        return None
-    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y"):
-        try:
-            return datetime.datetime.strptime(texto[:10], fmt).date()
-        except Exception:
-            pass
-    parsed = _parse_data_br(texto)
-    return parsed
-
-def _pv_publico_row(row):
-    return {
-        "id": _as_int(row.get("id"), 0),
-        "vendedor": _as_str(row.get("vendedor")),
-        "cliente": _as_str(row.get("cliente")),
-        "rota": _as_str(row.get("rota")),
-        "visita_periodicidade": _pv_periodicidade_normalizada(row.get("visita_periodicidade")),
-        "visita_periodicidade_label": "Quinzenal" if _pv_periodicidade_normalizada(row.get("visita_periodicidade")) == "quinzenal" else "Semanal",
-        "dia_semana": _as_int(row.get("dia_semana"), 0),
-        "dia_semana_label": _pv_dia_semana_label(row.get("dia_semana")),
-        "data_base": _fmt_date(row.get("data_base")),
-        "ativo": bool(_as_int(row.get("ativo"), 1)),
-        "observacao": _as_str(row.get("observacao")),
-        "criado_em": _fmt_dt(row.get("criado_em")),
-        "atualizado_em": _fmt_dt(row.get("atualizado_em")),
-    }
-
-def _pv_encontrar_similar(cur, vendedor="", cliente="", rota="", excluir_id=None):
-    cur.execute("""
-        SELECT id, vendedor, cliente, rota, visita_periodicidade, dia_semana, data_base, observacao, ativo, criado_em, atualizado_em
-        FROM pontos_venda
-    """)
-    alvo = _pv_chave_composta(vendedor, cliente, rota)
-    melhor = None
-    melhor_score = 0.0
-    for row in (cur.fetchall() or []):
-        if excluir_id is not None and _as_int(row.get("id"), 0) == _as_int(excluir_id, 0):
-            continue
-        cand = _pv_chave_composta(row.get("vendedor"), row.get("cliente"), row.get("rota"))
-        score = _pv_similaridade(alvo, cand)
-        if score >= 0.88 and score > melhor_score:
-            melhor = row
-            melhor_score = score
-    if melhor:
-        return _pv_publico_row(melhor) | {"similaridade": round(melhor_score, 3)}
-    return None
-
-def _pv_data_visita_na_semana(row, semana_inicio):
-    dia_semana = _pv_dia_semana_normalizado(row.get("dia_semana"))
-    if dia_semana is None:
-        return None
-    return semana_inicio + datetime.timedelta(days=dia_semana)
-
-def _pv_visita_deve_ocorrer_na_semana(row, semana_inicio):
-    if not _as_bool(row.get("ativo"), True):
-        return False
-    periodicidade = _pv_periodicidade_normalizada(row.get("visita_periodicidade"))
-    if periodicidade != "quinzenal":
-        return True
-    data_base = _pv_data_base_normalizada(row.get("data_base"))
-    if not data_base:
-        return True
-    base_inicio = data_base - datetime.timedelta(days=data_base.weekday())
-    diff_dias = (semana_inicio - base_inicio).days
-    return abs(diff_dias // 7) % 2 == 0
-
-def _decodificar_bytes_csv(dados):
-    for encoding in ("utf-8-sig", "cp1252", "latin-1"):
-        try:
-            return dados.decode(encoding)
-        except Exception:
-            continue
-    return dados.decode("utf-8", errors="replace")
-
-def _carregar_csv_texto_fonte(file_storage=None):
-    if file_storage and getattr(file_storage, "filename", ""):
-        dados = file_storage.read()
-        if not dados:
-            raise FileNotFoundError("Arquivo CSV vazio.")
-        return _decodificar_bytes_csv(dados), secure_filename(file_storage.filename or "cargas.csv"), ""
-
-    pasta = "/media/SrvWin/CARGAS"
-    candidatos = []
-    if os.path.isdir(pasta):
-        for nome in os.listdir(pasta):
-            if nome.lower().endswith(".csv"):
-                candidatos.append(os.path.join(pasta, nome))
-    if not candidatos:
-        raise FileNotFoundError("Nenhum CSV encontrado em /media/SrvWin/CARGAS.")
-
-    candidatos.sort(key=lambda p: os.path.getmtime(p), reverse=True)
-    if any(os.path.basename(p).lower() == "sellout_d.csv" for p in candidatos):
-        for p in candidatos:
-            if os.path.basename(p).lower() == "sellout_d.csv":
-                candidatos = [p] + [x for x in candidatos if x != p]
-                break
-    source_path = candidatos[0]
-    with open(source_path, "rb") as f:
-        dados = f.read()
-    return _decodificar_bytes_csv(dados), os.path.basename(source_path), source_path
-
-def _csv_numero(valor, default=0.0):
-    s = _as_str(valor)
-    if not s:
-        return default
-    s = s.replace(" ", "")
-    if "," in s and "." in s:
-        if s.rfind(",") > s.rfind("."):
-            s = s.replace(".", "").replace(",", ".")
-        else:
-            s = s.replace(",", "")
-    elif "," in s:
-        s = s.replace(".", "").replace(",", ".")
-    try:
-        return float(s)
-    except Exception:
-        return default
-
-def _csv_date(valor):
-    s = _as_str(valor)
-    if not s:
-        return None
-    formatos = ("%d/%m/%Y", "%d/%m/%y", "%Y-%m-%d")
-    for fmt in formatos:
-        try:
-            return datetime.datetime.strptime(s[:10], fmt).date()
-        except Exception:
-            continue
-    return None
-
-def _csv_veiculo_numero(linha, override=""):
-    candidatos = [
-        override,
-        linha.get("Veiculo"),
-        linha.get("veiculo"),
-        linha.get("VEICULO"),
-        linha.get("Veículo"),
-        linha.get("veículo"),
-        linha.get("Numero Veiculo"),
-        linha.get("numero veiculo"),
-        linha.get("Número Veiculo"),
-        linha.get("número veiculo"),
-        linha.get("Numero do Veiculo"),
-        linha.get("numero do veiculo"),
-        linha.get("Número do Veiculo"),
-        linha.get("número do veiculo"),
-        linha.get("Nro Veiculo"),
-        linha.get("nro veiculo"),
-        linha.get("Nr Veiculo"),
-        linha.get("nr veiculo"),
-        linha.get("Num Veiculo"),
-        linha.get("num veiculo"),
-        linha.get("Número do veículo"),
-        linha.get("número do veículo"),
-    ]
-    for candidato in candidatos:
-        s = _as_str(candidato)
-        if not s:
-            continue
-        m = re.search(r"\d+", s)
-        if m:
-            return m.group(0).lstrip("0") or "0"
-        return _normalizar_chave_texto(s) or s
-    return ""
-
-def _resolver_veiculo_id_por_numero(cur, veiculo_numero):
-    numero = _as_str(veiculo_numero)
-    if not numero:
-        return None
-    cur.execute(
-        """
-        SELECT id
-        FROM veiculos
-        WHERE TRIM(COALESCE(nome, '')) = %s
-           OR TRIM(COALESCE(placa, '')) = %s
-        ORDER BY id ASC
-        LIMIT 1
-        """,
-        (numero, numero),
-    )
-    row = cur.fetchone() or {}
-    return _as_int(row.get("id"), 0) or None
-
-_MESES_PTBR = {
-    "janeiro": 1,
-    "fevereiro": 2,
-    "marco": 3,
-    "março": 3,
-    "abril": 4,
-    "maio": 5,
-    "junho": 6,
-    "julho": 7,
-    "agosto": 8,
-    "setembro": 9,
-    "outubro": 10,
-    "novembro": 11,
-    "dezembro": 12,
-}
-
-def _codigo_produto_chave(valor):
-    bruto = _as_str(valor).strip().upper()
-    if not bruto:
-        return ""
-    if re.fullmatch(r"\d+", bruto):
-        return bruto.lstrip("0") or "0"
-    return re.sub(r"\s+", "", bruto)
-
-def _codigo_produto_nfe_saida(valor):
-    bruto = re.sub(r"\D+", "", _as_str(valor))
-    if not bruto:
-        return _as_str(valor).strip()
-    if len(bruto) >= 6:
-        return bruto
-    return bruto.zfill(6)
-
-def _produto_nome_normalizado(valor):
-    texto = _as_str(valor)
-    if not texto:
-        return ""
-    texto = re.sub(r"^\s*0*[A-Z0-9]+\s*[-–]\s*", "", texto, flags=re.I)
-    texto = unicodedata.normalize("NFKD", texto)
-    texto = "".join(ch for ch in texto if not unicodedata.combining(ch))
-    texto = texto.upper()
-    texto = re.sub(r"[^A-Z0-9]+", " ", texto)
-    return re.sub(r"\s+", " ", texto).strip()
-
-_ESTOQUE_GRUPOS_ORDEM = {
-    "GFA": 0,
-    "PET": 1,
-    "AGUA": 2,
-    "OUTROS": 3,
-}
-
-def _estoque_grupo_normalizado(valor):
-    bruto = _as_str(valor).strip().upper()
-    if not bruto:
-        return ""
-    aliases = {
-        "GF": "GFA",
-        "GFA": "GFA",
-        "GRF": "GFA",
-        "GARRAFA": "GFA",
-        "GARRAFA RETORNAVEL": "GFA",
-        "RETORNAVEL": "GFA",
-        "RETORNAVEIS": "GFA",
-        "VIDRO": "GFA",
-        "PET": "PET",
-        "DESCARTAVEL": "PET",
-        "DESCARTAVEIS": "PET",
-        "AGUA": "AGUA",
-        "AGUAS": "AGUA",
-        "AGUA MINERAL": "AGUA",
-        "OUTRO": "OUTROS",
-        "OUTROS": "OUTROS",
-        "MATERIA PRIMA": "OUTROS",
-        "MATERIA-PRIMA": "OUTROS",
-        "MATERIA PRIMA E INSUMOS": "OUTROS",
-        "EXPEDIENTE": "OUTROS",
-    }
-    return aliases.get(bruto, bruto if bruto in _ESTOQUE_GRUPOS_ORDEM else "")
-
-def _estoque_grupo_ordem(valor):
-    return _ESTOQUE_GRUPOS_ORDEM.get(_estoque_grupo_normalizado(valor), 99)
-
-def _estoque_grupo_inferido(nome_produto="", codigo_produto_nfe="", grupo_estoque=""):
-    grupo_exp = _estoque_grupo_normalizado(grupo_estoque)
-    if grupo_exp:
-        return grupo_exp
-    texto = " ".join([
-        _as_str(nome_produto).upper(),
-        _as_str(codigo_produto_nfe).upper(),
-    ]).strip()
-    if not texto:
-        return "OUTROS"
-    if re.search(r"\bAGUA\b", texto):
-        return "AGUA"
-    if re.search(r"\bPREFORMA\b", texto) or re.search(r"\bPRE\s*-?\s*FORMA\b", texto):
-        return "OUTROS"
-    if re.search(r"\bPET\b", texto) or re.search(r"\bDESCART", texto):
-        return "PET"
-    if re.search(r"\bGFA\b", texto) or re.search(r"\bGRF\b", texto) or re.search(r"\bGARRAFA\b", texto) or re.search(r"\bVIDRO\b", texto):
-        return "GFA"
-    return "OUTROS"
-
-def _estoque_apresentacao_normalizada(*valores):
-    texto = " ".join(_as_str(v).upper() for v in valores if _as_str(v)).strip()
-    if not texto:
-        return ""
-    if "PALLET" in texto or re.search(r"\bPAL\b", texto):
-        return "PALLET"
-    if "CX48" in texto:
-        return "CX48"
-    if "CX24" in texto:
-        return "CX24"
-    if "CAIXA" in texto or re.search(r"\bCX\b", texto):
-        return "CX"
-    if "DUZIA" in texto or "DUZIAS" in texto or re.search(r"\bDZ\b", texto):
-        return "DZ"
-    if "PACOTE" in texto or "PACOTES" in texto or re.search(r"\bPCT\b", texto) or re.search(r"\bPAC\b", texto):
-        return "PCT"
-    if "FARDO" in texto or "FARDOS" in texto or re.search(r"\bFD\b", texto):
-        return "FD"
-    if "UNIDADE" in texto or "UNIDADES" in texto or re.search(r"\bUND\b", texto) or re.search(r"\bUN\b", texto):
-        return "UN"
-    return ""
-
-def _estoque_extrair_multiplicador(texto):
-    bruto = _as_str(texto).upper()
-    if not bruto:
-        return 0.0
-    for pattern in (
-        r"\b(?:C\/|COM|X)\s*0*([1-9]\d{0,2})\b",
-        r"\b(?:PCT|PAC|PACOTE|PACOTES|FD|FARDO|FARDOS|CX|CAIXA|CAIXAS)\s*0*([1-9]\d{0,2})\b",
-        r"\b0*([1-9]\d{0,2})\s*(?:UN|UND|UNIDADES|GARRAFAS|PACOTES|CAIXAS)\b",
-    ):
-        match = re.search(pattern, bruto)
-        if match:
-            return _as_float(match.group(1), 0.0)
-    return 0.0
-
-def _estoque_base_nome_inferido(nome_produto="", grupo_estoque="", produto_base_nome=""):
-    base_exp = _as_str(produto_base_nome).strip()
-    if base_exp:
-        return base_exp
-    nome = _as_str(nome_produto).strip()
-    grupo = _estoque_grupo_inferido(nome_produto=nome, grupo_estoque=grupo_estoque)
-    texto = nome.upper()
-    if grupo == "PET":
-        if re.search(r"\b2\s*L(T)?\b|\b2LT\b", texto):
-            return "PET 2L"
-        if re.search(r"\b600\s*ML\b|\bPET\s*600\b", texto):
-            return "PET 600ML"
-        if re.search(r"\b200\s*ML\b|\bPET\s*200\b", texto):
-            return "PET 200ML"
-    if grupo == "GFA":
-        if re.search(r"\b600\s*ML\b|\bGFA\s*600\b|\bGRF\s*600\b", texto):
-            return "GFA 600ML"
-        if re.search(r"\b200\s*ML\b|\bGFA\s*200\b|\bGRF\s*200\b", texto):
-            return "GFA 200ML"
-    if grupo == "AGUA":
-        if re.search(r"\b510\s*ML\b", texto):
-            return "AGUA 510ML"
-        return "AGUA"
-
-    tokens = _produto_nome_normalizado(nome).split()
-    remover = {
-        "UN", "UND", "UNIDADE", "UNIDADES",
-        "DZ", "DUZIA", "DUZIAS",
-        "CX", "CX24", "CX48", "CAIXA", "CAIXAS",
-        "PCT", "PAC", "PACOTE", "PACOTES",
-        "FD", "FARDO", "FARDOS",
-        "PAL", "PALLET", "PALLETS",
-    }
-    remover_numeros = {"9", "12", "24", "35", "48", "80"}
-    tokens = [tok for tok in tokens if tok not in remover and tok not in remover_numeros]
-    base = " ".join(tokens).strip()
-    return base or nome or "PRODUTO"
-
-def _estoque_produto_meta(row):
-    grupo_exp = _estoque_grupo_normalizado(row.get("grupo_estoque"))
-    grupo = grupo_exp or _estoque_grupo_inferido(
-        nome_produto=row.get("nome_produto"),
-        codigo_produto_nfe=row.get("codigo_produto_nfe"),
-    )
-    base_exp = _as_str(row.get("produto_base_nome")).strip()
-    base_nome = base_exp or _estoque_base_nome_inferido(
-        nome_produto=row.get("nome_produto"),
-        grupo_estoque=grupo,
-        produto_base_nome=row.get("produto_base_nome"),
-    )
-    base_key_raw = _produto_nome_normalizado(base_nome) or _produto_nome_normalizado(row.get("nome_produto"))
-    if not base_key_raw:
-        base_key_raw = _codigo_produto_chave(row.get("codigo_produto_nfe")) or _normalizar_codigo_barras(row.get("codigo_barras")) or "PRODUTO"
-    return {
-        "grupo_estoque": grupo or "OUTROS",
-        "produto_base_nome": base_nome or _as_str(row.get("nome_produto")) or "Produto",
-        "produto_base_key": f"{grupo or 'OUTROS'}:{base_key_raw}",
-        "cadastro_explicitado": bool(grupo_exp and base_exp and _as_float(row.get("fator_embalagem_padrao"), 0.0) > 0),
-    }
-
-def _extrair_codigo_produto_texto(valor):
-    texto = _as_str(valor).strip()
-    if not texto:
-        return ""
-    match = re.match(r"^\s*0*([A-Z0-9]+)\s*[-–]\s*", texto, re.I)
-    if match:
-        return _codigo_produto_chave(match.group(1))
-    return ""
-
-def _fator_base_produto(nome_produto="", embalagem="", unidade_ref="", grupo_produto=""):
-    grupo = _estoque_grupo_inferido(nome_produto=nome_produto, grupo_estoque=grupo_produto)
-    unidade = _estoque_apresentacao_normalizada(unidade_ref, embalagem, nome_produto)
-    texto = " ".join([
-        _as_str(nome_produto).upper(),
-        _as_str(embalagem).upper(),
-        _as_str(grupo_produto).upper(),
-    ]).strip()
-    multiplicador = _estoque_extrair_multiplicador(texto)
-
-    if unidade == "UN":
-        return 1.0
-    if unidade == "DZ":
-        return 12.0
-    if grupo == "GFA":
-        if unidade == "PALLET":
-            return 35.0 * 24.0
-        if unidade in ("CX", "CX24", "CX48"):
-            return 24.0
-        return 12.0 if multiplicador <= 0 else multiplicador
-    if grupo == "PET":
-        pacote = multiplicador or (12.0 if re.search(r"\b12\b", texto) else (9.0 if re.search(r"\b9\b", texto) else 0.0))
-        if unidade == "PALLET":
-            return (pacote if pacote > 0 else 12.0) * 80.0
-        if unidade in ("PCT", "FD"):
-            return pacote if pacote > 0 else 12.0
-        if unidade in ("CX", "CX24", "CX48"):
-            return multiplicador if multiplicador > 0 else pacote
-        return 1.0
-    if grupo == "AGUA":
-        if unidade == "PALLET":
-            return multiplicador if multiplicador > 0 else 0.0
-        if unidade in ("PCT", "FD", "CX", "CX24", "CX48"):
-            return multiplicador if multiplicador > 0 else 12.0
-        return 1.0
-    if grupo == "OUTROS" and multiplicador > 0:
-        return multiplicador
-
-    match = re.search(r"\b(\d{1,2})\s*[Xx]\s*\d+(?:[.,]\d+)?\s*(?:ML|L|LT|LITROS?)\b", texto)
-    if match:
-        try:
-            return float(match.group(1))
-        except Exception:
-            pass
-
-    match = re.search(r"\b(\d{1,2})\s*[Xx]\s*\d{2,4}\b", texto)
-    if match:
-        try:
-            return float(match.group(1))
-        except Exception:
-            pass
-
-    if "GFA" in texto or "510ML" in texto or "200ML" in texto:
-        return 12.0
-    return 1.0
-
-def _valor_numerico_token(texto):
-    return _as_float_br(_as_str(texto), _as_float(_as_str(texto), 0.0))
-
-def _parse_token_qtd_unidade(texto):
-    match = re.fullmatch(r"\s*(\d+(?:[.,]\d+)?)\s+([A-Z]{2,4})\s*", _as_str(texto).upper())
-    if not match:
-        return 0.0, ""
-    return _valor_numerico_token(match.group(1)), _as_str(match.group(2)).upper()
-
-def _coletar_cidades_resumo_pdf(lines):
-    cidades = []
-    em_resumo = False
-    for raw in lines:
-        linha = _as_str(raw).strip()
-        up = linha.upper()
-        if "RESUMO DAS CIDADES ATENDIDAS" in up:
-            em_resumo = True
-            continue
-        if not em_resumo:
-            continue
-        if up.startswith("CIDADE") or up.startswith("UF ") or up.startswith("MAPAS"):
-            continue
-        match = re.match(r"^([A-ZÀ-Ú0-9 ./-]+?)\s+[A-Z]{2}\s+\d[\d.,]*\s+\d+\s+\d[\d.,]*\s*$", linha, re.I)
-        if not match:
-            continue
-        cidade = _normalizar_nome_local(match.group(1))
-        if cidade and cidade not in cidades:
-            cidades.append(cidade)
-    return cidades
-
-def _parse_data_ptbr_extenso(texto):
-    match = re.search(r"(\d{1,2})\s+de\s+([a-zç]+)\s+de\s+(\d{4})", _as_str(texto).lower())
-    if not match:
-        return None
-    dia = _as_int(match.group(1), 0)
-    mes = _MESES_PTBR.get(match.group(2))
-    ano = _as_int(match.group(3), 0)
-    if dia <= 0 or not mes or ano <= 0:
-        return None
-    try:
-        return datetime.date(ano, mes, dia)
-    except Exception:
-        return None
-
-def _rota_pdf_limpa(raw_text):
-    texto = _as_str(raw_text)
-    if not texto:
-        return ""
-    texto = re.sub(r"\s+", " ", texto)
-    texto = texto.replace(" / ", "/")
-    return texto.strip(" ,")
-
-def _parse_carga_pdf_page(page_text, source_name="", veiculo_override=""):
-    bruto = _as_str(page_text)
-    if not bruto:
-        return None
-
-    linhas = [linha.rstrip() for linha in bruto.splitlines() if _as_str(linha).strip()]
-    mapa_match = re.search(r"Mapa:\s*([0-9A-Z/-]+)", bruto, re.I)
-    mapa_numero = _as_str(mapa_match.group(1)) if mapa_match else ""
-    rota_match = re.search(r"Rota:\s*(.*?)\s+Separação Grupo(?: Carregamento)?", bruto, re.I | re.S)
-    rota = _rota_pdf_limpa(rota_match.group(1) if rota_match else "")
-    data_carga = _parse_data_ptbr_extenso(linhas[0] if linhas else "")
-    cidades = _coletar_cidades_resumo_pdf(linhas)
-    cidade_principal = cidades[0] if cidades else ""
-    veiculo_numero = _csv_veiculo_numero({}, veiculo_override)
-    if not veiculo_numero:
-        placa_match = re.search(r"Placa:\s*([A-Z0-9-]{5,10})", bruto, re.I)
-        veiculo_numero = _csv_veiculo_numero({"veiculo": placa_match.group(1) if placa_match else ""})
-
-    numero_entregas = _as_int(re.search(r"Número Entregas:\s*([0-9]+)", bruto, re.I).group(1), 0) if re.search(r"Número Entregas:\s*([0-9]+)", bruto, re.I) else 0
-    peso_total = _valor_numerico_token(re.search(r"Peso Total:\s*([0-9.,]+)", bruto, re.I).group(1)) if re.search(r"Peso Total:\s*([0-9.,]+)", bruto, re.I) else 0.0
-    volumes_total = _valor_numerico_token(re.search(r"Total dos Volumes:\s*([0-9.,]+)", bruto, re.I).group(1)) if re.search(r"Total dos Volumes:\s*([0-9.,]+)", bruto, re.I) else 0.0
-    valor_bonificacao = _valor_numerico_token(re.search(r"Valor Bonificação:\s*([0-9.,]+)", bruto, re.I).group(1)) if re.search(r"Valor Bonificação:\s*([0-9.,]+)", bruto, re.I) else 0.0
-    valor_liquido = _valor_numerico_token(re.search(r"Valor Total Liquido:\s*([0-9.,]+)", bruto, re.I).group(1)) if re.search(r"Valor Total Liquido:\s*([0-9.,]+)", bruto, re.I) else 0.0
-
-    grupo_atual = ""
-    itens = []
-    for raw in linhas:
-        linha = _as_str(raw).strip()
-        up = linha.upper()
-        if up.startswith("GRUPO C.:"):
-            grupo_atual = _as_str(linha.split(":", 1)[1]).strip()
-            continue
-        if not re.match(r"^\d{4,6}\s+", linha):
-            continue
-
-        colunas = [parte.strip() for parte in re.split(r"\s{2,}", linha) if _as_str(parte).strip()]
-        if len(colunas) < 2:
-            continue
-        codigo_produto = _codigo_produto_chave(colunas[0])
-        resto = colunas[1:]
-        tokens_qtd = []
-        while resto and re.fullmatch(r"\d+(?:[.,]\d+)?\s+[A-Z]{2,4}", resto[-1].upper()):
-            tokens_qtd.insert(0, resto.pop())
-
-        if not resto:
-            continue
-
-        embalagem = ""
-        if len(resto) >= 2:
-            nome_produto = " ".join(resto[:-1]).strip()
-            embalagem = resto[-1]
-        else:
-            nome_produto = resto[0]
-
-        qtd_embalagem = 0.0
-        unidade_embalagem = ""
-        qtd_solta = 0.0
-        unidade_solta = ""
-        if len(tokens_qtd) == 1:
-            qtd_tmp, und_tmp = _parse_token_qtd_unidade(tokens_qtd[0])
-            if und_tmp in ("DZ", "UN"):
-                qtd_solta, unidade_solta = qtd_tmp, und_tmp
-            else:
-                qtd_embalagem, unidade_embalagem = qtd_tmp, und_tmp
-        elif len(tokens_qtd) >= 2:
-            qtd_embalagem, unidade_embalagem = _parse_token_qtd_unidade(tokens_qtd[0])
-            qtd_solta, unidade_solta = _parse_token_qtd_unidade(tokens_qtd[1])
-
-        fator_embalagem = _fator_base_produto(
-            nome_produto=nome_produto,
-            embalagem=embalagem,
-            unidade_ref=unidade_embalagem or unidade_solta,
-            grupo_produto=grupo_atual,
-        )
-        fator_solta = _fator_base_produto(
-            nome_produto=nome_produto,
-            embalagem=embalagem,
-            unidade_ref=unidade_solta,
-            grupo_produto=grupo_atual,
-        )
-        quantidade_total = round((qtd_embalagem * fator_embalagem) + (qtd_solta * fator_solta), 3)
-        itens.append({
-            "item_seq": len(itens) + 1,
-            "grupo_produto": grupo_atual,
-            "codigo_produto": codigo_produto,
-            "nome_produto": nome_produto,
-            "embalagem": embalagem,
-            "unidade_embalagem": unidade_embalagem,
-            "quantidade_embalagem": qtd_embalagem,
-            "unidade_solta": unidade_solta,
-            "quantidade_solta": qtd_solta,
-            "fator_embalagem": fator_embalagem,
-            "quantidade_total": quantidade_total,
-            "dados_json": json.dumps({
-                "linha_bruta": linha,
-                "grupo_produto": grupo_atual,
-                "tokens_qtd": tokens_qtd,
-            }, ensure_ascii=False),
-        })
-
-    if not itens:
-        return None
-
-    nome_carga = rota or (f"Mapa {mapa_numero}" if mapa_numero else cidade_principal or "Carga PDF")
-    if mapa_numero and mapa_numero not in nome_carga:
-        nome_carga = f"Mapa {mapa_numero} - {nome_carga}"
-    quantidade_total = round(sum(_as_float(item.get("quantidade_total"), 0.0) for item in itens), 3)
-
-    return {
-        "mapa_numero": mapa_numero,
-        "nome_carga": nome_carga,
-        "cidade": cidade_principal,
-        "cidades": cidades,
-        "rota": rota,
-        "veiculo_numero": veiculo_numero,
-        "arquivo_origem": source_name,
-        "data_carga": data_carga or datetime.date.today(),
-        "numero_entregas": numero_entregas,
-        "peso_total": peso_total,
-        "volumes_total": volumes_total,
-        "valor_bonificacao": valor_bonificacao,
-        "valor_total": valor_liquido,
-        "quantidade_total": quantidade_total,
-        "itens": itens,
-    }
-
-def _parse_cargas_pdf_bytes(pdf_bytes, source_name="", veiculo_override=""):
-    texto = _extrair_texto_pdf_bytes(pdf_bytes)
-    if not _as_str(texto):
-        raise RuntimeError("Nao foi possivel extrair texto do PDF de cargas.")
-    paginas = []
-    for page_text in re.split(r"\f+", texto):
-        pagina = _parse_carga_pdf_page(page_text, source_name=source_name, veiculo_override=veiculo_override)
-        if pagina:
-            paginas.append(pagina)
-    if not paginas:
-        raise RuntimeError("O PDF informado nao trouxe cargas reconheciveis.")
-    return paginas
-
-def _carregar_arquivo_por_extensao(dirs, extensoes):
-    candidatos = []
-    for pasta in dirs:
-        if not pasta or not os.path.isdir(pasta):
-            continue
-        try:
-            for nome in os.listdir(pasta):
-                if any(nome.lower().endswith(ext.lower()) for ext in extensoes):
-                    candidatos.append(os.path.join(pasta, nome))
-        except Exception:
-            continue
-    if not candidatos:
-        raise FileNotFoundError("Nenhum arquivo encontrado para importacao.")
-    candidatos.sort(key=lambda p: os.path.getmtime(p), reverse=True)
-    caminho = candidatos[0]
-    with open(caminho, "rb") as f:
-        return f.read(), os.path.basename(caminho), caminho
-
-def _carregar_pdf_cargas_fonte(file_storage=None):
-    if file_storage and getattr(file_storage, "filename", ""):
-        dados = file_storage.read()
-        if not dados:
-            raise FileNotFoundError("Arquivo PDF vazio.")
-        return dados, secure_filename(file_storage.filename or "cargas.pdf"), ""
-    return _carregar_arquivo_por_extensao(CARGAS_IMPORT_PDF_DIRS, [".pdf"])
-
-def _carregar_xml_fabrica_fonte(file_storage=None):
-    if file_storage and getattr(file_storage, "filename", ""):
-        dados = file_storage.read()
-        if not dados:
-            raise FileNotFoundError("Arquivo XML vazio.")
-        return dados, secure_filename(file_storage.filename or "transferencia.xml"), ""
-    return _carregar_arquivo_por_extensao(CARGAS_IMPORT_XML_DIRS, [".xml"])
-
-def _buscar_produto_cadastro_por_referencias(cur, codigo_produto="", codigo_barras="", nome_produto=""):
-    codigo_barras = _normalizar_codigo_barras(codigo_barras)
-    codigo_produto = _codigo_produto_chave(codigo_produto)
-    nome_norm = _produto_nome_normalizado(nome_produto)
-    if codigo_barras:
-        cur.execute("""
-            SELECT id, codigo_barras, codigo_produto_nfe, nome_produto, grupo_estoque, produto_base_nome, unidade,
-                   embalagem_tipo_padrao, fator_embalagem_padrao, origem_cadastro, criado_em, atualizado_em
-            FROM estoque_produtos
-            WHERE codigo_barras=%s
-            ORDER BY id DESC
-            LIMIT 1
-        """, (codigo_barras,))
-        row = cur.fetchone()
-        if row:
-            return row
-    if codigo_produto:
-        cur.execute("""
-            SELECT id, codigo_barras, codigo_produto_nfe, nome_produto, unidade,
-                   embalagem_tipo_padrao, fator_embalagem_padrao, origem_cadastro, criado_em, atualizado_em
-            FROM estoque_produtos
-            WHERE TRIM(LEADING '0' FROM COALESCE(codigo_produto_nfe, ''))=%s
-            ORDER BY id DESC
-            LIMIT 1
-        """, (codigo_produto,))
-        row = cur.fetchone()
-        if row:
-            return row
-    if nome_norm:
-        cur.execute("""
-            SELECT id, codigo_barras, codigo_produto_nfe, nome_produto, unidade,
-                   embalagem_tipo_padrao, fator_embalagem_padrao, origem_cadastro, criado_em, atualizado_em
-            FROM estoque_produtos
-            ORDER BY id DESC
-        """)
-        for row in (cur.fetchall() or []):
-            if _produto_nome_normalizado(row.get("nome_produto")) == nome_norm:
-                return row
-    return None
-
-def _saldo_atual_produto_estoque(cur, codigo_barras="", codigo_produto_nfe="", nome_produto=""):
-    referencia = {
-        "codigo_barras": _normalizar_codigo_barras(codigo_barras),
-        "codigo_produto_nfe": _codigo_produto_nfe_saida(codigo_produto_nfe),
-        "nome_produto": _as_str(nome_produto),
-    }
-    if not (referencia["codigo_barras"] or referencia["codigo_produto_nfe"] or referencia["nome_produto"]):
-        return 0.0
-
-    meta_ref = _estoque_produto_meta(referencia)
-    payload = _estoque_resumo_produtos_data()
-    for item in (payload.get("rows") or []):
-        if _as_str(item.get("produto_base_key")) and _as_str(item.get("produto_base_key")) == _as_str(meta_ref.get("produto_base_key")):
-            return _as_float(item.get("quantidade_atual"), 0.0)
-        if referencia["codigo_barras"] and _normalizar_codigo_barras(item.get("codigo_barras")) == referencia["codigo_barras"]:
-            return _as_float(item.get("quantidade_atual"), 0.0)
-        if referencia["codigo_produto_nfe"] and _codigo_produto_chave(item.get("codigo_produto_nfe")) == _codigo_produto_chave(referencia["codigo_produto_nfe"]):
-            return _as_float(item.get("quantidade_atual"), 0.0)
-        if referencia["nome_produto"] and _produto_nome_normalizado(item.get("produto_base_nome") or item.get("nome_produto")) == _produto_nome_normalizado(referencia["nome_produto"]):
-            return _as_float(item.get("quantidade_atual"), 0.0)
-    return 0.0
-
-def _listar_itens_carga_estoque(cur, carga_id):
-    cur.execute("""
-        SELECT
-            id,
-            carga_id,
-            produto_id,
-            item_seq,
-            grupo_produto,
-            codigo_produto,
-            codigo_barras,
-            nome_produto,
-            embalagem,
-            unidade_embalagem,
-            quantidade_embalagem,
-            unidade_solta,
-            quantidade_solta,
-            fator_embalagem,
-            quantidade_total,
-            estoque_movimento_id,
-            baixado_em,
-            dados_json,
-            criado_em
-        FROM cargas_estoque_itens
-        WHERE carga_id=%s
-        ORDER BY item_seq ASC, id ASC
-    """, (carga_id,))
-    return cur.fetchall() or []
-
-def _baixar_estoque_carga(cur, carga_id, usuario="desconhecido"):
-    carga_id = _as_int(carga_id, 0)
-    if carga_id <= 0:
-        return {"ok": False, "motivo": "carga_invalida"}
-
-    cur.execute("""
-        SELECT id, nome, veiculo_numero, mapa_numero, estoque_baixado_em
-        FROM cargas
-        WHERE id=%s
-        LIMIT 1
-    """, (carga_id,))
-    carga = cur.fetchone() or {}
-    if not carga:
-        return {"ok": False, "motivo": "carga_nao_encontrada"}
-    if carga.get("estoque_baixado_em"):
-        return {
-            "ok": True,
-            "ja_baixada": True,
-            "carga_id": carga_id,
-            "nome": _as_str(carga.get("nome")),
-        }
-
-    itens = _listar_itens_carga_estoque(cur, carga_id)
-    if not itens:
-        return {"ok": False, "motivo": "sem_itens"}
-
-    total_itens = 0
-    insuficiencias = []
-    produtos_criados = 0
-    destino_setor = _as_str(carga.get("veiculo_numero")) or _as_str(carga.get("nome")) or "Caminhao"
-    numero_nota = f"CARGA-{_as_str(carga.get('mapa_numero')) or carga_id}"
-
-    for item in itens:
-        quantidade_total = _as_float(item.get("quantidade_total"), 0.0)
-        if quantidade_total <= 0:
-            quantidade_total = round(
-                (_as_float(item.get("quantidade_embalagem"), 0.0) * _as_float(item.get("fator_embalagem"), 1.0))
-                + (_as_float(item.get("quantidade_solta"), 0.0) * _fator_base_produto(
-                    nome_produto=item.get("nome_produto"),
-                    embalagem=item.get("embalagem"),
-                    unidade_ref=item.get("unidade_solta"),
-                    grupo_produto=item.get("grupo_produto"),
-                )),
-                3,
-            )
-        if quantidade_total <= 0:
-            continue
-
-        produto = _buscar_produto_cadastro_por_referencias(
-            cur,
-            codigo_produto=item.get("codigo_produto"),
-            codigo_barras=item.get("codigo_barras"),
-            nome_produto=item.get("nome_produto"),
-        )
-        produto_criado = False
-        if not produto:
-            produto, produto_criado = _obter_ou_criar_produto_estoque(
-                cur,
-                codigo_barras=item.get("codigo_barras"),
-                codigo_produto_nfe=_codigo_produto_nfe_saida(item.get("codigo_produto")),
-                nome_produto=item.get("nome_produto"),
-                unidade=item.get("embalagem") or item.get("unidade_embalagem") or item.get("unidade_solta"),
-                origem_cadastro="carga_pdf",
-            )
-        if produto_criado:
-            produtos_criados += 1
-
-        saldo_antes = _saldo_atual_produto_estoque(
-            cur,
-            codigo_barras=produto.get("codigo_barras") or item.get("codigo_barras"),
-            codigo_produto_nfe=produto.get("codigo_produto_nfe") or item.get("codigo_produto"),
-            nome_produto=produto.get("nome_produto") or item.get("nome_produto"),
-        )
-        saldo_depois = round(saldo_antes - quantidade_total, 3)
-        if saldo_depois < 0:
-            insuficiencias.append({
-                "produto": _as_str(produto.get("nome_produto") or item.get("nome_produto")),
-                "saldo_antes": round(saldo_antes, 3),
-                "quantidade_baixada": round(quantidade_total, 3),
-                "saldo_depois": saldo_depois,
-            })
-
-        cur.execute("""
-            INSERT INTO estoque_movimentos
-                (
-                    codigo_barras, codigo_produto_nfe, numero_nota, nome_produto, quantidade, valor_unitario, tipo_movimento,
-                    origem_setor, destino_setor, referencia_tipo, referencia_id, usuario_registro
-                )
-            VALUES
-                (%s, %s, %s, %s, %s, %s, 'saida', %s, %s, 'carga_pdf', %s, %s)
-        """, (
-            _normalizar_codigo_barras(produto.get("codigo_barras") or item.get("codigo_barras")),
-            _codigo_produto_nfe_saida(produto.get("codigo_produto_nfe") or item.get("codigo_produto")),
-            numero_nota,
-            _as_str(produto.get("nome_produto") or item.get("nome_produto")),
-            quantidade_total,
-            0.0,
-            "Almoxarifado",
-            destino_setor,
-            carga_id,
-            usuario or "desconhecido",
-        ))
-        movimento_id = _as_int(cur.lastrowid, 0)
-        cur.execute("""
-            UPDATE cargas_estoque_itens
-            SET produto_id=%s,
-                codigo_barras=%s,
-                estoque_movimento_id=%s,
-                baixado_em=NOW()
-            WHERE id=%s
-        """, (
-            _as_int(produto.get("id"), 0) or None,
-            _normalizar_codigo_barras(produto.get("codigo_barras") or item.get("codigo_barras")),
-            movimento_id or None,
-            _as_int(item.get("id"), 0),
-        ))
-        total_itens += 1
-
-    if total_itens <= 0:
-        return {"ok": False, "motivo": "sem_movimentos"}
-
-    cur.execute("""
-        UPDATE cargas
-        SET estoque_baixado_em=NOW(), estoque_baixado_por=%s
-        WHERE id=%s
-    """, (usuario or "desconhecido", carga_id))
-
-    return {
-        "ok": True,
-        "carga_id": carga_id,
-        "nome": _as_str(carga.get("nome")),
-        "itens_baixados": total_itens,
-        "produtos_criados": produtos_criados,
-        "insuficiencias": insuficiencias,
-        "ja_baixada": False,
-    }
-
-def _status_frete_gera_baixa_estoque(status):
-    return _as_str(status).lower() in ("carregado", "entregando", "retornando", "paradoCarregado".lower())
-
-def _sincronizar_baixa_estoque_frete(cur, antes, depois, usuario="desconhecido"):
-    carga_id = _as_int((depois or {}).get("carga_id"), 0)
-    if carga_id <= 0:
-        return None
-    status_antes = _as_str((antes or {}).get("status")).lower()
-    status_depois = _as_str((depois or {}).get("status")).lower()
-    if _status_frete_gera_baixa_estoque(status_depois) and not _status_frete_gera_baixa_estoque(status_antes):
-        return _baixar_estoque_carga(cur, carga_id, usuario=usuario)
-    return None
-
-def _importar_cargas_pdf_bytes(pdf_bytes, source_name="", veiculo_override="", usuario="desconhecido") -> dict:
-    paginas = _parse_cargas_pdf_bytes(pdf_bytes, source_name=source_name, veiculo_override=veiculo_override)
-    conn = get_conn()
-    cur = conn.cursor(dictionary=True)
-    criadas = 0
-    atualizadas = 0
-    fretes_criados = 0
-    fretes_atualizados = 0
-    cargas_baixadas = 0
-    try:
-        for pagina in paginas:
-            mapa_numero = _as_str(pagina.get("mapa_numero"))
-            cur.execute("""
-                SELECT *
-                FROM cargas
-                WHERE tipo_importacao='pdf'
-                  AND mapa_numero=%s
-                ORDER BY id DESC
-                LIMIT 1
-            """, (mapa_numero,))
-            existente = cur.fetchone()
-            if existente and existente.get("estoque_baixado_em"):
-                raise RuntimeError(f"A carga do mapa {mapa_numero or existente.get('id')} ja teve baixa no estoque e nao pode ser sobrescrita.")
-
-            payload = (
-                pagina.get("nome_carga"),
-                pagina.get("cidade"),
-                pagina.get("rota"),
-                pagina.get("veiculo_numero"),
-                source_name,
-                len(pagina.get("itens") or []),
-                0,
-                pagina.get("quantidade_total"),
-                0.0,
-                pagina.get("peso_total"),
-                pagina.get("valor_total"),
-                source_name,
-                "pdf",
-                mapa_numero,
-                pagina.get("data_carga"),
-                pagina.get("numero_entregas"),
-                pagina.get("volumes_total"),
-                pagina.get("valor_bonificacao"),
-            )
-
-            if existente:
-                carga_id = _as_int(existente.get("id"), 0)
-                cur.execute("""
-                    UPDATE cargas
-                    SET nome=%s,
-                        cidade=%s,
-                        rota=%s,
-                        veiculo_numero=%s,
-                        origem_csv=%s,
-                        registros_importados=%s,
-                        clientes_distintos=%s,
-                        quantidade_total=%s,
-                        litros_total=%s,
-                        peso_total=%s,
-                        valor_total=%s,
-                        arquivo_origem=%s,
-                        tipo_importacao=%s,
-                        mapa_numero=%s,
-                        data_carga=%s,
-                        numero_entregas=%s,
-                        volumes_total=%s,
-                        valor_bonificacao=%s,
-                        atualizado_em=NOW(),
-                        estoque_baixado_em=NULL,
-                        estoque_baixado_por=''
-                    WHERE id=%s
-                """, payload + (carga_id,))
-                atualizadas += 1
-            else:
-                cur.execute("""
-                    INSERT INTO cargas
-                        (
-                            nome, cidade, rota, veiculo_numero, origem_csv, registros_importados, clientes_distintos,
-                            quantidade_total, litros_total, peso_total, valor_total, arquivo_origem, tipo_importacao,
-                            mapa_numero, data_carga, numero_entregas, volumes_total, valor_bonificacao
-                        )
-                    VALUES
-                        (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                """, payload)
-                carga_id = _as_int(cur.lastrowid, 0)
-                criadas += 1
-
-            if carga_id <= 0:
-                continue
-
-            cur.execute("DELETE FROM cargas_estoque_itens WHERE carga_id=%s", (carga_id,))
-            for item in (pagina.get("itens") or []):
-                produto = _buscar_produto_cadastro_por_referencias(
-                    cur,
-                    codigo_produto=item.get("codigo_produto"),
-                    codigo_barras=item.get("codigo_barras"),
-                    nome_produto=item.get("nome_produto"),
-                )
-                if not produto:
-                    produto, _produto_criado = _obter_ou_criar_produto_estoque(
-                        cur,
-                        codigo_barras=item.get("codigo_barras"),
-                        codigo_produto_nfe=_codigo_produto_nfe_saida(item.get("codigo_produto")),
-                        nome_produto=item.get("nome_produto"),
-                        unidade=item.get("embalagem") or item.get("unidade_embalagem") or item.get("unidade_solta"),
-                        origem_cadastro="carga_pdf",
-                    )
-                fator_embalagem = _as_float(produto.get("fator_embalagem_padrao"), 0.0) or _as_float(item.get("fator_embalagem"), 1.0)
-                if fator_embalagem <= 0:
-                    fator_embalagem = _fator_base_produto(
-                        nome_produto=item.get("nome_produto"),
-                        embalagem=item.get("embalagem"),
-                        unidade_ref=item.get("unidade_embalagem") or item.get("unidade_solta"),
-                        grupo_produto=item.get("grupo_produto"),
-                    )
-                quantidade_total = round(
-                    (_as_float(item.get("quantidade_embalagem"), 0.0) * fator_embalagem)
-                    + (_as_float(item.get("quantidade_solta"), 0.0) * _fator_base_produto(
-                        nome_produto=item.get("nome_produto"),
-                        embalagem=item.get("embalagem"),
-                        unidade_ref=item.get("unidade_solta"),
-                        grupo_produto=item.get("grupo_produto"),
-                    )),
-                    3,
-                )
-                cur.execute("""
-                    INSERT INTO cargas_estoque_itens
-                        (
-                            carga_id, produto_id, item_seq, grupo_produto, codigo_produto, codigo_barras,
-                            nome_produto, embalagem, unidade_embalagem, quantidade_embalagem,
-                            unidade_solta, quantidade_solta, fator_embalagem, quantidade_total, dados_json
-                        )
-                    VALUES
-                        (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                """, (
-                    carga_id,
-                    _as_int(produto.get("id"), 0) or None,
-                    _as_int(item.get("item_seq"), 0),
-                    _as_str(item.get("grupo_produto")),
-                    _codigo_produto_nfe_saida(item.get("codigo_produto")),
-                    _normalizar_codigo_barras(produto.get("codigo_barras") or item.get("codigo_barras")),
-                    _as_str(produto.get("nome_produto") or item.get("nome_produto")),
-                    _as_str(item.get("embalagem")),
-                    _as_str(item.get("unidade_embalagem")),
-                    _as_float(item.get("quantidade_embalagem"), 0.0),
-                    _as_str(item.get("unidade_solta")),
-                    _as_float(item.get("quantidade_solta"), 0.0),
-                    fator_embalagem,
-                    quantidade_total,
-                    _as_str(item.get("dados_json")),
-                ))
-
-            veiculo_id_resolvido = _resolver_veiculo_id_por_numero(cur, pagina.get("veiculo_numero"))
-            cur.execute("SELECT id FROM fretes WHERE carga_id=%s ORDER BY id ASC LIMIT 1", (carga_id,))
-            frete_existente = cur.fetchone()
-            observacao = f"Mapa {mapa_numero or '-'} | {pagina.get('numero_entregas') or 0} entrega(s) | {round(_as_float(pagina.get('peso_total'), 0.0), 3)} kg"
-            if frete_existente:
-                frete_id = _as_int(frete_existente.get("id"), 0)
-                antes_frete = _buscar_frete_detalhado(cur, frete_id)
-                cur.execute("""
-                    UPDATE fretes
-                    SET nome=%s,
-                        cidade=%s,
-                        data_carga=%s,
-                        veiculo_id=%s,
-                        observacao=%s,
-                        peso=%s,
-                        qtd_entregas=%s
-                    WHERE id=%s
-                """, (
-                    pagina.get("nome_carga"),
-                    pagina.get("cidade"),
-                    pagina.get("data_carga"),
-                    veiculo_id_resolvido,
-                    observacao,
-                    pagina.get("peso_total"),
-                    pagina.get("numero_entregas"),
-                    frete_id,
-                ))
-                depois_frete = _buscar_frete_detalhado(cur, frete_id)
-                fretes_atualizados += 1
-                baixa = _sincronizar_baixa_estoque_frete(cur, antes_frete, depois_frete, usuario=usuario)
-                if baixa and baixa.get("ok") and not baixa.get("ja_baixada"):
-                    cargas_baixadas += 1
-            else:
-                cur.execute("""
-                    INSERT INTO fretes
-                        (nome, cidade, data_carga, status, veiculo_id, carga_id, observacao, km_atual, peso, qtd_entregas)
-                    VALUES
-                        (%s, %s, %s, 'liberado', %s, %s, %s, %s, %s, %s)
-                """, (
-                    pagina.get("nome_carga"),
-                    pagina.get("cidade"),
-                    pagina.get("data_carga"),
-                    veiculo_id_resolvido,
-                    carga_id,
-                    observacao,
-                    0,
-                    pagina.get("peso_total"),
-                    pagina.get("numero_entregas"),
-                ))
-                fretes_criados += 1
-
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        cur.close()
-        conn.close()
-
-    return {
-        "ok": True,
-        "arquivo": source_name,
-        "paginas_importadas": len(paginas),
-        "cargas_criadas": criadas,
-        "cargas_atualizadas": atualizadas,
-        "fretes_criados": fretes_criados,
-        "fretes_atualizados": fretes_atualizados,
-        "cargas_baixadas": cargas_baixadas,
-    }
-
-def _importar_cargas_csv_texto(texto, source_name="", veiculo_override="") -> dict:
-    leitor = csv.DictReader(io.StringIO(texto), delimiter=";")
-    if not leitor.fieldnames:
-        raise RuntimeError("CSV sem cabecalho.")
-
-    grupos = {}
-    for linha_num, linha in enumerate(leitor, start=2):
-        cidade_raw = _as_str(linha.get("Cidade"))
-        if not cidade_raw:
-            cidade_raw = _as_str(linha.get("cidade"))
-        cidade_key = _normalizar_chave_texto(cidade_raw) or "sem-cidade"
-        cidade_label = _normalizar_nome_local(cidade_raw) or "Sem cidade"
-        rota = _as_str(linha.get("Rota"))
-        rota_key = _normalizar_chave_texto(rota) or "sem-rota"
-        veiculo_numero = _csv_veiculo_numero(linha, veiculo_override)
-        veiculo_key = _normalizar_chave_texto(veiculo_numero) or "sem-veiculo"
-        grupo_key = veiculo_key if veiculo_numero else (rota_key if rota_key != "sem-rota" else cidade_key)
-        grupo = grupos.setdefault(grupo_key, {
-            "cidade": "",
-            "cidades": [],
-            "veiculo_numero": veiculo_numero,
-            "rotas": Counter(),
-            "clientes": set(),
-            "linhas": 0,
-            "data_carga": None,
-            "quantidade": 0.0,
-            "litros": 0.0,
-            "peso": 0.0,
-            "valor": 0.0,
-            "itens": [],
-        })
-        if cidade_label and cidade_label not in grupo["cidades"]:
-            grupo["cidades"].append(cidade_label)
-        if not _as_str(grupo.get("cidade")) and cidade_label:
-            grupo["cidade"] = cidade_label
-
-        cliente = _as_str(linha.get("Cliente"))
-        if rota:
-            grupo["rotas"][rota] += 1
-        if cliente:
-            grupo["clientes"].add(cliente)
-        grupo["linhas"] += 1
-        data_linha = _csv_date(linha.get("Data"))
-        if data_linha and grupo["data_carga"] is None:
-            grupo["data_carga"] = data_linha
-        grupo["quantidade"] += _csv_numero(linha.get("Quantidade"), 0.0)
-        grupo["litros"] += _csv_numero(linha.get("Litro"), 0.0)
-        grupo["peso"] += _csv_numero(linha.get("Peso"), 0.0)
-        grupo["valor"] += _csv_numero(linha.get("Valor Venda"), 0.0)
-        grupo["itens"].append({
-            "linha_num": linha_num,
-            "cliente": cliente,
-            "cidade": cidade_label,
-            "rota": rota,
-            "veiculo_numero": veiculo_numero,
-            "numero_nf": _as_str(linha.get("Número nf")) or _as_str(linha.get("Numero nf")),
-            "produto": _as_str(linha.get("Produto")),
-            "quantidade": _csv_numero(linha.get("Quantidade"), 0.0),
-            "litro": _csv_numero(linha.get("Litro"), 0.0),
-            "peso": _csv_numero(linha.get("Peso"), 0.0),
-            "valor_venda": _csv_numero(linha.get("Valor Venda"), 0.0),
-            "dados_json": json.dumps(linha, ensure_ascii=False, default=str),
-        })
-
-    if not grupos:
-        raise RuntimeError("CSV nao possui registros validos.")
-
-    conn = get_conn()
-    cur = conn.cursor(dictionary=True)
-    criadas = 0
-    atualizadas = 0
-    fretes_criados = 0
-    fretes_atualizados = 0
-    linhas_importadas = 0
-
-    try:
-        for grupo in grupos.values():
-            cidade = _as_str(grupo["cidade"]) or (_as_str(grupo["cidades"][0]) if grupo.get("cidades") else "")
-            veiculo_numero = _as_str(grupo.get("veiculo_numero"))
-            rota = grupo["rotas"].most_common(1)[0][0] if grupo["rotas"] else ""
-            data_carga = grupo.get("data_carga") or datetime.date.today()
-            if veiculo_numero:
-                nome_carga = _montar_nome_frete_exibicao(grupo.get("cidades"), veiculo_numero, cidade) or "Carga importada"
-            else:
-                nome_carga = _montar_nome_frete_exibicao(grupo.get("cidades"), rota, cidade) or rota or cidade or "Carga importada"
-            rota_lookup = rota if not veiculo_numero else ""
-            cidade_lookup = cidade if not veiculo_numero and not rota_lookup else ""
-            existente = None
-
-            if source_name:
-                if veiculo_numero:
-                    cur.execute(
-                        """
-                        SELECT id, nome, cidade, veiculo_numero
-                        FROM cargas
-                        WHERE LOWER(TRIM(COALESCE(origem_csv, ''))) = LOWER(%s)
-                          AND LOWER(TRIM(COALESCE(veiculo_numero, ''))) = LOWER(%s)
-                        ORDER BY id ASC
-                        LIMIT 1
-                        """,
-                        (source_name, veiculo_numero),
-                    )
-                    existente = cur.fetchone()
-                else:
-                    cur.execute(
-                        """
-                        SELECT id, nome, cidade, veiculo_numero
-                        FROM cargas
-                        WHERE LOWER(TRIM(COALESCE(origem_csv, ''))) = LOWER(%s)
-                          AND LOWER(TRIM(COALESCE(rota, ''))) = LOWER(%s)
-                          AND LOWER(TRIM(COALESCE(veiculo_numero, ''))) = ''
-                        ORDER BY id ASC
-                        LIMIT 1
-                        """,
-                        (source_name, rota_lookup),
-                    )
-                    existente = cur.fetchone()
-                    if not existente and cidade_lookup:
-                        cur.execute(
-                            """
-                            SELECT id, nome, cidade, veiculo_numero
-                            FROM cargas
-                            WHERE LOWER(TRIM(COALESCE(origem_csv, ''))) = LOWER(%s)
-                              AND LOWER(TRIM(COALESCE(cidade, ''))) = LOWER(%s)
-                              AND LOWER(TRIM(COALESCE(veiculo_numero, ''))) = ''
-                            ORDER BY id ASC
-                            LIMIT 1
-                            """,
-                            (source_name, cidade_lookup),
-                        )
-                        existente = cur.fetchone()
-            else:
-                cur.execute(
-                    """
-                    SELECT id, nome, cidade, veiculo_numero
-                    FROM cargas
-                    WHERE LOWER(TRIM(nome)) = LOWER(%s)
-                      AND LOWER(TRIM(COALESCE(veiculo_numero, ''))) = LOWER(%s)
-                    ORDER BY id ASC
-                    LIMIT 1
-                    """,
-                    (nome_carga, veiculo_numero),
-                )
-                existente = cur.fetchone()
-
-            payload = (
-                nome_carga,
-                cidade,
-                rota,
-                veiculo_numero,
-                source_name,
-                int(grupo["linhas"]),
-                int(len(grupo["clientes"])),
-                round(float(grupo["quantidade"]), 3),
-                round(float(grupo["litros"]), 3),
-                round(float(grupo["peso"]), 3),
-                round(float(grupo["valor"]), 2),
-                source_name,
-            )
-
-            if existente:
-                carga_id = _as_int(existente.get("id"), 0)
-                cur.execute(
-                    """
-                    UPDATE cargas
-                    SET nome=%s,
-                        cidade=%s,
-                        rota=%s,
-                        veiculo_numero=%s,
-                        origem_csv=%s,
-                        registros_importados=%s,
-                        clientes_distintos=%s,
-                        quantidade_total=%s,
-                        litros_total=%s,
-                        peso_total=%s,
-                        valor_total=%s,
-                        arquivo_origem=%s,
-                        tipo_importacao='csv',
-                        atualizado_em=NOW()
-                    WHERE id=%s
-                    """,
-                    payload + (carga_id,),
-                )
-                atualizadas += 1
-            else:
-                cur.execute(
-                    """
-                    INSERT INTO cargas
-                        (
-                            nome, cidade, rota, veiculo_numero, origem_csv, registros_importados, clientes_distintos,
-                            quantidade_total, litros_total, peso_total, valor_total, arquivo_origem, tipo_importacao
-                        )
-                    VALUES
-                        (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'csv')
-                    """,
-                    payload,
-                )
-                criadas += 1
-                carga_id = _as_int(cur.lastrowid, 0)
-
-            if not carga_id:
-                continue
-
-            veiculo_id_resolvido = _resolver_veiculo_id_por_numero(cur, veiculo_numero)
-
-            cur.execute("DELETE FROM cargas_import_linhas WHERE carga_id=%s", (carga_id,))
-            if grupo["itens"]:
-                cur.executemany(
-                    """
-                    INSERT INTO cargas_import_linhas
-                        (carga_id, linha_num, cliente, cidade, rota, veiculo_numero, numero_nf, produto, quantidade, litro, peso, valor_venda, dados_json)
-                    VALUES
-                        (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    """,
-                    [
-                        (
-                            carga_id,
-                            item["linha_num"],
-                            item["cliente"],
-                            item["cidade"],
-                            item["rota"],
-                            item["veiculo_numero"],
-                            item["numero_nf"],
-                            item["produto"],
-                            item["quantidade"],
-                            item["litro"],
-                            item["peso"],
-                            item["valor_venda"],
-                            item["dados_json"],
-                        )
-                        for item in grupo["itens"]
-                    ],
-                )
-                linhas_importadas += len(grupo["itens"])
-
-            cur.execute(
-                "SELECT id FROM fretes WHERE carga_id=%s ORDER BY id ASC LIMIT 1",
-                (carga_id,),
-            )
-            frete_existente = cur.fetchone()
-            nome_frete = nome_carga or "Carga importada"
-            if frete_existente:
-                cur.execute(
-                    """
-                    UPDATE fretes
-                    SET nome=%s,
-                        cidade=%s,
-                        carga_id=%s,
-                        veiculo_id=COALESCE(veiculo_id, %s),
-                        data_carga=COALESCE(data_carga, %s)
-                    WHERE id=%s
-                    """,
-                    (
-                        nome_frete,
-                        cidade,
-                        carga_id,
-                        veiculo_id_resolvido,
-                        data_carga,
-                        _as_int(frete_existente.get("id"), 0),
-                    ),
-                )
-                fretes_atualizados += 1
-            else:
-                cur.execute(
-                    """
-                    INSERT INTO fretes
-                        (nome, cidade, data_carga, status, carga_id, observacao, km_atual, peso, qtd_entregas)
-                    VALUES
-                        (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    """,
-                    (
-                        nome_frete,
-                        cidade,
-                        data_carga,
-                        "liberado",
-                        carga_id,
-                        f"Importado de {source_name}" if source_name else "Importado de CSV",
-                        0,
-                        round(float(grupo["peso"]), 3),
-                        int(grupo["linhas"]),
-                    ),
-                )
-                if veiculo_id_resolvido:
-                    frete_id = _as_int(cur.lastrowid, 0)
-                    if frete_id > 0:
-                        cur.execute(
-                            "UPDATE fretes SET veiculo_id=%s WHERE id=%s",
-                            (veiculo_id_resolvido, frete_id),
-                        )
-                fretes_criados += 1
-
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        cur.close()
-        conn.close()
-
-    return {
-        "ok": True,
-        "arquivo": source_name,
-        "cargas_criadas": criadas,
-        "cargas_atualizadas": atualizadas,
-        "fretes_criados": fretes_criados,
-        "fretes_atualizados": fretes_atualizados,
-        "cidades_total": len(grupos),
-        "linhas_total": sum(int(g["linhas"]) for g in grupos.values()),
-        "linhas_importadas": linhas_importadas,
-    }
-
 def _nz(v):
     return _as_float(v, 0.0)
 
@@ -3855,64 +1356,6 @@ def _json_obj_or_empty(s):
     except:
         return {}
 
-def _normalizar_item_manutencao_payload(item, index=0):
-    if not isinstance(item, dict):
-        return None
-    nome_produto = _as_str(item.get("nome_produto") or item.get("descricao") or item.get("item") or item.get("tipo"))
-    codigo_produto = _as_str(item.get("codigo_produto_nfe") or item.get("codigo") or item.get("codigo_barras"))
-    codigo_barras = _as_str(item.get("codigo_barras"))
-    unidade = _as_str(item.get("unidade"))
-    observacao = _as_str(item.get("observacao") or item.get("obs"))
-    quantidade = _as_float(item.get("quantidade"), 0.0)
-    valor_unitario = _as_float(item.get("valor_unitario"), 0.0)
-    valor_total = _as_float(item.get("valor_total"), 0.0)
-    if valor_total <= 0 and quantidade > 0 and valor_unitario > 0:
-        valor_total = quantidade * valor_unitario
-    if not any([
-        nome_produto,
-        codigo_produto,
-        codigo_barras,
-        observacao,
-        quantidade > 0,
-        valor_unitario > 0,
-        valor_total > 0,
-    ]):
-        return None
-    return {
-        "item_seq": _as_str(item.get("item_seq") or str(index + 1)),
-        "codigo_produto_nfe": codigo_produto,
-        "codigo_barras": codigo_barras,
-        "nome_produto": nome_produto,
-        "unidade": unidade,
-        "quantidade": quantidade,
-        "valor_unitario": valor_unitario,
-        "valor_total": valor_total,
-        "observacao": observacao,
-    }
-
-def _normalizar_itens_manutencao_payload(lista):
-    if not isinstance(lista, list):
-        return []
-    itens = []
-    for index, item in enumerate(lista):
-        normalizado = _normalizar_item_manutencao_payload(item, index)
-        if normalizado:
-            itens.append(normalizado)
-    return itens
-
-def _resumir_itens_manutencao(itens):
-    nomes = []
-    for item in _normalizar_itens_manutencao_payload(itens):
-        nome = _as_str(item.get("nome_produto"))
-        if nome and nome not in nomes:
-            nomes.append(nome)
-    if not nomes:
-        return ""
-    if len(nomes) == 1:
-        return nomes[0]
-    base = ", ".join(nomes[:3])
-    return f"{len(nomes)} itens: {base}{'...' if len(nomes) > 3 else ''}"
-
 def _load_json_file(path, default=None):
     try:
         with open(path, "r", encoding="utf-8") as f:
@@ -3942,213 +1385,14 @@ def _normalizar_codigo_barras(v):
 def _normalizar_chave_acesso_nfe(v):
     return re.sub(r"\D+", "", _as_str(v))
 
-COMBUSTIVEL_TIPOS = (
-    "diesel_s10",
-    "diesel_500",
-    "gasolina",
-    "etanol",
-    "arla",
-)
-COMBUSTIVEL_PADRAO_VEICULO_TIPOS = (
-    "diesel_s10",
-    "diesel_500",
-    "gasolina",
-    "etanol",
-    "flex",
-)
-COMBUSTIVEL_TIPO_ALIASES = {
-    "diesel_s10": "diesel_s10",
-    "diesel s10": "diesel_s10",
-    "diesel s-10": "diesel_s10",
-    "diesels10": "diesel_s10",
-    "diesel10": "diesel_s10",
-    "s10": "diesel_s10",
-    "s-10": "diesel_s10",
-    "diesel": "diesel_s10",
-    "diesel_500": "diesel_500",
-    "diesel_s500": "diesel_500",
-    "diesel 500": "diesel_500",
-    "diesel s500": "diesel_500",
-    "diesel s-500": "diesel_500",
-    "diesel500": "diesel_500",
-    "diesels500": "diesel_500",
-    "s500": "diesel_500",
-    "s-500": "diesel_500",
-    "gasolina": "gasolina",
-    "gasolina comum": "gasolina",
-    "gasolina c": "gasolina",
-    "gasolina c comum": "gasolina",
-    "etanol": "etanol",
-    "etanol comum": "etanol",
-    "etanol hidratado": "etanol",
-    "etanol hidratado comum": "etanol",
-    "alcool": "etanol",
-    "álcool": "etanol",
-    "arla": "arla",
-    "arla32": "arla",
-    "arla 32": "arla",
-}
-COMBUSTIVEL_PADRAO_VEICULO_ALIASES = {
-    **COMBUSTIVEL_TIPO_ALIASES,
-    "flex": "flex",
-    "gasolina/etanol": "flex",
-    "gasolina e etanol": "flex",
-    "etanol/gasolina": "flex",
-    "etanol e gasolina": "flex",
-}
-VEICULO_MODELOS_FLEX = ("gol", "polo", "saveiro")
-
 def _normalizar_combustivel_tipo(v):
-    tipo = re.sub(r"\s+", " ", _as_str(v).strip().lower())
-    return COMBUSTIVEL_TIPO_ALIASES.get(tipo, "diesel_s10")
-
-def _validar_combustivel_tipo(v):
-    tipo = re.sub(r"\s+", " ", _as_str(v).strip().lower())
-    if tipo not in COMBUSTIVEL_TIPO_ALIASES:
-        raise ValueError(
-            "combustivel_tipo deve ser Diesel S10, Diesel 500, Gasolina, Etanol ou Arla"
-        )
-    return COMBUSTIVEL_TIPO_ALIASES[tipo]
-
-def _normalizar_combustivel_padrao_veiculo(v):
-    tipo = re.sub(r"\s+", " ", _as_str(v).strip().lower())
-    normalizado = COMBUSTIVEL_PADRAO_VEICULO_ALIASES.get(tipo, "diesel_500")
-    return (
-        normalizado
-        if normalizado in COMBUSTIVEL_PADRAO_VEICULO_TIPOS
-        else "diesel_500"
-    )
-
-def _validar_combustivel_padrao_veiculo(v):
-    tipo = re.sub(r"\s+", " ", _as_str(v).strip().lower())
-    if tipo not in COMBUSTIVEL_PADRAO_VEICULO_ALIASES:
-        raise ValueError(
-            "combustivel_padrao do veiculo deve ser Diesel S10, Diesel 500, "
-            "Gasolina, Etanol ou Flex"
-        )
-    normalizado = COMBUSTIVEL_PADRAO_VEICULO_ALIASES[tipo]
-    if normalizado not in COMBUSTIVEL_PADRAO_VEICULO_TIPOS:
-        raise ValueError(
-            "combustivel_padrao do veiculo deve ser Diesel S10, Diesel 500, "
-            "Gasolina, Etanol ou Flex"
-        )
-    return normalizado
-
-def _modelo_veiculo_e_flex(modelo):
-    texto = re.sub(r"[^a-z0-9]+", " ", _as_str(modelo).strip().lower())
-    tokens = set(texto.split())
-    return any(modelo_flex in tokens for modelo_flex in VEICULO_MODELOS_FLEX)
-
-def _combustivel_padrao_para_modelo(modelo, combustivel_padrao):
-    if _modelo_veiculo_e_flex(modelo):
-        return "flex"
-    return _validar_combustivel_padrao_veiculo(combustivel_padrao)
-
-def _combustiveis_permitidos_veiculo(combustivel_padrao):
-    padrao = _normalizar_combustivel_padrao_veiculo(combustivel_padrao)
-    if padrao == "diesel_s10":
-        return ("diesel_s10", "arla")
-    if padrao == "flex":
-        return ("gasolina", "etanol")
-    return (padrao,)
-
-def _combustivel_padrao_veiculo_cur(cur, veiculo_id):
-    cur.execute(
-        "SELECT combustivel_padrao FROM veiculos WHERE id=%s",
-        (_as_int(veiculo_id, 0),),
-    )
-    row = cur.fetchone()
-    if not row:
-        raise ValueError("veiculo nao encontrado")
-    valor = row.get("combustivel_padrao") if isinstance(row, dict) else row[0]
-    return _normalizar_combustivel_padrao_veiculo(valor)
-
-def _validar_combustivel_para_veiculo(cur, veiculo_id, combustivel_tipo=""):
-    padrao = _combustivel_padrao_veiculo_cur(cur, veiculo_id)
-    tipo_informado = _as_str(combustivel_tipo).strip()
-    tipo = (
-        _validar_combustivel_tipo(tipo_informado)
-        if tipo_informado
-        else ("gasolina" if padrao == "flex" else padrao)
-    )
-    permitidos = _combustiveis_permitidos_veiculo(padrao)
-    if tipo not in permitidos:
-        if padrao == "diesel_500":
-            raise ValueError("este veiculo usa Diesel 500 e nao permite abastecimento com Arla ou Diesel S10")
-        if padrao == "diesel_s10":
-            raise ValueError("este veiculo permite somente Diesel S10 ou Arla")
-        if padrao == "flex":
-            raise ValueError("este veiculo e Flex e permite somente Gasolina ou Etanol")
-        raise ValueError(
-            f"este veiculo permite somente {_combustivel_tipo_label(padrao)}"
-        )
-    return tipo
+    tipo = _as_str(v).strip().lower()
+    if tipo in ("arla", "arla32", "arla 32"):
+        return "arla"
+    return "diesel"
 
 def _combustivel_tipo_label(v):
-    return {
-        "diesel_s10": "Diesel S10",
-        "diesel_500": "Diesel 500",
-        "gasolina": "Gasolina",
-        "etanol": "Etanol",
-        "arla": "Arla",
-    }[_normalizar_combustivel_tipo(v)]
-
-def _combustivel_e_diesel(v):
-    return _normalizar_combustivel_tipo(v) in ("diesel_s10", "diesel_500")
-
-def _combustivel_move_veiculo(v):
-    return _normalizar_combustivel_tipo(v) in (
-        "diesel_s10",
-        "diesel_500",
-        "gasolina",
-        "etanol",
-    )
-
-def _valor_litro_abastecimento(valor, quantidade_litros):
-    litros = _as_float(quantidade_litros, 0.0)
-    if litros <= 0:
-        return None
-    return _as_float(valor, 0.0) / litros
-
-def _calcular_metricas_abastecimentos(rows):
-    metricas = {}
-    prev_km_by_veiculo = {}
-    rows_ordenadas = sorted(
-        rows or [],
-        key=lambda r: (
-            _as_int(r.get("veiculo_id"), 0),
-            _as_int(r.get("km"), 0),
-            _as_int(r.get("id"), 0),
-        )
-    )
-    for row in rows_ordenadas:
-        rid = _as_int(row.get("id"), 0)
-        vid = _as_int(row.get("veiculo_id"), 0)
-        km_atual = _as_int(row.get("km"), 0)
-        qtd = _as_float(row.get("quantidade_litros"), 0.0)
-        status = _as_str(row.get("status")).lower()
-        combustivel_tipo = _normalizar_combustivel_tipo(row.get("combustivel_tipo"))
-        item = {
-            "km_inicial": None,
-            "km_atual": km_atual,
-            "km_rodado": None,
-            "km_l": None,
-            "valor_litro": _valor_litro_abastecimento(row.get("valor"), qtd),
-        }
-
-        if status == "abastecido" and _combustivel_move_veiculo(combustivel_tipo):
-            prev_km = prev_km_by_veiculo.get(vid)
-            if prev_km is not None:
-                item["km_inicial"] = prev_km
-                km_rodado = km_atual - prev_km
-                item["km_rodado"] = km_rodado
-                if km_rodado > 0:
-                    if qtd > 0:
-                        item["km_l"] = km_rodado / qtd
-            prev_km_by_veiculo[vid] = km_atual
-
-        metricas[rid] = item
-    return metricas
+    return "Arla" if _normalizar_combustivel_tipo(v) == "arla" else "Diesel"
 
 def _detectar_combustivel_tipo_item(nome_produto):
     nome = _as_str(nome_produto).upper()
@@ -4156,14 +1400,8 @@ def _detectar_combustivel_tipo_item(nome_produto):
         return ""
     if "ARLA" in nome:
         return "arla"
-    if "ETANOL" in nome or "ALCOOL" in nome or "ÁLCOOL" in nome:
-        return "etanol"
-    if "GASOLINA" in nome:
-        return "gasolina"
-    if any(token in nome for token in ("S500", "S-500", "DIESEL 500")):
-        return "diesel_500"
-    if any(token in nome for token in ("DIESEL", "S10", "S-10")):
-        return "diesel_s10"
+    if any(token in nome for token in ("DIESEL", "S10", "S-10", "S500", "S-500")):
+        return "diesel"
     return ""
 
 def _xml_local_name(tag):
@@ -5070,377 +2308,6 @@ def _extrair_campo_rotulado_ocr(linhas, rotulos):
             return _as_str(tokens[-1])
     return ""
 
-def _extrair_numero_nota_ocr(linhas, texto=""):
-    candidatos = []
-    for linha in linhas or []:
-        atual = _as_str(linha)
-        if not atual:
-            continue
-        up = atual.upper()
-        if not any(rotulo in up for rotulo in ("NF", "NF-E", "NOTA", "NUMERO", "NRO", "NR.")):
-            continue
-        patterns = [
-            r"(?:NF(?:-E)?|NOTA\s+FISCAL)\D{0,12}(\d{3,9})\b",
-            r"(?:NUMERO|NRO|NR\.?)\D{0,8}(\d{3,9})\b",
-            r"\b(\d{3,9})\b\D{0,8}(?:SERIE|S[ÉE]RIE)\b",
-        ]
-        for pattern in patterns:
-            match = re.search(pattern, up, re.I)
-            if not match:
-                continue
-            numero = _limpar_numero_nota(match.group(1))
-            if numero:
-                candidatos.append(numero)
-
-    if not candidatos and texto:
-        texto_upper = _as_str(texto).upper()
-        for pattern in (
-            r"(?:NF(?:-E)?|NOTA\s+FISCAL)\D{0,16}(\d{3,9})\b",
-            r"(?:NUMERO|NRO|NR\.?)\D{0,10}(\d{3,9})\b",
-        ):
-            match = re.search(pattern, texto_upper, re.I)
-            if not match:
-                continue
-            numero = _limpar_numero_nota(match.group(1))
-            if numero:
-                candidatos.append(numero)
-
-    if not candidatos:
-        campo_numero = _extrair_campo_rotulado_ocr(linhas, ["NUMERO", "NRO", "NF-E", "NOTA"])
-        match = re.search(r"\b(\d{3,9})\b", campo_numero)
-        if match:
-            numero = _limpar_numero_nota(match.group(1))
-            if numero:
-                candidatos.append(numero)
-
-    if not candidatos:
-        return ""
-
-    candidatos_unicos = []
-    for item in candidatos:
-        if item and item not in candidatos_unicos:
-            candidatos_unicos.append(item)
-    candidatos_unicos.sort(key=lambda value: (len(value), value), reverse=True)
-    return candidatos_unicos[0]
-
-def _extrair_secao_dados_produtos_ocr(texto):
-    linhas = [_as_str(l).strip() for l in _as_str(texto).splitlines() if _as_str(l).strip()]
-    if not linhas:
-        return []
-
-    inicio = -1
-    for idx, linha in enumerate(linhas):
-        up = linha.upper()
-        if "DADOS DOS PRODUTOS" in up or "DADOS DOS SERV" in up:
-            inicio = idx
-            break
-    if inicio < 0:
-        return []
-
-    fim = len(linhas)
-    marcadores_fim = (
-        "CALCULO DO IMPOSTO",
-        "CÁLCULO DO IMPOSTO",
-        "DADOS ADICIONAIS",
-        "RESERVADO AO FISCO",
-        "TRANSPORTADOR",
-        "FATURA",
-        "TOTAL DA NOTA",
-    )
-    for idx in range(inicio + 1, len(linhas)):
-        up = linhas[idx].upper()
-        if any(marker in up for marker in marcadores_fim):
-            fim = idx
-            break
-
-    return linhas[inicio + 1:fim]
-
-def _linha_parece_cabecalho_secao_produtos_ocr(linha):
-    up = _as_str(linha).upper().strip()
-    if not up:
-        return True
-    marcadores = (
-        "COD", "CÓD", "DESCR", "NCM", "SH", "CST", "CFOP", "UN",
-        "QTD", "QTDE", "QUANT", "V.UNIT", "V. UNIT", "VALOR UNIT",
-        "V.TOTAL", "V. TOTAL", "VALOR TOTAL", "BC ICMS", "ICMS", "IPI", "ALIQ",
-    )
-    hits = sum(1 for marcador in marcadores if marcador in up)
-    if hits >= 3 and not _detectar_combustivel_tipo_item(up):
-        return True
-    return False
-
-def _tokens_numericos_linha_ocr(texto):
-    tokens = []
-    for match in re.finditer(r"\d+(?:[.,]\d+)?", _as_str(texto)):
-        bruto = match.group(0)
-        valor = _as_float_br(bruto, None)
-        if valor is None or valor <= 0:
-            continue
-        tokens.append({
-            "raw": bruto,
-            "value": valor,
-            "start": match.start(),
-            "end": match.end(),
-            "decimal": ("," in bruto or "." in bruto),
-        })
-    return tokens
-
-def _extrair_qtd_total_bloco_produto_ocr(bloco_texto):
-    tokens = _tokens_numericos_linha_ocr(bloco_texto)
-    if len(tokens) < 2:
-        return {}
-
-    melhor = None
-    melhor_score = float("-inf")
-
-    for idx_total, token_total in enumerate(tokens):
-        total = token_total["value"]
-        if total <= 0 or total > 100000:
-            continue
-
-        for idx_qtd in range(0, idx_total):
-            token_qtd = tokens[idx_qtd]
-            qtd = token_qtd["value"]
-            if qtd <= 0 or qtd > 5000 or qtd >= total:
-                continue
-            if idx_total - idx_qtd > 4:
-                continue
-
-            ratio = total / max(qtd, 1.0)
-            if ratio <= 0 or ratio > 25:
-                continue
-
-            score = 0.0
-            score += 0.9 if token_qtd["decimal"] else -0.5
-            score += 0.4 if token_total["decimal"] else -0.2
-            if idx_total == len(tokens) - 1:
-                score += 0.6
-            if idx_qtd >= max(0, idx_total - 3):
-                score += 0.3
-            if qtd >= 5:
-                score += 0.2
-
-            valor_unitario = None
-            melhor_diff = None
-            for idx_unit in range(idx_qtd + 1, idx_total):
-                unit = tokens[idx_unit]["value"]
-                if unit <= 0 or unit > 25:
-                    continue
-                esperado = qtd * unit
-                if esperado <= 0:
-                    continue
-                diff = abs(esperado - total) / max(total, esperado, 1.0)
-                if diff > 0.12:
-                    continue
-                if melhor_diff is None or diff < melhor_diff:
-                    melhor_diff = diff
-                    valor_unitario = unit
-            if melhor_diff is not None:
-                score += 1.4 - melhor_diff
-            elif idx_total - idx_qtd > 2:
-                continue
-            else:
-                score -= 0.2
-
-            if score > melhor_score:
-                melhor = {
-                    "quantidade_litros": round(qtd, 3),
-                    "valor": round(total, 2),
-                    "valor_unitario": round(valor_unitario, 3) if valor_unitario is not None else round(ratio, 3),
-                }
-                melhor_score = score
-
-    return melhor or {}
-
-def _extrair_resumo_nota_amarela_ocr(linhas, combustivel_tipo=""):
-    tipo_forcado = _as_str(combustivel_tipo).strip()
-    tipo_forcado = _validar_combustivel_tipo(tipo_forcado) if tipo_forcado else ""
-    candidatos = []
-
-    for idx, linha_total in enumerate(linhas or []):
-        up_total = _as_str(linha_total).upper()
-        if "TOTAL R$" not in up_total and "TOTALRS" not in re.sub(r"\s+", "", up_total):
-            continue
-
-        valor, _valor_label = _normalizar_valor_brasileiro(linha_total)
-        if valor is None:
-            continue
-
-        inicio = max(0, idx - 3)
-        for pos in range(inicio, idx):
-            linha_item = _as_str(linhas[pos]).strip()
-            up_item = linha_item.upper()
-            tipo_item = _detectar_combustivel_tipo_item(up_item)
-            if tipo_forcado and tipo_item and tipo_item != tipo_forcado:
-                continue
-            if not tipo_item and not tipo_forcado:
-                continue
-
-            qtd = None
-            match_lt = re.search(r"\b(?:LT|LTS|LITROS?)\s*[:\-]?\s*(\d[\d.,]*)", linha_item, re.I)
-            if match_lt:
-                qtd = _as_float_br(match_lt.group(1), None)
-            if qtd in (None, "", 0, 0.0):
-                match_lt = re.search(r"(\d[\d.,]*)\s*(?:LT|LTS|LITROS?)\b", linha_item, re.I)
-                if match_lt:
-                    qtd = _as_float_br(match_lt.group(1), None)
-            if qtd in (None, "", 0, 0.0):
-                continue
-
-            tipo_final = tipo_item or tipo_forcado or ""
-            score = 2.0
-            if tipo_item:
-                score += 0.3
-            if "LT" in up_item or "LTS" in up_item or "LITRO" in up_item:
-                score += 0.2
-            if pos == idx - 1:
-                score += 0.2
-            candidatos.append((
-                score,
-                {
-                    "combustivel_tipo": tipo_final,
-                    "quantidade_litros": round(_as_float(qtd, 0.0), 3),
-                    "valor": round(_as_float(valor, 0.0), 2),
-                    "valor_unitario": round(_as_float(valor, 0.0) / max(_as_float(qtd, 1.0), 1.0), 3),
-                }
-            ))
-
-    if not candidatos:
-        return {}
-
-    candidatos.sort(key=lambda item: item[0], reverse=True)
-    return candidatos[0][1]
-
-def _extrair_resumo_combustivel_secao_ocr(texto, combustivel_tipo=""):
-    linhas = _extrair_secao_dados_produtos_ocr(texto)
-    if not linhas:
-        linhas = [_as_str(l).strip() for l in _as_str(texto).splitlines() if _as_str(l).strip()]
-    if not linhas:
-        return {}
-
-    tipo_forcado = _as_str(combustivel_tipo).strip()
-    tipo_forcado = _validar_combustivel_tipo(tipo_forcado) if tipo_forcado else ""
-    header_idx = -1
-    for idx, linha in enumerate(linhas):
-        up = _as_str(linha).upper()
-        if any(token in up for token in ("QTD", "QTDE", "QUANT")) and any(token in up for token in ("V.TOTAL", "V. TOTAL", "VALOR TOTAL")):
-            header_idx = idx
-            break
-
-    linhas_analise = linhas[header_idx + 1:] if header_idx >= 0 else linhas
-    candidatos = []
-    amarelo = _extrair_resumo_nota_amarela_ocr(linhas_analise, combustivel_tipo=tipo_forcado)
-    if amarelo:
-        candidatos.append((2.4, amarelo))
-
-    for idx, linha in enumerate(linhas_analise):
-        if _linha_parece_cabecalho_secao_produtos_ocr(linha):
-            continue
-
-        bloco_linhas = []
-        for pos in range(idx, min(idx + 2, len(linhas_analise))):
-            atual = linhas_analise[pos]
-            if _linha_parece_cabecalho_secao_produtos_ocr(atual):
-                continue
-            bloco_linhas.append(atual)
-        bloco = " ".join(bloco_linhas).strip()
-        if not bloco:
-            continue
-
-        extraido = _extrair_qtd_total_bloco_produto_ocr(bloco)
-        if extraido:
-            score = 1.0
-            if header_idx >= 0 and idx <= 2:
-                score += 0.4
-            if any(ch.isalpha() for ch in bloco):
-                score += 0.1
-            candidatos.append((
-                score,
-                {
-                    "combustivel_tipo": tipo_forcado or "",
-                    "quantidade_litros": extraido.get("quantidade_litros"),
-                    "valor": extraido.get("valor"),
-                    "valor_unitario": extraido.get("valor_unitario"),
-                }
-            ))
-
-    if not candidatos:
-        bloco_total = " ".join(
-            _as_str(linha).strip()
-            for linha in linhas_analise
-            if not _linha_parece_cabecalho_secao_produtos_ocr(linha)
-        ).strip()
-        extraido = _extrair_qtd_total_bloco_produto_ocr(bloco_total)
-        if extraido:
-            candidatos.append((
-                0.4,
-                {
-                    "combustivel_tipo": tipo_forcado or "",
-                    "quantidade_litros": extraido.get("quantidade_litros"),
-                    "valor": extraido.get("valor"),
-                    "valor_unitario": extraido.get("valor_unitario"),
-                }
-            ))
-
-    if not candidatos:
-        return {}
-
-    candidatos.sort(key=lambda item: item[0], reverse=True)
-    return candidatos[0][1]
-
-def _selecionar_resumo_combustivel_ocr_textos(textos, combustivel_tipo=""):
-    grupos = {}
-
-    for idx, texto in enumerate(textos or []):
-        resumo = _extrair_resumo_combustivel_secao_ocr(texto, combustivel_tipo=combustivel_tipo)
-        qtd = resumo.get("quantidade_litros")
-        valor = resumo.get("valor")
-        if qtd in (None, "", 0, 0.0) or valor in (None, "", 0, 0.0):
-            continue
-
-        combustivel = _as_str(resumo.get("combustivel_tipo")).strip()
-        chave = (
-            combustivel,
-            round(_as_float(qtd, 0.0), 3),
-            round(_as_float(valor, 0.0), 2),
-        )
-        entry = grupos.get(chave)
-        if entry is None:
-            entry = {
-                "count": 0,
-                "first_idx": idx,
-                "summary": dict(resumo),
-            }
-            grupos[chave] = entry
-        entry["count"] += 1
-        if not entry["summary"].get("valor_unitario") and resumo.get("valor_unitario"):
-            entry["summary"] = dict(resumo)
-
-    if not grupos:
-        return {}, []
-
-    ranked = sorted(
-        grupos.values(),
-        key=lambda item: (
-            -item["count"],
-            item["first_idx"],
-            -_as_float(item["summary"].get("quantidade_litros"), 0.0),
-            -_as_float(item["summary"].get("valor"), 0.0),
-        ),
-    )
-    escolhido = dict(ranked[0]["summary"])
-    escolhido["itens_encontrados"] = ranked[0]["count"]
-    variantes = [
-        {
-            "combustivel_tipo": _as_str(item["summary"].get("combustivel_tipo")),
-            "quantidade_litros": round(_as_float(item["summary"].get("quantidade_litros"), 0.0), 3),
-            "valor": round(_as_float(item["summary"].get("valor"), 0.0), 2),
-            "ocorrencias": item["count"],
-        }
-        for item in ranked
-    ]
-    return escolhido, variantes
-
 def _extrair_dados_ocr_nfe(texto, arquivo_origem=""):
     texto = _as_str(texto)
     linhas = [_as_str(l).strip() for l in texto.splitlines() if _as_str(l).strip()]
@@ -5470,6 +2337,10 @@ def _extrair_dados_ocr_nfe(texto, arquivo_origem=""):
 
     for linha in linhas[:40]:
         up = linha.upper()
+        if not numero_nota and any(rotulo in up for rotulo in ("NUMERO", "NRO", "N. NF", "NR. NF", "NF-E N")):
+            match = re.search(r"(\d{1,9})", linha)
+            if match:
+                numero_nota = _as_str(match.group(1))
         if not serie and "SERIE" in up:
             match = re.search(r"SERIE\s*[:\-]?\s*([A-Z0-9.-]+)", linha, re.I)
             if match:
@@ -5518,7 +2389,10 @@ def _extrair_dados_ocr_nfe(texto, arquivo_origem=""):
                 break
 
     if not numero_nota:
-        numero_nota = _extrair_numero_nota_ocr(linhas, texto)
+        campo_numero = _extrair_campo_rotulado_ocr(linhas, ["NUMERO", "NRO", "NF-E"])
+        match = re.search(r"(\d{1,9})", campo_numero)
+        if match:
+            numero_nota = _as_str(match.group(1))
 
     warnings = [
         "Leitura por OCR em modo assistido. Revise os campos antes de usar a chave ou concluir o lancamento."
@@ -5582,33 +2456,6 @@ def _coletar_textos_ocr_imagem(candidates, pytesseract):
             textos.append(texto)
     return textos
 
-def _selecionar_melhor_dados_ocr_nfe_textos(textos, arquivo_origem=""):
-    melhor = None
-    melhor_score = -1
-
-    for texto in textos or []:
-        extraido = _extrair_dados_ocr_nfe(texto, arquivo_origem=arquivo_origem)
-        score = 0
-        if extraido.get("chave_acesso"):
-            score += 10
-        if extraido.get("numero_nota"):
-            score += 2
-        if extraido.get("emitente_nome"):
-            score += 2
-        if extraido.get("valor_total") is not None:
-            score += 1
-        if score > melhor_score:
-            melhor = extraido
-            melhor_score = score
-        if extraido.get("chave_acesso"):
-            return extraido
-
-    if not melhor and textos:
-        melhor = _extrair_dados_ocr_nfe("\n".join(textos), arquivo_origem=arquivo_origem)
-    if not melhor:
-        raise ValueError("nenhum texto foi identificado na foto da nota")
-    return melhor
-
 def _coletar_textos_ocr_itens_imagem(candidates, pytesseract):
     base = candidates[-1] if len(candidates) >= 3 else (candidates[1] if len(candidates) >= 2 else candidates[0])
     tentativas = [
@@ -5626,247 +2473,6 @@ def _coletar_textos_ocr_itens_imagem(candidates, pytesseract):
         if texto and len(texto) > 80:
             break
     return textos
-
-def _extrair_url_payload_barcode(raw):
-    texto = unquote(_as_str(raw)).strip()
-    if not texto:
-        return ""
-    match = re.search(r"https?://[^\s<>'\"]+", texto, re.I)
-    if not match:
-        return ""
-    candidato = match.group(0).strip().rstrip(").,;")
-    parsed = urlparse(candidato)
-    if parsed.scheme not in ("http", "https") or not parsed.netloc:
-        return ""
-    return candidato
-
-def _montar_url_consulta_nfe(base_url, chave_acesso=""):
-    raw = _as_str(base_url).strip() or _nfe_consulta_url_default()
-    chave = _normalizar_chave_acesso_nfe(chave_acesso)
-    if len(chave) != 44:
-        return raw
-    try:
-        separador = "&" if "?" in raw else "?"
-        if re.search(r"([?&])nfe=", raw, re.I):
-            return re.sub(r"([?&])nfe=[^&]*", rf"\1nfe={chave}", raw, flags=re.I)
-        return f"{raw}{separador}nfe={chave}"
-    except Exception:
-        return raw
-
-def _detectar_payload_barcode_imagem_bytes(image_bytes):
-    BytesIO, Image, _pytesseract = _carregar_dependencias_ocr()
-    try:
-        from pyzbar.pyzbar import decode as zbar_decode
-    except Exception:
-        return {"raw": "", "url": "", "chave_acesso": ""}
-
-    try:
-        image = Image.open(BytesIO(image_bytes))
-        image.load()
-    except Exception:
-        return {"raw": "", "url": "", "chave_acesso": ""}
-
-    try:
-        candidates = _preparar_candidatos_ocr_imagem(image)
-    except Exception:
-        candidates = [image]
-
-    for candidate in candidates:
-        try:
-            resultados = zbar_decode(candidate)
-        except Exception:
-            resultados = []
-        for resultado in resultados or []:
-            raw = resultado.data.decode("utf-8", errors="ignore") if getattr(resultado, "data", None) else ""
-            url = _extrair_url_payload_barcode(raw)
-            digits = _normalizar_chave_acesso_nfe(raw)
-            if url or len(digits) == 44:
-                return {
-                    "raw": raw,
-                    "url": url,
-                    "chave_acesso": digits if len(digits) == 44 else "",
-                }
-    return {"raw": "", "url": "", "chave_acesso": ""}
-
-def _curl_fetch_html_text(url, timeout=30):
-    url = _as_str(url).strip()
-    if not url:
-        raise ValueError("URL de consulta vazia para o scraping do codigo de barras.")
-    try:
-        proc = subprocess.run(
-            [
-                "curl",
-                "-fsSL",
-                "--compressed",
-                "--max-time",
-                str(int(timeout)),
-                "--connect-timeout",
-                "10",
-                "-A",
-                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
-                "-H",
-                "Accept-Language: pt-BR,pt;q=0.9",
-                url,
-            ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-    except FileNotFoundError as exc:
-        raise RuntimeError("curl nao esta instalado neste ambiente.") from exc
-
-    if proc.returncode != 0:
-        detalhe = _as_str(proc.stderr).strip() or f"codigo {proc.returncode}"
-        raise RuntimeError(f"curl nao conseguiu consultar a URL do codigo de barras: {detalhe}")
-
-    html_text = _as_str(proc.stdout)
-    if not html_text.strip():
-        raise RuntimeError("curl retornou uma pagina vazia para a URL do codigo de barras.")
-    return html_text
-
-def _extrair_itens_html_generico(html_text):
-    parser = _HtmlTableCollector()
-    try:
-        parser.feed(_as_str(html_text))
-    except Exception:
-        pass
-
-    itens = []
-    for tabela in parser.tables or []:
-        rows = tabela.get("rows") or []
-        if len(rows) < 2:
-            continue
-
-        headers = [re.sub(r"\s+", " ", _as_str(col)).strip() for col in rows[0]]
-        idx_descricao = _portal_find_col(headers, ["descricao", "descrição", "produto", "xprod", "item"])
-        idx_unidade = _portal_find_col(headers, ["unidade", "un", "und", "ucom"])
-        idx_quantidade = _portal_find_col(headers, ["quantidade", "qtd", "qtde", "qcom"])
-        idx_vunit = _portal_find_col(headers, ["valor unitario", "valor unitário", "vl unit", "vuncom"])
-        idx_vtotal = _portal_find_col(headers, ["valor total", "v.total", "v total", "vprod", "valor produto"])
-        if idx_quantidade < 0 or idx_vtotal < 0:
-            continue
-
-        for row in rows[1:]:
-            cols = [_as_str(col).strip() for col in row]
-            if not any(cols):
-                continue
-            descricao = cols[idx_descricao] if 0 <= idx_descricao < len(cols) else ""
-            quantidade_raw = cols[idx_quantidade] if 0 <= idx_quantidade < len(cols) else ""
-            valor_total_raw = cols[idx_vtotal] if 0 <= idx_vtotal < len(cols) else ""
-            valor_unitario_raw = cols[idx_vunit] if 0 <= idx_vunit < len(cols) else ""
-            quantidade = _as_float_br(quantidade_raw, _as_float(quantidade_raw, 0.0))
-            valor_total = _as_float_br(valor_total_raw, _as_float(valor_total_raw, 0.0))
-            valor_unitario = _as_float_br(valor_unitario_raw, _as_float(valor_unitario_raw, 0.0))
-            if quantidade <= 0 or valor_total <= 0:
-                continue
-            itens.append({
-                "item_seq": str(len(itens) + 1),
-                "codigo_produto_nfe": "",
-                "codigo_barras": "",
-                "nome_produto": descricao,
-                "unidade": cols[idx_unidade] if 0 <= idx_unidade < len(cols) else "",
-                "quantidade": quantidade,
-                "valor_unitario": valor_unitario,
-                "valor_total": valor_total,
-            })
-
-    return itens
-
-def _scrape_resumo_abastecimento_html(html_text, chave_acesso="", combustivel_tipo=""):
-    itens = _extrair_itens_html_generico(html_text)
-    if itens:
-        resumo = _resumir_nfe_para_abastecimento({
-            "itens": itens,
-            "chave_acesso": chave_acesso,
-        }, combustivel_tipo=combustivel_tipo)
-        resumo["source_type"] = "barcode_scrape"
-        return resumo
-
-    texto = "\n".join(_html_linhas_limpa(html_text))
-    extraido = _extrair_resumo_combustivel_secao_ocr(texto, combustivel_tipo=combustivel_tipo)
-    if extraido.get("quantidade_litros") in (None, "", 0, 0.0) or extraido.get("valor") in (None, "", 0, 0.0):
-        raise ValueError("Nao foi possivel localizar Quantidade e V.Total na pagina retornada pelo codigo de barras.")
-
-    return {
-        "source_type": "barcode_scrape",
-        "combustivel_tipo": _normalizar_combustivel_tipo(extraido.get("combustivel_tipo") or combustivel_tipo),
-        "quantidade_litros": _as_float(extraido.get("quantidade_litros"), 0.0),
-        "valor": _as_float(extraido.get("valor"), 0.0),
-        "chave_acesso_nfe": _normalizar_chave_acesso_nfe(chave_acesso),
-        "emitente_nome": "",
-        "numero_nota": "",
-        "itens_encontrados": max(1, _as_int(extraido.get("itens_encontrados"), 0)),
-    }
-
-def _resumo_abastecimento_por_url_barcode(url, chave_acesso="", combustivel_tipo=""):
-    html_text = _curl_fetch_html_text(url)
-    return _scrape_resumo_abastecimento_html(
-        html_text,
-        chave_acesso=chave_acesso,
-        combustivel_tipo=combustivel_tipo,
-    )
-
-def _barcode_preview_abastecimento_imagem_bytes(image_bytes, arquivo_origem="", combustivel_tipo=""):
-    tipo_forcado = _as_str(combustivel_tipo).strip()
-    tipo_forcado = _validar_combustivel_tipo(tipo_forcado) if tipo_forcado else ""
-    payload_barcode = _detectar_payload_barcode_imagem_bytes(image_bytes)
-    chave_barcode = _normalizar_chave_acesso_nfe(payload_barcode.get("chave_acesso"))
-    if len(chave_barcode) != 44:
-        raise ValueError("Nao foi possivel localizar uma chave NF-e valida no codigo de barras/QR da imagem.")
-
-    meta = _nfe_resumo_chave_acesso(chave_barcode)
-    warnings = ["Chave NF-e lida da imagem de codigo de barras/QR."]
-    resumo = {
-        "source_type": "barcode_scrape",
-        "arquivo_origem": arquivo_origem,
-        "texto_bruto": "",
-        "chave_acesso_nfe": chave_barcode,
-        "chave_acesso": chave_barcode,
-        "numero_nota": _as_str(meta.get("numero_nota")),
-        "serie": _as_str(meta.get("serie")),
-        "data_emissao": "",
-        "emitente_nome": "",
-        "emitente_cnpj": _as_str(meta.get("emitente_cnpj")),
-        "combustivel_tipo": tipo_forcado,
-        "valor": None,
-        "valor_total": None,
-        "valor_total_label": "",
-        "quantidade_litros": None,
-        "itens_encontrados": 0,
-        "warnings": warnings,
-    }
-
-    url_barcode = _as_str(payload_barcode.get("url")).strip()
-    if not url_barcode:
-        cfg = _carregar_nfe_config()
-        url_barcode = _montar_url_consulta_nfe(
-            _as_str(cfg.get("consulta_url")) or _nfe_consulta_url_default(),
-            chave_barcode,
-        )
-        warnings.append("O codigo nao trouxe URL no payload. O sistema montou a URL de consulta a partir da chave lida.")
-
-    try:
-        resumo_scrape = _resumo_abastecimento_por_url_barcode(
-            url_barcode,
-            chave_acesso=chave_barcode,
-            combustivel_tipo=tipo_forcado,
-        )
-        resumo.update({
-            "numero_nota": _as_str(resumo_scrape.get("numero_nota")) or resumo["numero_nota"],
-            "emitente_nome": _as_str(resumo_scrape.get("emitente_nome")) or resumo["emitente_nome"],
-            "combustivel_tipo": _normalizar_combustivel_tipo(resumo_scrape.get("combustivel_tipo") or resumo.get("combustivel_tipo")),
-            "valor": _as_float(resumo_scrape.get("valor"), 0.0) if resumo_scrape.get("valor") not in (None, "") else None,
-            "valor_total": _as_float(resumo_scrape.get("valor"), 0.0) if resumo_scrape.get("valor") not in (None, "") else None,
-            "quantidade_litros": _as_float(resumo_scrape.get("quantidade_litros"), 0.0) if resumo_scrape.get("quantidade_litros") not in (None, "") else None,
-            "itens_encontrados": _as_int(resumo_scrape.get("itens_encontrados"), 0),
-        })
-        if resumo.get("quantidade_litros") not in (None, "", 0, 0.0) and resumo.get("valor") not in (None, "", 0, 0.0):
-            warnings.append("Quantidade e V.Total foram extraidos por scraping da pagina retornada pelo QR code.")
-    except Exception as exc:
-        warnings.append(f"A chave foi lida, mas o scraping via curl nao concluiu ({_as_str(exc)}). Use Foto OCR se precisar de Quantidade e V.Total.")
-
-    resumo["warnings"] = warnings
-    return resumo
 
 def _carregar_dependencias_ocr():
     try:
@@ -5908,7 +2514,31 @@ def _ocr_nfe_imagem_bytes(image_bytes, arquivo_origem=""):
         candidates = [image]
 
     textos = _coletar_textos_ocr_imagem(candidates, pytesseract)
-    return _selecionar_melhor_dados_ocr_nfe_textos(textos, arquivo_origem=arquivo_origem)
+    melhor = None
+    melhor_score = -1
+
+    for texto in textos:
+        extraido = _extrair_dados_ocr_nfe(texto, arquivo_origem=arquivo_origem)
+        score = 0
+        if extraido.get("chave_acesso"):
+            score += 10
+        if extraido.get("numero_nota"):
+            score += 2
+        if extraido.get("emitente_nome"):
+            score += 2
+        if extraido.get("valor_total") is not None:
+            score += 1
+        if score > melhor_score:
+            melhor = extraido
+            melhor_score = score
+        if extraido.get("chave_acesso"):
+            return extraido
+
+    if not melhor and textos:
+        melhor = _extrair_dados_ocr_nfe("\n".join(textos), arquivo_origem=arquivo_origem)
+    if not melhor:
+        raise ValueError("nenhum texto foi identificado na foto da nota")
+    return melhor
 
 def _ocr_itens_nfe_imagem_bytes(image_bytes, arquivo_origem=""):
     BytesIO, Image, pytesseract = _carregar_dependencias_ocr()
@@ -6076,153 +2706,6 @@ def _azure_docint_nfe_itens_preview(image_bytes, arquivo_origem=""):
             "Itens extraidos via Azure Document Intelligence. Revise os campos antes de confirmar a importacao.",
         ],
     })
-
-
-def _ocr_preview_manutencao_imagem_bytes(image_bytes, arquivo_origem=""):
-    ocr = None
-    warnings = []
-    itens = []
-    local_error = ""
-    try:
-        ocr = _ocr_nfe_imagem_bytes(image_bytes, arquivo_origem=arquivo_origem)
-        warnings.extend(ocr.get("warnings") or [])
-        try:
-            itens_preview = _ocr_itens_nfe_imagem_bytes(image_bytes, arquivo_origem=arquivo_origem)
-            if isinstance(itens_preview, dict):
-                itens = itens_preview.get("itens") if isinstance(itens_preview.get("itens"), list) else []
-                warnings.extend([msg for msg in (itens_preview.get("warnings") or []) if msg])
-        except Exception:
-            warnings.append("Nao foi possivel identificar os itens automaticamente nessa foto inteira. Se precisar, tire outra foto focando apenas a grade dos produtos.")
-    except RuntimeError as exc:
-        local_error = _as_str(exc)
-    except Exception:
-        raise
-
-    if ocr is None:
-        azure_error = ""
-        try:
-            azure_preview = _azure_docint_nfe_itens_preview(image_bytes, arquivo_origem=arquivo_origem)
-            return {
-                "source_type": "ocr",
-                "arquivo_origem": arquivo_origem or "Azure-Document-Intelligence",
-                "texto_bruto": "",
-                "chave_acesso": "",
-                "numero_nota": _as_str(azure_preview.get("numero_nota")),
-                "serie": "",
-                "data_documento": _normalizar_data_documento(azure_preview.get("data_emissao") or azure_preview.get("data_documento")),
-                "emitente_nome": _as_str(azure_preview.get("emitente_nome")),
-                "emitente_cnpj": "",
-                "valor_total": None,
-                "valor_total_label": "",
-                "itens": azure_preview.get("itens") if isinstance(azure_preview.get("itens"), list) else [],
-                "warnings": [
-                    msg for msg in (
-                        [
-                            "OCR local indisponivel nesta instalacao. Usando Azure Document Intelligence como fallback para a manutencao."
-                        ] + list(azure_preview.get("warnings") or [])
-                    ) if _as_str(msg).strip()
-                ],
-            }
-        except Exception as exc:
-            azure_error = _as_str(exc)
-        detalhes = [msg for msg in (local_error, azure_error) if msg]
-        raise RuntimeError(" | ".join(detalhes) or "OCR indisponivel para manutencao nesta instalacao.")
-
-    dedup_warnings = []
-    for msg in warnings:
-        text = _as_str(msg).strip()
-        if text and text not in dedup_warnings:
-            dedup_warnings.append(text)
-
-    return {
-        "source_type": "ocr",
-        "arquivo_origem": arquivo_origem,
-        "texto_bruto": _as_str(ocr.get("texto_bruto")),
-        "chave_acesso": _as_str(ocr.get("chave_acesso")),
-        "numero_nota": _as_str(ocr.get("numero_nota")),
-        "serie": _as_str(ocr.get("serie")),
-        "data_documento": _normalizar_data_documento(ocr.get("data_emissao")),
-        "emitente_nome": _as_str(ocr.get("emitente_nome")),
-        "emitente_cnpj": _as_str(ocr.get("emitente_cnpj")),
-        "valor_total": _as_float(ocr.get("valor_total"), 0.0) if ocr.get("valor_total") not in (None, "") else None,
-        "valor_total_label": _as_str(ocr.get("valor_total_label")),
-        "itens": itens,
-        "warnings": dedup_warnings,
-    }
-
-def _ocr_preview_abastecimento_imagem_bytes(image_bytes, arquivo_origem="", combustivel_tipo=""):
-    tipo_forcado = _as_str(combustivel_tipo).strip()
-    tipo_forcado = _validar_combustivel_tipo(tipo_forcado) if tipo_forcado else ""
-
-    BytesIO, Image, pytesseract = _carregar_dependencias_ocr()
-    try:
-        image = Image.open(BytesIO(image_bytes))
-        image.load()
-    except Exception as exc:
-        raise ValueError("nao foi possivel abrir a imagem enviada") from exc
-
-    try:
-        candidates = _preparar_candidatos_ocr_imagem(image)
-    except Exception:
-        candidates = [image]
-
-    textos = _coletar_textos_ocr_imagem(candidates, pytesseract)
-    if not textos:
-        raise ValueError("nenhum texto foi identificado na foto. Envie uma foto mais proxima da secao DADOS DOS PRODUTOS.")
-
-    warnings = []
-    resumo, variantes = _selecionar_resumo_combustivel_ocr_textos(textos, combustivel_tipo=tipo_forcado)
-    if resumo.get("quantidade_litros") not in (None, "", 0, 0.0) and resumo.get("valor") not in (None, "", 0, 0.0):
-        warnings.append(
-            "Quantidade e V.Total foram extraidos diretamente da foto da secao DADOS DOS PRODUTOS."
-        )
-        ocorrencias = _as_int(resumo.get("itens_encontrados"), 0)
-        if ocorrencias > 1:
-            warnings.append(f"Quantidade e V.Total foram confirmados em {ocorrencias} leituras da mesma imagem.")
-        elif len(variantes) > 1:
-            warnings.append(
-                "A imagem gerou mais de uma combinacao de Quantidade e V.Total. O sistema escolheu a combinacao mais recorrente."
-            )
-
-    if resumo.get("quantidade_litros") in (None, "", 0, 0.0) or resumo.get("valor") in (None, "", 0, 0.0):
-        warnings.append(
-            "Nao foi localizado um par confiavel de Quantidade e V.Total na secao DADOS DOS PRODUTOS. O sistema nao vai mais preencher valores aleatorios."
-        )
-
-    dedup_warnings = []
-    for msg in warnings:
-        text = _as_str(msg).strip()
-        if text and text not in dedup_warnings:
-            dedup_warnings.append(text)
-
-    combustivel_resumo = _as_str(resumo.get("combustivel_tipo")).strip()
-    if combustivel_resumo:
-        combustivel_resumo = _normalizar_combustivel_tipo(combustivel_resumo)
-    elif tipo_forcado:
-        combustivel_resumo = tipo_forcado
-
-    quantidade_resumo = resumo.get("quantidade_litros")
-    valor_resumo = _as_float(resumo.get("valor"), 0.0) if resumo.get("valor") not in (None, "") else None
-
-    return {
-        "source_type": "ocr",
-        "arquivo_origem": arquivo_origem,
-        "texto_bruto": "\n\n".join(textos),
-        "chave_acesso_nfe": "",
-        "chave_acesso": "",
-        "numero_nota": "",
-        "serie": "",
-        "data_emissao": "",
-        "emitente_nome": "",
-        "emitente_cnpj": "",
-        "combustivel_tipo": combustivel_resumo,
-        "valor": valor_resumo,
-        "valor_total": valor_resumo,
-        "valor_total_label": "",
-        "quantidade_litros": _as_float(quantidade_resumo, 0.0) if quantidade_resumo not in (None, "") else None,
-        "itens_encontrados": _as_int(resumo.get("itens_encontrados"), 0),
-        "warnings": dedup_warnings,
-    }
 
 def _preview_nfe_estoque_requisicao():
     payload = request.form.to_dict(flat=True) if request.form else (request.get_json(silent=True) or {})
@@ -6439,7 +2922,7 @@ def _persistir_preview_nfe_estoque(preview):
 
 def _resumir_nfe_para_abastecimento(nfe, combustivel_tipo=""):
     tipo_forcado = _as_str(combustivel_tipo).strip().lower()
-    tipo_forcado = _validar_combustivel_tipo(tipo_forcado) if tipo_forcado else ""
+    tipo_forcado = _normalizar_combustivel_tipo(tipo_forcado) if tipo_forcado else ""
 
     itens_tipados = []
     for item in nfe.get("itens") or []:
@@ -6455,15 +2938,9 @@ def _resumir_nfe_para_abastecimento(nfe, combustivel_tipo=""):
     else:
         tipos_encontrados = sorted({tipo_item for _, tipo_item in itens_tipados})
         if not tipos_encontrados:
-            raise ValueError(
-                "Nao foi possivel identificar Diesel S10, Diesel 500, "
-                "Gasolina, Etanol ou Arla nos itens da NF-e."
-            )
+            raise ValueError("Nao foi possivel identificar diesel ou arla nos itens da NF-e.")
         if len(tipos_encontrados) > 1:
-            raise ValueError(
-                "A NF-e possui mais de um tipo de combustivel. Selecione "
-                "Diesel S10, Diesel 500, Gasolina, Etanol ou Arla."
-            )
+            raise ValueError("A NF-e possui mais de um tipo de combustivel. Informe se deseja importar diesel ou arla.")
         tipo_final = tipos_encontrados[0]
         selecionados = [item for item, _ in itens_tipados]
 
@@ -6489,6 +2966,11 @@ def _resumir_nfe_para_abastecimento(nfe, combustivel_tipo=""):
 def _importar_nfe_abastecimento_por_xml_text(abastecimento_id, xml_text, chave_acesso_esperada="", combustivel_tipo=""):
     chave_acesso_esperada = _normalizar_chave_acesso_nfe(chave_acesso_esperada)
     nfe = _parse_nfe_xml_text(xml_text)
+    resumo_nfe = _resumir_nfe_para_abastecimento(nfe, combustivel_tipo=combustivel_tipo)
+
+    chave_xml = _normalizar_chave_acesso_nfe(resumo_nfe.get("chave_acesso_nfe"))
+    if chave_acesso_esperada and chave_xml != chave_acesso_esperada:
+        raise ValueError("a chave bipada nao confere com o XML da NF-e informado")
 
     conn = get_conn()
     cur = conn.cursor(dictionary=True)
@@ -6510,19 +2992,6 @@ def _importar_nfe_abastecimento_por_xml_text(abastecimento_id, xml_text, chave_a
         status = _as_str(row.get("status")).lower()
         if status not in ("liberado", "abastecido"):
             raise ValueError("somente abastecimentos liberados ou abastecidos podem receber XML")
-
-        combustivel_validado = _validar_combustivel_para_veiculo(
-            cur,
-            row.get("veiculo_id"),
-            combustivel_tipo,
-        )
-        resumo_nfe = _resumir_nfe_para_abastecimento(
-            nfe,
-            combustivel_tipo=combustivel_validado,
-        )
-        chave_xml = _normalizar_chave_acesso_nfe(resumo_nfe.get("chave_acesso_nfe"))
-        if chave_acesso_esperada and chave_xml != chave_acesso_esperada:
-            raise ValueError("a chave bipada nao confere com o XML da NF-e informado")
 
         _validar_nota_duplicada_abastecimento(
             cur,
@@ -6572,9 +3041,7 @@ def _importar_nfe_abastecimento_por_xml_text(abastecimento_id, xml_text, chave_a
 def _buscar_produto_estoque(cur, codigo_barras="", codigo_produto_nfe="", nome_produto=""):
     codigo_barras = _normalizar_codigo_barras(codigo_barras)
     codigo_produto_nfe = _as_str(codigo_produto_nfe)
-    codigo_produto_norm = _codigo_produto_chave(codigo_produto_nfe)
     nome_produto = _as_str(nome_produto)
-    nome_produto_norm = _produto_nome_normalizado(nome_produto)
 
     if codigo_barras:
         cur.execute("""
@@ -6591,7 +3058,7 @@ def _buscar_produto_estoque(cur, codigo_barras="", codigo_produto_nfe="", nome_p
 
     if codigo_produto_nfe:
         cur.execute("""
-            SELECT id, codigo_barras, codigo_produto_nfe, nome_produto, grupo_estoque, produto_base_nome, unidade,
+            SELECT id, codigo_barras, codigo_produto_nfe, nome_produto, unidade,
                    embalagem_tipo_padrao, fator_embalagem_padrao, origem_cadastro, criado_em, atualizado_em
             FROM estoque_produtos
             WHERE codigo_produto_nfe=%s
@@ -6601,22 +3068,10 @@ def _buscar_produto_estoque(cur, codigo_barras="", codigo_produto_nfe="", nome_p
         row = cur.fetchone()
         if row:
             return row
-    if codigo_produto_norm:
-        cur.execute("""
-            SELECT id, codigo_barras, codigo_produto_nfe, nome_produto, grupo_estoque, produto_base_nome, unidade,
-                   embalagem_tipo_padrao, fator_embalagem_padrao, origem_cadastro, criado_em, atualizado_em
-            FROM estoque_produtos
-            WHERE TRIM(LEADING '0' FROM COALESCE(codigo_produto_nfe, ''))=%s
-            ORDER BY id DESC
-            LIMIT 1
-        """, (codigo_produto_norm,))
-        row = cur.fetchone()
-        if row:
-            return row
 
     if nome_produto:
         cur.execute("""
-            SELECT id, codigo_barras, codigo_produto_nfe, nome_produto, grupo_estoque, produto_base_nome, unidade,
+            SELECT id, codigo_barras, codigo_produto_nfe, nome_produto, unidade,
                    embalagem_tipo_padrao, fator_embalagem_padrao, origem_cadastro, criado_em, atualizado_em
             FROM estoque_produtos
             WHERE nome_produto=%s
@@ -6626,16 +3081,6 @@ def _buscar_produto_estoque(cur, codigo_barras="", codigo_produto_nfe="", nome_p
         row = cur.fetchone()
         if row:
             return row
-    if nome_produto_norm:
-        cur.execute("""
-            SELECT id, codigo_barras, codigo_produto_nfe, nome_produto, grupo_estoque, produto_base_nome, unidade,
-                   embalagem_tipo_padrao, fator_embalagem_padrao, origem_cadastro, criado_em, atualizado_em
-            FROM estoque_produtos
-            ORDER BY id DESC
-        """)
-        for row in (cur.fetchall() or []):
-            if _produto_nome_normalizado(row.get("nome_produto")) == nome_produto_norm:
-                return row
 
     return None
 
@@ -6650,22 +3095,14 @@ def _obter_ou_criar_produto_estoque(cur, codigo_barras="", codigo_produto_nfe=""
         updates = []
         params = []
         codigo_barras = _normalizar_codigo_barras(codigo_barras)
-        codigo_produto_nfe = _codigo_produto_nfe_saida(codigo_produto_nfe)
+        codigo_produto_nfe = _as_str(codigo_produto_nfe)
         unidade = _as_str(unidade)
-        grupo_estoque = _estoque_grupo_inferido(nome_produto=nome_produto, codigo_produto_nfe=codigo_produto_nfe, grupo_estoque=row.get("grupo_estoque"))
-        produto_base_nome = _estoque_base_nome_inferido(nome_produto=nome_produto, grupo_estoque=grupo_estoque, produto_base_nome=row.get("produto_base_nome"))
         if codigo_barras and not _as_str(row.get("codigo_barras")):
             updates.append("codigo_barras=%s")
             params.append(codigo_barras)
         if codigo_produto_nfe and not _as_str(row.get("codigo_produto_nfe")):
             updates.append("codigo_produto_nfe=%s")
             params.append(codigo_produto_nfe)
-        if grupo_estoque and not _as_str(row.get("grupo_estoque")):
-            updates.append("grupo_estoque=%s")
-            params.append(grupo_estoque)
-        if produto_base_nome and not _as_str(row.get("produto_base_nome")):
-            updates.append("produto_base_nome=%s")
-            params.append(produto_base_nome)
         if unidade and not _as_str(row.get("unidade")):
             updates.append("unidade=%s")
             params.append(unidade)
@@ -6676,23 +3113,19 @@ def _obter_ou_criar_produto_estoque(cur, codigo_barras="", codigo_produto_nfe=""
                 **row,
                 "codigo_barras": codigo_barras or row.get("codigo_barras"),
                 "codigo_produto_nfe": codigo_produto_nfe or row.get("codigo_produto_nfe"),
-                "grupo_estoque": grupo_estoque or row.get("grupo_estoque"),
-                "produto_base_nome": produto_base_nome or row.get("produto_base_nome"),
                 "unidade": unidade or row.get("unidade"),
             }
         return row, False
 
     cur.execute("""
         INSERT INTO estoque_produtos
-            (codigo_barras, codigo_produto_nfe, nome_produto, grupo_estoque, produto_base_nome, unidade, embalagem_tipo_padrao, fator_embalagem_padrao, origem_cadastro)
+            (codigo_barras, codigo_produto_nfe, nome_produto, unidade, embalagem_tipo_padrao, fator_embalagem_padrao, origem_cadastro)
         VALUES
-            (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            (%s, %s, %s, %s, %s, %s, %s)
     """, (
         _normalizar_codigo_barras(codigo_barras),
-        _codigo_produto_nfe_saida(codigo_produto_nfe),
+        _as_str(codigo_produto_nfe),
         _as_str(nome_produto),
-        "",
-        "",
         _as_str(unidade),
         "",
         0.0,
@@ -6702,10 +3135,8 @@ def _obter_ou_criar_produto_estoque(cur, codigo_barras="", codigo_produto_nfe=""
     return {
         "id": produto_id,
         "codigo_barras": _normalizar_codigo_barras(codigo_barras),
-        "codigo_produto_nfe": _codigo_produto_nfe_saida(codigo_produto_nfe),
+        "codigo_produto_nfe": _as_str(codigo_produto_nfe),
         "nome_produto": _as_str(nome_produto),
-        "grupo_estoque": "",
-        "produto_base_nome": "",
         "unidade": _as_str(unidade),
         "embalagem_tipo_padrao": "",
         "fator_embalagem_padrao": 0.0,
@@ -6713,16 +3144,11 @@ def _obter_ou_criar_produto_estoque(cur, codigo_barras="", codigo_produto_nfe=""
     }, True
 
 def _produto_estoque_publico(row):
-    meta = _estoque_produto_meta(row)
     return {
         "id": _as_int(row.get("id"), 0),
         "codigo_barras": _normalizar_codigo_barras(row.get("codigo_barras")),
         "codigo_produto_nfe": _as_str(row.get("codigo_produto_nfe")),
         "nome_produto": _as_str(row.get("nome_produto")),
-        "grupo_estoque": meta.get("grupo_estoque"),
-        "produto_base_nome": meta.get("produto_base_nome"),
-        "produto_base_key": meta.get("produto_base_key"),
-        "cadastro_explicitado": 1 if meta.get("cadastro_explicitado") else 0,
         "unidade": _as_str(row.get("unidade")),
         "embalagem_tipo_padrao": _as_str(row.get("embalagem_tipo_padrao")),
         "fator_embalagem_padrao": _as_float(row.get("fator_embalagem_padrao"), 0.0),
@@ -6824,8 +3250,6 @@ def _carregar_produto_estoque_por_id(cur, produto_id):
             codigo_barras,
             codigo_produto_nfe,
             nome_produto,
-            grupo_estoque,
-            produto_base_nome,
             unidade,
             embalagem_tipo_padrao,
             fator_embalagem_padrao,
@@ -6905,33 +3329,6 @@ def _registrar_log_exclusao(cur, usuario, entidade, item_id, descricao):
         (_as_str(usuario) or "desconhecido", _as_str(entidade), _as_int(item_id, 0), _as_str(descricao))
     )
 
-
-def _montar_nome_frete_exibicao(cidades, veiculo_numero="", fallback_cidade=""):
-    partes = []
-
-    def _adicionar_cidade(valor):
-        cidade = _normalizar_nome_local(valor)
-        if cidade and cidade not in partes:
-            partes.append(cidade)
-
-    if isinstance(cidades, (list, tuple, set)):
-        for cidade in cidades:
-            _adicionar_cidade(cidade)
-    else:
-        texto_cidades = _as_str(cidades)
-        if texto_cidades:
-            for cidade in re.split(r"\s*-\s*", texto_cidades):
-                _adicionar_cidade(cidade)
-
-    if not partes:
-        _adicionar_cidade(fallback_cidade)
-
-    veiculo = _as_str(veiculo_numero).strip()
-    if veiculo:
-        partes.append(veiculo)
-
-    return " - ".join([parte for parte in partes if parte]).strip()
-
 FRETE_SELECT_SQL = """
     SELECT
         f.id,
@@ -6941,8 +3338,6 @@ FRETE_SELECT_SQL = """
         f.status,
         f.motorista_id,
         f.entregador_id,
-        f.colaborador_motorista_id,
-        f.colaborador_entregador_id,
         f.veiculo_id,
         f.carga_id,
         f.observacao,
@@ -6952,48 +3347,16 @@ FRETE_SELECT_SQL = """
         f.created_at,
         f.updated_at,
         f.finalizado_em,
-        f.arquivado,
-        cm.nome AS colaborador_motorista_nome,
-        ce.nome AS colaborador_entregador_nome,
         m.nome AS motorista_nome,
         e.nome AS entregador_nome,
         v.nome AS veiculo_nome,
         v.placa AS veiculo_placa,
-        c.nome AS carga_nome,
-        c.cidade AS carga_cidade,
-        c.rota AS carga_rota,
-        c.veiculo_numero AS carga_veiculo_numero,
-        c.origem_csv AS carga_origem_csv,
-        c.registros_importados AS carga_registros_importados,
-        c.clientes_distintos AS carga_clientes_distintos,
-        c.quantidade_total AS carga_quantidade_total,
-        c.litros_total AS carga_litros_total,
-        c.peso_total AS carga_peso_total,
-        c.valor_total AS carga_valor_total,
-        c.atualizado_em AS carga_atualizado_em,
-        cil.carga_cidades AS carga_cidades,
-        COALESCE(f.veiculo_id, vr.id) AS veiculo_id_resolvido,
-        COALESCE(v.nome, vr.nome) AS veiculo_nome_resolvido,
-        COALESCE(v.placa, vr.placa) AS veiculo_placa_resolvida
+        c.nome AS carga_nome
     FROM fretes f
-    LEFT JOIN colaboradores cm ON f.colaborador_motorista_id = cm.id
-    LEFT JOIN colaboradores ce ON f.colaborador_entregador_id = ce.id
     LEFT JOIN motoristas m ON f.motorista_id = m.id
     LEFT JOIN motoristas e ON f.entregador_id = e.id
     LEFT JOIN veiculos v ON f.veiculo_id = v.id
     LEFT JOIN cargas c ON f.carga_id = c.id
-    LEFT JOIN (
-        SELECT x.carga_id, GROUP_CONCAT(x.cidade ORDER BY x.primeira_linha SEPARATOR ' - ') AS carga_cidades
-        FROM (
-            SELECT carga_id, cidade, MIN(linha_num) AS primeira_linha
-            FROM cargas_import_linhas
-            WHERE TRIM(COALESCE(cidade, '')) <> ''
-            GROUP BY carga_id, cidade
-        ) x
-        GROUP BY x.carga_id
-    ) cil ON cil.carga_id = c.id
-    LEFT JOIN veiculos vr ON TRIM(COALESCE(vr.nome, '')) = TRIM(COALESCE(c.veiculo_numero, ''))
-        OR TRIM(COALESCE(vr.placa, '')) = TRIM(COALESCE(c.veiculo_numero, ''))
 """
 
 def _serialize_frete_row(row):
@@ -7007,38 +3370,20 @@ def _serialize_frete_row(row):
         "status": _as_str(row.get("status")),
         "motorista_id": _as_int(row.get("motorista_id"), 0) or None,
         "entregador_id": _as_int(row.get("entregador_id"), 0) or None,
-        "colaborador_motorista_id": _as_int(row.get("colaborador_motorista_id"), 0) or None,
-        "colaborador_entregador_id": _as_int(row.get("colaborador_entregador_id"), 0) or None,
-        "veiculo_id": _as_int(row.get("veiculo_id_resolvido") if row.get("veiculo_id_resolvido") is not None else row.get("veiculo_id"), 0) or None,
+        "veiculo_id": _as_int(row.get("veiculo_id"), 0) or None,
         "carga_id": _as_int(row.get("carga_id"), 0) or None,
         "observacao": _as_str(row.get("observacao")),
         "km_atual": _as_int(row.get("km_atual"), 0),
         "peso": _as_float(row.get("peso"), 0.0),
         "qtd_entregas": _as_int(row.get("qtd_entregas"), 0),
-        "colaborador_motorista_nome": _as_str(row.get("colaborador_motorista_nome")),
-        "colaborador_entregador_nome": _as_str(row.get("colaborador_entregador_nome")),
         "motorista_nome": _as_str(row.get("motorista_nome")),
         "entregador_nome": _as_str(row.get("entregador_nome")),
-        "veiculo_nome": _as_str(row.get("veiculo_nome_resolvido") if row.get("veiculo_nome_resolvido") is not None else row.get("veiculo_nome")),
-        "veiculo_placa": _as_str(row.get("veiculo_placa_resolvida") if row.get("veiculo_placa_resolvida") is not None else row.get("veiculo_placa")),
+        "veiculo_nome": _as_str(row.get("veiculo_nome")),
+        "veiculo_placa": _as_str(row.get("veiculo_placa")),
         "carga_nome": _as_str(row.get("carga_nome")),
-        "carga_cidade": _as_str(row.get("carga_cidade")),
-        "carga_rota": _as_str(row.get("carga_rota")),
-        "carga_veiculo_numero": _as_str(row.get("carga_veiculo_numero")),
-        "carga_cidades": _as_str(row.get("carga_cidades")),
-        "carga_origem_csv": _as_str(row.get("carga_origem_csv")),
-        "carga_registros_importados": _as_int(row.get("carga_registros_importados"), 0),
-        "carga_clientes_distintos": _as_int(row.get("carga_clientes_distintos"), 0),
-        "carga_quantidade_total": _as_float(row.get("carga_quantidade_total"), 0.0),
-        "carga_litros_total": _as_float(row.get("carga_litros_total"), 0.0),
-        "carga_peso_total": _as_float(row.get("carga_peso_total"), 0.0),
-        "carga_valor_total": _as_float(row.get("carga_valor_total"), 0.0),
-        "carga_atualizado_em": _fmt_dt(row.get("carga_atualizado_em")),
-        "carga_importada": bool(_as_str(row.get("carga_origem_csv"))),
         "created_at": _fmt_dt(row.get("created_at")),
         "updated_at": _fmt_dt(row.get("updated_at")),
         "finalizado_em": _fmt_dt(row.get("finalizado_em")),
-        "arquivado": bool(_as_int(row.get("arquivado"), 0)),
     }
 
 def _buscar_frete_detalhado(cur, frete_id):
@@ -7077,22 +3422,6 @@ def _montar_detalhes_historico_frete(acao, antes=None, depois=None):
         return (
             f"Frete {_frete_hist_val(ref.get('nome'))} removido automaticamente "
             f"apos 1 dia em Finalizado."
-        )
-    if acao == "nota_saida_vinculada":
-        return (
-            f"NF-e de saida {_frete_hist_val(ref.get('numero_nota') or ref.get('chave_nfe'))} "
-            f"vinculada | Rota {_frete_hist_val(ref.get('rota_registrada'))} | "
-            f"Placa XML {_frete_hist_val(ref.get('placa_xml'))} | "
-            f"Mapa {_frete_hist_val(ref.get('mapa_xml'))} | "
-            f"Origem {_frete_hist_val(ref.get('vinculacao_origem'))} | "
-            f"Itens {_frete_hist_num(ref.get('itens_total'))}"
-        )
-    if acao == "criado_automaticamente_xml":
-        return (
-            f"Card criado automaticamente para a NF-e "
-            f"{_frete_hist_val(ref.get('numero_nota') or ref.get('chave_nfe'))} | "
-            f"Veiculo {_frete_hist_val(ref.get('veiculo_nome') or ref.get('veiculo_placa'))} | "
-            f"Status {_frete_hist_val(ref.get('status'))}"
         )
 
     campos = [
@@ -7148,9 +3477,35 @@ def _registrar_historico_frete(cur, frete_id, acao, usuario, antes=None, depois=
     )
 
 def _limpar_fretes_finalizados_expirados():
-    # Mantemos os fretes finalizados para consulta posterior no historico.
-    # A ocultacao do kanban acontece no frontend apos 24h, sem apagar dados.
-    return 0
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    removidos = 0
+    try:
+        cur.execute(
+            FRETE_SELECT_SQL + """
+            WHERE f.status = 'retornando'
+              AND f.finalizado_em IS NOT NULL
+              AND f.finalizado_em <= DATE_SUB(NOW(), INTERVAL 1 DAY)
+            ORDER BY f.finalizado_em ASC, f.id ASC
+            """
+        )
+        expirados = [_serialize_frete_row(row) for row in (cur.fetchall() or [])]
+        expirados = [item for item in expirados if item]
+        for frete in expirados:
+            cur.execute("DELETE FROM fretes_historico WHERE frete_id = %s", (frete["id"],))
+            cur.execute("DELETE FROM fretes WHERE id = %s", (frete["id"],))
+            descricao = (
+                f"frete id={frete['id']} nome={_as_str(frete.get('nome'))} "
+                f"status={_as_str(frete.get('status'))} removido automaticamente apos 1 dia finalizado"
+            )
+            _registrar_log_exclusao(cur, "sistema", "fretes", frete["id"], descricao)
+            removidos += 1
+        if removidos:
+            conn.commit()
+    finally:
+        cur.close()
+        conn.close()
+    return removidos
 
 def _as_bool(v, default=False):
     if v is None:
@@ -9195,6 +5550,27 @@ def _gerar_bundle_pkcs12(certificados, nome_arquivo, senha, alias="RioBranco Cer
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)
 
+def _public_base_url():
+    explicit = _as_str(_env("RB_PUBLIC_BASE_URL", "")).rstrip("/")
+    if explicit:
+        return explicit
+
+    https_enabled = _as_bool(_env("RB_ENABLE_HTTPS", "0"), False)
+    server_name = _as_str(_env("RB_SERVER_NAME", "")).strip()
+    scheme = "https" if https_enabled else "http"
+    port = _env_int("RB_HTTPS_PORT", 443 if https_enabled else 80) if https_enabled else _env_int("RB_HTTP_PORT", 80)
+
+    if server_name and server_name != "_":
+        default_port = 443 if scheme == "https" else 80
+        host = server_name if port == default_port else f"{server_name}:{port}"
+        return f"{scheme}://{host}"
+
+    forwarded_proto = _as_str(request.headers.get("X-Forwarded-Proto")).lower()
+    forwarded_host = _as_str(request.headers.get("X-Forwarded-Host"))
+    host = forwarded_host or _as_str(request.headers.get("Host")) or urlparse(request.host_url).netloc
+    scheme = forwarded_proto or ("https" if https_enabled else _as_str(request.scheme).lower() or "http")
+    return f"{scheme}://{host}".rstrip("/")
+
 def _bootstrap_sip_config_from_env():
     env_cfg = _sip_config_from_env()
     if _sip_config_is_blank(env_cfg):
@@ -9233,156 +5609,83 @@ def _usuario_publico_dict(row):
         "data_cadastro": _fmt_dt(row.get("data_cadastro")),
     }
 
-def _buscar_usuario_login_cur(cur, login):
-    cur.execute(
-        """
-        SELECT
-            u.id,
-            COALESCE(c.nome, u.nome) AS nome,
-            u.login,
-            u.senha,
-            u.ativo,
-            COALESCE(c.sip_habilitado, u.sip_habilitado, 0) AS sip_habilitado,
-            COALESCE(c.sip_usuario, u.sip_usuario, '') AS sip_usuario,
-            COALESCE(c.sip_senha, u.sip_senha, '') AS sip_senha,
-            COALESCE(c.sip_ramal, u.sip_ramal, '') AS sip_ramal,
-            COALESCE(c.codbar_modo, u.codbar_modo, 'bip') AS codbar_modo,
-            u.data_cadastro
-        FROM usuarios u
-        LEFT JOIN colaboradores c ON c.usuario_id = u.id
-        WHERE u.login=%s
-        LIMIT 1
-        """,
-        (login,),
-    )
-    return cur.fetchone()
+def _portal_usuario_headers():
+    uid = _as_int(request.headers.get("X-Usuario-Id"), 0)
+    login = _as_str(request.headers.get("X-Usuario-Login"))
+    nome = _as_str(request.headers.get("X-Usuario-Nome")) or login
+    if uid <= 0 and not login:
+        return None
+    if not login:
+        login = f"portal-{uid}"
+    if not nome:
+        nome = login
+    return {"id": uid, "nome": nome, "login": login}
 
-def _buscar_usuario_id_cur(cur, user_id):
-    cur.execute(
-        """
-        SELECT
-            u.id,
-            COALESCE(c.nome, u.nome) AS nome,
-            u.login,
-            u.senha,
-            u.ativo,
-            COALESCE(c.sip_habilitado, u.sip_habilitado, 0) AS sip_habilitado,
-            COALESCE(c.sip_usuario, u.sip_usuario, '') AS sip_usuario,
-            COALESCE(c.sip_senha, u.sip_senha, '') AS sip_senha,
-            COALESCE(c.sip_ramal, u.sip_ramal, '') AS sip_ramal,
-            COALESCE(c.codbar_modo, u.codbar_modo, 'bip') AS codbar_modo,
-            u.data_cadastro
-        FROM usuarios u
-        LEFT JOIN colaboradores c ON c.usuario_id = u.id
-        WHERE u.id=%s
-        LIMIT 1
-        """,
-        (user_id,),
-    )
-    return cur.fetchone()
+def _ensure_portal_usuario(conn):
+    portal_user = _portal_usuario_headers()
+    if not portal_user:
+        return None
 
-def _sincronizar_colaborador_por_usuario(cur, user_id, data=None):
-    data = data or {}
-    cur.execute(
-        """
-        SELECT
-            id,
-            nome,
-            login,
-            senha,
-            sip_habilitado,
-            sip_usuario,
-            sip_senha,
-            sip_ramal,
-            codbar_modo
-        FROM colaboradores
-        WHERE usuario_id=%s
-        LIMIT 1
-        """,
-        (user_id,),
-    )
-    col = cur.fetchone()
-    if not col and _as_str(data.get("login")):
+    cur = conn.cursor(dictionary=True)
+    try:
         cur.execute(
             """
-            SELECT id, usuario_id, login
-            FROM colaboradores
-            WHERE login=%s
-            ORDER BY id ASC
+            SELECT id, nome, login, ativo, sip_habilitado, sip_usuario, sip_ramal, codbar_modo, data_cadastro
+            FROM usuarios
+            WHERE id=%s OR login=%s
+            ORDER BY CASE WHEN id=%s THEN 0 ELSE 1 END
             LIMIT 1
             """,
-            (_as_str(data.get("login")),),
+            (portal_user["id"], portal_user["login"], portal_user["id"]),
         )
-        col = cur.fetchone()
+        row = cur.fetchone()
+        if row:
+            updates = []
+            params = []
+            if portal_user["nome"] and _as_str(row.get("nome")) != portal_user["nome"]:
+                updates.append("nome=%s")
+                params.append(portal_user["nome"])
+            if _as_int(row.get("ativo"), 1) != 1:
+                updates.append("ativo=1")
+            if updates:
+                params.append(row["id"])
+                cur.execute(f"UPDATE usuarios SET {', '.join(updates)} WHERE id=%s", params)
+                conn.commit()
+                row["nome"] = portal_user["nome"] or row.get("nome")
+                row["ativo"] = 1
+            return _usuario_publico_dict(row)
 
-    nome = _as_str(data.get("nome")) or _as_str((col or {}).get("nome"))
-    login = _as_str(data.get("login")) or _as_str((col or {}).get("login"))
-    senha_hash = _as_str((col or {}).get("senha"))
-    if _as_str(data.get("senha")):
-        senha_hash = generate_password_hash(_as_str(data.get("senha")))
-    sip_habilitado = 1 if _as_bool(data.get("sip_habilitado"), _as_bool((col or {}).get("sip_habilitado"), False)) else 0
-    sip_usuario = _as_str(data.get("sip_usuario")) or login
-    sip_senha = _as_str(data.get("sip_senha")) or _as_str((col or {}).get("sip_senha"))
-    sip_ramal = _as_str(data.get("sip_ramal")) or _as_str((col or {}).get("sip_ramal"))
-    codbar_modo = _normalizar_codbar_modo(data.get("codbar_modo") if "codbar_modo" in data else (col or {}).get("codbar_modo"))
-
-    if col:
+        senha_sistema = generate_password_hash(uuid.uuid4().hex)
+        if portal_user["id"] > 0:
+            cur.execute(
+                """
+                INSERT INTO usuarios (id, nome, login, senha, ativo, codbar_modo)
+                VALUES (%s, %s, %s, %s, 1, 'bip')
+                """,
+                (portal_user["id"], portal_user["nome"], portal_user["login"], senha_sistema),
+            )
+        else:
+            cur.execute(
+                """
+                INSERT INTO usuarios (nome, login, senha, ativo, codbar_modo)
+                VALUES (%s, %s, %s, 1, 'bip')
+                """,
+                (portal_user["nome"], portal_user["login"], senha_sistema),
+            )
+        conn.commit()
+        local_id = portal_user["id"] if portal_user["id"] > 0 else cur.lastrowid
         cur.execute(
             """
-            UPDATE colaboradores
-            SET nome=%s,
-                login=%s,
-                senha=%s,
-                sip_habilitado=%s,
-                sip_usuario=%s,
-                sip_senha=%s,
-                sip_ramal=%s,
-                codbar_modo=%s,
-                usuario_id=%s
+            SELECT id, nome, login, ativo, sip_habilitado, sip_usuario, sip_ramal, codbar_modo, data_cadastro
+            FROM usuarios
             WHERE id=%s
+            LIMIT 1
             """,
-            (
-                nome,
-                login,
-                senha_hash,
-                sip_habilitado,
-                sip_usuario,
-                sip_senha,
-                sip_ramal,
-                codbar_modo,
-                user_id,
-                _as_int(col.get("id"), 0),
-            ),
+            (local_id,),
         )
-        return cur.rowcount or 0
-
-    cur.execute(
-        """
-        INSERT INTO colaboradores (
-            nome, email, cpf, login, senha, sip_habilitado, sip_usuario, sip_senha, sip_ramal, codbar_modo,
-            is_motorista, is_entregador, is_ajudante, is_conferente, is_vendedor, usuario_id
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        """,
-        (
-            nome,
-            "",
-            "",
-            login,
-            senha_hash,
-            sip_habilitado,
-            sip_usuario,
-            sip_senha,
-            sip_ramal,
-            codbar_modo,
-            0,
-            0,
-            0,
-            0,
-            0,
-            user_id,
-        ),
-    )
-    return cur.rowcount or 0
+        return _usuario_publico_dict(cur.fetchone() or {})
+    finally:
+        cur.close()
 
 def _usuario_sip_dict(row):
     return {
@@ -9390,1195 +5693,8 @@ def _usuario_sip_dict(row):
         "sip_senha": _as_str(row.get("sip_senha")),
     }
 
-
-def _abastecimento_xml_placa_normalizada(valor):
-    return re.sub(r"[^A-Z0-9]", "", _as_str(valor).upper())
-
-
-def _veiculo_cadastro_sem_placa(veiculo):
-    placa_original = _as_str((veiculo or {}).get("placa")).strip().upper()
-    placa = _abastecimento_xml_placa_normalizada(placa_original)
-    nome = re.sub(
-        r"[^A-Z0-9]+",
-        "",
-        _as_str((veiculo or {}).get("nome")).upper(),
-    )
-    placa_brasileira = bool(
-        re.fullmatch(r"[A-Z]{3}(?:[0-9]{4}|[0-9][A-Z][0-9]{2})", placa)
-    )
-    return bool(
-        not placa
-        or nome.startswith("SEMPLACA")
-        or (
-            placa_original.startswith("SEM-")
-            and not placa_brasileira
-        )
-    )
-
-
-def _abastecimento_xml_veiculo_sem_placa(combustivel_tipo, veiculos):
-    tipo_informado = re.sub(
-        r"\s+",
-        " ",
-        _as_str(combustivel_tipo).strip().lower(),
-    )
-    tipo = COMBUSTIVEL_TIPO_ALIASES.get(tipo_informado)
-    candidatos = sorted(
-        (
-            veiculo
-            for veiculo in (veiculos or [])
-            if tipo
-            and _veiculo_cadastro_sem_placa(veiculo)
-            and tipo
-            in _combustiveis_permitidos_veiculo(
-                veiculo.get("combustivel_padrao")
-            )
-        ),
-        key=lambda veiculo: _as_int(veiculo.get("id"), 0),
-    )
-    return {
-        "veiculo": candidatos[0] if len(candidatos) == 1 else None,
-        "candidatos": candidatos,
-        "candidatos_total": len(candidatos),
-    }
-
-
-def _abastecimento_xml_placa_equivalente(valor):
-    grupos = {
-        **dict.fromkeys("0OQ", "0"),
-        **dict.fromkeys("1IL", "1"),
-        **dict.fromkeys("2Z", "2"),
-        **dict.fromkeys("5S", "5"),
-        **dict.fromkeys("6G", "6"),
-        **dict.fromkeys("8B", "8"),
-    }
-    return "".join(
-        grupos.get(char, char)
-        for char in _abastecimento_xml_placa_normalizada(valor)
-    )
-
-
-def _abastecimento_xml_distancia_placa(valor_a, valor_b):
-    a = _abastecimento_xml_placa_normalizada(valor_a)
-    b = _abastecimento_xml_placa_normalizada(valor_b)
-    if not a:
-        return len(b)
-    if not b:
-        return len(a)
-    anterior = list(range(len(b) + 1))
-    for indice_a, char_a in enumerate(a, start=1):
-        atual = [indice_a]
-        for indice_b, char_b in enumerate(b, start=1):
-            atual.append(
-                min(
-                    atual[-1] + 1,
-                    anterior[indice_b] + 1,
-                    anterior[indice_b - 1] + (char_a != char_b),
-                )
-            )
-        anterior = atual
-    return anterior[-1]
-
-
-def _abastecimento_xml_veiculo_similar(placa_xml, veiculos):
-    placa = _abastecimento_xml_placa_normalizada(placa_xml)
-    if len(placa) < 5:
-        return None
-    candidatos = []
-    for veiculo in veiculos or []:
-        placa_cadastro = _abastecimento_xml_placa_normalizada(
-            veiculo.get("placa")
-        )
-        if len(placa_cadastro) < 5:
-            continue
-        distancia = _abastecimento_xml_distancia_placa(placa, placa_cadastro)
-        sequencia = SequenceMatcher(None, placa, placa_cadastro).ratio()
-        equivalencia = SequenceMatcher(
-            None,
-            _abastecimento_xml_placa_equivalente(placa),
-            _abastecimento_xml_placa_equivalente(placa_cadastro),
-        ).ratio()
-        posicoes = (
-            sum(a == b for a, b in zip(placa, placa_cadastro))
-            / max(len(placa), len(placa_cadastro))
-        )
-        score = max(sequencia, equivalencia * 0.98, posicoes)
-        if distancia <= 2 and score >= 0.70:
-            candidatos.append((score, -distancia, veiculo))
-    candidatos.sort(
-        key=lambda item: (
-            item[0],
-            item[1],
-            _as_int(item[2].get("id"), 0),
-        ),
-        reverse=True,
-    )
-    if not candidatos:
-        return None
-    score, distancia_negativa, veiculo = candidatos[0]
-    return {
-        "veiculo": veiculo,
-        "score": round(score, 4),
-        "distancia": -distancia_negativa,
-        "candidatos_total": len(candidatos),
-    }
-
-
-def _abastecimento_xml_dados_json(row):
-    dados = row.get("dados_json")
-    if isinstance(dados, dict):
-        return dados
-    texto = _as_str(dados).strip()
-    if not texto:
-        return {}
-    try:
-        resultado = json.loads(texto)
-    except Exception:
-        try:
-            resultado = ast.literal_eval(texto)
-        except Exception:
-            resultado = {}
-    return resultado if isinstance(resultado, dict) else {}
-
-
-def _abastecimento_xml_itens(row):
-    dados = _abastecimento_xml_dados_json(row)
-    itens_brutos = dados.get("itens") if isinstance(dados.get("itens"), list) else []
-    itens = []
-    for index, item in enumerate(itens_brutos):
-        if not isinstance(item, dict):
-            continue
-        normalizado = _normalizar_item_manutencao_payload(
-            {
-                "item_seq": item.get("nItem") or item.get("item_seq"),
-                "codigo_produto_nfe": (
-                    item.get("codigo_produto")
-                    or item.get("codigo_produto_nfe")
-                ),
-                "codigo_barras": item.get("codigo_barras"),
-                "nome_produto": (
-                    item.get("descricao_produto")
-                    or item.get("nome_produto")
-                    or item.get("desc_anp")
-                ),
-                "unidade": item.get("unidade"),
-                "quantidade": item.get("quantidade"),
-                "valor_unitario": item.get("valor_unitario"),
-                "valor_total": (
-                    item.get("valor_total_item")
-                    or item.get("valor_total")
-                ),
-            },
-            index,
-        )
-        if normalizado:
-            itens.append(normalizado)
-    if itens:
-        return itens
-    fallback = _normalizar_item_manutencao_payload(
-        {
-            "nome_produto": row.get("combustivel"),
-            "quantidade": row.get("litros"),
-            "valor_unitario": row.get("valor_unitario"),
-            "valor_total": _abastecimento_xml_valor(row),
-        },
-        0,
-    )
-    return [fallback] if fallback else []
-
-
-def _abastecimento_xml_classificar_nota(row, combustivel_padrao=""):
-    nomes = [
-        _as_str(item.get("nome_produto"))
-        for item in _abastecimento_xml_itens(row)
-    ]
-    nomes.append(_as_str(row.get("combustivel")))
-    tipos = [
-        _abastecimento_xml_tipo_combustivel(nome, combustivel_padrao)
-        for nome in nomes
-        if nome
-    ]
-    tipos = [tipo for tipo in tipos if tipo]
-    if tipos:
-        return {
-            "destino": "abastecimento",
-            "combustivel_tipo": tipos[0],
-        }
-
-    texto = _abastecimento_xml_texto_normalizado(" ".join(nomes))
-    if "GNV" in texto:
-        return {
-            "destino": "combustivel_nao_suportado",
-            "combustivel_tipo": "",
-        }
-    if _abastecimento_xml_itens(row):
-        return {
-            "destino": "manutencao",
-            "combustivel_tipo": "",
-        }
-    return {
-        "destino": "indeterminado",
-        "combustivel_tipo": "",
-    }
-
-
-def _manutencao_xml_registrar_pre_lancamento(
-    cur,
-    row,
-    veiculo=None,
-    sugestao_confianca=0.0,
-    origem_veiculo="",
-    motivo="",
-):
-    nota_key = _abastecimento_xml_nota_key(row)
-    cur.execute(
-        """
-        SELECT id, status
-        FROM manutencao_xml_pre_lancamentos
-        WHERE nota_key=%s
-        LIMIT 1
-        """,
-        (nota_key,),
-    )
-    existente = cur.fetchone() or {}
-    if _as_str(existente.get("status")) == "confirmado":
-        return existente
-
-    itens = _abastecimento_xml_itens(row)
-    valor_itens = sum(
-        _as_float(item.get("valor_total"), 0.0)
-        for item in itens
-    )
-    valor = valor_itens if valor_itens > 0 else _abastecimento_xml_valor(row)
-    cur.execute(
-        """
-        INSERT INTO manutencao_xml_pre_lancamentos (
-            nota_key, importar_xml_abastecimento_id, chave_nfe, numero_nota,
-            veiculo_id, placa_xml, sugestao_confianca, origem_veiculo,
-            status, motivo, emitente_nome, data_documento, km, valor,
-            itens_json, criado_em, atualizado_em
-        )
-        VALUES (
-            %s, %s, %s, %s, %s, %s, %s, %s,
-            'pendente', %s, %s, %s, %s, %s, %s, NOW(), NOW()
-        )
-        ON DUPLICATE KEY UPDATE
-            importar_xml_abastecimento_id=VALUES(importar_xml_abastecimento_id),
-            chave_nfe=VALUES(chave_nfe),
-            numero_nota=VALUES(numero_nota),
-            veiculo_id=VALUES(veiculo_id),
-            placa_xml=VALUES(placa_xml),
-            sugestao_confianca=VALUES(sugestao_confianca),
-            origem_veiculo=VALUES(origem_veiculo),
-            status='pendente',
-            motivo=VALUES(motivo),
-            emitente_nome=VALUES(emitente_nome),
-            data_documento=VALUES(data_documento),
-            km=VALUES(km),
-            valor=VALUES(valor),
-            itens_json=VALUES(itens_json),
-            manutencao_id=NULL,
-            confirmado_em=NULL,
-            atualizado_em=NOW()
-        """,
-        (
-            nota_key,
-            _as_int(row.get("id"), 0),
-            _normalizar_chave_acesso_nfe(row.get("chave_nfe")),
-            _as_str(row.get("numero_nota")),
-            _as_int((veiculo or {}).get("id"), 0) or None,
-            _as_str(row.get("placa")),
-            max(0.0, min(1.0, _as_float(sugestao_confianca, 0.0))),
-            _as_str(origem_veiculo),
-            _as_str(motivo)[:500],
-            _as_str(row.get("posto_nome")),
-            _normalizar_data_documento(row.get("data_emissao")) or None,
-            _as_int(row.get("km_final"), 0),
-            valor,
-            json.dumps(itens, ensure_ascii=False),
-        ),
-    )
-    return {
-        "id": _as_int(existente.get("id"), 0) or _as_int(cur.lastrowid, 0),
-        "status": "pendente",
-    }
-
-
-def _abastecimento_xml_nota_key(row):
-    chave = _normalizar_chave_acesso_nfe(row.get("chave_nfe"))
-    if len(chave) == 44:
-        return chave
-    partes = [
-        _as_str(row.get("posto_cnpj")),
-        _as_str(row.get("numero_nota")),
-        _as_str(row.get("data_emissao"))[:10],
-        _abastecimento_xml_placa_normalizada(row.get("placa")),
-        f"{_as_float(row.get('litros'), 0.0):.3f}",
-    ]
-    return "|".join(partes)
-
-
-def _abastecimento_xml_data(valor):
-    texto = _as_str(valor).strip()
-    if not texto:
-        return None
-    try:
-        data = datetime.datetime.fromisoformat(texto.replace("Z", "+00:00"))
-        return data.replace(tzinfo=None)
-    except ValueError:
-        try:
-            return datetime.datetime.strptime(texto[:10], "%Y-%m-%d")
-        except ValueError:
-            return None
-
-
-def _abastecimento_xml_tipo_combustivel(valor, combustivel_padrao=""):
-    texto = re.sub(r"\s+", " ", _as_str(valor).upper()).strip()
-    if "ARLA" in texto:
-        return "arla"
-    if "ETANOL" in texto or "ALCOOL" in texto or "ÁLCOOL" in texto:
-        return "etanol"
-    if "GASOLINA" in texto:
-        return "gasolina"
-    if any(token in texto for token in ("S500", "S-500", "DIESEL 500")):
-        return "diesel_500"
-    if any(token in texto for token in ("S10", "S-10")):
-        return "diesel_s10"
-    if "DIESEL" in texto or "OLEO DIESEL" in texto:
-        return _normalizar_combustivel_padrao_veiculo(combustivel_padrao)
-    return ""
-
-
-def _abastecimento_xml_valor(row):
-    valor_produto = _as_float(row.get("valor_produto"), 0.0)
-    return valor_produto if valor_produto > 0 else _as_float(row.get("valor_total"), 0.0)
-
-
-def _abastecimento_xml_texto_normalizado(valor):
-    return re.sub(r"[^A-Z0-9]+", " ", _as_str(valor).upper()).strip()
-
-
-def _abastecimento_xml_registrar_vinculo(
-    cur,
-    row,
-    abastecimento_id=0,
-    veiculo_id=0,
-    origem="",
-    status="pendente",
-    motivo="",
-):
-    cur.execute(
-        """
-        INSERT INTO abastecimento_xml_vinculos (
-            nota_key, importar_xml_abastecimento_id, chave_nfe, numero_nota,
-            abastecimento_id, veiculo_id, placa_xml, vinculacao_origem,
-            status, motivo, criado_em, atualizado_em
-        )
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
-        ON DUPLICATE KEY UPDATE
-            importar_xml_abastecimento_id=VALUES(importar_xml_abastecimento_id),
-            chave_nfe=VALUES(chave_nfe),
-            numero_nota=VALUES(numero_nota),
-            abastecimento_id=VALUES(abastecimento_id),
-            veiculo_id=VALUES(veiculo_id),
-            placa_xml=VALUES(placa_xml),
-            vinculacao_origem=VALUES(vinculacao_origem),
-            status=VALUES(status),
-            motivo=VALUES(motivo),
-            atualizado_em=NOW()
-        """,
-        (
-            _abastecimento_xml_nota_key(row),
-            _as_int(row.get("id"), 0),
-            _normalizar_chave_acesso_nfe(row.get("chave_nfe")),
-            _as_str(row.get("numero_nota")),
-            _as_int(abastecimento_id, 0) or None,
-            _as_int(veiculo_id, 0) or None,
-            _as_str(row.get("placa")),
-            _as_str(origem),
-            _as_str(status) or "pendente",
-            _as_str(motivo)[:500],
-        ),
-    )
-
-
-def _abastecimento_xml_candidato_manual(
-    row,
-    abastecimentos,
-    veiculo_id,
-    ids_ja_vinculados,
-):
-    data_xml = _abastecimento_xml_data(row.get("data_emissao"))
-    km_xml = _as_int(row.get("km_final"), 0)
-    litros_xml = _as_float(row.get("litros"), 0.0)
-    valor_xml = _abastecimento_xml_valor(row)
-    posto_xml = _abastecimento_xml_texto_normalizado(row.get("posto_nome"))
-    candidatos = []
-
-    for abastecimento in abastecimentos:
-        abastecimento_id = _as_int(abastecimento.get("id"), 0)
-        if abastecimento_id in ids_ja_vinculados:
-            continue
-        if _as_int(abastecimento.get("veiculo_id"), 0) != _as_int(veiculo_id, 0):
-            continue
-        chave_atual = _normalizar_chave_acesso_nfe(
-            abastecimento.get("chave_acesso_nfe")
-        )
-        numero_atual = _as_str(abastecimento.get("numero_nota"))
-        if chave_atual or (
-            numero_atual
-            and numero_atual != _as_str(row.get("numero_nota"))
-        ):
-            continue
-
-        data_abastecimento = (
-            abastecimento.get("data_abastecimento")
-            or abastecimento.get("data_liberacao")
-        )
-        if isinstance(data_abastecimento, datetime.date):
-            data_manual = (
-                data_abastecimento
-                if isinstance(data_abastecimento, datetime.datetime)
-                else datetime.datetime.combine(data_abastecimento, datetime.time())
-            )
-        else:
-            data_manual = _abastecimento_xml_data(data_abastecimento)
-        diferenca_dias = (
-            abs((data_manual - data_xml).total_seconds()) / 86400
-            if data_manual and data_xml
-            else 999
-        )
-        km_manual = _as_int(abastecimento.get("km"), 0)
-        diferenca_km = abs(km_manual - km_xml) if km_manual > 0 and km_xml > 0 else 999999
-        litros_manual = _as_float(abastecimento.get("quantidade_litros"), 0.0)
-        valor_manual = _as_float(abastecimento.get("valor"), 0.0)
-        tolerancia_litros = max(0.10, litros_xml * 0.003)
-        tolerancia_valor = max(2.0, valor_xml * 0.01)
-        litros_compativeis = (
-            litros_xml > 0
-            and litros_manual > 0
-            and abs(litros_manual - litros_xml) <= tolerancia_litros
-        )
-        valor_compativel = (
-            valor_xml > 0
-            and valor_manual > 0
-            and abs(valor_manual - valor_xml) <= tolerancia_valor
-        )
-        posto_manual = _abastecimento_xml_texto_normalizado(
-            abastecimento.get("posto")
-        )
-        posto_compativel = bool(
-            posto_xml
-            and posto_manual
-            and (
-                posto_xml in posto_manual
-                or posto_manual in posto_xml
-                or any(
-                    token in posto_manual
-                    for token in posto_xml.split()
-                    if len(token) >= 6
-                )
-            )
-        )
-        status = _as_str(abastecimento.get("status")).lower()
-        score = 0
-        if diferenca_km <= 5:
-            score += 6
-        elif diferenca_km <= 50:
-            score += 3
-        if diferenca_dias <= 1:
-            score += 4
-        elif diferenca_dias <= 3:
-            score += 2
-        elif diferenca_dias <= 7:
-            score += 1
-        if litros_compativeis:
-            score += 5
-        if valor_compativel:
-            score += 3
-        if posto_compativel:
-            score += 1
-
-        if status == "liberado":
-            elegivel = diferenca_km <= 50 and diferenca_dias <= 7 and score >= 7
-        elif status == "abastecido":
-            elegivel = (
-                diferenca_dias <= 3
-                and litros_compativeis
-                and (diferenca_km <= 50 or valor_compativel)
-                and score >= 10
-            )
-        else:
-            elegivel = False
-        if elegivel:
-            candidatos.append((score, abastecimento))
-
-    candidatos.sort(key=lambda item: (item[0], _as_int(item[1].get("id"), 0)), reverse=True)
-    if not candidatos:
-        return None
-    if len(candidatos) > 1 and candidatos[0][0] <= candidatos[1][0] + 1:
-        return None
-    return candidatos[0][1]
-
-
-def sincronizar_abastecimentos_xml(dry_run=False, source_id=0):
-    conn = get_conn()
-    cur = conn.cursor(dictionary=True)
-    lock_name = "riobranco_abastecimentos_xml"
-    lock_adquirido = False
-    resumo = {
-        "notas": 0,
-        "duplicatas_origem": 0,
-        "ja_vinculadas": 0,
-        "requisicoes_concluidas": 0,
-        "manuais_vinculados": 0,
-        "criados": 0,
-        "pendentes": 0,
-        "manutencoes_pre_lancadas": 0,
-        "manutencoes_confirmadas": 0,
-        "ignoradas": 0,
-        "simulacao": bool(dry_run),
-        "detalhes": [],
-    }
-    try:
-        cur.execute("SELECT GET_LOCK(%s, 15) AS adquirido", (lock_name,))
-        lock_row = cur.fetchone() or {}
-        lock_adquirido = _as_int(lock_row.get("adquirido"), 0) == 1
-        if not lock_adquirido:
-            raise RuntimeError(
-                "outra sincronizacao de abastecimentos XML ainda esta em andamento"
-            )
-        cur.execute(
-            """
-            SELECT *
-            FROM importar_xml_abastecimentos
-            ORDER BY id DESC
-            """
-        )
-        rows = cur.fetchall() or []
-        notas = {}
-        repeticoes = {}
-        for row in rows:
-            nota_key = _abastecimento_xml_nota_key(row)
-            repeticoes[nota_key] = repeticoes.get(nota_key, 0) + 1
-            notas.setdefault(nota_key, row)
-        if _as_int(source_id, 0) > 0:
-            chaves_source = {
-                _abastecimento_xml_nota_key(row)
-                for row in rows
-                if _as_int(row.get("id"), 0) == _as_int(source_id, 0)
-            }
-            notas = {
-                nota_key: row
-                for nota_key, row in notas.items()
-                if nota_key in chaves_source
-            }
-        resumo["notas"] = len(notas)
-        resumo["duplicatas_origem"] = sum(
-            max(0, quantidade - 1)
-            for nota_key, quantidade in repeticoes.items()
-            if nota_key in notas
-        )
-
-        cur.execute(
-            """
-            SELECT id, nota_key, abastecimento_id, status
-            FROM abastecimento_xml_vinculos
-            """
-        )
-        vinculos = {
-            _as_str(row.get("nota_key")): row
-            for row in (cur.fetchall() or [])
-        }
-        ids_ja_vinculados = {
-            _as_int(row.get("abastecimento_id"), 0)
-            for row in vinculos.values()
-            if _as_int(row.get("abastecimento_id"), 0) > 0
-        }
-        cur.execute(
-            """
-            SELECT id, nome, placa, combustivel_padrao, km_atual
-            FROM veiculos
-            ORDER BY id
-            """
-        )
-        veiculos = cur.fetchall() or []
-        veiculos_por_placa = {
-            _abastecimento_xml_placa_normalizada(row.get("placa")): row
-            for row in veiculos
-            if _abastecimento_xml_placa_normalizada(row.get("placa"))
-        }
-        cur.execute(
-            """
-            SELECT a.*, v.placa AS veiculo_placa
-            FROM abastecimentos a
-            LEFT JOIN veiculos v ON v.id=a.veiculo_id
-            ORDER BY a.id DESC
-            """
-        )
-        abastecimentos = cur.fetchall() or []
-
-        for nota_key, row in notas.items():
-            vinculo_atual = vinculos.get(nota_key) or {}
-            abastecimento_vinculado_id = _as_int(
-                vinculo_atual.get("abastecimento_id"),
-                0,
-            )
-            if (
-                abastecimento_vinculado_id > 0
-                and _as_str(vinculo_atual.get("status")) in {"vinculado", "criado"}
-            ):
-                resumo["ja_vinculadas"] += 1
-                continue
-            if _as_str(vinculo_atual.get("status")) == "manutencao_pendente":
-                resumo["manutencoes_pre_lancadas"] += 1
-                continue
-            if _as_str(vinculo_atual.get("status")) == "manutencao_confirmada":
-                resumo["manutencoes_confirmadas"] += 1
-                continue
-            if _as_str(vinculo_atual.get("status")) == "ignorado":
-                resumo["ignoradas"] += 1
-                continue
-
-            chave = _normalizar_chave_acesso_nfe(row.get("chave_nfe"))
-            numero_nota = _as_str(row.get("numero_nota"))
-            emitente_nome = _as_str(row.get("posto_nome"))
-            abastecimento_existente = next(
-                (
-                    item
-                    for item in abastecimentos
-                    if chave
-                    and _normalizar_chave_acesso_nfe(
-                        item.get("chave_acesso_nfe")
-                    ) == chave
-                ),
-                None,
-            )
-            if not abastecimento_existente and numero_nota:
-                emitente_norm = _abastecimento_xml_texto_normalizado(
-                    emitente_nome
-                )
-                candidatos_nota = [
-                    item
-                    for item in abastecimentos
-                    if _as_str(item.get("numero_nota")) == numero_nota
-                    and (
-                        not emitente_norm
-                        or _abastecimento_xml_texto_normalizado(
-                            item.get("emitente_nome") or item.get("posto")
-                        ) == emitente_norm
-                    )
-                ]
-                if len(candidatos_nota) == 1:
-                    abastecimento_existente = candidatos_nota[0]
-            if abastecimento_existente:
-                abastecimento_id = _as_int(
-                    abastecimento_existente.get("id"),
-                    0,
-                )
-                if not dry_run:
-                    cur.execute(
-                        """
-                        UPDATE abastecimentos
-                        SET chave_acesso_nfe=CASE
-                                WHEN COALESCE(chave_acesso_nfe, '')='' THEN %s
-                                ELSE chave_acesso_nfe
-                            END,
-                            numero_nota=CASE
-                                WHEN COALESCE(numero_nota, '')='' THEN %s
-                                ELSE numero_nota
-                            END,
-                            emitente_nome=CASE
-                                WHEN COALESCE(emitente_nome, '')='' THEN %s
-                                ELSE emitente_nome
-                            END
-                        WHERE id=%s
-                        """,
-                        (chave, numero_nota, emitente_nome, abastecimento_id),
-                    )
-                    _abastecimento_xml_registrar_vinculo(
-                        cur,
-                        row,
-                        abastecimento_id=abastecimento_id,
-                        veiculo_id=abastecimento_existente.get("veiculo_id"),
-                        origem="nota_existente",
-                        status="vinculado",
-                        motivo="NF-e ja estava registrada neste abastecimento.",
-                    )
-                ids_ja_vinculados.add(abastecimento_id)
-                resumo["ja_vinculadas"] += 1
-                continue
-
-            placa = _abastecimento_xml_placa_normalizada(row.get("placa"))
-            veiculo = veiculos_por_placa.get(placa)
-            sugestao = (
-                None
-                if veiculo
-                else _abastecimento_xml_veiculo_similar(placa, veiculos)
-            )
-            veiculo_sugerido = (
-                (sugestao or {}).get("veiculo")
-                if sugestao
-                else None
-            )
-            classificacao = _abastecimento_xml_classificar_nota(
-                row,
-                (veiculo or veiculo_sugerido or {}).get("combustivel_padrao"),
-            )
-            vinculo_sem_placa = None
-            if (
-                not placa
-                and classificacao.get("destino") == "abastecimento"
-            ):
-                vinculo_sem_placa = _abastecimento_xml_veiculo_sem_placa(
-                    classificacao.get("combustivel_tipo"),
-                    veiculos,
-                )
-                veiculo_sem_placa = vinculo_sem_placa.get("veiculo")
-                if veiculo_sem_placa:
-                    veiculo = veiculo_sem_placa
-                    classificacao = _abastecimento_xml_classificar_nota(
-                        row,
-                        veiculo.get("combustivel_padrao"),
-                    )
-            if classificacao.get("destino") == "manutencao":
-                if veiculo:
-                    motivo_manutencao = (
-                        "Nota sem item de combustivel enviada para conferencia "
-                        f"de manutencao do veiculo {_as_str(veiculo.get('nome'))} / "
-                        f"{_as_str(veiculo.get('placa'))}."
-                    )
-                    origem_veiculo = "placa_exata"
-                    confianca = 1.0
-                    candidato_manutencao = veiculo
-                elif veiculo_sugerido:
-                    confianca = _as_float(sugestao.get("score"), 0.0)
-                    motivo_manutencao = (
-                        "Nota sem item de combustivel enviada para conferencia "
-                        "de manutencao. Sugestao por placa semelhante: "
-                        f"{_as_str(veiculo_sugerido.get('nome'))} / "
-                        f"{_as_str(veiculo_sugerido.get('placa'))} "
-                        f"({round(confianca * 100)}%)."
-                    )
-                    origem_veiculo = "placa_similar"
-                    candidato_manutencao = veiculo_sugerido
-                else:
-                    motivo_manutencao = (
-                        "Nota sem item de combustivel enviada para conferencia "
-                        "de manutencao; selecione o veiculo antes de confirmar."
-                    )
-                    origem_veiculo = "nao_identificado"
-                    confianca = 0.0
-                    candidato_manutencao = None
-                if not dry_run:
-                    _manutencao_xml_registrar_pre_lancamento(
-                        cur,
-                        row,
-                        veiculo=candidato_manutencao,
-                        sugestao_confianca=confianca,
-                        origem_veiculo=origem_veiculo,
-                        motivo=motivo_manutencao,
-                    )
-                    _abastecimento_xml_registrar_vinculo(
-                        cur,
-                        row,
-                        veiculo_id=(candidato_manutencao or {}).get("id"),
-                        origem="pre_manutencao",
-                        status="manutencao_pendente",
-                        motivo=motivo_manutencao,
-                    )
-                resumo["manutencoes_pre_lancadas"] += 1
-                if len(resumo["detalhes"]) < 50:
-                    resumo["detalhes"].append(
-                        {
-                            "nota": numero_nota or chave,
-                            "placa": _as_str(row.get("placa")),
-                            "status": "manutencao_pendente",
-                            "motivo": motivo_manutencao,
-                        }
-                    )
-                continue
-
-            motivo_pendente = ""
-            if not placa and not veiculo:
-                combustivel_xml = _as_str(
-                    classificacao.get("combustivel_tipo")
-                )
-                candidatos_sem_placa = _as_int(
-                    (vinculo_sem_placa or {}).get("candidatos_total"),
-                    0,
-                )
-                if candidatos_sem_placa > 1:
-                    motivo_pendente = (
-                        f"XML sem placa possui {candidatos_sem_placa} veiculos "
-                        "sem placa compativeis com "
-                        f"{_combustivel_tipo_label(combustivel_xml)}; "
-                        "selecione manualmente."
-                    )
-                elif combustivel_xml:
-                    motivo_pendente = (
-                        "XML sem placa e nenhum veiculo sem placa compativel "
-                        f"com {_combustivel_tipo_label(combustivel_xml)}."
-                    )
-                else:
-                    motivo_pendente = (
-                        "XML sem placa e sem combustivel reconhecido para "
-                        "vinculo automatico."
-                    )
-            elif not veiculo:
-                if veiculo_sugerido:
-                    motivo_pendente = (
-                        f"Placa {row.get('placa')} nao encontrada exatamente. "
-                        "Pre-vinculo sugerido para conferencia: "
-                        f"{_as_str(veiculo_sugerido.get('nome'))} / "
-                        f"{_as_str(veiculo_sugerido.get('placa'))} "
-                        f"({round(_as_float(sugestao.get('score'), 0.0) * 100)}% similar)."
-                    )
-                else:
-                    motivo_pendente = (
-                        f"Placa {row.get('placa')} nao encontrada exatamente no cadastro."
-                    )
-            combustivel_tipo = ""
-            if veiculo:
-                combustivel_tipo = _as_str(
-                    classificacao.get("combustivel_tipo")
-                )
-                if not combustivel_tipo:
-                    motivo_pendente = (
-                        f"Combustivel nao suportado automaticamente: "
-                        f"{_as_str(row.get('combustivel')) or 'nao informado'}."
-                    )
-                else:
-                    try:
-                        combustivel_tipo = _validar_combustivel_para_veiculo(
-                            cur,
-                            veiculo.get("id"),
-                            combustivel_tipo,
-                        )
-                    except ValueError as exc:
-                        motivo_pendente = str(exc)
-
-            if motivo_pendente:
-                resumo["pendentes"] += 1
-                if len(resumo["detalhes"]) < 50:
-                    resumo["detalhes"].append(
-                        {
-                            "nota": numero_nota or chave,
-                            "placa": _as_str(row.get("placa")),
-                            "status": "pendente",
-                            "motivo": motivo_pendente,
-                        }
-                    )
-                if not dry_run:
-                    _abastecimento_xml_registrar_vinculo(
-                        cur,
-                        row,
-                        veiculo_id=(
-                            veiculo.get("id")
-                            if veiculo
-                            else (veiculo_sugerido or {}).get("id")
-                        ),
-                        origem=(
-                            "placa_similar"
-                            if veiculo_sugerido and not veiculo
-                            else (
-                                "combustivel_sem_placa"
-                                if vinculo_sem_placa
-                                else "automatico"
-                            )
-                        ),
-                        status="pendente",
-                        motivo=motivo_pendente,
-                    )
-                continue
-
-            veiculo_id = _as_int(veiculo.get("id"), 0)
-            candidato = _abastecimento_xml_candidato_manual(
-                row,
-                abastecimentos,
-                veiculo_id,
-                ids_ja_vinculados,
-            )
-            data_emissao = (
-                _abastecimento_xml_data(row.get("data_emissao"))
-                or datetime.datetime.now()
-            )
-            valor = _abastecimento_xml_valor(row)
-            litros = _as_float(row.get("litros"), 0.0)
-            km = _as_int(row.get("km_final"), 0)
-            posto = _as_str(row.get("posto_nome")) or "Posto NF-e"
-
-            if candidato:
-                abastecimento_id = _as_int(candidato.get("id"), 0)
-                status_candidato = _as_str(candidato.get("status")).lower()
-                origem = (
-                    "requisicao_existente"
-                    if status_candidato == "liberado"
-                    else "lancamento_manual"
-                )
-                if not dry_run:
-                    if status_candidato == "liberado":
-                        cur.execute(
-                            """
-                            UPDATE abastecimentos
-                            SET posto=CASE WHEN COALESCE(posto, '')='' THEN %s ELSE posto END,
-                                combustivel_tipo=%s,
-                                chave_acesso_nfe=%s,
-                                numero_nota=%s,
-                                emitente_nome=%s,
-                                valor=%s,
-                                quantidade_litros=%s,
-                                status='abastecido',
-                                data_abastecimento=%s
-                            WHERE id=%s
-                            """,
-                            (
-                                posto,
-                                combustivel_tipo,
-                                chave,
-                                numero_nota,
-                                emitente_nome,
-                                valor,
-                                litros,
-                                data_emissao,
-                                abastecimento_id,
-                            ),
-                        )
-                    else:
-                        cur.execute(
-                            """
-                            UPDATE abastecimentos
-                            SET chave_acesso_nfe=%s,
-                                numero_nota=%s,
-                                emitente_nome=CASE
-                                    WHEN COALESCE(emitente_nome, '')='' THEN %s
-                                    ELSE emitente_nome
-                                END
-                            WHERE id=%s
-                            """,
-                            (
-                                chave,
-                                numero_nota,
-                                emitente_nome,
-                                abastecimento_id,
-                            ),
-                        )
-                    _abastecimento_xml_registrar_vinculo(
-                        cur,
-                        row,
-                        abastecimento_id=abastecimento_id,
-                        veiculo_id=veiculo_id,
-                        origem=origem,
-                        status="vinculado",
-                        motivo=(
-                            "NF-e vinculada a requisicao existente."
-                            if status_candidato == "liberado"
-                            else "NF-e vinculada sem alterar valor, litros ou KM do lancamento manual."
-                        ),
-                    )
-                ids_ja_vinculados.add(abastecimento_id)
-                if status_candidato == "liberado":
-                    resumo["requisicoes_concluidas"] += 1
-                else:
-                    resumo["manuais_vinculados"] += 1
-                continue
-
-            km_ausente_permitido = bool(
-                km <= 0
-                and vinculo_sem_placa
-                and _veiculo_cadastro_sem_placa(veiculo)
-            )
-            km_incompativel = (
-                km > 0
-                and km < 1000
-                and _as_int(veiculo.get("km_atual"), 0) >= 10000
-            )
-            if (
-                (km <= 0 and not km_ausente_permitido)
-                or litros <= 0
-                or valor <= 0
-                or km_incompativel
-            ):
-                motivo_pendente = (
-                    "KM do XML incompativel com o historico do veiculo."
-                    if km_incompativel
-                    else "XML sem KM, quantidade ou valor suficientes para criar a requisicao."
-                )
-                resumo["pendentes"] += 1
-                if len(resumo["detalhes"]) < 50:
-                    resumo["detalhes"].append(
-                        {
-                            "nota": numero_nota or chave,
-                            "placa": _as_str(row.get("placa")),
-                            "status": "pendente",
-                            "motivo": motivo_pendente,
-                        }
-                    )
-                if not dry_run:
-                    _abastecimento_xml_registrar_vinculo(
-                        cur,
-                        row,
-                        veiculo_id=veiculo_id,
-                        origem=(
-                            "combustivel_sem_placa"
-                            if vinculo_sem_placa
-                            else "automatico"
-                        ),
-                        status="pendente",
-                        motivo=motivo_pendente,
-                    )
-                continue
-
-            abastecimento_id = 0
-            if not dry_run:
-                cur.execute(
-                    """
-                    INSERT INTO abastecimentos (
-                        veiculo_id, km, posto, combustivel_tipo,
-                        chave_acesso_nfe, numero_nota, emitente_nome,
-                        valor, quantidade_litros, status,
-                        data_liberacao, data_abastecimento
-                    )
-                    VALUES (
-                        %s, %s, %s, %s, %s, %s, %s,
-                        %s, %s, 'abastecido', %s, %s
-                    )
-                    """,
-                    (
-                        veiculo_id,
-                        km,
-                        posto,
-                        combustivel_tipo,
-                        chave,
-                        numero_nota,
-                        emitente_nome,
-                        valor,
-                        litros,
-                        data_emissao,
-                        data_emissao,
-                    ),
-                )
-                abastecimento_id = cur.lastrowid
-                if km > 0:
-                    cur.execute(
-                        """
-                        UPDATE veiculos
-                        SET km_atual=CASE
-                            WHEN km_atual IS NULL OR km_atual < %s THEN %s
-                            ELSE km_atual
-                        END
-                        WHERE id=%s
-                        """,
-                        (km, km, veiculo_id),
-                    )
-                _abastecimento_xml_registrar_vinculo(
-                    cur,
-                    row,
-                    abastecimento_id=abastecimento_id,
-                    veiculo_id=veiculo_id,
-                    origem=(
-                        "criado_sem_placa_combustivel"
-                        if vinculo_sem_placa
-                        else "criado_automatico"
-                    ),
-                    status="criado",
-                    motivo=(
-                        "Requisicao e abastecimento criados a partir da NF-e "
-                        "sem placa, vinculada pelo combustivel ao veiculo "
-                        f"{_as_str(veiculo.get('nome'))}."
-                        if vinculo_sem_placa
-                        else "Requisicao e abastecimento criados a partir da NF-e."
-                    ),
-                )
-                ids_ja_vinculados.add(abastecimento_id)
-                abastecimentos.append(
-                    {
-                        "id": abastecimento_id,
-                        "veiculo_id": veiculo_id,
-                        "km": km,
-                        "posto": posto,
-                        "combustivel_tipo": combustivel_tipo,
-                        "chave_acesso_nfe": chave,
-                        "numero_nota": numero_nota,
-                        "emitente_nome": emitente_nome,
-                        "valor": valor,
-                        "quantidade_litros": litros,
-                        "status": "abastecido",
-                        "data_liberacao": data_emissao,
-                        "data_abastecimento": data_emissao,
-                    }
-                )
-            resumo["criados"] += 1
-
-        if dry_run:
-            conn.rollback()
-        else:
-            conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        if lock_adquirido:
-            try:
-                cur.execute("SELECT RELEASE_LOCK(%s)", (lock_name,))
-                cur.fetchone()
-            except Exception:
-                app.logger.exception(
-                    "Falha ao liberar bloqueio da sincronizacao de abastecimentos XML"
-                )
-        cur.close()
-        conn.close()
-    return resumo
-
-
-def _sincronizar_abastecimento_xml_importado(source_id):
-    return sincronizar_abastecimentos_xml(
-        dry_run=False,
-        source_id=_as_int(source_id, 0),
-    )
-
-def _sincronizar_xml_apos_cadastro_veiculo():
-    try:
-        return sincronizar_abastecimentos_xml(dry_run=False)
-    except Exception as exc:
-        app.logger.exception(
-            "Falha ao reconciliar XMLs depois da alteracao do cadastro de veiculo"
-        )
-        return {"erro": str(exc)}
-
-
 ensure_schema()
 _bootstrap_sip_config_from_env()
-
-from legacy_services import register_legacy_services
-
-LEGACY_SERVICES_MIGRATION = register_legacy_services(
-    app=app,
-    conn_factory=get_conn,
-    data_root=DATA_ROOT,
-    legacy_xml_root=os.environ.get(
-        "RB_IMPORTAR_XML_LEGACY_DIR",
-        os.path.join(BASE_DIR, "ImportarXml"),
-    ),
-    legacy_email_root=os.environ.get(
-        "RB_GESTOR_EMAIL_LEGACY_DIR",
-        os.path.join(BASE_DIR, "GestorEmails"),
-    ),
-    migrate=_as_bool(os.environ.get("RB_MIGRATE_LEGACY_SERVICES", "0"), False),
-    abastecimento_import_callback=_sincronizar_abastecimento_xml_importado,
-)
-
-if _as_bool(
-    os.environ.get("RB_SYNC_ABASTECIMENTOS_XML_STARTUP", "1"),
-    True,
-):
-    try:
-        ABASTECIMENTOS_XML_STARTUP = sincronizar_abastecimentos_xml(dry_run=False)
-    except Exception as exc:
-        ABASTECIMENTOS_XML_STARTUP = {"erro": str(exc)}
-        app.logger.exception("Falha ao sincronizar abastecimentos XML na inicializacao")
-else:
-    ABASTECIMENTOS_XML_STARTUP = {"desabilitado": True}
 
 def _normalizar_km_base(km_base, km_atual):
     """
@@ -10781,17 +5897,6 @@ def _fmt_money_br(value):
     n = _as_float(value, 0.0)
     return f"R$ {n:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
-def _fmt_decimal_br(value, casas=2):
-    n = _as_float(value, 0.0)
-    return f"{n:,.{casas}f}".replace(",", "X").replace(".", ",").replace("X", ".")
-
-def _fmt_litros_br(value):
-    return _fmt_decimal_br(value, 3)
-
-def _fmt_preco_litro_br(value):
-    n = _as_float(value, 0.0)
-    return f"R$ {n:,.3f}".replace(",", "X").replace(".", ",").replace("X", ".")
-
 def _build_report_header(styles):
     logo_cell = ""
     logo_path = os.path.join(BASE_DIR, "logo.png")
@@ -10876,371 +5981,6 @@ def _build_frota_report_pdf(titulo, headers, rows, slug, filtros=None):
     doc.build(elementos)
     return arquivo
 
-def _build_abastecimentos_report_pdf(
-    rows,
-    filtros=None,
-    titulo="Relatório de Abastecimentos por Tipo e Posto",
-    slug="abastecimentos",
-):
-    filtros = filtros or {}
-    stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    arquivo = os.path.join("/tmp", f"frota_{slug}_{stamp}.pdf")
-    doc = SimpleDocTemplate(
-        arquivo,
-        pagesize=landscape(A4),
-        topMargin=24,
-        leftMargin=24,
-        rightMargin=24,
-        bottomMargin=42
-    )
-    styles = getSampleStyleSheet()
-    small_style = styles["BodyText"].clone("AbastecimentosSmall")
-    small_style.fontSize = 7
-    small_style.leading = 8.5
-    normal_style = styles["Normal"].clone("AbastecimentosNormal")
-    normal_style.fontSize = 8.5
-    normal_style.leading = 10
-    emissao = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-
-    def footer(canvas, doc_obj):
-        canvas.saveState()
-        canvas.setFont("Helvetica", 7)
-        canvas.setFillColor(colors.HexColor("#475569"))
-        canvas.drawString(doc_obj.leftMargin, 18, "Bebidas Rio Branco - Gestão de Frota")
-        canvas.drawRightString(doc_obj.pagesize[0] - doc_obj.rightMargin, 18, f"Página {doc_obj.page} | Emitido em {emissao}")
-        canvas.restoreState()
-
-    def as_cell(value, style=small_style, bold=False):
-        text = _pdf_escape(value)
-        if bold:
-            text = f"<b>{text}</b>"
-        return Paragraph(text, style)
-
-    def make_table(data, col_widths, header_bg="#f59e0b", font_size=7, summary_rows=None):
-        body_style = small_style.clone(f"AbastecimentosTable{uuid.uuid4().hex[:8]}")
-        body_style.fontSize = font_size
-        body_style.leading = font_size + 1.5
-        table_rows = []
-        for idx, row in enumerate(data):
-            table_rows.append([as_cell(cell, body_style, bold=(idx == 0)) for cell in row])
-        table = Table(table_rows, repeatRows=1, colWidths=col_widths)
-        table_style = [
-            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(header_bg)),
-            ("TEXTCOLOR", (0, 0), (-1, 0), colors.black),
-            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-            ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#d1d5db")),
-            ("VALIGN", (0, 0), (-1, -1), "TOP"),
-            ("LEFTPADDING", (0, 0), (-1, -1), 4),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 4),
-            ("TOPPADDING", (0, 0), (-1, -1), 3),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#fff7ed")]),
-        ]
-        for row_idx in summary_rows or []:
-            table_style.extend([
-                ("BACKGROUND", (0, row_idx), (-1, row_idx), colors.HexColor("#fde68a")),
-                ("FONTNAME", (0, row_idx), (-1, row_idx), "Helvetica-Bold"),
-                ("LINEABOVE", (0, row_idx), (-1, row_idx), 0.8, colors.HexColor("#92400e")),
-            ])
-        table.setStyle(TableStyle(table_style))
-        return table
-
-    def evento_dt(row):
-        return row.get("data_evento") or row.get("data_abastecimento") or row.get("data_liberacao")
-
-    def data_br(value):
-        dt = _fmt_dt(value)
-        if not dt:
-            return "-"
-        try:
-            parsed = datetime.datetime.fromisoformat(str(dt).replace(" ", "T")[:19])
-            return parsed.strftime("%d/%m/%Y %H:%M")
-        except Exception:
-            return str(dt)
-
-    def veiculo_label(row, incluir_placa=True):
-        partes = []
-        if incluir_placa and _as_str(row.get("placa")):
-            partes.append(_as_str(row.get("placa")))
-        if _as_str(row.get("veiculo_nome")):
-            partes.append(_as_str(row.get("veiculo_nome")))
-        elif _as_int(row.get("veiculo_id"), 0) > 0:
-            partes.append(f"Veículo {row.get('veiculo_id')}")
-        if not partes:
-            return "-"
-        return " - ".join(partes)
-
-    def posto_label(row):
-        raw = _as_str(row.get("posto")) or _as_str(row.get("emitente_nome"))
-        return _normalizar_nome_local(raw) if raw else "Sem posto informado"
-
-    def join_limit(values, max_items=8):
-        uniq = []
-        seen = set()
-        for value in values:
-            text = _as_str(value)
-            if not text or text in seen:
-                continue
-            seen.add(text)
-            uniq.append(text)
-        if len(uniq) > max_items:
-            return ", ".join(uniq[:max_items]) + f" +{len(uniq) - max_items}"
-        return ", ".join(uniq) if uniq else "-"
-
-    def precos_label(precos, max_items=8):
-        vals = sorted({_as_float(p, 0.0) for p in precos if _as_float(p, 0.0) > 0})
-        if not vals:
-            return "-"
-        label = ", ".join(_fmt_preco_litro_br(v) for v in vals[:max_items])
-        if len(vals) > max_items:
-            label += f" +{len(vals) - max_items}"
-        return label
-
-    def km_label(value):
-        if value is None:
-            return "-"
-        return str(_as_int(value, 0))
-
-    def km_l_label(value):
-        if value is None:
-            return "-"
-        return _fmt_decimal_br(value, 2)
-
-    def preco_litro_label(value):
-        if value is None:
-            return "-"
-        return _fmt_preco_litro_br(value)
-
-    metricas = _calcular_metricas_abastecimentos(rows)
-    registros = []
-    for row in rows or []:
-        rid = _as_int(row.get("id"), 0)
-        metrica = metricas.get(rid, {})
-        valor = _as_float(row.get("valor"), 0.0)
-        litros = _as_float(row.get("quantidade_litros"), 0.0)
-        preco_litro = metrica.get("valor_litro")
-        registros.append({
-            **dict(row),
-            "posto_label": posto_label(row),
-            "veiculo_label": veiculo_label(row),
-            "valor_num": valor,
-            "litros_num": litros,
-            "preco_litro": preco_litro,
-            "km_inicial": metrica.get("km_inicial"),
-            "km_atual": metrica.get("km_atual"),
-            "km_rodado": metrica.get("km_rodado"),
-            "km_l": metrica.get("km_l"),
-            "combustivel_label": _combustivel_tipo_label(row.get("combustivel_tipo")),
-            "data_label": data_br(evento_dt(row)),
-        })
-
-    postos = {}
-    veiculos = {}
-    for item in registros:
-        posto = item["posto_label"]
-        entry = postos.setdefault(posto, {
-            "posto": posto,
-            "abastecimentos": 0,
-            "valor": 0.0,
-            "litros": 0.0,
-            "precos": [],
-            "veiculos": [],
-            "combustiveis": [],
-        })
-        entry["abastecimentos"] += 1
-        entry["valor"] += item["valor_num"]
-        entry["litros"] += item["litros_num"]
-        if item["preco_litro"] and item["preco_litro"] > 0:
-            entry["precos"].append(round(item["preco_litro"], 3))
-        entry["veiculos"].append(item["veiculo_label"])
-        entry["combustiveis"].append(item["combustivel_label"])
-
-        vid_key = _as_str(item.get("veiculo_id")) or item["veiculo_label"]
-        ventry = veiculos.setdefault(vid_key, {
-            "veiculo": item["veiculo_label"],
-            "abastecimentos": 0,
-            "valor": 0.0,
-            "litros": 0.0,
-            "postos": [],
-            "precos": [],
-            "kms_diesel": [],
-            "km_rodado_total": 0,
-            "km_l_metricas": [],
-        })
-        ventry["abastecimentos"] += 1
-        ventry["valor"] += item["valor_num"]
-        ventry["litros"] += item["litros_num"]
-        ventry["postos"].append(posto)
-        if item["preco_litro"] and item["preco_litro"] > 0:
-            ventry["precos"].append(round(item["preco_litro"], 3))
-        if _combustivel_move_veiculo(item.get("combustivel_tipo")):
-            if item.get("km_inicial") is not None:
-                ventry["kms_diesel"].append(_as_int(item.get("km_inicial"), 0))
-            if item.get("km_atual") is not None:
-                ventry["kms_diesel"].append(_as_int(item.get("km_atual"), 0))
-            if item.get("km_rodado") is not None and item.get("km_rodado") > 0:
-                ventry["km_rodado_total"] += _as_int(item.get("km_rodado"), 0)
-            if item.get("km_l") is not None and item.get("km_l") > 0:
-                ventry["km_l_metricas"].append(item["km_l"])
-
-    total_valor = sum(item["valor_num"] for item in registros)
-    total_litros = sum(item["litros_num"] for item in registros)
-    total_preco_medio = (total_valor / total_litros) if total_litros > 0 else 0.0
-    filtros_resumo = filtros.get("resumo") or ["Período: todos"]
-
-    elementos = [
-        _build_report_header(styles),
-        Spacer(1, 10),
-        Paragraph(titulo, styles["Heading2"]),
-        Paragraph(_pdf_escape(" | ".join(filtros_resumo)), normal_style),
-        Paragraph(f"Gerado em {emissao}", normal_style),
-        Spacer(1, 8),
-    ]
-
-    resumo_rows = [
-        ["Abastecimentos", "Postos", "Veículos abastecidos", "Litros", "Valor", "Preço médio/l"],
-        [
-            str(len(registros)),
-            str(len(postos)),
-            str(len(veiculos)),
-            _fmt_litros_br(total_litros),
-            _fmt_money_br(total_valor),
-            _fmt_preco_litro_br(total_preco_medio),
-        ],
-    ]
-    elementos.append(make_table(resumo_rows, [90, 70, 110, 110, 110, 110], header_bg="#fde68a", font_size=8))
-    elementos.append(Spacer(1, 12))
-
-    elementos.append(Paragraph("Subtotais por tipo de combustível", styles["Heading3"]))
-    tipo_rows = [["Combustível", "Abastecimentos", "Litros", "Valor", "Preço médio/l"]]
-    registros_por_tipo = {}
-    for item in registros:
-        tipo = _normalizar_combustivel_tipo(item.get("combustivel_tipo"))
-        registros_por_tipo.setdefault(tipo, []).append(item)
-    for tipo in COMBUSTIVEL_TIPOS:
-        itens_tipo = registros_por_tipo.get(tipo) or []
-        if not itens_tipo:
-            continue
-        subtotal_litros = sum(item["litros_num"] for item in itens_tipo)
-        subtotal_valor = sum(item["valor_num"] for item in itens_tipo)
-        subtotal_preco = subtotal_valor / subtotal_litros if subtotal_litros > 0 else 0.0
-        tipo_rows.append([
-            _combustivel_tipo_label(tipo),
-            str(len(itens_tipo)),
-            _fmt_litros_br(subtotal_litros),
-            _fmt_money_br(subtotal_valor),
-            _fmt_preco_litro_br(subtotal_preco),
-        ])
-    if len(tipo_rows) == 1:
-        tipo_rows.append(["Sem registros no período.", "", "", "", ""])
-    elementos.append(make_table(tipo_rows, [150, 100, 120, 120, 120], header_bg="#bfdbfe", font_size=8))
-    elementos.append(Spacer(1, 12))
-
-    elementos.append(Paragraph("Totais agrupados por posto", styles["Heading3"]))
-    posto_rows = [["Posto", "Comb.", "Abast.", "Litros", "Valor", "Preço médio/l", "Valores aplicados/l", "Veículos abastecidos"]]
-    for item in sorted(postos.values(), key=lambda x: (-x["valor"], x["posto"])):
-        preco_medio = item["valor"] / item["litros"] if item["litros"] > 0 else 0.0
-        posto_rows.append([
-            item["posto"],
-            join_limit(sorted(set(item["combustiveis"])), max_items=3),
-            str(item["abastecimentos"]),
-            _fmt_litros_br(item["litros"]),
-            _fmt_money_br(item["valor"]),
-            _fmt_preco_litro_br(preco_medio),
-            precos_label(item["precos"]),
-            join_limit(sorted(item["veiculos"]), max_items=10),
-        ])
-    if len(posto_rows) == 1:
-        posto_rows.append(["Sem registros no período.", "", "", "", "", "", "", ""])
-    elementos.append(make_table(posto_rows, [150, 48, 42, 70, 75, 78, 130, 225], font_size=6.8))
-    elementos.append(Spacer(1, 12))
-
-    elementos.append(Paragraph("Lista de veículos abastecidos", styles["Heading3"]))
-    veiculo_rows = [["Veículo", "Abast.", "KM inicial", "KM final", "KM rodado", "Qtd litros", "Média KM/L", "R$/L", "Valor total", "Postos"]]
-    for item in sorted(veiculos.values(), key=lambda x: x["veiculo"]):
-        preco_medio = item["valor"] / item["litros"] if item["litros"] > 0 else None
-        kms_diesel = [km for km in item["kms_diesel"] if km > 0]
-        media_km_l = (
-            sum(item["km_l_metricas"]) / len(item["km_l_metricas"])
-            if item["km_l_metricas"] else None
-        )
-        veiculo_rows.append([
-            item["veiculo"],
-            str(item["abastecimentos"]),
-            km_label(min(kms_diesel) if kms_diesel else None),
-            km_label(max(kms_diesel) if kms_diesel else None),
-            km_label(item["km_rodado_total"] if item["km_rodado_total"] > 0 else None),
-            _fmt_litros_br(item["litros"]),
-            km_l_label(media_km_l),
-            preco_litro_label(preco_medio),
-            _fmt_money_br(item["valor"]),
-            join_limit(sorted(item["postos"]), max_items=12),
-        ])
-    if len(veiculo_rows) == 1:
-        veiculo_rows.append(["Sem veículos abastecidos no período.", "", "", "", "", "", "", "", "", ""])
-    elementos.append(make_table(veiculo_rows, [112, 38, 52, 52, 54, 62, 48, 54, 62, 259], font_size=6.2))
-    elementos.append(Spacer(1, 12))
-
-    elementos.append(Paragraph("Detalhamento por tipo de combustível", styles["Heading3"]))
-    detalhe_header = ["Data", "Veículo", "Posto", "Comb.", "KM inicial", "KM final", "KM rodado", "Qtd litros", "Média KM/L", "R$/L", "Valor total", "NF-e"]
-    algum_detalhe = False
-    for tipo in COMBUSTIVEL_TIPOS:
-        itens_tipo = registros_por_tipo.get(tipo) or []
-        if not itens_tipo:
-            continue
-        algum_detalhe = True
-        itens_tipo = sorted(
-            itens_tipo,
-            key=lambda x: (_fmt_dt(evento_dt(x)) or "", _as_int(x.get("id"), 0)),
-            reverse=True,
-        )
-        detalhe_rows = [detalhe_header]
-        for item in itens_tipo:
-            detalhe_rows.append([
-                item["data_label"],
-                item["veiculo_label"],
-                item["posto_label"],
-                item["combustivel_label"],
-                km_label(item.get("km_inicial")),
-                km_label(item.get("km_atual")),
-                km_label(item.get("km_rodado")),
-                _fmt_litros_br(item["litros_num"]),
-                km_l_label(item.get("km_l")),
-                preco_litro_label(item["preco_litro"]),
-                _fmt_money_br(item["valor_num"]),
-                _as_str(item.get("numero_nota")) or _as_str(item.get("chave_acesso_nfe")) or "-",
-            ])
-        subtotal_litros = sum(item["litros_num"] for item in itens_tipo)
-        subtotal_valor = sum(item["valor_num"] for item in itens_tipo)
-        subtotal_preco = subtotal_valor / subtotal_litros if subtotal_litros > 0 else None
-        detalhe_rows.append([
-            f"Subtotal {_combustivel_tipo_label(tipo)}",
-            f"{len(itens_tipo)} lançamento(s)",
-            "",
-            "",
-            "",
-            "",
-            "",
-            _fmt_litros_br(subtotal_litros),
-            "",
-            preco_litro_label(subtotal_preco),
-            _fmt_money_br(subtotal_valor),
-            "",
-        ])
-        elementos.append(Paragraph(_combustivel_tipo_label(tipo), styles["Heading4"]))
-        elementos.append(make_table(
-            detalhe_rows,
-            [60, 86, 104, 44, 45, 45, 48, 56, 42, 49, 58, 156],
-            font_size=5.9,
-            summary_rows=[len(detalhe_rows) - 1],
-        ))
-        elementos.append(Spacer(1, 9))
-    if not algum_detalhe:
-        elementos.append(Paragraph("Sem registros no período.", normal_style))
-
-    doc.build(elementos, onFirstPage=footer, onLaterPages=footer)
-    return arquivo
-
 FRETE_STATUS_RELATORIO = [
     ("chegada", "Chegou C/ Vasilhames"),
     ("descarregado", "Descarregado Aguardando Carga"),
@@ -11316,98 +6056,6 @@ def _coletar_filtros_relatorio_fretes_req():
         "ordenacao": ordenacao,
         "resumo": resumo,
     }
-
-def _coletar_filtros_relatorio_abastecimentos_req():
-    data_inicio = _as_date(request.args.get("data_inicio") or request.args.get("inicio") or request.args.get("data"))
-    data_fim = _as_date(request.args.get("data_fim") or request.args.get("fim") or request.args.get("data"))
-    if data_inicio and not data_fim:
-        data_fim = data_inicio
-    elif data_fim and not data_inicio:
-        data_inicio = data_fim
-    if data_inicio and data_fim and data_inicio > data_fim:
-        data_inicio, data_fim = data_fim, data_inicio
-
-    resumo = []
-    if data_inicio and data_fim:
-        resumo.append(f"Período: {data_inicio.strftime('%d/%m/%Y')} até {data_fim.strftime('%d/%m/%Y')}")
-    elif data_inicio:
-        resumo.append(f"Período: a partir de {data_inicio.strftime('%d/%m/%Y')}")
-    elif data_fim:
-        resumo.append(f"Período: até {data_fim.strftime('%d/%m/%Y')}")
-    else:
-        resumo.append("Período: todos")
-
-    return {
-        "data_inicio": data_inicio,
-        "data_fim": data_fim,
-        "resumo": resumo,
-    }
-
-
-def _coletar_abastecimentos_relatorio(
-    cur,
-    filtros=None,
-    somente_sem_placa=False,
-):
-    filtros = filtros or {}
-    where = ["LOWER(COALESCE(a.status, '')) = 'abastecido'"]
-    params = []
-    data_expr = "COALESCE(a.data_abastecimento, a.data_liberacao)"
-    if filtros.get("data_inicio"):
-        where.append(f"DATE({data_expr}) >= %s")
-        params.append(filtros["data_inicio"])
-    if filtros.get("data_fim"):
-        where.append(f"DATE({data_expr}) <= %s")
-        params.append(filtros["data_fim"])
-    cur.execute(
-        f"""
-        SELECT
-            COALESCE(a.data_abastecimento, a.data_liberacao) AS data_evento,
-            a.id,
-            a.veiculo_id,
-            a.km,
-            a.posto,
-            a.combustivel_tipo,
-            a.chave_acesso_nfe,
-            a.numero_nota,
-            a.emitente_nome,
-            a.quantidade_litros,
-            a.valor,
-            a.status,
-            v.nome AS veiculo_nome,
-            v.placa,
-            v.modelo
-        FROM abastecimentos a
-        LEFT JOIN veiculos v ON v.id = a.veiculo_id
-        WHERE {" AND ".join(where)}
-        ORDER BY
-            CASE
-                WHEN LOWER(COALESCE(a.combustivel_tipo, '')) IN ('diesel_s10', 'diesel s10', 'diesel', 's10', 's-10') THEN 1
-                WHEN LOWER(COALESCE(a.combustivel_tipo, '')) IN ('diesel_500', 'diesel_s500', 'diesel 500', 'diesel s500', 's500', 's-500') THEN 2
-                WHEN LOWER(COALESCE(a.combustivel_tipo, '')) IN ('gasolina', 'gasolina comum', 'gasolina c', 'gasolina c comum') THEN 3
-                WHEN LOWER(COALESCE(a.combustivel_tipo, '')) IN ('etanol', 'etanol comum', 'etanol hidratado', 'etanol hidratado comum', 'alcool', 'álcool') THEN 4
-                WHEN LOWER(COALESCE(a.combustivel_tipo, '')) IN ('arla', 'arla32', 'arla 32') THEN 5
-                ELSE 6
-            END,
-            data_evento DESC,
-            a.id DESC
-        """,
-        tuple(params),
-    )
-    rows = cur.fetchall() or []
-    if not somente_sem_placa:
-        return rows
-    return [
-        row
-        for row in rows
-        if _veiculo_cadastro_sem_placa(
-            {
-                "nome": row.get("veiculo_nome"),
-                "placa": row.get("placa"),
-            }
-        )
-    ]
-
 
 def _dados_relatorio_escala(cur, filtros=None):
     filtros = filtros or {}
@@ -11520,13 +6168,7 @@ def status():
     cameras_status = []
     try:
         conn = get_conn()
-        uid = _as_int(request.headers.get("X-Usuario-Id"), 0)
-        if uid > 0:
-            cur_user = conn.cursor(dictionary=True)
-            row_user = _buscar_usuario_id_cur(cur_user, uid)
-            cur_user.close()
-            if row_user:
-                usuario_logado = _usuario_publico_dict(row_user)
+        usuario_logado = _ensure_portal_usuario(conn)
         conn.close()
         db_ok = True
     except:
@@ -11591,10 +6233,25 @@ def backup():
     arquivo_tmp = os.path.join("/tmp", nome_arquivo)
     arquivo_final = os.path.join(DB_BACKUP_DIR, nome_arquivo)
 
+    comando = [
+        "mariadb-dump",
+        "--skip-ssl",
+        "--databases", db_config["database"],
+        "--routines", "--events", "--triggers",
+        "--single-transaction", "--quick",
+        "--add-drop-database", "--add-drop-table",
+        "--default-character-set=utf8mb4",
+        "-h", db_config["host"],
+        "-P", str(db_config.get("port", 3306)),
+        "-u", db_config["user"],
+        f"-p{db_config['password']}"
+    ]
+
     try:
         os.makedirs(DB_BACKUP_DIR, exist_ok=True)
 
-        p = _dump_database_sql(arquivo_tmp)
+        with open(arquivo_tmp, "w", encoding="utf-8") as f:
+            p = subprocess.run(comando, stdout=f, stderr=subprocess.PIPE, text=True)
 
         if p.returncode != 0:
             return jsonify({"erro": "mysqldump falhou", "detalhes": (p.stderr or "").strip()}), 500
@@ -11614,136 +6271,6 @@ def backup():
                 os.remove(arquivo_tmp)
         except Exception:
             pass
-
-
-def _dump_database_sql(output_path):
-    comando = [
-        "mariadb-dump",
-        "--skip-ssl",
-        "--databases", db_config["database"],
-        "--routines", "--events", "--triggers",
-        "--single-transaction", "--quick",
-        "--add-drop-database", "--add-drop-table",
-        "--default-character-set=utf8mb4",
-        "-h", db_config["host"],
-        "-P", str(db_config.get("port", 3306)),
-        "-u", db_config["user"],
-        f"-p{db_config['password']}"
-    ]
-    with open(output_path, "w", encoding="utf-8") as f:
-        p = subprocess.run(comando, stdout=f, stderr=subprocess.PIPE, text=True)
-    return p
-
-
-def _backup_path_exists(path):
-    try:
-        return bool(path) and os.path.exists(path)
-    except Exception:
-        return False
-
-
-def _full_backup_sources():
-    sources = []
-
-    data_root_abs = os.path.abspath(DATA_ROOT)
-    base_dir_abs = os.path.abspath(BASE_DIR)
-    if data_root_abs != base_dir_abs and _backup_path_exists(DATA_ROOT):
-        sources.append(("app_data", DATA_ROOT))
-    else:
-        known_app_paths = [
-            ("app_data/FotosDevolucoes", FOTOS_DIR),
-            ("app_data/RequisicoesAbastecimento", REQ_ABAST_DIR),
-            ("app_data/ChatAnexos", CHAT_ATTACHMENTS_DIR),
-            ("app_data/nfe-cache", NFE_XML_CACHE_DIR),
-            ("app_data/nfe-dfe-limit.json", NFE_DFE_LIMIT_FILE),
-            ("app_data/vendas-cache", VENDAS_CACHE_DIR),
-            ("app_data/vendas-config.json", VENDAS_CONFIG_FILE),
-        ]
-        for arcname, path in known_app_paths:
-            if _backup_path_exists(path):
-                sources.append((arcname, path))
-
-    cameras_dir_abs = os.path.abspath(CAMERAS_DATA_DIR)
-    default_cameras_abs = os.path.abspath(os.path.join(BASE_DIR, "cameras"))
-    if cameras_dir_abs != default_cameras_abs and _backup_path_exists(CAMERAS_DATA_DIR):
-        sources.append(("cameras_data", CAMERAS_DATA_DIR))
-    else:
-        known_camera_paths = [
-            ("cameras_data/cameras.db", os.path.join(default_cameras_abs, "cameras.db")),
-            ("cameras_data/cams.json", os.path.join(default_cameras_abs, "cams.json")),
-            ("cameras_data/cams", os.path.join(default_cameras_abs, "cams")),
-        ]
-        for arcname, path in known_camera_paths:
-            if _backup_path_exists(path):
-                sources.append((arcname, path))
-
-    if _backup_path_exists(VENDAS_RELATORIOS_DIR):
-        sources.append(("relatorios", VENDAS_RELATORIOS_DIR))
-
-    return sources
-
-
-def _tar_filter(info):
-    parts = set(info.name.split("/"))
-    if "__pycache__" in parts or ".pytest_cache" in parts:
-        return None
-    if info.name.endswith((".pyc", ".pyo")):
-        return None
-    return info
-
-
-@app.route("/api/backup/full")
-def backup_full():
-    data = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    nome_arquivo = f"backup_full_{data}.tar.gz"
-    arquivo_final = os.path.join(DB_BACKUP_DIR, nome_arquivo)
-
-    try:
-        os.makedirs(DB_BACKUP_DIR, exist_ok=True)
-        with tempfile.TemporaryDirectory(prefix="riob_full_backup_") as tmp_dir:
-            sql_path = os.path.join(tmp_dir, "backup.sql")
-            dump_result = _dump_database_sql(sql_path)
-            if dump_result.returncode != 0:
-                return jsonify({"erro": "mysqldump falhou", "detalhes": (dump_result.stderr or "").strip()}), 500
-
-            manifest = {
-                "formato": "riobranco-full-backup-v1",
-                "criado_em": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                "database": db_config["database"],
-                "inclui": [
-                    "db/backup.sql",
-                    "app_data",
-                    "cameras_data",
-                    "relatorios",
-                ],
-                "fontes": [
-                    {"arquivo": arcname, "origem": os.path.abspath(path)}
-                    for arcname, path in _full_backup_sources()
-                ],
-                "observacoes": [
-                    "O arquivo .env, senhas externas e certificados privados nao sao incluidos por seguranca.",
-                    "Configure .env e certificados do novo ambiente antes ou depois do restore conforme o runbook.",
-                ],
-            }
-            manifest_path = os.path.join(tmp_dir, "manifest.json")
-            with open(manifest_path, "w", encoding="utf-8") as f:
-                json.dump(manifest, f, ensure_ascii=False, indent=2, sort_keys=True)
-
-            with tarfile.open(arquivo_final, "w:gz") as tar:
-                tar.add(manifest_path, arcname="manifest.json", filter=_tar_filter)
-                tar.add(sql_path, arcname="db/backup.sql", filter=_tar_filter)
-                for arcname, path in _full_backup_sources():
-                    if _backup_path_exists(path):
-                        tar.add(path, arcname=arcname, recursive=True, filter=_tar_filter)
-
-        resp = send_file(arquivo_final, as_attachment=True, download_name=nome_arquivo)
-        resp.headers["X-Backup-File"] = nome_arquivo
-        resp.headers["X-Backup-Stored-Path"] = arquivo_final
-        resp.headers["X-Backup-Type"] = "full"
-        return resp
-
-    except Exception as e:
-        return jsonify({"erro": str(e)}), 500
 
 @app.route("/api/logs_exclusoes", methods=["GET"])
 def listar_logs_exclusoes():
@@ -12336,2304 +6863,49 @@ def dashboard():
     conn.close()
     return jsonify(resumo)
 
-def _carregar_lookup_produtos_estoque(cur):
-    cur.execute("""
-        SELECT
-            id,
-            codigo_barras,
-            codigo_produto_nfe,
-            nome_produto,
-            grupo_estoque,
-            produto_base_nome,
-            unidade,
-            embalagem_tipo_padrao,
-            fator_embalagem_padrao,
-            origem_cadastro,
-            criado_em,
-            atualizado_em
-        FROM estoque_produtos
-        ORDER BY id DESC
-    """)
-    rows = cur.fetchall() or []
-    lookup = {
-        "codigo_barras": {},
-        "codigo_produto_nfe": {},
-        "nome_produto": {},
-    }
-    for row in rows:
-        codigo_barras = _normalizar_codigo_barras(row.get("codigo_barras"))
-        codigo_nfe = _codigo_produto_chave(row.get("codigo_produto_nfe"))
-        nome_norm = _produto_nome_normalizado(row.get("nome_produto"))
-        if codigo_barras and codigo_barras not in lookup["codigo_barras"]:
-            lookup["codigo_barras"][codigo_barras] = row
-        if codigo_nfe and codigo_nfe not in lookup["codigo_produto_nfe"]:
-            lookup["codigo_produto_nfe"][codigo_nfe] = row
-        if nome_norm and nome_norm not in lookup["nome_produto"]:
-            lookup["nome_produto"][nome_norm] = row
-    return lookup
-
-def _resolver_produto_lookup_estoque(lookup, codigo_barras="", codigo_produto_nfe="", nome_produto=""):
-    if not isinstance(lookup, dict):
-        return None
-    codigo_barras_norm = _normalizar_codigo_barras(codigo_barras)
-    codigo_nfe_norm = _codigo_produto_chave(codigo_produto_nfe)
-    nome_norm = _produto_nome_normalizado(nome_produto)
-    if codigo_barras_norm and codigo_barras_norm in lookup.get("codigo_barras", {}):
-        return lookup["codigo_barras"][codigo_barras_norm]
-    if codigo_nfe_norm and codigo_nfe_norm in lookup.get("codigo_produto_nfe", {}):
-        return lookup["codigo_produto_nfe"][codigo_nfe_norm]
-    if nome_norm and nome_norm in lookup.get("nome_produto", {}):
-        return lookup["nome_produto"][nome_norm]
-    return None
-
-def _estoque_merge_row(target, aliases, row):
-    meta = _estoque_produto_meta(row)
-    codigo_barras = _normalizar_codigo_barras(row.get("codigo_barras"))
-    codigo_produto_nfe_norm = _codigo_produto_chave(row.get("codigo_produto_nfe"))
-    codigo_produto_nfe_saida = _codigo_produto_nfe_saida(codigo_produto_nfe_norm) if codigo_produto_nfe_norm else _as_str(row.get("codigo_produto_nfe"))
-    nome_produto = _as_str(meta.get("produto_base_nome") or row.get("nome_produto"))
-    nome_produto_norm = _produto_nome_normalizado(nome_produto) or nome_produto
-    grupo_estoque = meta.get("grupo_estoque") or "OUTROS"
-    produto_base_key = _as_str(meta.get("produto_base_key"))
-
-    chaves_candidatas = []
-    if produto_base_key:
-        chaves_candidatas.append(f"base:{produto_base_key}")
-    if codigo_produto_nfe_norm:
-        chaves_candidatas.append(f"cod:{codigo_produto_nfe_norm}")
-    if codigo_barras:
-        chaves_candidatas.append(f"ean:{codigo_barras}")
-    if nome_produto_norm:
-        chaves_candidatas.append(f"nom:{nome_produto_norm}")
-
-    chave = next((aliases[ch] for ch in chaves_candidatas if ch in aliases), None)
-    if not chave:
-        chave = chaves_candidatas[0] if chaves_candidatas else f"row:{len(target) + 1}"
-
-    atual = target.setdefault(chave, {
-        "produto_key": chave,
-        "grupo_estoque": grupo_estoque,
-        "produto_base_nome": nome_produto or "-",
-        "produto_base_key": produto_base_key,
-        "codigo_barras": codigo_barras,
-        "codigo_produto_nfe": codigo_produto_nfe_saida,
-        "codigo_produto_nfe_norm": codigo_produto_nfe_norm,
-        "nome_produto": nome_produto or "-",
-        "nome_produto_norm": nome_produto_norm,
-        "entradas_total": 0.0,
-        "saidas_total": 0.0,
-        "saidas_dia": 0.0,
-        "quantidade_atual": 0.0,
-        "quantidade_comprometida": 0.0,
-        "vendas_dia": 0.0,
-        "vendas_semana": 0.0,
-        "ultimo_valor": 0.0,
-        "ultima_movimentacao": "",
-        "fornecedores": {},
-    })
-    for alias in chaves_candidatas:
-        aliases[alias] = chave
-
-    if codigo_barras and not atual.get("codigo_barras"):
-        atual["codigo_barras"] = codigo_barras
-    if codigo_produto_nfe_norm:
-        atual["codigo_produto_nfe_norm"] = codigo_produto_nfe_norm
-    if codigo_produto_nfe_saida and not atual.get("codigo_produto_nfe"):
-        atual["codigo_produto_nfe"] = codigo_produto_nfe_saida
-    if grupo_estoque and not atual.get("grupo_estoque"):
-        atual["grupo_estoque"] = grupo_estoque
-    if produto_base_key and not atual.get("produto_base_key"):
-        atual["produto_base_key"] = produto_base_key
-    if nome_produto and (not atual.get("produto_base_nome") or atual.get("produto_base_nome") == "-"):
-        atual["produto_base_nome"] = nome_produto
-    if nome_produto and (not atual.get("nome_produto") or atual.get("nome_produto") == "-"):
-        atual["nome_produto"] = nome_produto
-    if nome_produto_norm and not atual.get("nome_produto_norm"):
-        atual["nome_produto_norm"] = nome_produto_norm
-    fornecedor = _estoque_fornecedor_publico(row)
-    if fornecedor:
-        fornecedor_key = (
-            fornecedor.get("cnpj")
-            or fornecedor.get("nome")
-            or fornecedor.get("categoria")
-        )
-        if fornecedor_key:
-            atual.setdefault("fornecedores", {})[fornecedor_key] = fornecedor
-    return atual
-
-def _estoque_fornecedor_publico(row):
-    cnpj = re.sub(r"\D+", "", _as_str(row.get("fornecedor_cnpj") or row.get("emitente_cnpj") or row.get("cnpj")))
-    nome = _as_str(row.get("fornecedor_nome") or row.get("emitente_nome") or row.get("nome"))
-    categoria = _as_str(row.get("fornecedor_categoria") or row.get("categoria"))
-    if (nome or cnpj) and not categoria:
-        categoria = "outros"
-    if not (nome or cnpj or categoria):
-        return None
-    return {
-        "cnpj": cnpj,
-        "nome": nome or cnpj or "Sem fornecedor",
-        "categoria": categoria or "outros",
-    }
-
-def _estoque_fornecedores_lista(item):
-    fornecedores = item.get("fornecedores") or {}
-    if isinstance(fornecedores, dict):
-        values = list(fornecedores.values())
-    elif isinstance(fornecedores, list):
-        values = fornecedores
-    else:
-        values = []
-    normalizados = []
-    seen = set()
-    for fornecedor in values:
-        if not isinstance(fornecedor, dict):
-            continue
-        item_publico = _estoque_fornecedor_publico(fornecedor)
-        if not item_publico:
-            continue
-        key = item_publico.get("cnpj") or item_publico.get("nome")
-        if not key or key in seen:
-            continue
-        seen.add(key)
-        normalizados.append(item_publico)
-    normalizados.sort(key=lambda row: (_as_str(row.get("categoria")), _as_str(row.get("nome"))))
-    return normalizados
-
-def _estoque_registrar_filtro_fornecedor(meta, fornecedor):
-    item = _estoque_fornecedor_publico(fornecedor or {})
-    if not item:
-        return
-    meta.setdefault("_fornecedores_map", {})[item.get("cnpj") or item.get("nome")] = item
-    categoria = item.get("categoria") or "outros"
-    meta.setdefault("_categorias_fornecedor", set()).add(categoria)
-
-def _estoque_resumo_produtos_data():
-    hoje = datetime.date.today()
-    inicio_semana = hoje - datetime.timedelta(days=hoje.weekday())
-    conn = get_conn()
-    cur = conn.cursor(dictionary=True)
-    linhas = {}
-    aliases = {}
-    meta = {
-        "data_referencia": _fmt_date(hoje),
-        "inicio_semana": _fmt_date(inicio_semana),
-        "cargas_importadas": 0,
-        "cargas_pendentes": 0,
-        "cargas_baixadas": 0,
-        "saidas_dia_total": 0.0,
-        "vendas_dia_total": 0.0,
-        "vendas_semana_total": 0.0,
-        "_fornecedores_map": {},
-        "_categorias_fornecedor": set(),
-    }
-    pending_carga_ids = set()
-    baixadas_ids = set()
-    try:
-        produtos_lookup = _carregar_lookup_produtos_estoque(cur)
-        cur.execute("""
-            SELECT
-                e.codigo_barras,
-                e.codigo_produto_nfe,
-                e.nome_produto,
-                COALESCE(SUM(CASE WHEN e.tipo_movimento = 'entrada' THEN e.quantidade ELSE 0 END), 0) AS entradas_total,
-                COALESCE(SUM(CASE WHEN e.tipo_movimento = 'saida' THEN e.quantidade ELSE 0 END), 0) AS saidas_total,
-                COALESCE(SUM(CASE WHEN e.tipo_movimento = 'saida' AND DATE(e.data_registro) = CURDATE() THEN e.quantidade ELSE 0 END), 0) AS saidas_dia,
-                COALESCE(SUM(CASE WHEN e.tipo_movimento = 'saida' THEN -e.quantidade ELSE e.quantidade END), 0) AS quantidade_atual,
-                MAX(e.data_registro) AS ultima_movimentacao,
-                (
-                    SELECT e2.valor_unitario
-                    FROM estoque_movimentos e2
-                    WHERE
-                        COALESCE(NULLIF(e2.codigo_barras, ''), '__') = COALESCE(NULLIF(e.codigo_barras, ''), '__')
-                        AND COALESCE(NULLIF(e2.codigo_produto_nfe, ''), '__') = COALESCE(NULLIF(e.codigo_produto_nfe, ''), '__')
-                        AND COALESCE(NULLIF(e2.nome_produto, ''), '__') = COALESCE(NULLIF(e.nome_produto, ''), '__')
-                    ORDER BY e2.id DESC
-                    LIMIT 1
-                ) AS ultimo_valor,
-                COALESCE(NULLIF(f.cnpj, ''), NULLIF(xi.emitente_cnpj, ''), NULLIF(c.emitente_cnpj, '')) AS fornecedor_cnpj,
-                COALESCE(NULLIF(f.nome, ''), NULLIF(xi.emitente_nome, ''), NULLIF(c.emitente_nome, '')) AS fornecedor_nome,
-                COALESCE(NULLIF(f.categoria, ''), CASE WHEN COALESCE(NULLIF(xi.emitente_cnpj, ''), NULLIF(c.emitente_cnpj, '')) IS NOT NULL THEN 'outros' ELSE '' END) AS fornecedor_categoria
-            FROM estoque_movimentos e
-            LEFT JOIN importar_xml_estoque_itens xi
-                ON e.referencia_tipo='importar_xml'
-               AND e.referencia_id=xi.id
-            LEFT JOIN estoque_conferencias c
-                ON e.referencia_tipo='conferencia_nfe'
-               AND e.referencia_id=c.id
-            LEFT JOIN gestor_email_fornecedores f
-                ON BINARY f.cnpj = BINARY COALESCE(NULLIF(xi.emitente_cnpj, ''), NULLIF(c.emitente_cnpj, ''))
-            GROUP BY
-                e.codigo_barras, e.codigo_produto_nfe, e.nome_produto,
-                fornecedor_cnpj, fornecedor_nome, fornecedor_categoria
-        """)
-        for row in (cur.fetchall() or []):
-            _estoque_registrar_filtro_fornecedor(meta, row)
-            cadastro = _resolver_produto_lookup_estoque(
-                produtos_lookup,
-                codigo_barras=row.get("codigo_barras"),
-                codigo_produto_nfe=row.get("codigo_produto_nfe"),
-                nome_produto=row.get("nome_produto"),
-            ) or {}
-            row = {
-                **row,
-                "grupo_estoque": cadastro.get("grupo_estoque"),
-                "produto_base_nome": cadastro.get("produto_base_nome"),
-                "embalagem_tipo_padrao": cadastro.get("embalagem_tipo_padrao"),
-                "fator_embalagem_padrao": cadastro.get("fator_embalagem_padrao"),
-            }
-            item = _estoque_merge_row(linhas, aliases, row)
-            item["entradas_total"] += _as_float(row.get("entradas_total"), 0.0)
-            item["saidas_total"] += _as_float(row.get("saidas_total"), 0.0)
-            item["saidas_dia"] += _as_float(row.get("saidas_dia"), 0.0)
-            item["quantidade_atual"] += _as_float(row.get("quantidade_atual"), 0.0)
-            ultima = _fmt_dt(row.get("ultima_movimentacao"))
-            if ultima and ultima > _as_str(item.get("ultima_movimentacao")):
-                item["ultima_movimentacao"] = ultima
-                item["ultimo_valor"] = _as_float(row.get("ultimo_valor"), item.get("ultimo_valor"))
-            elif not item.get("ultima_movimentacao"):
-                item["ultimo_valor"] = _as_float(row.get("ultimo_valor"), item.get("ultimo_valor"))
-
-        cur.execute("""
-            SELECT
-                c.id AS carga_id,
-                c.nome AS carga_nome,
-                c.tipo_importacao,
-                c.estoque_baixado_em,
-                f.status AS frete_status,
-                i.codigo_produto,
-                i.codigo_barras,
-                i.nome_produto,
-                i.quantidade_total
-            FROM cargas c
-            LEFT JOIN fretes f ON f.carga_id = c.id
-            LEFT JOIN cargas_estoque_itens i ON i.carga_id = c.id
-            WHERE c.tipo_importacao='pdf'
-            ORDER BY c.id DESC, i.item_seq ASC, i.id ASC
-        """)
-        for row in (cur.fetchall() or []):
-            carga_id = _as_int(row.get("carga_id"), 0)
-            if row.get("estoque_baixado_em"):
-                if carga_id > 0:
-                    baixadas_ids.add(carga_id)
-                continue
-            status_frete = _as_str(row.get("frete_status")).lower()
-            if status_frete and status_frete not in ("chegada", "descarregado", "liberado", "carregando", "carregado"):
-                continue
-            if carga_id > 0:
-                pending_carga_ids.add(carga_id)
-            if not _as_str(row.get("nome_produto")):
-                continue
-            cadastro = _resolver_produto_lookup_estoque(
-                produtos_lookup,
-                codigo_barras=row.get("codigo_barras"),
-                codigo_produto_nfe=row.get("codigo_produto"),
-                nome_produto=row.get("nome_produto"),
-            ) or {}
-            item = _estoque_merge_row(linhas, aliases, {
-                "codigo_barras": row.get("codigo_barras"),
-                "codigo_produto_nfe": row.get("codigo_produto"),
-                "nome_produto": row.get("nome_produto"),
-                "grupo_estoque": cadastro.get("grupo_estoque"),
-                "produto_base_nome": cadastro.get("produto_base_nome"),
-            })
-            item["quantidade_comprometida"] += _as_float(row.get("quantidade_total"), 0.0)
-
-        meta["cargas_pendentes"] = len(pending_carga_ids)
-        meta["cargas_baixadas"] = len(baixadas_ids)
-
-        cache_entry = None
-        try:
-            cache_entry, _source, _cfg = _vendas_obter_cache_ativo(force_refresh=False)
-        except Exception:
-            cache_entry = None
-
-        cache_id = _as_str((cache_entry or {}).get("id"))
-        if cache_id:
-            for chave_periodo, data_inicio, data_fim in (
-                ("vendas_dia", hoje, hoje),
-                ("vendas_semana", inicio_semana, hoje),
-            ):
-                cur.execute("""
-                    SELECT
-                        produto,
-                        COALESCE(SUM(quantidade), 0) AS quantidade
-                    FROM vendas_relatorio_itens
-                    WHERE import_id=%s AND data_ref BETWEEN %s AND %s
-                    GROUP BY produto
-                """, (cache_id, data_inicio, data_fim))
-                for row in (cur.fetchall() or []):
-                    produto_texto = _as_str(row.get("produto"))
-                    codigo_produto = _extrair_codigo_produto_texto(produto_texto)
-                    nome_produto = re.sub(r"^\s*0*[A-Z0-9]+\s*[-–]\s*", "", produto_texto, flags=re.I).strip() or produto_texto
-                    cadastro = _buscar_produto_estoque(
-                        cur,
-                        codigo_produto_nfe=_codigo_produto_nfe_saida(codigo_produto),
-                        nome_produto=nome_produto,
-                    ) or {}
-                    fator = _as_float(cadastro.get("fator_embalagem_padrao"), 0.0)
-                    if fator <= 0:
-                        fator = _fator_base_produto(
-                            nome_produto=nome_produto,
-                            embalagem="",
-                            unidade_ref=_as_str(cadastro.get("unidade")),
-                            grupo_produto=cadastro.get("grupo_estoque"),
-                        )
-                    quantidade_base = round(_as_float(row.get("quantidade"), 0.0) * (fator if fator > 0 else 1.0), 3)
-                    item = _estoque_merge_row(linhas, aliases, {
-                        "codigo_barras": cadastro.get("codigo_barras"),
-                        "codigo_produto_nfe": cadastro.get("codigo_produto_nfe") or codigo_produto,
-                        "nome_produto": cadastro.get("nome_produto") or nome_produto,
-                        "grupo_estoque": cadastro.get("grupo_estoque"),
-                        "produto_base_nome": cadastro.get("produto_base_nome"),
-                    })
-                    item[chave_periodo] += quantidade_base
-                    meta[f"{chave_periodo}_total"] += quantidade_base
-    finally:
-        cur.close()
-        conn.close()
-
-    rows = []
-    for item in linhas.values():
-        entradas_total = round(_as_float(item.get("entradas_total"), 0.0), 3)
-        saidas_total = round(_as_float(item.get("saidas_total"), 0.0), 3)
-        saidas_dia = round(_as_float(item.get("saidas_dia"), 0.0), 3)
-        quantidade_atual = round(_as_float(item.get("quantidade_atual"), 0.0), 3)
-        quantidade_comprometida = round(_as_float(item.get("quantidade_comprometida"), 0.0), 3)
-        vendas_dia = round(_as_float(item.get("vendas_dia"), 0.0), 3)
-        vendas_semana = round(_as_float(item.get("vendas_semana"), 0.0), 3)
-        saldo_previsto_dia = round(quantidade_atual - quantidade_comprometida - vendas_dia, 3)
-        saldo_remanescente = round(quantidade_atual - quantidade_comprometida, 3)
-        if not any([quantidade_atual, quantidade_comprometida, entradas_total, saidas_total, vendas_dia, vendas_semana, saidas_dia]):
-            continue
-        fornecedores = _estoque_fornecedores_lista(item)
-        meta["saidas_dia_total"] += saidas_dia
-        rows.append({
-            "grupo_estoque": _as_str(item.get("grupo_estoque")) or "OUTROS",
-            "produto_base_nome": _as_str(item.get("produto_base_nome")) or _as_str(item.get("nome_produto")) or "-",
-            "produto_base_key": _as_str(item.get("produto_base_key")),
-            "codigo_barras": _as_str(item.get("codigo_barras")),
-            "codigo_produto_nfe": _as_str(item.get("codigo_produto_nfe")),
-            "nome_produto": _as_str(item.get("produto_base_nome") or item.get("nome_produto")) or "-",
-            "entradas_total": entradas_total,
-            "saidas_total": saidas_total,
-            "saidas_dia": saidas_dia,
-            "quantidade_atual": quantidade_atual,
-            "quantidade_comprometida": quantidade_comprometida,
-            "vendas_dia": vendas_dia,
-            "vendas_semana": vendas_semana,
-            "saldo_previsto_dia": saldo_previsto_dia,
-            "saldo_remanescente": saldo_remanescente,
-            "ultimo_valor": _as_float(item.get("ultimo_valor"), 0.0),
-            "ultima_movimentacao": _as_str(item.get("ultima_movimentacao")),
-            "fornecedores": fornecedores,
-            "fornecedor_nomes": [f.get("nome") for f in fornecedores if f.get("nome")],
-            "fornecedor_categorias": sorted({f.get("categoria") or "outros" for f in fornecedores}),
-        })
-    rows.sort(key=lambda r: (
-        _estoque_grupo_ordem(r.get("grupo_estoque")),
-        _produto_nome_normalizado(r.get("produto_base_nome") or r.get("nome_produto")),
-        _as_str(r.get("codigo_produto_nfe")),
-        _as_str(r.get("codigo_barras")),
-    ))
-    meta["cargas_importadas"] = max(meta["cargas_importadas"], len(pending_carga_ids | baixadas_ids))
-    meta["saidas_dia_total"] = round(meta["saidas_dia_total"], 3)
-    meta["fornecedores"] = sorted(
-        meta.pop("_fornecedores_map", {}).values(),
-        key=lambda row: (_as_str(row.get("categoria")), _as_str(row.get("nome"))),
-    )
-    meta["categorias_fornecedor"] = sorted(meta.pop("_categorias_fornecedor", set()))
-    return {
-        "rows": rows,
-        "meta": meta,
-    }
-
-def _dashboard_estoque_data():
-    return _estoque_resumo_produtos_data()
-
-
-_ESTOQUE_XML_REFERENCIA = "importar_xml"
-_ESTOQUE_XML_LOTE_MAXIMO = 500
-
-
-def _estoque_xml_dados_item(valor):
-    if isinstance(valor, dict):
-        return valor
-    texto = _as_str(valor).strip()
-    if not texto:
-        return {}
-    try:
-        dados = json.loads(texto)
-    except Exception:
-        try:
-            dados = ast.literal_eval(texto)
-        except Exception:
-            dados = {}
-    return dados if isinstance(dados, dict) else {}
-
-
-def _estoque_xml_placa_normalizada(valor):
-    return re.sub(r"[^A-Z0-9]", "", _as_str(valor).upper())
-
-
-def _estoque_xml_numero_veiculo(valor):
-    match = re.search(r"\d+", _as_str(valor))
-    if not match:
-        return ""
-    return match.group(0).lstrip("0") or "0"
-
-
-def _estoque_xml_numero_caminhao_mapa(mapa):
-    match = re.fullmatch(r"7(\d{2})\d{4}", _as_str(mapa).strip())
-    if not match:
-        return ""
-    return match.group(1).lstrip("0") or "0"
-
-
-def _estoque_xml_tag_local(elemento):
-    return _as_str(getattr(elemento, "tag", "")).rsplit("}", 1)[-1]
-
-
-def _estoque_xml_texto_tag(elemento, nome_tag):
-    if elemento is None:
-        return ""
-    for filho in elemento.iter():
-        if _estoque_xml_tag_local(filho) == nome_tag:
-            return _as_str(filho.text).strip()
-    return ""
-
-
-def _estoque_xml_localizar_arquivo(cur, nota):
-    arquivo_ids = sorted(
-        arquivo_id
-        for arquivo_id in (nota.get("arquivo_ids") or set())
-        if _as_int(arquivo_id, 0) > 0
-    )
-    if not arquivo_ids:
-        return ""
-    placeholders = ", ".join(["%s"] * len(arquivo_ids))
-    cur.execute(
-        f"""
-        SELECT id, nome_arquivo, caminho_relativo
-        FROM importar_xml_arquivos
-        WHERE id IN ({placeholders})
-        ORDER BY id DESC
-        """,
-        tuple(arquivo_ids),
-    )
-    nomes = []
-    for row in cur.fetchall() or []:
-        for valor in (row.get("caminho_relativo"), row.get("nome_arquivo")):
-            nome = os.path.basename(_as_str(valor).strip())
-            if nome and nome not in nomes:
-                nomes.append(nome)
-
-    raiz_legacy = os.environ.get(
-        "RB_IMPORTAR_XML_LEGACY_DIR",
-        os.path.join(BASE_DIR, "ImportarXml"),
-    )
-    diretorios = [
-        os.environ.get(
-            "RB_IMPORTAR_XML_DATA_DIR",
-            os.path.join(DATA_ROOT, "ImportarXml", "uploads"),
-        ),
-        os.path.join(raiz_legacy, "uploads_xml_homologacao"),
-        os.path.join(BASE_DIR, "ImportarXml", "uploads_xml_homologacao"),
-    ]
-    for diretorio in diretorios:
-        for nome in nomes:
-            caminho = os.path.join(diretorio, nome)
-            if os.path.isfile(caminho):
-                return caminho
-    return ""
-
-
-def _estoque_xml_extrair_transporte(cur, nota):
-    resultado = {
-        "placa": "",
-        "uf_placa": "",
-        "mapa": "",
-        "numero_caminhao": "",
-        "modalidade_frete": "",
-        "informacoes_complementares": "",
-        "arquivo_xml": "",
-    }
-    caminho = _estoque_xml_localizar_arquivo(cur, nota)
-    if not caminho:
-        return resultado
-    resultado["arquivo_xml"] = os.path.basename(caminho)
-    try:
-        raiz = ET.parse(caminho).getroot()
-    except Exception:
-        return resultado
-
-    veiculo = next(
-        (
-            elemento
-            for elemento in raiz.iter()
-            if _estoque_xml_tag_local(elemento) == "veicTransp"
-        ),
-        None,
-    )
-    resultado["placa"] = _estoque_xml_placa_normalizada(
-        _estoque_xml_texto_tag(veiculo, "placa")
-    )
-    resultado["uf_placa"] = _estoque_xml_texto_tag(veiculo, "UF").upper()
-    resultado["modalidade_frete"] = next(
-        (
-            _as_str(elemento.text)
-            for elemento in raiz.iter()
-            if _estoque_xml_tag_local(elemento) == "modFrete"
-        ),
-        "",
-    )
-    inf_cpl = next(
-        (
-            _as_str(elemento.text)
-            for elemento in raiz.iter()
-            if _estoque_xml_tag_local(elemento) == "infCpl"
-        ),
-        "",
-    )
-    resultado["informacoes_complementares"] = inf_cpl
-    match_mapa = re.search(r"\bMapa\s*:\s*([0-9]+)", inf_cpl, flags=re.IGNORECASE)
-    resultado["mapa"] = match_mapa.group(1) if match_mapa else ""
-    resultado["numero_caminhao"] = _estoque_xml_numero_caminhao_mapa(
-        resultado["mapa"]
-    )
-    return resultado
-
-
-def _estoque_xml_normalizar_texto(valor):
-    texto = unicodedata.normalize("NFKD", _as_str(valor).upper())
-    return " ".join(
-        "".join(ch for ch in texto if not unicodedata.combining(ch)).split()
-    )
-
-
-def _estoque_xml_detectar_dispensa_frete(transporte):
-    modalidade = _as_str(transporte.get("modalidade_frete"))
-    if modalidade in {"1", "4", "9"}:
-        rotulos = {
-            "1": "frete por conta do destinatario",
-            "4": "transporte proprio do destinatario",
-            "9": "operacao sem transporte",
-        }
-        return {
-            "dispensa_frete": True,
-            "tipo_transporte": "retirada_cliente",
-            "origem": "automatico_xml",
-            "motivo": (
-                f"XML informa {rotulos[modalidade]}; "
-                "nao exige frete, rota ou veiculo da empresa."
-            ),
-        }
-
-    texto = _estoque_xml_normalizar_texto(
-        transporte.get("informacoes_complementares")
-    )
-    sem_veiculo = not (
-        _estoque_xml_placa_normalizada(transporte.get("placa"))
-        or _estoque_xml_numero_veiculo(transporte.get("numero_caminhao"))
-    )
-    padroes_cliente = (
-        (r"\bRETIRADA PELO CLIENTE\b", "RETIRADA PELO CLIENTE"),
-        (r"\bRETIRA CLIENTE\b", "RETIRA CLIENTE"),
-        (r"\bTRANSPORTE PELO CLIENTE\b", "TRANSPORTE PELO CLIENTE"),
-        (r"\bTRANSPORTE DO CLIENTE\b", "TRANSPORTE DO CLIENTE"),
-        (
-            r"\bVENDEDOR\s*:\s*(?:\d+\s*-\s*)?BALCAO\b",
-            "VENDA DE BALCAO",
-        ),
-    )
-    indicacao = next(
-        (rotulo for padrao, rotulo in padroes_cliente if re.search(padrao, texto)),
-        "",
-    )
-    if sem_veiculo and indicacao:
-        return {
-            "dispensa_frete": True,
-            "tipo_transporte": "retirada_cliente",
-            "origem": "automatico_xml",
-            "motivo": (
-                f"XML sem placa/caminhao e com indicacao '{indicacao}'; "
-                "tratado como retirada ou transporte pelo cliente."
-            ),
-        }
-    return {
-        "dispensa_frete": False,
-        "tipo_transporte": "",
-        "origem": "",
-        "motivo": "",
-    }
-
-
-def _estoque_xml_arquivar_card_automatico_dispensado(
-    cur,
-    pre_vinculo,
-    nota_key,
-    usuario,
-):
-    frete_id = _as_int(pre_vinculo.get("frete_id"), 0)
-    if (
-        frete_id <= 0
-        or _as_str(pre_vinculo.get("origem_frete")) != "frete_criado"
-    ):
-        return False
-    cur.execute(
-        """
-        SELECT COUNT(*) AS total
-        FROM estoque_xml_frete_vinculos
-        WHERE frete_id=%s
-        """,
-        (frete_id,),
-    )
-    if _as_int((cur.fetchone() or {}).get("total"), 0) > 0:
-        return False
-    cur.execute(
-        """
-        SELECT COUNT(*) AS total
-        FROM estoque_xml_frete_pre_vinculos
-        WHERE frete_id=%s AND nota_key<>%s AND status<>'dispensado'
-        """,
-        (frete_id, nota_key),
-    )
-    if _as_int((cur.fetchone() or {}).get("total"), 0) > 0:
-        return False
-    frete = _buscar_frete_detalhado(cur, frete_id)
-    if not frete or not _as_str(frete.get("observacao")).startswith(
-        "Card criado automaticamente pelo XML de saida."
-    ):
-        return False
-    observacao = _as_str(frete.get("observacao"))
-    complemento = " Arquivado porque o transporte foi realizado pelo cliente."
-    if complemento.strip() not in observacao:
-        observacao = f"{observacao}{complemento}"[:500]
-    cur.execute(
-        """
-        UPDATE fretes
-        SET arquivado=1, observacao=%s
-        WHERE id=%s
-        """,
-        (observacao, frete_id),
-    )
-    depois = _buscar_frete_detalhado(cur, frete_id)
-    _registrar_historico_frete(
-        cur,
-        frete_id,
-        "arquivado_retirada_cliente_xml",
-        usuario,
-        frete,
-        depois,
-    )
-    return True
-
-
-def _estoque_xml_definir_dispensa_frete(
-    cur,
-    nota,
-    dispensa_frete,
-    origem,
-    motivo,
-    usuario,
-    tipo_transporte="retirada_cliente",
-):
-    canonicos = nota.get("canonicos") or []
-    base = canonicos[0] if canonicos else {}
-    nota_key = _as_str(nota.get("nota_key"))
-    cur.execute(
-        """
-        INSERT IGNORE INTO estoque_xml_frete_pre_vinculos (
-            nota_key, chave_nfe, numero_nota, status, criado_em, atualizado_em
-        )
-        VALUES (%s, %s, %s, 'pendente', NOW(), NOW())
-        """,
-        (
-            nota_key,
-            _normalizar_chave_acesso_nfe(base.get("chave_nfe")),
-            _as_str(base.get("numero_nota")),
-        ),
-    )
-    cur.execute(
-        """
-        SELECT *
-        FROM estoque_xml_frete_pre_vinculos
-        WHERE nota_key=%s
-        LIMIT 1
-        FOR UPDATE
-        """,
-        (nota_key,),
-    )
-    pre_vinculo = cur.fetchone() or {}
-    card_arquivado = False
-    if dispensa_frete:
-        card_arquivado = _estoque_xml_arquivar_card_automatico_dispensado(
-            cur,
-            pre_vinculo,
-            nota_key,
-            usuario,
-        )
-    cur.execute(
-        """
-        UPDATE estoque_xml_frete_pre_vinculos
-        SET dispensa_frete=%s,
-            tipo_transporte=%s,
-            origem_decisao_logistica=%s,
-            motivo_decisao_logistica=%s,
-            usuario_decisao_logistica=%s,
-            frete_id=CASE WHEN %s=1 THEN NULL ELSE frete_id END,
-            veiculo_id=CASE WHEN %s=1 THEN NULL ELSE veiculo_id END,
-            origem_frete=CASE WHEN %s=1 THEN 'retirada_cliente' ELSE '' END,
-            origem_veiculo=CASE WHEN %s=1 THEN 'veiculo_cliente' ELSE '' END,
-            status=CASE WHEN %s=1 THEN 'dispensado' ELSE 'pendente' END,
-            detalhes=%s,
-            atualizado_em=NOW(),
-            confirmado_em=NULL
-        WHERE nota_key=%s
-        """,
-        (
-            1 if dispensa_frete else 0,
-            tipo_transporte if dispensa_frete else "",
-            _as_str(origem),
-            _as_str(motivo)[:500],
-            _as_str(usuario),
-            1 if dispensa_frete else 0,
-            1 if dispensa_frete else 0,
-            1 if dispensa_frete else 0,
-            1 if dispensa_frete else 0,
-            1 if dispensa_frete else 0,
-            _as_str(motivo)[:500],
-            nota_key,
-        ),
-    )
-    cur.execute(
-        """
-        SELECT *
-        FROM estoque_xml_frete_pre_vinculos
-        WHERE nota_key=%s
-        LIMIT 1
-        """,
-        (nota_key,),
-    )
-    atualizado = cur.fetchone() or {}
-    atualizado["card_arquivado"] = card_arquivado
-    return atualizado
-
-
-def _estoque_xml_resolver_veiculo(cur, transporte):
-    placa_xml = _estoque_xml_placa_normalizada(transporte.get("placa"))
-    numero_xml = _estoque_xml_numero_veiculo(transporte.get("numero_caminhao"))
-    cur.execute(
-        """
-        SELECT id, nome, placa, modelo
-        FROM veiculos
-        ORDER BY id ASC
-        """
-    )
-    veiculos = cur.fetchall() or []
-    if placa_xml:
-        for veiculo in veiculos:
-            if _estoque_xml_placa_normalizada(veiculo.get("placa")) == placa_xml:
-                return {
-                    "veiculo_id": _as_int(veiculo.get("id"), 0),
-                    "origem": "placa_xml",
-                    "veiculo": veiculo,
-                }
-    if numero_xml:
-        for veiculo in veiculos:
-            if _estoque_xml_numero_veiculo(veiculo.get("nome")) == numero_xml:
-                return {
-                    "veiculo_id": _as_int(veiculo.get("id"), 0),
-                    "origem": "mapa_xml",
-                    "veiculo": veiculo,
-                }
-    return {
-        "veiculo_id": 0,
-        "origem": "nao_identificado",
-        "veiculo": None,
-    }
-
-
-def _estoque_xml_sugerir_frete(cur, transporte, veiculo_id=0):
-    placa_xml = _estoque_xml_placa_normalizada(transporte.get("placa"))
-    numero_xml = _estoque_xml_numero_veiculo(transporte.get("numero_caminhao"))
-    vazio = {
-        "frete_id": 0,
-        "confianca": "",
-        "motivo": "",
-        "candidatos_total": 0,
-    }
-    if not (placa_xml or numero_xml or _as_int(veiculo_id, 0) > 0):
-        return {
-            **vazio,
-            "motivo": "O XML nao informou uma placa nem um mapa compativel com numero de caminhao.",
-        }
-
-    cur.execute(
-        FRETE_SELECT_SQL
-        + """
-          WHERE COALESCE(f.arquivado, 0)=0
-        """
-    )
-    fretes_por_id = {}
-    for row in cur.fetchall() or []:
-        frete = _serialize_frete_row(row)
-        if frete and frete.get("id"):
-            fretes_por_id[frete["id"]] = frete
-
-    candidatos = []
-    for frete in fretes_por_id.values():
-        if _as_str(frete.get("status")) in {"retornando", "paradoVasio"}:
-            continue
-        placa_frete = _estoque_xml_placa_normalizada(frete.get("veiculo_placa"))
-        numeros_frete = {
-            numero
-            for numero in (
-                _estoque_xml_numero_veiculo(frete.get("veiculo_nome")),
-                _estoque_xml_numero_veiculo(frete.get("carga_veiculo_numero")),
-            )
-            if numero
-        }
-        veiculo_confere = bool(
-            _as_int(veiculo_id, 0) > 0
-            and _as_int(frete.get("veiculo_id"), 0) == _as_int(veiculo_id, 0)
-        )
-        placa_confere = bool(placa_xml and placa_frete == placa_xml)
-        numero_confere = bool(numero_xml and numero_xml in numeros_frete)
-        if not (veiculo_confere or placa_confere or numero_confere):
-            continue
-        candidatos.append(
-            {
-                "frete": frete,
-                "veiculo_confere": veiculo_confere,
-                "placa_confere": placa_confere,
-                "numero_confere": numero_confere,
-            }
-        )
-
-    candidatos_placa = [item for item in candidatos if item["placa_confere"]]
-    if candidatos_placa:
-        candidatos = candidatos_placa
-    if not candidatos:
-        identificador = (
-            placa_xml
-            or (f"caminhao {numero_xml}" if numero_xml else "")
-            or f"veiculo #{_as_int(veiculo_id, 0)}"
-        )
-        return {
-            **vazio,
-            "motivo": f"Nao existe frete ativo para {identificador}; selecione manualmente.",
-        }
-
-    pontos_status = {
-        "entregando": 50,
-        "carregado": 45,
-        "carregando": 40,
-        "liberado": 35,
-        "chegada": 20,
-        "descarregado": 15,
-        "paradoCarregado": 10,
-        "paradoVasio": 5,
-        "retornando": 0,
-    }
-    for item in candidatos:
-        frete = item["frete"]
-        item["pontos"] = (
-            (120 if item["veiculo_confere"] else 0)
-            + (100 if item["placa_confere"] else 0)
-            + (40 if item["numero_confere"] else 0)
-            + pontos_status.get(_as_str(frete.get("status")), 0)
-        )
-    candidatos.sort(
-        key=lambda item: (
-            item["pontos"],
-            _as_int(item["frete"].get("id"), 0),
-        ),
-        reverse=True,
-    )
-    escolhido = candidatos[0]
-    frete = escolhido["frete"]
-    evidencias = []
-    if escolhido["veiculo_confere"]:
-        evidencias.append(f"veiculo cadastrado #{_as_int(veiculo_id, 0)}")
-    if escolhido["placa_confere"]:
-        evidencias.append(f"placa {placa_xml}")
-    if escolhido["numero_confere"]:
-        evidencias.append(f"caminhao {numero_xml} pelo mapa {transporte.get('mapa')}")
-    confianca = "alta" if len(candidatos) == 1 and escolhido["placa_confere"] else "media"
-    evidencias_texto = " e ".join(evidencias)
-    if evidencias_texto:
-        evidencias_texto = evidencias_texto[0].upper() + evidencias_texto[1:]
-    return {
-        "frete_id": _as_int(frete.get("id"), 0),
-        "confianca": confianca,
-        "motivo": (
-            f"{evidencias_texto} indicam o frete "
-            f"#{frete.get('id')} ({_as_str(frete.get('nome'))}); "
-            f"status {_as_str(frete.get('status')) or '-'}."
-        ),
-        "candidatos_total": len(candidatos),
-    }
-
-
-def _estoque_xml_criar_frete_automatico(
-    cur,
-    nota,
-    transporte,
-    veiculo_resolvido,
-    usuario="sistema",
-):
-    canonicos = nota.get("canonicos") or []
-    base = canonicos[0] if canonicos else {}
-    numero_nota = _as_str(base.get("numero_nota")) or _as_str(nota.get("nota_key"))
-    veiculo = veiculo_resolvido.get("veiculo") or {}
-    numero_caminhao = _as_str(transporte.get("numero_caminhao"))
-    identificador = (
-        _as_str(veiculo.get("nome"))
-        or numero_caminhao
-        or _as_str(transporte.get("placa"))
-    )
-    nome = (
-        f"NF-e {numero_nota} - Caminhao {identificador}"
-        if identificador
-        else f"NF-e {numero_nota} - Vincular veiculo"
-    )[:150]
-    partes_observacao = [
-        "Card criado automaticamente pelo XML de saida.",
-        f"Placa: {_as_str(transporte.get('placa')) or '-'}.",
-        f"Mapa: {_as_str(transporte.get('mapa')) or '-'}.",
-    ]
-    if not _as_int(veiculo_resolvido.get("veiculo_id"), 0):
-        partes_observacao.append("Veiculo pendente de vinculacao no Kanban.")
-    partes_observacao.append("Revise rota, motorista e demais dados.")
-    observacao = " ".join(partes_observacao)
-    cur.execute(
-        """
-        INSERT INTO fretes (
-            nome, cidade, data_carga, status, veiculo_id, carga_id,
-            observacao, km_atual, peso, qtd_entregas, arquivado
-        )
-        VALUES (%s, %s, %s, 'liberado', %s, NULL, %s, 0, 0, 1, 0)
-        """,
-        (
-            nome,
-            "",
-            _as_date(base.get("data_emissao")) or datetime.date.today(),
-            _as_int(veiculo_resolvido.get("veiculo_id"), 0) or None,
-            observacao,
-        ),
-    )
-    frete_id = _as_int(cur.lastrowid, 0)
-    frete = _buscar_frete_detalhado(cur, frete_id)
-    historico = {
-        **(frete or {}),
-        "numero_nota": numero_nota,
-        "chave_nfe": _normalizar_chave_acesso_nfe(base.get("chave_nfe")),
-    }
-    _registrar_historico_frete(
-        cur,
-        frete_id,
-        "criado_automaticamente_xml",
-        usuario,
-        None,
-        historico,
-    )
-    return frete
-
-
-def _estoque_xml_preparar_vinculo(cur, nota, usuario="sistema"):
-    canonicos = nota.get("canonicos") or []
-    base = canonicos[0] if canonicos else {}
-    nota_key = _as_str(nota.get("nota_key"))
-    chave_nfe = _normalizar_chave_acesso_nfe(base.get("chave_nfe"))
-    numero_nota = _as_str(base.get("numero_nota"))
-    transporte = _estoque_xml_extrair_transporte(cur, nota)
-
-    cur.execute(
-        """
-        INSERT IGNORE INTO estoque_xml_frete_pre_vinculos (
-            nota_key, chave_nfe, numero_nota, placa_xml, mapa_xml,
-            numero_caminhao_xml, status, criado_em, atualizado_em
-        )
-        VALUES (%s, %s, %s, %s, %s, %s, 'pendente', NOW(), NOW())
-        """,
-        (
-            nota_key,
-            chave_nfe,
-            numero_nota,
-            _as_str(transporte.get("placa")),
-            _as_str(transporte.get("mapa")),
-            _as_str(transporte.get("numero_caminhao")),
-        ),
-    )
-    pre_vinculo_criado = bool(cur.rowcount)
-    cur.execute(
-        """
-        SELECT *
-        FROM estoque_xml_frete_pre_vinculos
-        WHERE nota_key=%s
-        LIMIT 1
-        FOR UPDATE
-        """,
-        (nota_key,),
-    )
-    pre_vinculo = cur.fetchone() or {}
-    cur.execute(
-        """
-        SELECT frete_id, veiculo_id
-        FROM estoque_xml_frete_vinculos
-        WHERE nota_key=%s
-        LIMIT 1
-        """,
-        (nota_key,),
-    )
-    vinculo_final = cur.fetchone() or {}
-    decisao_automatica = _estoque_xml_detectar_dispensa_frete(transporte)
-    if (
-        decisao_automatica.get("dispensa_frete")
-        and not _as_str(pre_vinculo.get("origem_decisao_logistica"))
-        and not vinculo_final
-    ):
-        pre_vinculo = _estoque_xml_definir_dispensa_frete(
-            cur,
-            nota,
-            True,
-            decisao_automatica.get("origem"),
-            decisao_automatica.get("motivo"),
-            usuario,
-            tipo_transporte=decisao_automatica.get("tipo_transporte"),
-        )
-    if _as_int(pre_vinculo.get("dispensa_frete"), 0):
-        return {
-            "nota_key": nota_key,
-            "frete_id": 0,
-            "veiculo_id": 0,
-            "origem_veiculo": _as_str(pre_vinculo.get("origem_veiculo")),
-            "origem_frete": _as_str(pre_vinculo.get("origem_frete")),
-            "status": _as_str(pre_vinculo.get("status")) or "dispensado",
-            "dispensa_frete": True,
-            "tipo_transporte": _as_str(pre_vinculo.get("tipo_transporte")),
-            "origem_decisao_logistica": _as_str(
-                pre_vinculo.get("origem_decisao_logistica")
-            ),
-            "motivo_decisao_logistica": _as_str(
-                pre_vinculo.get("motivo_decisao_logistica")
-            ),
-            "transporte_xml": transporte,
-            "frete_sugestao": {
-                "frete_id": 0,
-                "confianca": "alta",
-                "motivo": _as_str(
-                    pre_vinculo.get("motivo_decisao_logistica")
-                ),
-                "candidatos_total": 0,
-            },
-            "pre_vinculo_criado": pre_vinculo_criado,
-            "frete_criado": False,
-            "card_arquivado": bool(pre_vinculo.get("card_arquivado")),
-        }
-
-    frete_id_atual = (
-        _as_int(vinculo_final.get("frete_id"), 0)
-        or _as_int(pre_vinculo.get("frete_id"), 0)
-    )
-    frete_atual = (
-        _buscar_frete_detalhado(cur, frete_id_atual)
-        if frete_id_atual > 0
-        else None
-    )
-
-    veiculo_resolvido = _estoque_xml_resolver_veiculo(cur, transporte)
-    veiculo_id_xml = _as_int(veiculo_resolvido.get("veiculo_id"), 0)
-    veiculo_id_frete = _as_int((frete_atual or {}).get("veiculo_id"), 0)
-    veiculo_id = (
-        _as_int(vinculo_final.get("veiculo_id"), 0)
-        or veiculo_id_frete
-        or _as_int(pre_vinculo.get("veiculo_id"), 0)
-        or veiculo_id_xml
-    )
-    origem_veiculo = _as_str(pre_vinculo.get("origem_veiculo"))
-    if veiculo_id_frete and veiculo_id_frete != veiculo_id_xml:
-        origem_veiculo = "kanban_manual"
-    elif not origem_veiculo or origem_veiculo == "nao_identificado":
-        origem_veiculo = _as_str(veiculo_resolvido.get("origem"))
-    if frete_atual and _as_int(frete_atual.get("veiculo_id"), 0):
-        origem_veiculo = origem_veiculo or "frete_existente"
-
-    frete_criado = False
-    sugestao = {}
-    origem_frete = _as_str(pre_vinculo.get("origem_frete"))
-    if vinculo_final and frete_atual:
-        origem_frete = origem_frete or "vinculo_confirmado"
-        sugestao = {
-            "frete_id": _as_int(frete_atual.get("id"), 0),
-            "confianca": "alta",
-            "motivo": "A nota ja possui vinculo definitivo com este frete.",
-            "candidatos_total": 1,
-        }
-    elif frete_atual:
-        origem_frete = origem_frete or "pre_vinculo_existente"
-        veiculo_pendente = not _as_int(frete_atual.get("veiculo_id"), 0)
-        sugestao = {
-            "frete_id": _as_int(frete_atual.get("id"), 0),
-            "confianca": "manual" if veiculo_pendente else "alta",
-            "motivo": (
-                "O card foi criado automaticamente e aguarda o vinculo manual do veiculo no Kanban."
-                if veiculo_pendente
-                else (
-                    "O card criado automaticamente ja estava preparado para esta nota."
-                    if origem_frete == "frete_criado"
-                    else "O frete ja estava preparado para esta nota."
-                )
-            ),
-            "candidatos_total": 1,
-        }
-    else:
-        sugestao = _estoque_xml_sugerir_frete(cur, transporte, veiculo_id)
-        frete_id_sugerido = _as_int(sugestao.get("frete_id"), 0)
-        if frete_id_sugerido > 0:
-            frete_atual = _buscar_frete_detalhado(cur, frete_id_sugerido)
-            origem_frete = "frete_existente"
-        else:
-            veiculo_resolvido = {
-                **veiculo_resolvido,
-                "veiculo_id": veiculo_id,
-            }
-            frete_atual = _estoque_xml_criar_frete_automatico(
-                cur,
-                nota,
-                transporte,
-                veiculo_resolvido,
-                usuario=usuario,
-            )
-            frete_criado = True
-            origem_frete = "frete_criado"
-            sugestao = {
-                "frete_id": _as_int((frete_atual or {}).get("id"), 0),
-                "confianca": "alta" if veiculo_id > 0 else "manual",
-                "motivo": (
-                    "Foi criado um card no Kanban ja vinculado ao veiculo identificado."
-                    if veiculo_id > 0
-                    else "Foi criado um card aberto no Kanban para vincular o veiculo manualmente."
-                ),
-                "candidatos_total": 1,
-            }
-
-    frete_id = _as_int((frete_atual or {}).get("id"), 0)
-    if not veiculo_id:
-        veiculo_id = _as_int((frete_atual or {}).get("veiculo_id"), 0)
-    status_pre = "confirmado" if vinculo_final else "pendente"
-    detalhes = _as_str(sugestao.get("motivo"))[:500]
-    if vinculo_final:
-        cur.execute(
-            """
-            UPDATE estoque_xml_frete_vinculos
-            SET veiculo_id=COALESCE(veiculo_id, %s),
-                placa_xml=CASE
-                    WHEN TRIM(COALESCE(placa_xml, ''))='' THEN %s
-                    ELSE placa_xml
-                END,
-                mapa_xml=CASE
-                    WHEN TRIM(COALESCE(mapa_xml, ''))='' THEN %s
-                    ELSE mapa_xml
-                END,
-                numero_caminhao_xml=CASE
-                    WHEN TRIM(COALESCE(numero_caminhao_xml, ''))='' THEN %s
-                    ELSE numero_caminhao_xml
-                END
-            WHERE nota_key=%s
-            """,
-            (
-                veiculo_id or None,
-                _as_str(transporte.get("placa")),
-                _as_str(transporte.get("mapa")),
-                _as_str(transporte.get("numero_caminhao")),
-                nota_key,
-            ),
-        )
-    cur.execute(
-        """
-        UPDATE estoque_xml_frete_pre_vinculos
-        SET chave_nfe=%s,
-            numero_nota=%s,
-            veiculo_id=%s,
-            frete_id=%s,
-            placa_xml=%s,
-            mapa_xml=%s,
-            numero_caminhao_xml=%s,
-            origem_veiculo=%s,
-            origem_frete=%s,
-            status=%s,
-            detalhes=%s,
-            atualizado_em=NOW(),
-            confirmado_em=CASE
-                WHEN %s='confirmado' THEN COALESCE(confirmado_em, NOW())
-                ELSE confirmado_em
-            END
-        WHERE nota_key=%s
-        """,
-        (
-            chave_nfe,
-            numero_nota,
-            veiculo_id or None,
-            frete_id or None,
-            _as_str(transporte.get("placa")),
-            _as_str(transporte.get("mapa")),
-            _as_str(transporte.get("numero_caminhao")),
-            origem_veiculo,
-            origem_frete,
-            status_pre,
-            detalhes,
-            status_pre,
-            nota_key,
-        ),
-    )
-    return {
-        "nota_key": nota_key,
-        "frete_id": frete_id,
-        "veiculo_id": veiculo_id,
-        "origem_veiculo": origem_veiculo,
-        "origem_frete": origem_frete,
-        "status": status_pre,
-        "dispensa_frete": False,
-        "tipo_transporte": "",
-        "origem_decisao_logistica": _as_str(
-            pre_vinculo.get("origem_decisao_logistica")
-        ),
-        "motivo_decisao_logistica": _as_str(
-            pre_vinculo.get("motivo_decisao_logistica")
-        ),
-        "transporte_xml": transporte,
-        "frete_sugestao": sugestao,
-        "pre_vinculo_criado": pre_vinculo_criado,
-        "frete_criado": frete_criado,
-    }
-
-
-def _estoque_xml_nota_key(row):
-    chave = _normalizar_chave_acesso_nfe(row.get("chave_nfe"))
-    if chave:
-        return chave
-    return "|".join(
-        [
-            "sem-chave",
-            _as_str(row.get("emitente_cnpj")),
-            _as_str(row.get("numero_nota")),
-            _as_str(row.get("serie")),
-        ]
-    )
-
-
-def _estoque_xml_item_seq(row):
-    dados = _estoque_xml_dados_item(row.get("dados_json"))
-    return _as_str(dados.get("nItem") or dados.get("item_seq"))
-
-
-def _estoque_xml_agrupar_notas(rows):
-    notas = {}
-    for row in rows or []:
-        chave_nota = _estoque_xml_nota_key(row)
-        nota = notas.setdefault(
-            chave_nota,
-            {
-                "nota_key": chave_nota,
-                "rows": [],
-                "arquivo_ids": set(),
-            },
-        )
-        nota["rows"].append(row)
-        arquivo_id = _as_int(row.get("arquivo_id"), 0)
-        if arquivo_id > 0:
-            nota["arquivo_ids"].add(arquivo_id)
-
-    for nota in notas.values():
-        canonicos = {}
-        for row in sorted(nota["rows"], key=lambda item: _as_int(item.get("id"), 0)):
-            seq = _estoque_xml_item_seq(row)
-            if seq:
-                identidade = f"seq:{seq}"
-            else:
-                identidade = "|".join(
-                    [
-                        "item",
-                        _as_str(row.get("codigo_produto")),
-                        _as_str(row.get("descricao_produto")),
-                        str(round(_as_float(row.get("quantidade"), 0.0), 6)),
-                        str(round(_as_float(row.get("valor_unitario"), 0.0), 6)),
-                        _as_str(row.get("cfop")),
-                    ]
-                )
-            canonicos.setdefault(identidade, row)
-        nota["canonicos"] = list(canonicos.values())
-    return notas
-
-
-def _estoque_xml_carregar_notas(cur, nota_key=""):
-    sql = """
-        SELECT
-            id, arquivo_id, arquivo_origem, tipo_movimento,
-            padrao_detectado, motivo_classificacao, chave_nfe,
-            numero_nota, serie, data_emissao, natureza_operacao,
-            cfop, emitente_cnpj, emitente_nome, destinatario_cnpj,
-            destinatario_nome, codigo_produto, descricao_produto,
-            ncm, unidade, quantidade, valor_unitario,
-            valor_total_item, valor_total_nota, criado_em, dados_json
-        FROM importar_xml_estoque_itens
-    """
-    params = []
-    chave = _normalizar_chave_acesso_nfe(nota_key)
-    if len(chave) == 44:
-        sql += " WHERE chave_nfe=%s"
-        params.append(chave)
-    sql += " ORDER BY id ASC"
-    cur.execute(sql, tuple(params))
-    notas = _estoque_xml_agrupar_notas(cur.fetchall() or [])
-    if nota_key and nota_key in notas:
-        return {nota_key: notas[nota_key]}
-    return notas
-
-
-def _estoque_xml_referencias_lancadas(cur):
-    cur.execute(
-        """
-        SELECT referencia_id
-        FROM estoque_movimentos
-        WHERE referencia_tipo=%s AND referencia_id IS NOT NULL
-        """,
-        (_ESTOQUE_XML_REFERENCIA,),
-    )
-    return {
-        _as_int(row.get("referencia_id"), 0)
-        for row in (cur.fetchall() or [])
-        if _as_int(row.get("referencia_id"), 0) > 0
-    }
-
-
-def _estoque_xml_nota_publica(nota, referencias_lancadas):
-    canonicos = nota.get("canonicos") or []
-    base = canonicos[0] if canonicos else {}
-    total = len(canonicos)
-    lancados = sum(
-        1
-        for row in canonicos
-        if _as_int(row.get("id"), 0) in referencias_lancadas
-    )
-    status = "consolidado" if total > 0 and lancados == total else (
-        "parcial" if lancados > 0 else "pendente"
-    )
-    tipo_origem = _as_str(base.get("tipo_movimento")).upper()
-    tipo_movimento = "saida" if tipo_origem == "SAIDA_ESTOQUE" else "entrada"
-    return {
-        "nota_key": nota.get("nota_key"),
-        "chave_nfe": _as_str(base.get("chave_nfe")),
-        "numero_nota": _as_str(base.get("numero_nota")),
-        "serie": _as_str(base.get("serie")),
-        "data_emissao": _as_str(base.get("data_emissao")),
-        "emitente_nome": _as_str(base.get("emitente_nome")),
-        "emitente_cnpj": _as_str(base.get("emitente_cnpj")),
-        "destinatario_nome": _as_str(base.get("destinatario_nome")),
-        "destinatario_cnpj": _as_str(base.get("destinatario_cnpj")),
-        "natureza_operacao": _as_str(base.get("natureza_operacao")),
-        "tipo_movimento": tipo_movimento,
-        "tipo_movimento_origem": tipo_origem,
-        "status": status,
-        "total_itens": total,
-        "itens_lancados": lancados,
-        "itens_pendentes": max(0, total - lancados),
-        "arquivos_repetidos": len(nota.get("arquivo_ids") or []),
-        "valor_total_nota": _as_float(base.get("valor_total_nota"), 0.0),
-        "arquivo_origem": _as_str(base.get("arquivo_origem")),
-    }
-
-
-def migrar_importacoes_xml_fretes(dry_run=False):
-    conn = get_conn()
-    cur = conn.cursor(dictionary=True)
-    resumo = {
-        "notas_saida": 0,
-        "pre_vinculos_criados": 0,
-        "fretes_criados": 0,
-        "veiculos_vinculados": 0,
-        "cards_sem_veiculo": 0,
-        "retiradas_cliente": 0,
-        "cards_arquivados": 0,
-        "simulacao": bool(dry_run),
-    }
-    try:
-        notas = _estoque_xml_carregar_notas(cur)
-        for nota in notas.values():
-            canonicos = nota.get("canonicos") or []
-            base = canonicos[0] if canonicos else {}
-            if _as_str(base.get("tipo_movimento")).upper() != "SAIDA_ESTOQUE":
-                continue
-            resumo["notas_saida"] += 1
-            preparado = _estoque_xml_preparar_vinculo(
-                cur,
-                nota,
-                usuario="deploy_xml",
-            )
-            if preparado.get("pre_vinculo_criado"):
-                resumo["pre_vinculos_criados"] += 1
-            if preparado.get("frete_criado"):
-                resumo["fretes_criados"] += 1
-            if preparado.get("dispensa_frete"):
-                resumo["retiradas_cliente"] += 1
-                if preparado.get("card_arquivado"):
-                    resumo["cards_arquivados"] += 1
-            elif _as_int(preparado.get("veiculo_id"), 0) > 0:
-                resumo["veiculos_vinculados"] += 1
-            else:
-                resumo["cards_sem_veiculo"] += 1
-        if dry_run:
-            conn.rollback()
-        else:
-            conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        cur.close()
-        conn.close()
-    return resumo
-
-
-def _estoque_xml_preview(cur, nota, referencias_lancadas):
-    resumo = _estoque_xml_nota_publica(nota, referencias_lancadas)
-    transporte_xml = {}
-    frete_sugestao = {}
-    frete_id = 0
-    veiculo_id = 0
-    dispensa_frete = False
-    pre_vinculo = {}
-    if resumo.get("tipo_movimento") == "saida":
-        pre_vinculo = _estoque_xml_preparar_vinculo(cur, nota)
-        transporte_xml = pre_vinculo.get("transporte_xml") or {}
-        frete_sugestao = pre_vinculo.get("frete_sugestao") or {}
-        frete_id = _as_int(pre_vinculo.get("frete_id"), 0)
-        veiculo_id = _as_int(pre_vinculo.get("veiculo_id"), 0)
-        dispensa_frete = bool(pre_vinculo.get("dispensa_frete"))
-    itens = []
-    for idx, row in enumerate(nota.get("canonicos") or [], start=1):
-        xml_item_id = _as_int(row.get("id"), 0)
-        if xml_item_id in referencias_lancadas:
-            continue
-        itens.append(
-            {
-                "xml_item_id": xml_item_id,
-                "item_seq": _estoque_xml_item_seq(row) or str(idx),
-                "produto_id": 0,
-                "codigo_produto_nfe": _as_str(row.get("codigo_produto")),
-                "codigo_barras": "",
-                "nome_produto": _as_str(row.get("descricao_produto")),
-                "unidade": _as_str(row.get("unidade")),
-                "embalagem_tipo": _as_str(row.get("unidade")),
-                "quantidade": _as_float(row.get("quantidade"), 0.0),
-                "quantidade_embalagem": _as_float(row.get("quantidade"), 0.0),
-                "fator_embalagem": 0,
-                "fator_inferido": 0,
-                "quantidade_unidades": _as_float(row.get("quantidade"), 0.0),
-                "valor_unitario": _as_float(row.get("valor_unitario"), 0.0),
-                "valor_total": _as_float(row.get("valor_total_item"), 0.0),
-            }
-        )
-    repetidos = max(0, _as_int(resumo.get("arquivos_repetidos"), 0) - 1)
-    warnings = [
-        (
-            "Esta importacao ainda nao altera o saldo. O estoque sera "
-            "contabilizado somente depois da confirmacao."
-        )
-    ]
-    if repetidos:
-        warnings.append(
-            f"Foram detectados {repetidos} upload(s) repetido(s) desta NF-e; "
-            "somente uma copia de cada item sera considerada."
-        )
-    if resumo.get("tipo_movimento") == "saida":
-        if dispensa_frete:
-            warnings.append(
-                "Saida identificada como retirada ou transporte pelo cliente. "
-                "A baixa nao exigira frete, rota ou veiculo da empresa."
-            )
-        elif frete_id:
-            warnings.append(
-                "O frete foi sugerido pelos dados de transporte do XML. "
-                "Revise e altere o vinculo se necessario."
-            )
-        else:
-            warnings.append(
-                "Nao foi possivel sugerir um frete ativo com seguranca; "
-                "o vinculo deve ser selecionado manualmente."
-            )
-    return {
-        "source_type": "importar_xml",
-        "preview_tipo": "completo",
-        "importar_xml_chave": nota.get("nota_key"),
-        "frete_id": frete_id,
-        "veiculo_id": veiculo_id,
-        "dispensa_frete": dispensa_frete,
-        "tipo_transporte": _as_str(pre_vinculo.get("tipo_transporte")),
-        "decisao_logistica": {
-            "origem": _as_str(
-                pre_vinculo.get("origem_decisao_logistica")
-            ),
-            "motivo": _as_str(
-                pre_vinculo.get("motivo_decisao_logistica")
-            ),
-        },
-        "pre_vinculo_frete": {
-            "origem_veiculo": _as_str(pre_vinculo.get("origem_veiculo")),
-            "origem_frete": _as_str(pre_vinculo.get("origem_frete")),
-            "status": _as_str(pre_vinculo.get("status")),
-        },
-        "transporte_xml": transporte_xml,
-        "frete_sugestao": frete_sugestao,
-        "tipo_movimento": resumo.get("tipo_movimento"),
-        "arquivo_origem": resumo.get("arquivo_origem"),
-        "numero_nota": resumo.get("numero_nota"),
-        "serie": resumo.get("serie"),
-        "chave_acesso": resumo.get("chave_nfe"),
-        "data_emissao": _normalizar_data_documento(resumo.get("data_emissao")),
-        "emitente_nome": resumo.get("emitente_nome"),
-        "emitente_cnpj": resumo.get("emitente_cnpj"),
-        "destinatario_nome": resumo.get("destinatario_nome"),
-        "destinatario_cnpj": resumo.get("destinatario_cnpj"),
-        "valor_total": resumo.get("valor_total_nota"),
-        "warnings": warnings,
-        "itens": itens,
-    }
-
-
 @app.route("/api/dashboard_estoque", methods=["GET"])
 def dashboard_estoque():
-    payload = _dashboard_estoque_data()
-    return jsonify(payload)
-
-
-@app.route("/api/estoque/importacoes-xml", methods=["GET"])
-def listar_importacoes_xml_estoque():
-    status_filtro = _as_str(request.args.get("status")).lower() or "pendente"
     conn = get_conn()
     cur = conn.cursor(dictionary=True)
-    try:
-        notas = _estoque_xml_carregar_notas(cur)
-        referencias = _estoque_xml_referencias_lancadas(cur)
-        rows = [
-            _estoque_xml_nota_publica(nota, referencias)
-            for nota in notas.values()
-        ]
-    finally:
-        cur.close()
-        conn.close()
-
-    if status_filtro == "pendente":
-        rows = [row for row in rows if row.get("status") != "consolidado"]
-    elif status_filtro in {"parcial", "consolidado"}:
-        rows = [row for row in rows if row.get("status") == status_filtro]
-    rows.sort(
-        key=lambda row: (
-            _as_str(row.get("data_emissao")),
-            _as_int(row.get("numero_nota"), 0),
-            _as_str(row.get("nota_key")),
-        ),
-        reverse=True,
-    )
-    return jsonify(
-        {
-            "rows": rows,
-            "meta": {
-                "total": len(rows),
-                "entradas": sum(1 for row in rows if row.get("tipo_movimento") == "entrada"),
-                "saidas": sum(1 for row in rows if row.get("tipo_movimento") == "saida"),
-                "itens_pendentes": sum(_as_int(row.get("itens_pendentes"), 0) for row in rows),
-                "lote_maximo": _ESTOQUE_XML_LOTE_MAXIMO,
-            },
-        }
-    )
-
-
-@app.route("/api/estoque/importacoes-xml/detalhe", methods=["GET"])
-def detalhar_importacao_xml_estoque():
-    nota_key = _as_str(request.args.get("chave"))
-    if not nota_key:
-        return jsonify({"erro": "chave da importacao XML nao informada"}), 400
-    conn = get_conn()
-    cur = conn.cursor(dictionary=True)
-    try:
-        notas = _estoque_xml_carregar_notas(cur, nota_key)
-        nota = notas.get(nota_key)
-        if not nota:
-            return jsonify({"erro": "importacao XML nao encontrada"}), 404
-        referencias = _estoque_xml_referencias_lancadas(cur)
-        preview = _estoque_xml_preview(cur, nota, referencias)
-        if not preview.get("itens"):
-            conn.rollback()
-            return jsonify({"erro": "esta importacao XML ja foi consolidada no estoque"}), 409
-        conn.commit()
-        return jsonify({"ok": True, "preview": preview})
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        cur.close()
-        conn.close()
-
-
-@app.route("/api/estoque/importacoes-xml/lote/preparar", methods=["POST"])
-def preparar_lote_importacoes_xml_estoque():
-    data = request.get_json(silent=True) or {}
-    chaves_brutas = data.get("chaves") if isinstance(data.get("chaves"), list) else []
-    chaves = []
-    for valor in chaves_brutas:
-        chave = _as_str(valor)
-        if chave and chave not in chaves:
-            chaves.append(chave)
-    if not chaves:
-        return jsonify({"erro": "selecione ao menos uma importacao XML"}), 400
-    if len(chaves) > _ESTOQUE_XML_LOTE_MAXIMO:
-        return jsonify(
-            {
-                "erro": (
-                    "o lote tecnico pode conter no maximo "
-                    f"{_ESTOQUE_XML_LOTE_MAXIMO} notas"
-                ),
-                "lote_maximo": _ESTOQUE_XML_LOTE_MAXIMO,
-            }
-        ), 400
-
-    conn = get_conn()
-    cur = conn.cursor(dictionary=True)
-    previews = []
-    erros = []
-    try:
-        notas = _estoque_xml_carregar_notas(cur)
-        referencias = _estoque_xml_referencias_lancadas(cur)
-        for nota_key in chaves:
-            nota = notas.get(nota_key)
-            if not nota:
-                erros.append(
-                    {
-                        "chave": nota_key,
-                        "numero_nota": "",
-                        "erro": "importacao XML nao encontrada",
-                    }
-                )
-                continue
-            resumo = _estoque_xml_nota_publica(nota, referencias)
-            if resumo.get("status") == "consolidado":
-                erros.append(
-                    {
-                        "chave": nota_key,
-                        "numero_nota": resumo.get("numero_nota"),
-                        "erro": "nota ja consolidada no estoque",
-                    }
-                )
-                continue
-            preview = _estoque_xml_preview(cur, nota, referencias)
-            if not preview.get("itens"):
-                erros.append(
-                    {
-                        "chave": nota_key,
-                        "numero_nota": resumo.get("numero_nota"),
-                        "erro": "nota sem itens pendentes",
-                    }
-                )
-                continue
-            previews.append(preview)
-        conn.commit()
-        return jsonify(
-            {
-                "ok": not erros,
-                "previews": previews,
-                "erros": erros,
-                "meta": {
-                    "selecionadas": len(chaves),
-                    "preparadas": len(previews),
-                    "com_erro": len(erros),
-                    "itens": sum(
-                        len(preview.get("itens") or [])
-                        for preview in previews
-                    ),
-                },
-            }
-        )
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        cur.close()
-        conn.close()
-
-
-@app.route("/api/estoque/importacoes-xml/logistica", methods=["PUT"])
-def alterar_logistica_importacao_xml_estoque():
-    usuario = _usuario_ator_req()
-    data = request.get_json(silent=True) or {}
-    nota_key = _as_str(data.get("chave"))
-    dispensa_frete = _as_bool(data.get("dispensa_frete"), False)
-    if not nota_key:
-        return jsonify({"erro": "chave da importacao XML nao informada"}), 400
-
-    conn = get_conn()
-    cur = conn.cursor(dictionary=True)
-    try:
-        notas = _estoque_xml_carregar_notas(cur, nota_key)
-        nota = notas.get(nota_key)
-        if not nota:
-            return jsonify({"erro": "importacao XML nao encontrada"}), 404
-        referencias = _estoque_xml_referencias_lancadas(cur)
-        if any(
-            _as_int(row.get("id"), 0) in referencias
-            for row in (nota.get("canonicos") or [])
-        ):
-            return jsonify(
-                {
-                    "erro": (
-                        "a logistica nao pode ser alterada depois que a nota "
-                        "comecou a ser contabilizada no estoque"
-                    )
-                }
-            ), 409
-        resumo = _estoque_xml_nota_publica(nota, referencias)
-        if resumo.get("tipo_movimento") != "saida":
-            return jsonify(
-                {"erro": "a opcao de retirada pelo cliente se aplica somente a saidas"}
-            ), 400
-        cur.execute(
-            """
-            SELECT frete_id
-            FROM estoque_xml_frete_vinculos
-            WHERE nota_key=%s
-            LIMIT 1
-            """,
-            (nota_key,),
-        )
-        vinculo_final = cur.fetchone()
-        if vinculo_final:
-            return jsonify(
-                {
-                    "erro": (
-                        "a nota ja possui vinculo definitivo com o frete "
-                        f"#{_as_int(vinculo_final.get('frete_id'), 0)}"
-                    )
-                }
-            ), 409
-
-        motivo = (
-            "Transporte ou retirada realizado pelo cliente; "
-            "sem frete, rota ou veiculo da empresa."
-            if dispensa_frete
-            else "Usuario informou que a saida exige vinculo com frete da empresa."
-        )
-        _estoque_xml_definir_dispensa_frete(
-            cur,
-            nota,
-            dispensa_frete,
-            "manual",
-            motivo,
-            usuario,
-        )
-        if not dispensa_frete:
-            _estoque_xml_preparar_vinculo(cur, nota, usuario=usuario)
-        preview = _estoque_xml_preview(cur, nota, referencias)
-        conn.commit()
-        return jsonify({"ok": True, "preview": preview})
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        cur.close()
-        conn.close()
-
-
-@app.route("/api/estoque/importacoes-xml/fretes", methods=["GET"])
-def listar_fretes_importacao_xml_estoque():
-    conn = get_conn()
-    cur = conn.cursor(dictionary=True)
-    try:
-        cur.execute(
-            FRETE_SELECT_SQL
-            + """
-              WHERE COALESCE(f.arquivado, 0)=0
-              ORDER BY
-                CASE f.status
-                    WHEN 'carregando' THEN 1
-                    WHEN 'carregado' THEN 2
-                    WHEN 'liberado' THEN 3
-                    WHEN 'entregando' THEN 4
-                    ELSE 5
-                END,
-                f.id DESC
-            """
-        )
-        rows = [_serialize_frete_row(row) for row in (cur.fetchall() or [])]
-        return jsonify({"ok": True, "fretes": rows})
-    finally:
-        cur.close()
-        conn.close()
-
-
-@app.route("/api/estoque/importacoes-xml/confirmar", methods=["POST"])
-def confirmar_importacao_xml_estoque():
-    usuario = _usuario_ator_req()
-    data = request.get_json(silent=True) or {}
-    nota_key = _as_str(data.get("chave"))
-    frete_id = _as_int(data.get("frete_id"), 0)
-    itens_payload = data.get("itens") if isinstance(data.get("itens"), list) else []
-    if not nota_key:
-        return jsonify({"erro": "chave da importacao XML nao informada"}), 400
-
-    payload_por_id = {
-        _as_int(item.get("xml_item_id"), 0): item
-        for item in itens_payload
-        if isinstance(item, dict) and _as_int(item.get("xml_item_id"), 0) > 0
-    }
-    conn = get_conn()
-    cur = conn.cursor(dictionary=True)
-    try:
-        notas = _estoque_xml_carregar_notas(cur, nota_key)
-        nota = notas.get(nota_key)
-        if not nota:
-            return jsonify({"erro": "importacao XML nao encontrada"}), 404
-
-        referencias = _estoque_xml_referencias_lancadas(cur)
-        pendentes = [
-            row
-            for row in (nota.get("canonicos") or [])
-            if _as_int(row.get("id"), 0) not in referencias
-        ]
-        ids_pendentes = {_as_int(row.get("id"), 0) for row in pendentes}
-        if not ids_pendentes:
-            return jsonify({"erro": "esta importacao XML ja foi consolidada no estoque"}), 409
-        if set(payload_por_id) != ids_pendentes:
-            return jsonify(
-                {
-                    "erro": (
-                        "os itens da importacao foram alterados ou removidos. "
-                        "Reabra a NF-e e confirme todos os itens pendentes."
-                    )
-                }
-            ), 409
-
-        base = pendentes[0]
-        chave_nfe = _normalizar_chave_acesso_nfe(base.get("chave_nfe"))
-        numero_nota = _as_str(base.get("numero_nota"))
-        tipo_origem_nota = _as_str(base.get("tipo_movimento")).upper()
-        tipo_movimento_nota = "saida" if tipo_origem_nota == "SAIDA_ESTOQUE" else "entrada"
-        frete_vinculado = None
-        rota_registrada = ""
-        transporte_xml = {}
-        frete_sugestao = {}
-        pre_vinculo = {}
-        vinculacao_origem = ""
-        dispensa_frete = False
-        if tipo_movimento_nota == "saida":
-            pre_vinculo = _estoque_xml_preparar_vinculo(cur, nota, usuario=usuario)
-            transporte_xml = pre_vinculo.get("transporte_xml") or {}
-            frete_sugestao = pre_vinculo.get("frete_sugestao") or {}
-            dispensa_frete = bool(pre_vinculo.get("dispensa_frete"))
-            cur.execute(
-                """
-                SELECT id, frete_id
-                FROM estoque_xml_frete_vinculos
-                WHERE nota_key=%s
-                LIMIT 1
-                """,
-                (nota_key,),
-            )
-            vinculo_existente = cur.fetchone()
-            if vinculo_existente:
-                return jsonify(
-                    {
-                        "erro": (
-                            "esta nota de saida ja esta vinculada ao frete "
-                            f"#{_as_int(vinculo_existente.get('frete_id'), 0)}"
-                        )
-                    }
-                ), 409
-            if dispensa_frete:
-                frete_id = 0
-                vinculacao_origem = "retirada_cliente"
-            else:
-                if frete_id <= 0:
-                    frete_id = _as_int(pre_vinculo.get("frete_id"), 0)
-                if frete_id <= 0:
-                    return jsonify(
-                        {"erro": "selecione o frete/rota antes de confirmar a nota de saida"}
-                    ), 400
-                vinculacao_origem = (
-                    "automatica_xml"
-                    if frete_id == _as_int(pre_vinculo.get("frete_id"), 0)
-                    else "manual"
-                )
-                frete_vinculado = _buscar_frete_detalhado(cur, frete_id)
-                if not frete_vinculado:
-                    return jsonify({"erro": "frete selecionado nao encontrado"}), 404
-                if frete_vinculado.get("arquivado"):
-                    return jsonify(
-                        {"erro": "o frete selecionado esta arquivado; escolha um frete ativo"}
-                    ), 409
-                rota_registrada = (
-                    _as_str(frete_vinculado.get("carga_rota"))
-                    or _as_str(frete_vinculado.get("carga_cidades"))
-                    or _as_str(frete_vinculado.get("cidade"))
-                    or _as_str(frete_vinculado.get("nome"))
-                )
-        if chave_nfe:
-            cur.execute(
-                """
-                SELECT id, status
-                FROM estoque_conferencias
-                WHERE chave_acesso=%s
-                ORDER BY id DESC
-                LIMIT 1
-                """,
-                (chave_nfe,),
-            )
-            conferencia_existente = cur.fetchone()
-            if conferencia_existente:
-                return jsonify(
-                    {
-                        "erro": (
-                            "esta NF-e ja esta registrada na conferencia "
-                            f"#{_as_int(conferencia_existente.get('id'), 0)} "
-                            f"(status: {_as_str(conferencia_existente.get('status'))})."
-                        )
-                    }
-                ), 409
-
-        movimentos = []
-        produtos_criados = 0
-        for row in pendentes:
-            xml_item_id = _as_int(row.get("id"), 0)
-            item_payload = payload_por_id[xml_item_id]
-            produto_id = _as_int(item_payload.get("produto_id"), 0)
-            produto = _carregar_produto_estoque_por_id(cur, produto_id) if produto_id > 0 else None
-            if produto_id > 0 and not produto:
-                return jsonify({"erro": f"produto selecionado no item {xml_item_id} nao foi encontrado"}), 404
-
-            fator_embalagem = _as_float(item_payload.get("fator_embalagem"), 0.0)
-            if fator_embalagem <= 0:
-                return jsonify(
-                    {
-                        "erro": (
-                            f"informe o fator de conversao do item {xml_item_id}: "
-                            "quantas unidades existem em cada embalagem"
-                        )
-                    }
-                ), 400
-            quantidade = _as_float(item_payload.get("quantidade"), 0.0)
-            if quantidade <= 0:
-                return jsonify({"erro": f"quantidade invalida no item {xml_item_id}"}), 400
-            embalagem_tipo = _estoque_apresentacao_normalizada(
-                item_payload.get("embalagem_tipo"),
-                row.get("unidade"),
-                row.get("descricao_produto"),
-            ) or _as_str(row.get("unidade")) or "UN"
-            codigo_produto = _codigo_produto_nfe_saida(
-                produto.get("codigo_produto_nfe") if produto else row.get("codigo_produto")
-            )
-            codigo_barras = _normalizar_codigo_barras(
-                produto.get("codigo_barras") if produto else item_payload.get("codigo_barras")
-            )
-            nome_produto = _as_str(
-                produto.get("nome_produto") if produto else row.get("descricao_produto")
-            )
-            unidade = _as_str(
-                produto.get("unidade") if produto else row.get("unidade")
-            )
-            if not nome_produto:
-                return jsonify({"erro": f"produto vazio no item {xml_item_id}"}), 400
-
-            tipo_origem = _as_str(row.get("tipo_movimento")).upper()
-            tipo_movimento = "saida" if tipo_origem == "SAIDA_ESTOQUE" else "entrada"
-            if tipo_movimento != tipo_movimento_nota:
-                return jsonify(
-                    {"erro": "a importacao XML possui itens com tipos de movimento divergentes"}
-                ), 409
-            cur.execute(
-                """
-                SELECT id
-                FROM estoque_movimentos
+    cur.execute("""
+        SELECT
+            codigo_barras,
+            nome_produto,
+            COALESCE(SUM(CASE WHEN tipo_movimento = 'saida' THEN -quantidade ELSE quantidade END), 0) AS quantidade_atual,
+            MAX(data_registro) AS ultima_movimentacao,
+            (
+                SELECT e2.valor_unitario
+                FROM estoque_movimentos e2
                 WHERE
-                    referencia_tipo<>%s
-                    AND numero_nota=%s
-                    AND tipo_movimento=%s
-                    AND (
-                        (codigo_produto_nfe<>'' AND codigo_produto_nfe=%s)
-                        OR nome_produto=%s
-                    )
-                    AND ABS(quantidade-%s)<0.001
-                ORDER BY id DESC
+                    COALESCE(e2.codigo_barras, '') = COALESCE(e.codigo_barras, '')
+                    AND COALESCE(e2.nome_produto, '') = COALESCE(e.nome_produto, '')
+                ORDER BY e2.id DESC
                 LIMIT 1
-                """,
-                (
-                    _ESTOQUE_XML_REFERENCIA,
-                    numero_nota,
-                    tipo_movimento,
-                    codigo_produto,
-                    nome_produto,
-                    quantidade,
-                ),
-            )
-            movimento_compativel = cur.fetchone()
-            if movimento_compativel:
-                return jsonify(
-                    {
-                        "erro": (
-                            f"o item {nome_produto} da nota {numero_nota} parece "
-                            "ja ter sido lancado manualmente. Nenhum item foi contabilizado."
-                        )
-                    }
-                ), 409
-
-            if not produto:
-                produto, criado = _obter_ou_criar_produto_estoque(
-                    cur,
-                    codigo_barras=codigo_barras,
-                    codigo_produto_nfe=codigo_produto,
-                    nome_produto=nome_produto,
-                    unidade=unidade,
-                    origem_cadastro="importar_xml",
-                )
-                if criado:
-                    produtos_criados += 1
-            grupo_estoque = (
-                _estoque_grupo_normalizado(item_payload.get("grupo_estoque"))
-                or _estoque_grupo_inferido(
-                    nome_produto=nome_produto,
-                    codigo_produto_nfe=codigo_produto,
-                    grupo_estoque=produto.get("grupo_estoque"),
-                )
-                or "OUTROS"
-            )
-            produto_base_nome = (
-                _as_str(item_payload.get("produto_base_nome"))
-                or _estoque_base_nome_inferido(
-                    nome_produto=nome_produto,
-                    grupo_estoque=grupo_estoque,
-                    produto_base_nome=produto.get("produto_base_nome"),
-                )
-            )
-            cur.execute(
-                """
-                UPDATE estoque_produtos
-                SET grupo_estoque=%s,
-                    produto_base_nome=%s,
-                    unidade=%s,
-                    embalagem_tipo_padrao=%s,
-                    fator_embalagem_padrao=%s
-                WHERE id=%s
-                """,
-                (
-                    grupo_estoque,
-                    produto_base_nome,
-                    embalagem_tipo,
-                    embalagem_tipo,
-                    fator_embalagem,
-                    _as_int(produto.get("id"), 0),
-                ),
-            )
-
-            origem_setor = (
-                _as_str(row.get("emitente_nome")) or
-                ("Almoxarifado" if tipo_movimento == "saida" else "Origem NF-e")
-            )[:80]
-            destino_setor = (
-                _as_str(row.get("destinatario_nome")) or
-                ("Destino NF-e" if tipo_movimento == "saida" else "Almoxarifado")
-            )[:80]
-            movimentos.append(
-                {
-                    "xml_item_id": xml_item_id,
-                    "codigo_barras": codigo_barras,
-                    "codigo_produto": codigo_produto,
-                    "numero_nota": numero_nota,
-                    "nome_produto": nome_produto,
-                    "quantidade": quantidade,
-                    "valor_unitario": _as_float(
-                        item_payload.get("valor_unitario"),
-                        _as_float(row.get("valor_unitario"), 0.0),
-                    ),
-                    "tipo_movimento": tipo_movimento,
-                    "origem_setor": origem_setor,
-                    "destino_setor": destino_setor,
-                }
-            )
-
-        for movimento in movimentos:
-            cur.execute(
-                """
-                INSERT INTO estoque_movimentos
-                    (
-                        codigo_barras, codigo_produto_nfe, numero_nota,
-                        nome_produto, quantidade, valor_unitario,
-                        tipo_movimento, origem_setor, destino_setor,
-                        referencia_tipo, referencia_id, usuario_registro
-                    )
-                VALUES
-                    (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                """,
-                (
-                    movimento["codigo_barras"],
-                    movimento["codigo_produto"],
-                    movimento["numero_nota"],
-                    movimento["nome_produto"],
-                    movimento["quantidade"],
-                    movimento["valor_unitario"],
-                    movimento["tipo_movimento"],
-                    movimento["origem_setor"],
-                    movimento["destino_setor"],
-                    _ESTOQUE_XML_REFERENCIA,
-                    movimento["xml_item_id"],
-                    usuario,
-                ),
-            )
-        if tipo_movimento_nota == "saida" and dispensa_frete:
-            cur.execute(
-                """
-                UPDATE estoque_xml_frete_pre_vinculos
-                SET frete_id=NULL,
-                    veiculo_id=NULL,
-                    origem_frete='retirada_cliente',
-                    origem_veiculo='veiculo_cliente',
-                    status='confirmado_sem_frete',
-                    confirmado_em=COALESCE(confirmado_em, NOW()),
-                    atualizado_em=NOW()
-                WHERE nota_key=%s
-                """,
-                (nota_key,),
-            )
-        elif tipo_movimento_nota == "saida":
-            quantidade_total = sum(
-                _as_float(movimento.get("quantidade"), 0.0)
-                for movimento in movimentos
-            )
-            valor_total_nota = _as_float(base.get("valor_total_nota"), 0.0)
-            cur.execute(
-                """
-                INSERT INTO estoque_xml_frete_vinculos (
-                    nota_key, chave_nfe, numero_nota, frete_id, veiculo_id, carga_id,
-                    rota_registrada, placa_xml, mapa_xml,
-                    numero_caminhao_xml, vinculacao_origem,
-                    frete_sugerido_id, sugestao_confianca,
-                    emitente_nome, destinatario_nome, data_emissao,
-                    itens_total, quantidade_total, valor_total_nota,
-                    usuario_registro, criado_em
-                )
-                VALUES (
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW()
-                )
-                """,
-                (
-                    nota_key,
-                    chave_nfe,
-                    numero_nota,
-                    frete_id,
-                    _as_int(frete_vinculado.get("veiculo_id"), 0) or None,
-                    _as_int(frete_vinculado.get("carga_id"), 0) or None,
-                    rota_registrada,
-                    _as_str(transporte_xml.get("placa")),
-                    _as_str(transporte_xml.get("mapa")),
-                    _as_str(transporte_xml.get("numero_caminhao")),
-                    vinculacao_origem,
-                    _as_int(frete_sugestao.get("frete_id"), 0) or None,
-                    _as_str(frete_sugestao.get("confianca")),
-                    _as_str(base.get("emitente_nome")),
-                    _as_str(base.get("destinatario_nome")),
-                    _as_date(base.get("data_emissao")),
-                    len(movimentos),
-                    quantidade_total,
-                    valor_total_nota,
-                    usuario,
-                ),
-            )
-            cur.execute(
-                """
-                UPDATE estoque_xml_frete_pre_vinculos
-                SET frete_id=%s,
-                    veiculo_id=%s,
-                    origem_frete=%s,
-                    status='confirmado',
-                    confirmado_em=COALESCE(confirmado_em, NOW()),
-                    atualizado_em=NOW()
-                WHERE nota_key=%s
-                """,
-                (
-                    frete_id,
-                    _as_int(frete_vinculado.get("veiculo_id"), 0) or None,
-                    (
-                        _as_str(pre_vinculo.get("origem_frete"))
-                        if vinculacao_origem == "automatica_xml"
-                        else "selecionado_manual"
-                    ),
-                    nota_key,
-                ),
-            )
-            historico_depois = {
-                **frete_vinculado,
-                "numero_nota": numero_nota,
-                "chave_nfe": chave_nfe,
-                "rota_registrada": rota_registrada,
-                "itens_total": len(movimentos),
-                "placa_xml": _as_str(transporte_xml.get("placa")),
-                "mapa_xml": _as_str(transporte_xml.get("mapa")),
-                "vinculacao_origem": vinculacao_origem,
-            }
-            _registrar_historico_frete(
-                cur,
-                frete_id,
-                "nota_saida_vinculada",
-                usuario,
-                frete_vinculado,
-                historico_depois,
-            )
-        conn.commit()
-    except mysql.connector.IntegrityError:
-        conn.rollback()
-        return jsonify(
-            {
-                "erro": (
-                    "esta importacao foi confirmada simultaneamente ou ja havia "
-                    "sido lancada. Nenhum item foi duplicado."
-                )
-            }
-        ), 409
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        cur.close()
-        conn.close()
-
-    return jsonify(
+            ) AS ultimo_valor
+        FROM estoque_movimentos e
+        GROUP BY codigo_barras, nome_produto
+        HAVING ABS(quantidade_atual) > 0
+        ORDER BY nome_produto ASC, codigo_barras ASC
+    """)
+    rows = cur.fetchall() or []
+    cur.close()
+    conn.close()
+    return jsonify([
         {
-            "ok": True,
-            "movimentos_criados": len(movimentos),
-            "produtos_criados": produtos_criados,
-            "tipo_movimento": movimentos[0]["tipo_movimento"] if movimentos else "",
-            "frete": (
-                {
-                    "id": frete_id,
-                    "nome": _as_str(frete_vinculado.get("nome")),
-                    "rota": rota_registrada,
-                    "vinculacao_origem": vinculacao_origem,
-                }
-                if frete_vinculado else None
-            ),
-            "retirada_cliente": bool(
-                tipo_movimento_nota == "saida" and dispensa_frete
-            ),
-        }
-    )
-
+            "codigo_barras": _as_str(r.get("codigo_barras")),
+            "nome_produto": _as_str(r.get("nome_produto")),
+            "quantidade_atual": _as_float(r.get("quantidade_atual"), 0.0),
+            "ultimo_valor": _as_float(r.get("ultimo_valor"), 0.0),
+            "ultima_movimentacao": _fmt_dt(r.get("ultima_movimentacao")),
+        } for r in rows
+    ])
 
 @app.route("/api/estoque", methods=["POST"])
 def criar_movimento_estoque():
     usuario = _usuario_ator_req()
     data = request.json or {}
-    produto_id = _as_int(data.get("produto_id"), 0)
     codigo_barras = _normalizar_codigo_barras(data.get("codigo_barras"))
-    codigo_produto_nfe = _codigo_produto_nfe_saida(data.get("codigo_produto_nfe"))
+    codigo_produto_nfe = _as_str(data.get("codigo_produto_nfe"))
     numero_nota = _as_str(data.get("numero_nota"))
     nome_produto = _as_str(data.get("nome_produto"))
     quantidade = _as_float(data.get("quantidade"), 0.0)
@@ -14649,24 +6921,14 @@ def criar_movimento_estoque():
 
     if not numero_nota and codigo_barras:
         numero_nota = codigo_barras
+    if not nome_produto:
+        return jsonify({"erro": "nome_produto é obrigatório"}), 400
     if quantidade <= 0:
         return jsonify({"erro": "quantidade inválida"}), 400
 
     conn = get_conn()
     cur = conn.cursor(dictionary=True)
     try:
-        produto_selecionado = _carregar_produto_estoque_por_id(cur, produto_id) if produto_id > 0 else None
-        if produto_id > 0 and not produto_selecionado:
-            return jsonify({"erro": "produto selecionado nao encontrado"}), 404
-        if produto_selecionado:
-            codigo_barras = codigo_barras or _normalizar_codigo_barras(produto_selecionado.get("codigo_barras"))
-            codigo_produto_nfe = codigo_produto_nfe or _codigo_produto_nfe_saida(produto_selecionado.get("codigo_produto_nfe"))
-            nome_produto = nome_produto or _as_str(produto_selecionado.get("nome_produto"))
-            unidade = unidade or _as_str(produto_selecionado.get("unidade") or produto_selecionado.get("embalagem_tipo_padrao"))
-        if not numero_nota and codigo_produto_nfe:
-            numero_nota = codigo_produto_nfe
-        if not nome_produto:
-            return jsonify({"erro": "nome_produto é obrigatório"}), 400
         produto, produto_criado = _obter_ou_criar_produto_estoque(
             cur,
             codigo_barras=codigo_barras,
@@ -14679,15 +6941,14 @@ def criar_movimento_estoque():
             """
             INSERT INTO estoque_movimentos
                 (
-                    codigo_barras, codigo_produto_nfe, numero_nota, nome_produto, quantidade, valor_unitario, tipo_movimento,
+                    codigo_barras, numero_nota, nome_produto, quantidade, valor_unitario, tipo_movimento,
                     origem_setor, destino_setor, referencia_tipo, referencia_id, usuario_registro
                 )
             VALUES
-                (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 codigo_barras,
-                codigo_produto_nfe,
                 numero_nota,
                 nome_produto,
                 quantidade,
@@ -14714,39 +6975,26 @@ def criar_movimento_estoque():
 
 @app.route("/api/estoque", methods=["GET"])
 def listar_movimentos_estoque():
-    limit = max(100, min(_as_int(request.args.get("limit"), 500), 5000))
     conn = get_conn()
     cur = conn.cursor(dictionary=True)
-    cur.execute(f"""
+    cur.execute("""
         SELECT
-            e.id,
-            e.codigo_barras,
-            e.codigo_produto_nfe,
-            e.numero_nota,
-            e.nome_produto,
-            e.quantidade,
-            e.valor_unitario,
-            e.tipo_movimento,
-            e.origem_setor,
-            e.destino_setor,
-            e.referencia_tipo,
-            e.referencia_id,
-            e.usuario_registro,
-            e.data_registro,
-            COALESCE(NULLIF(f.cnpj, ''), NULLIF(xi.emitente_cnpj, ''), NULLIF(c.emitente_cnpj, '')) AS fornecedor_cnpj,
-            COALESCE(NULLIF(f.nome, ''), NULLIF(xi.emitente_nome, ''), NULLIF(c.emitente_nome, '')) AS fornecedor_nome,
-            COALESCE(NULLIF(f.categoria, ''), CASE WHEN COALESCE(NULLIF(xi.emitente_cnpj, ''), NULLIF(c.emitente_cnpj, '')) IS NOT NULL THEN 'outros' ELSE '' END) AS fornecedor_categoria
-        FROM estoque_movimentos e
-        LEFT JOIN importar_xml_estoque_itens xi
-            ON e.referencia_tipo='importar_xml'
-           AND e.referencia_id=xi.id
-        LEFT JOIN estoque_conferencias c
-            ON e.referencia_tipo='conferencia_nfe'
-           AND e.referencia_id=c.id
-        LEFT JOIN gestor_email_fornecedores f
-            ON BINARY f.cnpj = BINARY COALESCE(NULLIF(xi.emitente_cnpj, ''), NULLIF(c.emitente_cnpj, ''))
-        ORDER BY e.id DESC
-        LIMIT {limit}
+            id,
+            codigo_barras,
+            numero_nota,
+            nome_produto,
+            quantidade,
+            valor_unitario,
+            tipo_movimento,
+            origem_setor,
+            destino_setor,
+            referencia_tipo,
+            referencia_id,
+            usuario_registro,
+            data_registro
+        FROM estoque_movimentos
+        ORDER BY id DESC
+        LIMIT 500
     """)
     rows = cur.fetchall() or []
     cur.close()
@@ -14755,7 +7003,6 @@ def listar_movimentos_estoque():
         {
             "id": _as_int(r.get("id"), 0),
             "codigo_barras": _as_str(r.get("codigo_barras")),
-            "codigo_produto_nfe": _as_str(r.get("codigo_produto_nfe")),
             "numero_nota": _as_str(r.get("numero_nota")),
             "nome_produto": _as_str(r.get("nome_produto")),
             "quantidade": _as_float(r.get("quantidade"), 0.0),
@@ -14767,252 +7014,8 @@ def listar_movimentos_estoque():
             "referencia_id": _as_int(r.get("referencia_id"), 0),
             "usuario_registro": _as_str(r.get("usuario_registro")),
             "data_registro": _fmt_dt(r.get("data_registro")),
-            "grupo_estoque": _estoque_produto_meta(r).get("grupo_estoque"),
-            "produto_base_nome": _estoque_produto_meta(r).get("produto_base_nome"),
-            "fornecedor": _estoque_fornecedor_publico(r),
-            "fornecedor_nome": _as_str((_estoque_fornecedor_publico(r) or {}).get("nome")),
-            "fornecedor_categoria": _as_str((_estoque_fornecedor_publico(r) or {}).get("categoria")),
         } for r in rows
     ])
-
-def _lote_estatistica_parse_data(valor):
-    texto = _as_str(valor)
-    if not texto:
-        return datetime.date.today()
-    if re.fullmatch(r"\d{8}", texto):
-        try:
-            return datetime.datetime.strptime(texto, "%Y%m%d").date()
-        except Exception:
-            return datetime.date.today()
-    data = _as_date(texto)
-    return data or datetime.date.today()
-
-def _lote_estatistica_categoria_uso(row):
-    grupo = _estoque_produto_meta(row).get("grupo_estoque") or "OUTROS"
-    if grupo in ("GFA", "PET"):
-        return "Embalagem"
-    texto = " ".join([
-        _as_str(row.get("nome_produto")),
-        _as_str(row.get("produto_base_nome")),
-        _as_str(row.get("grupo_estoque")),
-    ]).upper()
-    if any(token in texto for token in ("EMBAL", "TAMPA", "ROTULO", "RÓTULO", "GARRAFA", "CAIXA", "PET", "PREFORMA")):
-        return "Embalagem"
-    return "Materia-prima"
-
-def _lote_estatistica_notas_estoque(cur, tipo_movimento, data_ref):
-    data_sql = _fmt_date(data_ref)
-    cur.execute(
-        """
-        SELECT
-            COALESCE(NULLIF(xi.numero_nota, ''), NULLIF(e.numero_nota, ''), '-') AS numero_nota,
-            COALESCE(NULLIF(LEFT(xi.data_emissao, 10), ''), DATE(e.data_registro)) AS data_emissao,
-            COALESCE(NULLIF(xi.emitente_nome, ''), NULLIF(f.nome, ''), NULLIF(c.emitente_nome, ''), '') AS emitente_nome,
-            COALESCE(NULLIF(xi.destinatario_nome, ''), NULLIF(c.destinatario_nome, ''), '') AS destinatario_nome,
-            COUNT(*) AS itens,
-            COALESCE(SUM(e.quantidade), 0) AS quantidade,
-            COALESCE(SUM(e.quantidade * e.valor_unitario), 0) AS valor_total
-        FROM estoque_movimentos e
-        LEFT JOIN importar_xml_estoque_itens xi
-            ON e.referencia_tipo='importar_xml'
-           AND e.referencia_id=xi.id
-        LEFT JOIN estoque_conferencias c
-            ON e.referencia_tipo='conferencia_nfe'
-           AND e.referencia_id=c.id
-        LEFT JOIN gestor_email_fornecedores f
-            ON BINARY f.cnpj = BINARY COALESCE(NULLIF(xi.emitente_cnpj, ''), NULLIF(c.emitente_cnpj, ''))
-        WHERE e.tipo_movimento=%s
-          AND COALESCE(NULLIF(LEFT(xi.data_emissao, 10), ''), DATE(e.data_registro))=%s
-        GROUP BY numero_nota, data_emissao, emitente_nome, destinatario_nome
-        ORDER BY data_emissao ASC, numero_nota ASC
-        """,
-        (tipo_movimento, data_sql),
-    )
-    return [
-        {
-            "numero_nota": _as_str(row.get("numero_nota")),
-            "data_emissao": _fmt_date(row.get("data_emissao")),
-            "emitente_nome": _as_str(row.get("emitente_nome")),
-            "destinatario_nome": _as_str(row.get("destinatario_nome")),
-            "itens": _as_int(row.get("itens"), 0),
-            "quantidade": _as_float(row.get("quantidade"), 0.0),
-            "valor_total": _as_float(row.get("valor_total"), 0.0),
-        }
-        for row in (cur.fetchall() or [])
-    ]
-
-def _lote_estatistica_uso_estoque(cur, data_ref, data_saida):
-    produtos_lookup = _carregar_lookup_produtos_estoque(cur)
-    data_consumo = _fmt_date(data_ref)
-    cur.execute(
-        """
-        SELECT
-            e.codigo_barras,
-            e.codigo_produto_nfe,
-            e.nome_produto,
-            e.numero_nota,
-            COALESCE(SUM(e.quantidade), 0) AS quantidade,
-            COALESCE(SUM(e.quantidade * e.valor_unitario), 0) AS valor_total
-        FROM estoque_movimentos e
-        LEFT JOIN importar_xml_estoque_itens xi
-            ON e.referencia_tipo='importar_xml'
-           AND e.referencia_id=xi.id
-        WHERE e.tipo_movimento='saida'
-          AND COALESCE(NULLIF(LEFT(xi.data_emissao, 10), ''), DATE(e.data_registro))=%s
-        GROUP BY e.codigo_barras, e.codigo_produto_nfe, e.nome_produto, e.numero_nota
-        ORDER BY e.nome_produto ASC
-        """,
-        (data_consumo,),
-    )
-    rows = cur.fetchall() or []
-    origem = "consumo_lote"
-    if not rows:
-        cur.execute(
-            """
-            SELECT
-                e.codigo_barras,
-                e.codigo_produto_nfe,
-                e.nome_produto,
-                e.numero_nota,
-                COALESCE(SUM(e.quantidade), 0) AS quantidade,
-                COALESCE(SUM(e.quantidade * e.valor_unitario), 0) AS valor_total
-            FROM estoque_movimentos e
-            LEFT JOIN importar_xml_estoque_itens xi
-                ON e.referencia_tipo='importar_xml'
-               AND e.referencia_id=xi.id
-            WHERE e.tipo_movimento='saida'
-              AND COALESCE(NULLIF(LEFT(xi.data_emissao, 10), ''), DATE(e.data_registro))=%s
-            GROUP BY e.codigo_barras, e.codigo_produto_nfe, e.nome_produto, e.numero_nota
-            ORDER BY e.nome_produto ASC
-            """,
-            (_fmt_date(data_saida),),
-        )
-        rows = cur.fetchall() or []
-        origem = "notas_saida_d2"
-
-    agrupados = {}
-    for row in rows:
-        cadastro = _resolver_produto_lookup_estoque(
-            produtos_lookup,
-            codigo_barras=row.get("codigo_barras"),
-            codigo_produto_nfe=row.get("codigo_produto_nfe"),
-            nome_produto=row.get("nome_produto"),
-        ) or {}
-        meta_row = {**row, **{
-            "grupo_estoque": cadastro.get("grupo_estoque"),
-            "produto_base_nome": cadastro.get("produto_base_nome"),
-        }}
-        meta = _estoque_produto_meta(meta_row)
-        key = meta.get("produto_base_key") or _as_str(row.get("nome_produto"))
-        item = agrupados.setdefault(key, {
-            "uso": _lote_estatistica_categoria_uso(meta_row),
-            "grupo_estoque": meta.get("grupo_estoque") or "OUTROS",
-            "produto": meta.get("produto_base_nome") or _as_str(row.get("nome_produto")),
-            "quantidade": 0.0,
-            "valor_total": 0.0,
-            "notas": set(),
-            "origem": origem,
-        })
-        item["quantidade"] += _as_float(row.get("quantidade"), 0.0)
-        item["valor_total"] += _as_float(row.get("valor_total"), 0.0)
-        nota = _as_str(row.get("numero_nota"))
-        if nota:
-            item["notas"].add(nota)
-
-    saida = []
-    for item in agrupados.values():
-        saida.append({
-            **item,
-            "notas": sorted(item.get("notas") or []),
-        })
-    saida.sort(key=lambda row: (row.get("uso"), _estoque_grupo_ordem(row.get("grupo_estoque")), row.get("produto") or ""))
-    return saida
-
-def _lote_estatistica_vendas(data_saida):
-    try:
-        cache_entry, _, _ = _vendas_obter_cache_ativo(force_refresh=False)
-        cache_id = _as_str(cache_entry.get("id"))
-    except Exception:
-        return {"erro": "Relatorio de vendas ativo indisponivel.", "rows": []}
-    conn = get_conn()
-    cur = conn.cursor(dictionary=True)
-    try:
-        cur.execute(
-            """
-            SELECT
-                produto,
-                grupo_norm,
-                COUNT(DISTINCT numero_nf) AS notas,
-                COUNT(DISTINCT cliente_norm) AS clientes,
-                COALESCE(SUM(quantidade), 0) AS quantidade,
-                COALESCE(SUM(caixas), 0) AS caixas,
-                COALESCE(SUM(valor_liquido), 0) AS valor_liquido
-            FROM vendas_relatorio_itens
-            WHERE import_id=%s
-              AND data_ref=%s
-            GROUP BY produto, grupo_norm
-            ORDER BY valor_liquido DESC, quantidade DESC, produto ASC
-            LIMIT 300
-            """,
-            (cache_id, data_saida),
-        )
-        rows = [
-            {
-                "produto": _as_str(row.get("produto")),
-                "grupo": _as_str(row.get("grupo_norm")) or "SEM GRUPO",
-                "notas": _as_int(row.get("notas"), 0),
-                "clientes": _as_int(row.get("clientes"), 0),
-                "quantidade": _as_float(row.get("quantidade"), 0.0),
-                "caixas": _as_float(row.get("caixas"), 0.0),
-                "valor_liquido": _as_float(row.get("valor_liquido"), 0.0),
-            }
-            for row in (cur.fetchall() or [])
-        ]
-        return {"cache_id": cache_id, "rows": rows}
-    finally:
-        cur.close()
-        conn.close()
-
-@app.route("/api/estoque/lotes/estatistica", methods=["GET"])
-def estatistica_lote_estoque():
-    data_lote = _lote_estatistica_parse_data(request.args.get("data") or request.args.get("lote"))
-    data_saida = data_lote + datetime.timedelta(days=2)
-    conn = get_conn()
-    cur = conn.cursor(dictionary=True)
-    try:
-        notas_entrada = _lote_estatistica_notas_estoque(cur, "entrada", data_lote)
-        notas_saida = _lote_estatistica_notas_estoque(cur, "saida", data_saida)
-        uso_estimado = _lote_estatistica_uso_estoque(cur, data_lote, data_saida)
-    finally:
-        cur.close()
-        conn.close()
-
-    vendas = _lote_estatistica_vendas(data_saida)
-    vendas_rows = vendas.get("rows") or []
-    resumo = {
-        "data_lote": _fmt_date(data_lote),
-        "lote_codigo": data_lote.strftime("%Y%m%d"),
-        "data_saida_estimativa": _fmt_date(data_saida),
-        "dias_fabricacao_saida": 2,
-        "notas_entrada": len(notas_entrada),
-        "notas_saida": len(notas_saida),
-        "itens_uso": len(uso_estimado),
-        "qtd_uso_estimado": round(sum(_as_float(row.get("quantidade"), 0.0) for row in uso_estimado), 3),
-        "valor_uso_estimado": round(sum(_as_float(row.get("valor_total"), 0.0) for row in uso_estimado), 2),
-        "vendas_produtos": len(vendas_rows),
-        "vendas_notas": sum(_as_int(row.get("notas"), 0) for row in vendas_rows),
-        "vendas_clientes": sum(_as_int(row.get("clientes"), 0) for row in vendas_rows),
-        "vendas_valor_liquido": round(sum(_as_float(row.get("valor_liquido"), 0.0) for row in vendas_rows), 2),
-    }
-    return jsonify({
-        "ok": True,
-        "regra": "data_saida_estimativa = data_lote + 2 dias",
-        "resumo": resumo,
-        "uso_estimado": uso_estimado,
-        "notas_entrada": notas_entrada,
-        "notas_saida": notas_saida,
-        "vendas": vendas,
-    })
 
 @app.route("/api/estoque/<int:movimento_id>", methods=["PUT"])
 def atualizar_movimento_estoque(movimento_id):
@@ -15022,8 +7025,8 @@ def atualizar_movimento_estoque(movimento_id):
     cur = conn.cursor(dictionary=True)
     try:
         cur.execute("""
-            SELECT id, codigo_barras, codigo_produto_nfe, numero_nota, nome_produto, quantidade, valor_unitario,
-                   tipo_movimento, origem_setor, destino_setor, referencia_tipo
+            SELECT id, codigo_barras, numero_nota, nome_produto, quantidade, valor_unitario,
+                   tipo_movimento, origem_setor, destino_setor
             FROM estoque_movimentos
             WHERE id=%s
             LIMIT 1
@@ -15031,18 +7034,8 @@ def atualizar_movimento_estoque(movimento_id):
         row = cur.fetchone()
         if not row:
             return jsonify({"erro": "lancamento de estoque nao encontrado"}), 404
-        if _as_str(row.get("referencia_tipo")):
-            return jsonify(
-                {
-                    "erro": (
-                        "lancamentos vinculados a uma confirmacao nao podem "
-                        "ser editados pelo historico."
-                    )
-                }
-            ), 409
 
         codigo_barras = _normalizar_codigo_barras(data.get("codigo_barras")) if "codigo_barras" in data else _as_str(row.get("codigo_barras"))
-        codigo_produto_nfe = _codigo_produto_nfe_saida(data.get("codigo_produto_nfe")) if "codigo_produto_nfe" in data else _as_str(row.get("codigo_produto_nfe"))
         numero_nota = _as_str(data.get("numero_nota")) if "numero_nota" in data else _as_str(row.get("numero_nota"))
         nome_produto = _as_str(data.get("nome_produto")) if "nome_produto" in data else _as_str(row.get("nome_produto"))
         quantidade = _as_float(data.get("quantidade"), _as_float(row.get("quantidade"), 0.0)) if "quantidade" in data else _as_float(row.get("quantidade"), 0.0)
@@ -15060,12 +7053,11 @@ def atualizar_movimento_estoque(movimento_id):
 
         cur.execute("""
             UPDATE estoque_movimentos
-            SET codigo_barras=%s, codigo_produto_nfe=%s, numero_nota=%s, nome_produto=%s, quantidade=%s, valor_unitario=%s,
+            SET codigo_barras=%s, numero_nota=%s, nome_produto=%s, quantidade=%s, valor_unitario=%s,
                 tipo_movimento=%s, origem_setor=%s, destino_setor=%s, usuario_registro=%s
             WHERE id=%s
         """, (
             codigo_barras,
-            codigo_produto_nfe,
             numero_nota,
             nome_produto,
             quantidade,
@@ -15087,27 +7079,10 @@ def excluir_movimento_estoque(movimento_id):
     conn = get_conn()
     cur = conn.cursor(dictionary=True)
     try:
-        cur.execute(
-            """
-            SELECT id, referencia_tipo
-            FROM estoque_movimentos
-            WHERE id=%s
-            LIMIT 1
-            """,
-            (movimento_id,),
-        )
+        cur.execute("SELECT id FROM estoque_movimentos WHERE id=%s LIMIT 1", (movimento_id,))
         row = cur.fetchone()
         if not row:
             return jsonify({"erro": "lancamento de estoque nao encontrado"}), 404
-        if _as_str(row.get("referencia_tipo")):
-            return jsonify(
-                {
-                    "erro": (
-                        "lancamentos vinculados a uma confirmacao nao podem "
-                        "ser excluidos pelo historico."
-                    )
-                }
-            ), 409
         cur.execute("DELETE FROM estoque_movimentos WHERE id=%s", (movimento_id,))
         conn.commit()
         return jsonify({"ok": True})
@@ -15117,11 +7092,7 @@ def excluir_movimento_estoque(movimento_id):
 
 @app.route("/api/estoque/saldo", methods=["GET"])
 def saldo_estoque():
-    return jsonify(_estoque_resumo_produtos_data())
-
-@app.route("/api/estoque/posicao", methods=["GET"])
-def posicao_estoque():
-    return jsonify(_estoque_resumo_produtos_data())
+    return dashboard_estoque()
 
 @app.route("/api/estoque/produtos", methods=["GET"])
 def listar_produtos_estoque():
@@ -15133,8 +7104,6 @@ def listar_produtos_estoque():
             codigo_barras,
             codigo_produto_nfe,
             nome_produto,
-            grupo_estoque,
-            produto_base_nome,
             unidade,
             embalagem_tipo_padrao,
             fator_embalagem_padrao,
@@ -15153,10 +7122,8 @@ def listar_produtos_estoque():
 def criar_produto_estoque():
     data = request.json or {}
     codigo_barras = _normalizar_codigo_barras(data.get("codigo_barras"))
-    codigo_produto_nfe = _codigo_produto_nfe_saida(data.get("codigo_produto_nfe"))
+    codigo_produto_nfe = _as_str(data.get("codigo_produto_nfe"))
     nome_produto = _as_str(data.get("nome_produto"))
-    grupo_estoque = _estoque_grupo_normalizado(data.get("grupo_estoque"))
-    produto_base_nome = _as_str(data.get("produto_base_nome") or data.get("produto_base"))
     embalagem_tipo_padrao = _as_str(data.get("embalagem_tipo_padrao") or data.get("embalagem_tipo"))
     fator_embalagem_padrao = _as_float(data.get("fator_embalagem_padrao"), _as_float(data.get("fator_embalagem"), 0.0))
     if not (codigo_barras or codigo_produto_nfe or nome_produto):
@@ -15174,15 +7141,13 @@ def criar_produto_estoque():
             return jsonify({"erro": "ja existe cadastro para este produto"}), 409
         cur.execute("""
             INSERT INTO estoque_produtos
-                (codigo_barras, codigo_produto_nfe, nome_produto, grupo_estoque, produto_base_nome, unidade, embalagem_tipo_padrao, fator_embalagem_padrao, origem_cadastro)
+                (codigo_barras, codigo_produto_nfe, nome_produto, unidade, embalagem_tipo_padrao, fator_embalagem_padrao, origem_cadastro)
             VALUES
-                (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                (%s, %s, %s, %s, %s, %s, %s)
         """, (
             codigo_barras,
             codigo_produto_nfe,
             nome_produto,
-            grupo_estoque,
-            produto_base_nome,
             embalagem_tipo_padrao,
             embalagem_tipo_padrao,
             fator_embalagem_padrao,
@@ -15191,7 +7156,7 @@ def criar_produto_estoque():
         produto_id = cur.lastrowid
         conn.commit()
         cur.execute("""
-            SELECT id, codigo_barras, codigo_produto_nfe, nome_produto, grupo_estoque, produto_base_nome, unidade,
+            SELECT id, codigo_barras, codigo_produto_nfe, nome_produto, unidade,
                    embalagem_tipo_padrao, fator_embalagem_padrao, origem_cadastro, criado_em, atualizado_em
             FROM estoque_produtos
             WHERE id=%s
@@ -15210,7 +7175,7 @@ def atualizar_produto_estoque(produto_id):
     cur = conn.cursor(dictionary=True)
     try:
         cur.execute("""
-            SELECT id, codigo_barras, codigo_produto_nfe, nome_produto, grupo_estoque, produto_base_nome, unidade,
+            SELECT id, codigo_barras, codigo_produto_nfe, nome_produto, unidade,
                    embalagem_tipo_padrao, fator_embalagem_padrao, origem_cadastro, criado_em, atualizado_em
             FROM estoque_produtos
             WHERE id=%s
@@ -15221,10 +7186,8 @@ def atualizar_produto_estoque(produto_id):
             return jsonify({"erro": "produto nao encontrado"}), 404
 
         codigo_barras = _normalizar_codigo_barras(data.get("codigo_barras")) if "codigo_barras" in data else _normalizar_codigo_barras(row.get("codigo_barras"))
-        codigo_produto_nfe = _codigo_produto_nfe_saida(data.get("codigo_produto_nfe")) if "codigo_produto_nfe" in data else _as_str(row.get("codigo_produto_nfe"))
+        codigo_produto_nfe = _as_str(data.get("codigo_produto_nfe")) if "codigo_produto_nfe" in data else _as_str(row.get("codigo_produto_nfe"))
         nome_produto = _as_str(data.get("nome_produto")) if "nome_produto" in data else _as_str(row.get("nome_produto"))
-        grupo_estoque = _estoque_grupo_normalizado(data.get("grupo_estoque")) if "grupo_estoque" in data else _as_str(row.get("grupo_estoque"))
-        produto_base_nome = _as_str(data.get("produto_base_nome") or data.get("produto_base")) if ("produto_base_nome" in data or "produto_base" in data) else _as_str(row.get("produto_base_nome"))
         embalagem_tipo_padrao = _as_str(data.get("embalagem_tipo_padrao") or data.get("embalagem_tipo")) if ("embalagem_tipo_padrao" in data or "embalagem_tipo" in data) else _as_str(row.get("embalagem_tipo_padrao"))
         fator_embalagem_padrao = _as_float(data.get("fator_embalagem_padrao"), _as_float(data.get("fator_embalagem"), 0.0)) if ("fator_embalagem_padrao" in data or "fator_embalagem" in data) else _as_float(row.get("fator_embalagem_padrao"), 0.0)
 
@@ -15240,8 +7203,6 @@ def atualizar_produto_estoque(produto_id):
             SET codigo_barras=%s,
                 codigo_produto_nfe=%s,
                 nome_produto=%s,
-                grupo_estoque=%s,
-                produto_base_nome=%s,
                 unidade=%s,
                 embalagem_tipo_padrao=%s,
                 fator_embalagem_padrao=%s
@@ -15250,8 +7211,6 @@ def atualizar_produto_estoque(produto_id):
             codigo_barras,
             codigo_produto_nfe,
             nome_produto,
-            grupo_estoque,
-            produto_base_nome,
             embalagem_tipo_padrao,
             embalagem_tipo_padrao,
             fator_embalagem_padrao,
@@ -15259,7 +7218,7 @@ def atualizar_produto_estoque(produto_id):
         ))
         conn.commit()
         cur.execute("""
-            SELECT id, codigo_barras, codigo_produto_nfe, nome_produto, grupo_estoque, produto_base_nome, unidade,
+            SELECT id, codigo_barras, codigo_produto_nfe, nome_produto, unidade,
                    embalagem_tipo_padrao, fator_embalagem_padrao, origem_cadastro, criado_em, atualizado_em
             FROM estoque_produtos
             WHERE id=%s
@@ -15270,73 +7229,6 @@ def atualizar_produto_estoque(produto_id):
     finally:
         cur.close()
         conn.close()
-
-@app.route("/api/estoque/produtos/<int:produto_id>/ajuste", methods=["POST"])
-def ajustar_produto_estoque(produto_id):
-    usuario = _usuario_ator_req()
-    data = request.json or {}
-    quantidade_ajuste = _as_float(data.get("quantidade_ajuste"), 0.0)
-    motivo = _as_str(data.get("motivo_ajuste") or data.get("motivo"))
-    if abs(quantidade_ajuste) <= 0:
-        return jsonify({"erro": "informe uma quantidade de ajuste diferente de zero"}), 400
-
-    conn = get_conn()
-    cur = conn.cursor(dictionary=True)
-    try:
-        produto = _carregar_produto_estoque_por_id(cur, produto_id)
-        if not produto:
-            return jsonify({"erro": "produto nao encontrado"}), 404
-
-        saldo_antes = _saldo_atual_produto_estoque(
-            cur,
-            codigo_barras=produto.get("codigo_barras"),
-            codigo_produto_nfe=produto.get("codigo_produto_nfe"),
-            nome_produto=produto.get("nome_produto"),
-        )
-        tipo_movimento = "entrada" if quantidade_ajuste > 0 else "saida"
-        quantidade_movimento = abs(round(quantidade_ajuste, 3))
-        numero_nota = f"AJUSTE-{produto_id}"
-        if motivo:
-            numero_nota = f"{numero_nota} - {motivo[:80]}"
-
-        cur.execute(
-            """
-            INSERT INTO estoque_movimentos
-                (
-                    codigo_barras, codigo_produto_nfe, numero_nota, nome_produto, quantidade, valor_unitario, tipo_movimento,
-                    origem_setor, destino_setor, referencia_tipo, referencia_id, usuario_registro
-                )
-            VALUES
-                (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'ajuste_cadastro', %s, %s)
-            """,
-            (
-                _normalizar_codigo_barras(produto.get("codigo_barras")),
-                _codigo_produto_nfe_saida(produto.get("codigo_produto_nfe")),
-                numero_nota,
-                _as_str(produto.get("nome_produto")),
-                quantidade_movimento,
-                0.0,
-                tipo_movimento,
-                "Ajuste Manual",
-                "Almoxarifado",
-                produto_id,
-                usuario,
-            )
-        )
-        conn.commit()
-    finally:
-        cur.close()
-        conn.close()
-
-    saldo_depois = round(saldo_antes + quantidade_ajuste, 3)
-    return jsonify({
-        "ok": True,
-        "produto": _produto_estoque_publico(produto),
-        "quantidade_ajuste": round(quantidade_ajuste, 3),
-        "saldo_antes": round(saldo_antes, 3),
-        "saldo_depois": saldo_depois,
-        "motivo_ajuste": motivo,
-    })
 
 @app.route("/api/estoque/produtos/<int:produto_id>", methods=["DELETE"])
 def excluir_produto_estoque(produto_id):
@@ -15410,38 +7302,6 @@ def preview_nfe_estoque():
         "preview": preview,
         "warnings": preview.get("warnings") or [],
     })
-
-@app.route("/api/estoque/nfe/preview_fabrica", methods=["POST"])
-def preview_nfe_estoque_fabrica():
-    source_path = ""
-    try:
-        file_storage = request.files.get("arquivo") or request.files.get("xml")
-        conteudo, arquivo_origem, source_path = _carregar_xml_fabrica_fonte(file_storage)
-        xml_text = _decode_xml_bytes(conteudo)
-        preview = _preview_nfe_estoque_from_xml_text(
-            xml_text,
-            arquivo_origem=arquivo_origem,
-        )
-        preview["source_type"] = "xml_fabrica"
-        preview["warnings"] = [
-            "XML da fabrica carregado para transferencia de estoque Fabrica -> Central. Revise a conferencia antes de consolidar."
-        ] + (preview.get("warnings") or [])
-        preview = _aplicar_cadastro_embalagem_preview(preview)
-    except FileNotFoundError as exc:
-        return jsonify({"erro": str(exc)}), 404
-    except ValueError as exc:
-        return jsonify({"erro": str(exc)}), 400
-    except Exception as exc:
-        return jsonify({"erro": f"Falha ao ler o XML da fabrica: {str(exc)}"}), 500
-
-    payload = {
-        "ok": True,
-        "preview": preview,
-        "warnings": preview.get("warnings") or [],
-    }
-    if source_path:
-        payload["source_path"] = source_path
-    return jsonify(payload)
 
 
 @app.route("/api/estoque/nfe/portal_retorno", methods=["POST"])
@@ -15560,54 +7420,6 @@ def ocr_itens_nfe_estoque():
         "warnings": preview.get("warnings") or [],
     })
 
-@app.route("/api/abastecimentos/ocr_preview", methods=["POST"])
-def ocr_preview_abastecimento():
-    payload = request.form.to_dict(flat=True) if request.form else (request.get_json(silent=True) or {})
-    combustivel_tipo = payload.get("combustivel_tipo")
-    try:
-        conteudo, arquivo_origem, _mimetype = _ler_arquivo_imagem_requisicao()
-        preview = _ocr_preview_abastecimento_imagem_bytes(
-            conteudo,
-            arquivo_origem=arquivo_origem,
-            combustivel_tipo=combustivel_tipo,
-        )
-    except ValueError as exc:
-        return jsonify({"erro": str(exc)}), 400
-    except RuntimeError as exc:
-        return jsonify({"erro": str(exc)}), 503
-    except Exception as exc:
-        return jsonify({"erro": f"Falha ao ler a foto da nota do abastecimento: {str(exc)}"}), 500
-
-    return jsonify({
-        "ok": True,
-        "ocr": preview,
-        "warnings": preview.get("warnings") or [],
-    })
-
-@app.route("/api/abastecimentos/barcode_preview", methods=["POST"])
-def barcode_preview_abastecimento():
-    payload = request.form.to_dict(flat=True) if request.form else (request.get_json(silent=True) or {})
-    combustivel_tipo = payload.get("combustivel_tipo")
-    try:
-        conteudo, arquivo_origem, _mimetype = _ler_arquivo_imagem_requisicao()
-        preview = _barcode_preview_abastecimento_imagem_bytes(
-            conteudo,
-            arquivo_origem=arquivo_origem,
-            combustivel_tipo=combustivel_tipo,
-        )
-    except ValueError as exc:
-        return jsonify({"erro": str(exc)}), 400
-    except RuntimeError as exc:
-        return jsonify({"erro": str(exc)}), 503
-    except Exception as exc:
-        return jsonify({"erro": f"Falha ao ler o codigo de barras/QR da nota: {str(exc)}"}), 500
-
-    return jsonify({
-        "ok": True,
-        "ocr": preview,
-        "warnings": preview.get("warnings") or [],
-    })
-
 @app.route("/api/estoque/nfe/azure_itens", methods=["POST"])
 def azure_itens_nfe_estoque():
     try:
@@ -15653,25 +7465,6 @@ def preview_nfe_estoque_dfe():
         "warnings": preview.get("warnings") or [],
         "dfe": _nfe_resumo_distribuicao_publico(resultado),
         "limite_consultas": resultado.get("limite_consultas") or _nfe_dfe_limite_status(),
-    })
-
-
-@app.route("/api/manutencoes/ocr_preview", methods=["POST"])
-def ocr_preview_manutencao():
-    try:
-        conteudo, arquivo_origem, _mimetype = _ler_arquivo_imagem_requisicao()
-        preview = _ocr_preview_manutencao_imagem_bytes(conteudo, arquivo_origem=arquivo_origem)
-    except ValueError as exc:
-        return jsonify({"erro": str(exc)}), 400
-    except RuntimeError as exc:
-        return jsonify({"erro": str(exc)}), 503
-    except Exception as exc:
-        return jsonify({"erro": f"Falha ao ler a imagem da manutencao: {str(exc)}"}), 500
-
-    return jsonify({
-        "ok": True,
-        "preview": preview,
-        "warnings": preview.get("warnings") or [],
     })
 
 @app.route("/api/estoque/nfe/import", methods=["POST"])
@@ -15773,14 +7566,13 @@ def confirmar_conferencia_estoque(conferencia_id):
             cur.execute("""
                 INSERT INTO estoque_movimentos
                     (
-                        codigo_barras, codigo_produto_nfe, numero_nota, nome_produto, quantidade, valor_unitario, tipo_movimento,
+                        codigo_barras, numero_nota, nome_produto, quantidade, valor_unitario, tipo_movimento,
                         origem_setor, destino_setor, referencia_tipo, referencia_id, usuario_registro
                     )
                 VALUES
-                    (%s, %s, %s, %s, %s, %s, 'entrada', %s, %s, 'conferencia_nfe', %s, %s)
+                    (%s, %s, %s, %s, %s, 'entrada', %s, %s, 'conferencia_nfe', %s, %s)
             """, (
                 codigo_barras_final,
-                codigo_produto_nfe_final,
                 _as_str(conferencia.get("numero_nota")),
                 nome_produto_final,
                 quantidade_conferida,
@@ -15854,7 +7646,7 @@ def deletar_devolucao(id):
     conn = get_conn()
     cursor = conn.cursor(dictionary=True)
 
-    cursor.execute("SELECT id, frete_id, veiculo_id, conferente_id, colaborador_conferente_id FROM devolucoes WHERE id=%s", (id,))
+    cursor.execute("SELECT id, frete_id, veiculo_id, conferente_id FROM devolucoes WHERE id=%s", (id,))
     row = cursor.fetchone()
     if not row:
         cursor.close()
@@ -15862,7 +7654,7 @@ def deletar_devolucao(id):
         return jsonify({"erro": "devolucao nao encontrada"}), 404
 
     cursor.execute("DELETE FROM devolucoes WHERE id=%s", (id,))
-    descricao = f"devolucao id={id} frete_id={_as_int(row.get('frete_id'),0)} veiculo_id={_as_int(row.get('veiculo_id'),0)} conferente_id={_as_int(row.get('colaborador_conferente_id') or row.get('conferente_id'),0)}"
+    descricao = f"devolucao id={id} frete_id={_as_int(row.get('frete_id'),0)} veiculo_id={_as_int(row.get('veiculo_id'),0)} conferente_id={_as_int(row.get('conferente_id'),0)}"
     _registrar_log_exclusao(cursor, usuario, "devolucoes", id, descricao)
     conn.commit()
     cursor.close()
@@ -15876,15 +7668,12 @@ def atualizar_devolucao(id):
     data = request.json or {}
     conn = get_conn()
     cursor = conn.cursor()
-    colaborador_conferente_id = _as_int(data.get("colaborador_conferente_id"), 0) or None
-    conferente_id = None if colaborador_conferente_id else _as_int(data.get("conferente_id"), 0) or None
 
     cursor.execute("""
     UPDATE devolucoes
     SET frete_id=%s,
         veiculo_id=%s,
         conferente_id=%s,
-        colaborador_conferente_id=%s,
         c24=%s, obs_c24=%s,
         c48=%s, obs_c48=%s,
         pet2l=%s, obs_pet2l=%s,
@@ -15897,8 +7686,7 @@ def atualizar_devolucao(id):
     """, (
         data["frete_id"],
         data["veiculo_id"],
-        conferente_id,
-        colaborador_conferente_id,
+        data["conferente_id"],
         data["c24"], data.get("obs_c24"),
         data["c48"], data.get("obs_c48"),
         data["pet2l"], data.get("obs_pet2l"),
@@ -15925,12 +7713,11 @@ def listar_devolucoes():
         d.id,
         f.nome AS frete_nome,
         v.nome AS veiculo_nome,
-        COALESCE(cc.nome, c.nome) AS conferente_nome,
+        c.nome AS conferente_nome,
 
         d.frete_id,
         d.veiculo_id,
         d.conferente_id,
-        d.colaborador_conferente_id,
 
         d.c24, d.c48, d.pet2l, d.pet600, d.pet200,
         d.obs_c24, d.obs_c48, d.obs_pet2l, d.obs_pet600, d.obs_pet200,
@@ -15942,7 +7729,6 @@ def listar_devolucoes():
     FROM devolucoes d
     LEFT JOIN fretes f ON d.frete_id = f.id
     LEFT JOIN veiculos v ON d.veiculo_id = v.id
-    LEFT JOIN colaboradores cc ON d.colaborador_conferente_id = cc.id
     LEFT JOIN conferentes c ON d.conferente_id = c.id
     ORDER BY d.id DESC
     """)
@@ -15958,60 +7744,6 @@ def listar_devolucoes():
 
     return jsonify(dados)
 
-
-def _buscar_colaborador_conferente_logado_cur(cur):
-    uid = _as_int(request.headers.get("X-Usuario-Id"), 0)
-    login = _normalizar_chave_texto(request.headers.get("X-Usuario-Login"))
-    nome = _normalizar_chave_texto(request.headers.get("X-Usuario-Nome"))
-
-    if uid > 0:
-        cur.execute(
-            """
-            SELECT id
-            FROM colaboradores
-            WHERE usuario_id=%s AND COALESCE(is_conferente, 0)=1
-            ORDER BY id ASC
-            LIMIT 1
-            """,
-            (uid,),
-        )
-        row = cur.fetchone()
-        if row:
-            return _as_int(row.get("id"), 0) or None
-
-    if not login and not nome:
-        return None
-
-    cur.execute(
-        """
-        SELECT
-            c.id,
-            c.nome,
-            c.login,
-            u.nome AS usuario_nome,
-            u.login AS usuario_login
-        FROM colaboradores c
-        LEFT JOIN usuarios u ON u.id = c.usuario_id
-        WHERE COALESCE(c.is_conferente, 0)=1
-        ORDER BY c.id ASC
-        """
-    )
-    for row in cur.fetchall() or []:
-        candidatos_login = {
-            _normalizar_chave_texto(row.get("login")),
-            _normalizar_chave_texto(row.get("usuario_login")),
-        }
-        candidatos_nome = {
-            _normalizar_chave_texto(row.get("nome")),
-            _normalizar_chave_texto(row.get("usuario_nome")),
-        }
-        if login and login in candidatos_login:
-            return _as_int(row.get("id"), 0) or None
-        if nome and nome in candidatos_nome:
-            return _as_int(row.get("id"), 0) or None
-    return None
-
-
 @app.route("/api/devolucoes", methods=["POST"])
 def criar_devolucao():
     is_multipart = (request.content_type or "").startswith("multipart/form-data")
@@ -16022,7 +7754,6 @@ def criar_devolucao():
         data = {
             "frete_id": form.get("frete_id"),
             "veiculo_id": form.get("veiculo_id"),
-            "colaborador_conferente_id": form.get("colaborador_conferente_id"),
             "conferente_id": form.get("conferente_id"),
             "c24": _as_int(form.get("c24"), 0),
             "c48": _as_int(form.get("c48"), 0),
@@ -16045,30 +7776,24 @@ def criar_devolucao():
         data = request.json or {}
         files = []
 
-    colaborador_conferente_id = _as_int(data.get("colaborador_conferente_id"), 0) or None
-    conferente_id = None if colaborador_conferente_id else _as_int(data.get("conferente_id"), 0) or None
+    if not data.get("frete_id") or not data.get("conferente_id"):
+        return jsonify({"erro": "frete_id e conferente_id são obrigatórios"}), 400
+
     conn = get_conn()
-    cursor = conn.cursor(dictionary=True)
-    if not (conferente_id or colaborador_conferente_id):
-        colaborador_conferente_id = _buscar_colaborador_conferente_logado_cur(cursor)
-    if not data.get("frete_id") or not (conferente_id or colaborador_conferente_id):
-        cursor.close()
-        conn.close()
-        return jsonify({"erro": "frete_id e conferente_id ou colaborador_conferente_id são obrigatórios"}), 400
+    cursor = conn.cursor()
 
     cursor.execute("""
     INSERT INTO devolucoes
-    (frete_id, veiculo_id, conferente_id, colaborador_conferente_id,
+    (frete_id, veiculo_id, conferente_id,
      c24, c48, pet2l, pet600, pet200,
      obs_c24, obs_c48, obs_pet2l, obs_pet600, obs_pet200,
      agua_com_gas, obs_agua_com_gas, agua_sem_gas, obs_agua_sem_gas, cx_600, obs_cx_600,
      fotos)
-    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
     """, (
         data.get("frete_id"),
         data.get("veiculo_id"),
-        conferente_id,
-        colaborador_conferente_id,
+        data.get("conferente_id"),
         data.get("c24"),
         data.get("c48"),
         data.get("pet2l"),
@@ -16114,10 +7839,8 @@ def criar_frete():
         return jsonify({"erro": "nome do frete e obrigatorio"}), 400
     cidade = _as_str(data.get("cidade"))
     data_carga = _as_date(data.get("data_carga")) or datetime.date.today()
-    colaborador_motorista_id = _as_int(data.get("colaborador_motorista_id"), 0) or _as_int(data.get("motorista_id"), 0) or None
-    colaborador_entregador_id = _as_int(data.get("colaborador_entregador_id"), 0) or _as_int(data.get("entregador_id"), 0) or colaborador_motorista_id
-    motorista_id = colaborador_motorista_id
-    entregador_id = colaborador_entregador_id
+    motorista_id = _as_int(data.get("motorista_id"), 0) or None
+    entregador_id = _as_int(data.get("entregador_id"), 0) or motorista_id
     veiculo_id = _as_int(data.get("veiculo_id"), 0) or None
     carga_id = _as_int(data.get("carga_id"), 0) or None
     observacao = _as_str(data.get("observacao"))
@@ -16127,32 +7850,14 @@ def criar_frete():
 
     conn = get_conn()
     cursor = conn.cursor(dictionary=True)
-    legacy_motorista_id = _resolver_motorista_legacy_id_por_colaborador(cursor, colaborador_motorista_id)
-    legacy_entregador_id = _resolver_motorista_legacy_id_por_colaborador(cursor, colaborador_entregador_id)
-    erro_equipe = _validar_colaboradores_frete(cursor, motorista_id, entregador_id)
-    if erro_equipe:
-        cursor.close()
-        conn.close()
-        return jsonify({"erro": erro_equipe}), 400
-    erro_escala = _validar_duplicidade_escala_frete(cursor, None, "liberado", motorista_id, entregador_id)
-    if erro_escala:
-        cursor.close()
-        conn.close()
-        return jsonify({"erro": erro_escala}), 400
-
-    if not veiculo_id and carga_id:
-        cursor.execute("SELECT veiculo_numero FROM cargas WHERE id=%s", (carga_id,))
-        carga_ref = cursor.fetchone() or {}
-        veiculo_id = _resolver_veiculo_id_por_numero(cursor, carga_ref.get("veiculo_numero"))
-
     cursor.execute(
         """
         INSERT INTO fretes
-            (nome, cidade, data_carga, status, motorista_id, entregador_id, colaborador_motorista_id, colaborador_entregador_id, veiculo_id, carga_id, observacao, km_atual, peso, qtd_entregas, arquivado)
+            (nome, cidade, data_carga, status, motorista_id, entregador_id, veiculo_id, carga_id, observacao, km_atual, peso, qtd_entregas)
         VALUES
-            (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
-        (nome, cidade, data_carga, "liberado", legacy_motorista_id, legacy_entregador_id, colaborador_motorista_id, colaborador_entregador_id, veiculo_id, carga_id, observacao, km_atual, peso, qtd_entregas, 0)
+        (nome, cidade, data_carga, "liberado", motorista_id, entregador_id, veiculo_id, carga_id, observacao, km_atual, peso, qtd_entregas)
     )
     frete_id = cursor.lastrowid
     if veiculo_id and km_atual > 0:
@@ -16185,23 +7890,6 @@ def deletar_frete(id):
         conn.close()
         return jsonify({"erro": "frete nao encontrado"}), 404
 
-    cursor.execute(
-        "SELECT COUNT(*) AS total FROM estoque_xml_frete_vinculos WHERE frete_id=%s",
-        (id,),
-    )
-    total_notas = _as_int((cursor.fetchone() or {}).get("total"), 0)
-    if total_notas > 0:
-        cursor.close()
-        conn.close()
-        return jsonify(
-            {
-                "erro": (
-                    f"este frete possui {total_notas} nota(s) de saida vinculada(s) "
-                    "e nao pode ser excluido"
-                )
-            }
-        ), 409
-
     cursor.execute("DELETE FROM fretes_historico WHERE frete_id=%s", (id,))
     cursor.execute("DELETE FROM fretes WHERE id=%s", (id,))
     descricao = f"frete id={id} nome={_as_str(frete.get('nome'))} status={_as_str(frete.get('status'))}"
@@ -16211,7 +7899,7 @@ def deletar_frete(id):
     conn.close()
     return jsonify({"ok": True})
 
-@app.route("/api/fretes/<int:id>", methods=["PUT", "PATCH"])
+@app.route("/api/fretes/<int:id>", methods=["PUT"])
 def atualizar_frete(id):
     data = request.json or {}
     usuario = _usuario_ator_req()
@@ -16230,19 +7918,16 @@ def atualizar_frete(id):
         if "data_carga" in data else _as_date(antes.get("data_carga"))
     )
     status = _as_str(data.get("status")) if ("status" in data and data.get("status") is not None) else _as_str(antes.get("status"))
-    arquivado = _as_int(data.get("arquivado"), 0) if ("arquivado" in data) else (_as_int(antes.get("arquivado"), 0) or 0)
-    colaborador_motorista_id = (
-        _as_int(data.get("colaborador_motorista_id"), 0) or _as_int(data.get("motorista_id"), 0) or None
-        if "colaborador_motorista_id" in data else (_as_int(antes.get("colaborador_motorista_id"), 0) or None)
+    motorista_id = (
+        _as_int(data.get("motorista_id"), 0) or None
+        if "motorista_id" in data else (_as_int(antes.get("motorista_id"), 0) or None)
     )
-    colaborador_entregador_id = (
-        _as_int(data.get("colaborador_entregador_id"), 0) or _as_int(data.get("entregador_id"), 0) or None
-        if "colaborador_entregador_id" in data else (_as_int(antes.get("colaborador_entregador_id"), 0) or None)
+    entregador_id = (
+        _as_int(data.get("entregador_id"), 0) or None
+        if "entregador_id" in data else (_as_int(antes.get("entregador_id"), 0) or None)
     )
-    if colaborador_entregador_id is None and colaborador_motorista_id:
-        colaborador_entregador_id = colaborador_motorista_id
-    motorista_id = colaborador_motorista_id
-    entregador_id = colaborador_entregador_id
+    if entregador_id is None and motorista_id:
+        entregador_id = motorista_id
     veiculo_id = (
         _as_int(data.get("veiculo_id"), 0) or None
         if "veiculo_id" in data else (_as_int(antes.get("veiculo_id"), 0) or None)
@@ -16261,21 +7946,13 @@ def atualizar_frete(id):
         conn.close()
         return jsonify({"erro": "nome do frete e obrigatorio"}), 400
 
-    if not veiculo_id and carga_id:
-        cursor.execute("SELECT veiculo_numero FROM cargas WHERE id=%s", (carga_id,))
-        carga_ref = cursor.fetchone() or {}
-        veiculo_id = _resolver_veiculo_id_por_numero(cursor, carga_ref.get("veiculo_numero"))
-
     comparacao_antes = {
         "nome": _as_str(antes.get("nome")),
         "cidade": _as_str(antes.get("cidade")),
         "data_carga": _as_str(antes.get("data_carga")),
         "status": _as_str(antes.get("status")),
-        "arquivado": _as_int(antes.get("arquivado"), 0),
         "motorista_id": _as_int(antes.get("motorista_id"), 0) or None,
         "entregador_id": _as_int(antes.get("entregador_id"), 0) or None,
-        "colaborador_motorista_id": _as_int(antes.get("colaborador_motorista_id"), 0) or None,
-        "colaborador_entregador_id": _as_int(antes.get("colaborador_entregador_id"), 0) or None,
         "veiculo_id": _as_int(antes.get("veiculo_id"), 0) or None,
         "carga_id": _as_int(antes.get("carga_id"), 0) or None,
         "observacao": _as_str(antes.get("observacao")),
@@ -16288,11 +7965,8 @@ def atualizar_frete(id):
         "cidade": cidade,
         "data_carga": _fmt_date(data_carga),
         "status": status,
-        "arquivado": arquivado,
         "motorista_id": motorista_id,
         "entregador_id": entregador_id,
-        "colaborador_motorista_id": colaborador_motorista_id,
-        "colaborador_entregador_id": colaborador_entregador_id,
         "veiculo_id": veiculo_id,
         "carga_id": carga_id,
         "observacao": observacao,
@@ -16300,42 +7974,6 @@ def atualizar_frete(id):
         "peso": peso,
         "qtd_entregas": qtd_entregas,
     }
-
-    legacy_motorista_id = _resolver_motorista_legacy_id_por_colaborador(
-        cursor,
-        colaborador_motorista_id,
-        _as_int(antes.get("motorista_id"), 0) if colaborador_motorista_id == (_as_int(antes.get("colaborador_motorista_id"), 0) or None) else None,
-    )
-    legacy_entregador_id = _resolver_motorista_legacy_id_por_colaborador(
-        cursor,
-        colaborador_entregador_id,
-        _as_int(antes.get("entregador_id"), 0) if colaborador_entregador_id == (_as_int(antes.get("colaborador_entregador_id"), 0) or None) else None,
-    )
-
-    escala_keys = {
-        "status",
-        "motorista_id",
-        "entregador_id",
-        "colaborador_motorista_id",
-        "colaborador_entregador_id",
-    }
-    precisa_validar_escala = any(comparacao_antes.get(key) != comparacao_depois.get(key) for key in escala_keys)
-    precisa_validar_equipe = precisa_validar_escala or comparacao_antes.get("veiculo_id") != comparacao_depois.get("veiculo_id")
-
-    if precisa_validar_equipe:
-        erro_equipe = _validar_colaboradores_frete(cursor, motorista_id, entregador_id)
-        if erro_equipe:
-            cursor.close()
-            conn.close()
-            return jsonify({"erro": erro_equipe}), 400
-
-    if precisa_validar_escala:
-        erro_escala = _validar_duplicidade_escala_frete(cursor, id, status, motorista_id, entregador_id)
-        if erro_escala:
-            cursor.close()
-            conn.close()
-            return jsonify({"erro": erro_escala}), 400
-
     if comparacao_antes == comparacao_depois:
         cursor.close()
         conn.close()
@@ -16348,11 +7986,8 @@ def atualizar_frete(id):
           cidade = %s,
           data_carga = %s,
           status = %s,
-          arquivado = %s,
           motorista_id = %s,
           entregador_id = %s,
-          colaborador_motorista_id = %s,
-          colaborador_entregador_id = %s,
           veiculo_id = %s,
           carga_id = %s,
           observacao = %s,
@@ -16370,11 +8005,8 @@ def atualizar_frete(id):
         cidade,
         data_carga,
         status,
-        arquivado,
-        legacy_motorista_id,
-        legacy_entregador_id,
-        colaborador_motorista_id,
-        colaborador_entregador_id,
+        motorista_id,
+        entregador_id,
         veiculo_id,
         carga_id,
         observacao,
@@ -16402,12 +8034,11 @@ def atualizar_frete(id):
         )
 
     depois = _buscar_frete_detalhado(cursor, id)
-    estoque_baixa = _sincronizar_baixa_estoque_frete(cursor, antes, depois, usuario=usuario)
     _registrar_historico_frete(cursor, id, "atualizado", usuario, antes, depois)
     conn.commit()
     cursor.close()
     conn.close()
-    return jsonify({"ok": True, "frete": depois, "estoque_baixa": estoque_baixa})
+    return jsonify({"ok": True, "frete": depois})
 
 @app.route("/api/fretes", methods=["GET"])
 def listar_fretes():
@@ -16420,82 +8051,81 @@ def listar_fretes():
     conn.close()
     return jsonify(dados)
 
-
-@app.route("/api/fretes/<int:id>/notas-saida", methods=["GET"])
-def listar_notas_saida_frete(id):
+# =========================================================
+# (7) CADASTROS GENÉRICOS
+# =========================================================
+@app.route("/api/usuarios", methods=["GET"])
+def listar_usuarios():
     conn = get_conn()
-    cursor = conn.cursor(dictionary=True)
-    try:
-        frete = _buscar_frete_detalhado(cursor, id)
-        if not frete:
-            return jsonify({"erro": "frete nao encontrado"}), 404
-        cursor.execute(
-            """
-            SELECT
-                id, nota_key, chave_nfe, numero_nota, frete_id, veiculo_id, carga_id,
-                rota_registrada, placa_xml, mapa_xml,
-                numero_caminhao_xml, vinculacao_origem,
-                frete_sugerido_id, sugestao_confianca,
-                emitente_nome, destinatario_nome, data_emissao,
-                itens_total, quantidade_total, valor_total_nota,
-                usuario_registro, criado_em
-            FROM estoque_xml_frete_vinculos
-            WHERE frete_id=%s
-            ORDER BY criado_em DESC, id DESC
-            """,
-            (id,),
-        )
-        notas = []
-        for row in cursor.fetchall() or []:
-            notas.append(
-                {
-                    "id": _as_int(row.get("id"), 0),
-                    "nota_key": _as_str(row.get("nota_key")),
-                    "chave_nfe": _as_str(row.get("chave_nfe")),
-                    "numero_nota": _as_str(row.get("numero_nota")),
-                    "frete_id": _as_int(row.get("frete_id"), 0),
-                    "veiculo_id": _as_int(row.get("veiculo_id"), 0) or None,
-                    "carga_id": _as_int(row.get("carga_id"), 0) or None,
-                    "rota_registrada": _as_str(row.get("rota_registrada")),
-                    "placa_xml": _as_str(row.get("placa_xml")),
-                    "mapa_xml": _as_str(row.get("mapa_xml")),
-                    "numero_caminhao_xml": _as_str(row.get("numero_caminhao_xml")),
-                    "vinculacao_origem": _as_str(row.get("vinculacao_origem")) or "manual",
-                    "frete_sugerido_id": _as_int(row.get("frete_sugerido_id"), 0) or None,
-                    "sugestao_confianca": _as_str(row.get("sugestao_confianca")),
-                    "emitente_nome": _as_str(row.get("emitente_nome")),
-                    "destinatario_nome": _as_str(row.get("destinatario_nome")),
-                    "data_emissao": _fmt_date(row.get("data_emissao")),
-                    "itens_total": _as_int(row.get("itens_total"), 0),
-                    "quantidade_total": _as_float(row.get("quantidade_total"), 0.0),
-                    "valor_total_nota": _as_float(row.get("valor_total_nota"), 0.0),
-                    "usuario_registro": _as_str(row.get("usuario_registro")),
-                    "criado_em": _fmt_dt(row.get("criado_em")),
-                }
-            )
-        return jsonify({"ok": True, "frete": frete, "notas": notas})
-    finally:
-        cursor.close()
-        conn.close()
+    cur = conn.cursor(dictionary=True)
+    cur.execute("""
+        SELECT
+            id,
+            nome,
+            login,
+            ativo,
+            sip_habilitado,
+            sip_usuario,
+            sip_ramal,
+            codbar_modo,
+            data_cadastro
+        FROM usuarios
+        ORDER BY nome ASC, id ASC
+    """)
+    rows = cur.fetchall() or []
+    cur.close()
+    conn.close()
+    return jsonify([_usuario_publico_dict(r) for r in rows])
 
+@app.route("/api/usuarios", methods=["POST"])
+def criar_usuario():
+    data = request.json or {}
+    nome = _as_str(data.get("nome"))
+    login = _as_str(data.get("login"))
+    senha = _as_str(data.get("senha"))
+    sip_habilitado = 1 if _as_bool(data.get("sip_habilitado"), False) else 0
+    sip_usuario = _as_str(data.get("sip_usuario"))
+    sip_senha = _as_str(data.get("sip_senha"))
+    sip_ramal = _as_str(data.get("sip_ramal"))
+    codbar_modo = _normalizar_codbar_modo(data.get("codbar_modo"))
 
-@app.route("/api/me", methods=["GET"])
-def usuario_logado_api():
-    uid = _as_int(request.headers.get("X-Usuario-Id"), 0) or _as_int(request.args.get("usuario_id"), 0)
-    if uid <= 0:
-        return jsonify({"erro": "usuario nao encontrado"}), 404
+    if not nome:
+        return jsonify({"erro": "nome e obrigatorio"}), 400
+    if not login:
+        return jsonify({"erro": "login e obrigatorio"}), 400
+    if not senha:
+        return jsonify({"erro": "senha e obrigatoria"}), 400
+
     conn = get_conn()
     cur = conn.cursor(dictionary=True)
     try:
-        row = _buscar_usuario_id_cur(cur, uid)
+        cur.execute("SELECT id FROM usuarios WHERE login=%s LIMIT 1", (login,))
+        if cur.fetchone():
+            return jsonify({"erro": "login ja existe"}), 409
+
+        cur.execute(
+            """
+            INSERT INTO usuarios (
+                nome, login, senha, ativo,
+                sip_habilitado, sip_usuario, sip_senha, sip_ramal, codbar_modo
+            ) VALUES (%s, %s, %s, 1, %s, %s, %s, %s, %s)
+            """,
+            (nome, login, generate_password_hash(senha), sip_habilitado, sip_usuario, sip_senha, sip_ramal, codbar_modo)
+        )
+        user_id = cur.lastrowid
+        conn.commit()
+        try:
+            _sincronizar_usuarios_sip(conn, senha_plana_por_id={user_id: sip_senha or senha}, apenas_ids=[user_id])
+            conn.commit()
+        except Exception as exc:
+            conn.rollback()
+            print(f"WARN sip sync create user {user_id}:", exc)
     finally:
         cur.close()
         conn.close()
-    if not row:
-        return jsonify({"erro": "usuario nao encontrado"}), 404
-    if _as_int(row.get("ativo"), 1) != 1:
-        return jsonify({"erro": "usuario inativo"}), 403
-    return jsonify({"ok": True, "usuario": _usuario_publico_dict(row)})
+
+    _sincronizar_usuario_freepbx_best_effort(user_id)
+    return jsonify({"ok": True, "id": user_id})
 
 @app.route("/api/login", methods=["POST"])
 def login_usuario():
@@ -16507,7 +8137,16 @@ def login_usuario():
 
     conn = get_conn()
     cur = conn.cursor(dictionary=True)
-    row = _buscar_usuario_login_cur(cur, login)
+    cur.execute(
+        """
+        SELECT id, nome, login, senha, ativo, sip_usuario, sip_senha, sip_ramal, codbar_modo
+        FROM usuarios
+        WHERE login=%s
+        LIMIT 1
+        """,
+        (login,)
+    )
+    row = cur.fetchone()
     if not row:
         cur.close()
         conn.close()
@@ -16515,7 +8154,7 @@ def login_usuario():
 
     senha_ok = False
     senha_db = str(row.get("senha") or "")
-    # Aceita hash atual; fallback para senhas legadas em texto puro.
+    # Aceita hash atual; fallback temporario para texto puro legado.
     try:
         senha_ok = check_password_hash(senha_db, senha)
     except Exception:
@@ -16557,6 +8196,131 @@ def login_usuario():
             "codbar_modo": _normalizar_codbar_modo(row.get("codbar_modo")),
         }
     })
+
+@app.route("/api/usuarios/<int:user_id>", methods=["GET", "PUT"])
+def atualizar_usuario(user_id):
+    if request.method == "GET":
+        conn = get_conn()
+        cur = conn.cursor(dictionary=True)
+        cur.execute("""
+            SELECT
+                id,
+                nome,
+                login,
+                ativo,
+                sip_habilitado,
+                sip_usuario,
+                sip_ramal,
+                codbar_modo,
+                data_cadastro
+            FROM usuarios
+            WHERE id=%s
+            LIMIT 1
+        """, (user_id,))
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+        if not row:
+            return jsonify({"erro": "usuario nao encontrado"}), 404
+        return jsonify(_usuario_publico_dict(row))
+
+    data = request.json or {}
+    nome = _as_str(data.get("nome"))
+    login = _as_str(data.get("login"))
+    senha = _as_str(data.get("senha"))
+    sip_habilitado = 1 if _as_bool(data.get("sip_habilitado"), False) else 0
+    sip_usuario = _as_str(data.get("sip_usuario"))
+    sip_senha = _as_str(data.get("sip_senha"))
+    sip_ramal = _as_str(data.get("sip_ramal"))
+    codbar_modo = _normalizar_codbar_modo(data.get("codbar_modo"))
+
+    if not nome:
+        return jsonify({"erro": "nome e obrigatorio"}), 400
+    if not login:
+        return jsonify({"erro": "login e obrigatorio"}), 400
+
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    sip_ramal_atual = ""
+    try:
+        cur.execute("SELECT id, sip_senha, sip_ramal FROM usuarios WHERE id=%s LIMIT 1", (user_id,))
+        row_existente = cur.fetchone()
+        if not row_existente:
+            return jsonify({"erro": "usuario nao encontrado"}), 404
+        sip_ramal_anterior = _sip_ramal_interno(row_existente.get("sip_ramal"))
+
+        cur.execute("SELECT id FROM usuarios WHERE login=%s AND id<>%s LIMIT 1", (login, user_id))
+        if cur.fetchone():
+            return jsonify({"erro": "login ja existe"}), 409
+
+        limpar_sip_senha = _as_bool(data.get("limpar_sip_senha"), False)
+        sip_senha_final = sip_senha
+        if not sip_senha:
+            if limpar_sip_senha:
+                sip_senha_final = ""
+            elif senha:
+                sip_senha_final = senha
+            else:
+                sip_senha_final = _as_str(row_existente.get("sip_senha"))
+
+        if senha:
+            cur.execute(
+                """
+                UPDATE usuarios
+                SET nome=%s, login=%s, senha=%s, sip_habilitado=%s, sip_usuario=%s, sip_senha=%s, sip_ramal=%s, codbar_modo=%s
+                WHERE id=%s
+                """,
+                (nome, login, generate_password_hash(senha), sip_habilitado, sip_usuario, sip_senha_final, sip_ramal, codbar_modo, user_id)
+            )
+        else:
+            cur.execute(
+                """
+                UPDATE usuarios
+                SET nome=%s, login=%s, sip_habilitado=%s, sip_usuario=%s, sip_senha=%s, sip_ramal=%s, codbar_modo=%s
+                WHERE id=%s
+                """,
+                (nome, login, sip_habilitado, sip_usuario, sip_senha_final, sip_ramal, codbar_modo, user_id)
+            )
+        cur.execute("SELECT sip_ramal FROM usuarios WHERE id=%s LIMIT 1", (user_id,))
+        row_atualizada = cur.fetchone() or {}
+        sip_ramal_atual = _sip_ramal_interno(row_atualizada.get("sip_ramal"))
+        conn.commit()
+        try:
+            _sincronizar_usuarios_sip(conn, senha_plana_por_id={user_id: sip_senha_final or senha}, apenas_ids=[user_id])
+            conn.commit()
+        except Exception as exc:
+            conn.rollback()
+            print(f"WARN sip sync update user {user_id}:", exc)
+    finally:
+        cur.close()
+        conn.close()
+
+    remocoes = [sip_ramal_anterior] if sip_ramal_anterior and sip_ramal_anterior != sip_ramal_atual else []
+    _sincronizar_usuario_freepbx_best_effort(user_id, remove_extensions=remocoes)
+    return jsonify({"ok": True})
+
+@app.route("/api/usuarios/<int:user_id>", methods=["DELETE"])
+def deletar_usuario(user_id):
+    usuario = _usuario_ator_req()
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute("SELECT id, nome, login, sip_ramal FROM usuarios WHERE id=%s LIMIT 1", (user_id,))
+        row = cur.fetchone()
+        if not row:
+            return jsonify({"erro": "usuario nao encontrado"}), 404
+        sip_ramal_removido = _sip_ramal_interno(row.get("sip_ramal"))
+
+        cur.execute("DELETE FROM usuarios WHERE id=%s", (user_id,))
+        descricao = f"usuario id={user_id} nome={_as_str(row.get('nome'))} login={_as_str(row.get('login'))}"
+        _registrar_log_exclusao(cur, usuario, "usuarios", user_id, descricao)
+        conn.commit()
+    finally:
+        cur.close()
+        conn.close()
+    if sip_ramal_removido:
+        _sincronizar_usuario_freepbx_best_effort(user_id, remove_extensions=[sip_ramal_removido])
+    return jsonify({"ok": True})
 
 @app.route("/api/chat/conversa", methods=["GET"])
 def chat_conversa():
@@ -16814,410 +8578,6 @@ def chat_unread():
         "total_mensagens_nao_lidas": total_mensagens,
         "total_conversas_com_nao_lidas": len(por_contato),
         "por_contato": por_contato
-    })
-
-@app.route("/api/pontos_venda", methods=["GET"])
-def listar_pontos_venda():
-    ativo = request.args.get("ativo")
-    vendedor_filtro = _pv_texto_normalizado(request.args.get("vendedor"))
-    cliente_filtro = _pv_texto_normalizado(request.args.get("cliente"))
-    rota_filtro = _pv_texto_normalizado(request.args.get("rota"))
-    conn = get_conn()
-    cur = conn.cursor(dictionary=True)
-    sql = """
-        SELECT
-            id, vendedor, cliente, rota, visita_periodicidade, dia_semana,
-            data_base, observacao, ativo, criado_em, atualizado_em
-        FROM pontos_venda
-    """
-    filtros = []
-    params = []
-    if ativo is not None and _as_str(ativo) != "":
-        filtros.append("ativo = %s")
-        params.append(1 if _as_bool(ativo, True) else 0)
-    if vendedor_filtro:
-        filtros.append("vendedor_norm LIKE %s")
-        params.append(f"%{vendedor_filtro}%")
-    if cliente_filtro:
-        filtros.append("cliente_norm LIKE %s")
-        params.append(f"%{cliente_filtro}%")
-    if rota_filtro:
-        filtros.append("rota_norm LIKE %s")
-        params.append(f"%{rota_filtro}%")
-    if filtros:
-        sql += " WHERE " + " AND ".join(filtros)
-    sql += " ORDER BY ativo DESC, cliente ASC, vendedor ASC, rota ASC, dia_semana ASC, id ASC"
-    cur.execute(sql, tuple(params))
-    rows = cur.fetchall() or []
-    cur.close()
-    conn.close()
-    return jsonify([_pv_publico_row(r) for r in rows])
-
-def _pontos_venda_payload_normalizado(data, atual=None):
-    data = data or {}
-    atual = atual or {}
-    vendedor = _as_str(data.get("vendedor") if ("vendedor" in data or not atual) else atual.get("vendedor")).strip()
-    cliente = _as_str(data.get("cliente") if ("cliente" in data or not atual) else atual.get("cliente")).strip()
-    rota = _as_str(data.get("rota") if ("rota" in data or not atual) else atual.get("rota")).strip()
-    periodicidade = _pv_periodicidade_normalizada(data.get("visita_periodicidade") if ("visita_periodicidade" in data or not atual) else atual.get("visita_periodicidade"))
-    dia_semana = _pv_dia_semana_normalizado(data.get("dia_semana") if ("dia_semana" in data or not atual) else atual.get("dia_semana"))
-    data_base = _pv_data_base_normalizada(data.get("data_base") if ("data_base" in data or not atual) else atual.get("data_base"))
-    observacao = _as_str(data.get("observacao") if ("observacao" in data or not atual) else atual.get("observacao")).strip()
-    ativo = _as_bool(data.get("ativo"), _as_bool(atual.get("ativo"), True)) if atual else _as_bool(data.get("ativo"), True)
-
-    if not vendedor:
-        return None, "vendedor obrigatorio"
-    if not cliente:
-        return None, "cliente obrigatorio"
-    if not rota:
-        return None, "rota obrigatoria"
-    if dia_semana is None:
-        return None, "dia da semana obrigatorio"
-    if periodicidade == "quinzenal" and not data_base:
-        return None, "data base obrigatoria para visita quinzenal"
-
-    return {
-        "vendedor": vendedor,
-        "vendedor_norm": _pv_texto_normalizado(vendedor),
-        "cliente": cliente,
-        "cliente_norm": _pv_texto_normalizado(cliente),
-        "rota": rota,
-        "rota_norm": _pv_texto_normalizado(rota),
-        "visita_periodicidade": periodicidade,
-        "dia_semana": dia_semana,
-        "data_base": data_base,
-        "observacao": observacao,
-        "ativo": 1 if ativo else 0,
-    }, ""
-
-def _pontos_venda_salvar_registro(cur, payload, item_id=None, force_create=False):
-    similar = _pv_encontrar_similar(cur, payload.get("vendedor"), payload.get("cliente"), payload.get("rota"), excluir_id=item_id)
-    if similar and not force_create:
-        return None, similar
-
-    campos = (
-        payload["vendedor"],
-        payload["vendedor_norm"],
-        payload["cliente"],
-        payload["cliente_norm"],
-        payload["rota"],
-        payload["rota_norm"],
-        payload["visita_periodicidade"],
-        payload["dia_semana"],
-        payload["data_base"],
-        payload["observacao"],
-        payload["ativo"],
-    )
-
-    if item_id:
-        cur.execute("""
-            UPDATE pontos_venda
-            SET vendedor=%s, vendedor_norm=%s, cliente=%s, cliente_norm=%s, rota=%s, rota_norm=%s,
-                visita_periodicidade=%s, dia_semana=%s, data_base=%s, observacao=%s, ativo=%s
-            WHERE id=%s
-        """, campos + (_as_int(item_id, 0),))
-        return _as_int(item_id, 0), None
-
-    if similar and force_create:
-        cur.execute("""
-            UPDATE pontos_venda
-            SET vendedor=%s, vendedor_norm=%s, cliente=%s, cliente_norm=%s, rota=%s, rota_norm=%s,
-                visita_periodicidade=%s, dia_semana=%s, data_base=%s, observacao=%s, ativo=%s
-            WHERE id=%s
-        """, campos + (_as_int(similar.get("id"), 0),))
-        return _as_int(similar.get("id"), 0), None
-
-    cur.execute("""
-        INSERT INTO pontos_venda (
-            vendedor, vendedor_norm, cliente, cliente_norm, rota, rota_norm,
-            visita_periodicidade, dia_semana, data_base, observacao, ativo
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-    """, campos)
-    return _as_int(cur.lastrowid, 0), None
-
-@app.route("/api/pontos_venda", methods=["POST"])
-def criar_ponto_venda():
-    data = request.get_json(silent=True) or {}
-    payload, erro = _pontos_venda_payload_normalizado(data)
-    if not payload:
-        return jsonify({"erro": erro or "dados invalidos"}), 400
-
-    force = _as_bool(data.get("force"), False)
-    conn = get_conn()
-    cur = conn.cursor(dictionary=True)
-    try:
-        novo_id, similar = _pontos_venda_salvar_registro(cur, payload, item_id=None, force_create=force)
-        if novo_id is None and similar:
-            return jsonify({"erro": "cadastro semelhante encontrado", "registro_existente": similar}), 409
-        conn.commit()
-        return jsonify({"ok": True, "id": novo_id, "registro": _pv_publico_row({
-            "id": novo_id,
-            "vendedor": payload["vendedor"],
-            "cliente": payload["cliente"],
-            "rota": payload["rota"],
-            "visita_periodicidade": payload["visita_periodicidade"],
-            "dia_semana": payload["dia_semana"],
-            "data_base": payload["data_base"],
-            "observacao": payload["observacao"],
-            "ativo": payload["ativo"],
-            "criado_em": datetime.datetime.now(),
-            "atualizado_em": datetime.datetime.now(),
-        })})
-    finally:
-        cur.close()
-        conn.close()
-
-@app.route("/api/pontos_venda/<int:item_id>", methods=["PUT"])
-def atualizar_ponto_venda(item_id):
-    data = request.get_json(silent=True) or {}
-    conn = get_conn()
-    cur = conn.cursor(dictionary=True)
-    try:
-        cur.execute("""
-            SELECT id, vendedor, cliente, rota, visita_periodicidade, dia_semana, data_base, observacao, ativo, criado_em, atualizado_em
-            FROM pontos_venda
-            WHERE id=%s
-        """, (item_id,))
-        atual = cur.fetchone()
-        if not atual:
-            return jsonify({"erro": "registro nao encontrado"}), 404
-        payload, erro = _pontos_venda_payload_normalizado(data, atual=atual)
-        if not payload:
-            return jsonify({"erro": erro or "dados invalidos"}), 400
-        force = _as_bool(data.get("force"), False)
-        novo_id, similar = _pontos_venda_salvar_registro(cur, payload, item_id=item_id, force_create=force)
-        if novo_id is None and similar:
-            return jsonify({"erro": "cadastro semelhante encontrado", "registro_existente": similar}), 409
-        conn.commit()
-        cur.execute("""
-            SELECT id, vendedor, cliente, rota, visita_periodicidade, dia_semana, data_base, observacao, ativo, criado_em, atualizado_em
-            FROM pontos_venda
-            WHERE id=%s
-        """, (novo_id,))
-        row = cur.fetchone() or atual
-        return jsonify({"ok": True, "id": novo_id, "registro": _pv_publico_row(row)})
-    finally:
-        cur.close()
-        conn.close()
-
-@app.route("/api/pontos_venda/<int:item_id>", methods=["DELETE"])
-def deletar_ponto_venda(item_id):
-    usuario = _usuario_ator_req()
-    conn = get_conn()
-    cur = conn.cursor(dictionary=True)
-    try:
-        cur.execute("SELECT id, vendedor, cliente, rota FROM pontos_venda WHERE id=%s", (item_id,))
-        row = cur.fetchone()
-        if not row:
-            return jsonify({"erro": "registro nao encontrado"}), 404
-        cur.execute("DELETE FROM pontos_venda WHERE id=%s", (item_id,))
-        descricao = f"ponto_venda id={item_id} vendedor={_as_str(row.get('vendedor'))} cliente={_as_str(row.get('cliente'))} rota={_as_str(row.get('rota'))}"
-        _registrar_log_exclusao(cur, usuario, "pontos_venda", item_id, descricao)
-        conn.commit()
-        return jsonify({"ok": True})
-    finally:
-        cur.close()
-        conn.close()
-
-def _pontos_venda_ler_csv_texto(texto):
-    amostra = texto[:4096]
-    try:
-        dialect = csv.Sniffer().sniff(amostra, delimiters=";,")
-    except Exception:
-        dialect = csv.excel
-        dialect.delimiter = ";"
-    return list(csv.DictReader(io.StringIO(texto), dialect=dialect))
-
-def _pontos_venda_importar_csv_rows(rows, force=False):
-    conn = get_conn()
-    cur = conn.cursor(dictionary=True)
-    inseridos = 0
-    atualizados = 0
-    ignorados = 0
-    duplicados = []
-    try:
-        preparados = []
-        vistos_no_arquivo = []
-        for idx, row in enumerate(rows or [], start=1):
-            row_map = _pv_csv_row_map(row)
-            raw = {
-                "vendedor": _pv_csv_val(row_map, "vendedor", "vendedor_nome", "vendedor pedido", "vendedor_pedido"),
-                "cliente": _pv_csv_val(row_map, "cliente", "cliente_nome", "nome cliente"),
-                "rota": _pv_csv_val(row_map, "rota", "rota_nome", "trajeto"),
-                "visita_periodicidade": _pv_csv_val(row_map, "visita_periodicidade", "visita", "periodicidade", "freq"),
-                "dia_semana": _pv_csv_val(row_map, "dia_semana", "dia", "weekday"),
-                "data_base": _pv_csv_val(row_map, "data_base", "data_referencia", "base"),
-                "observacao": _pv_csv_val(row_map, "observacao", "obs"),
-                "ativo": _pv_csv_val(row_map, "ativo", "status"),
-            }
-            payload, erro = _pontos_venda_payload_normalizado(raw)
-            if not payload:
-                raise ValueError(f"linha {idx}: {erro}")
-            chave_atual = _pv_chave_composta(payload.get("vendedor"), payload.get("cliente"), payload.get("rota"))
-            similar_arquivo = None
-            for idx_prev, payload_prev in vistos_no_arquivo:
-                chave_prev = _pv_chave_composta(payload_prev.get("vendedor"), payload_prev.get("cliente"), payload_prev.get("rota"))
-                if _pv_similaridade(chave_atual, chave_prev) >= 0.88:
-                    similar_arquivo = {"linha": idx_prev, "proposto": payload_prev, "existente": _pv_publico_row({
-                        "id": None,
-                        "vendedor": payload_prev.get("vendedor"),
-                        "cliente": payload_prev.get("cliente"),
-                        "rota": payload_prev.get("rota"),
-                        "visita_periodicidade": payload_prev.get("visita_periodicidade"),
-                        "dia_semana": payload_prev.get("dia_semana"),
-                        "data_base": payload_prev.get("data_base"),
-                        "observacao": payload_prev.get("observacao"),
-                        "ativo": payload_prev.get("ativo"),
-                        "criado_em": None,
-                        "atualizado_em": None,
-                    }) | {"similaridade": 1.0, "origem": "arquivo"}}
-                    break
-            similar = _pv_encontrar_similar(cur, payload.get("vendedor"), payload.get("cliente"), payload.get("rota"))
-            if similar and not force:
-                duplicados.append({"linha": idx, "proposto": payload, "existente": similar})
-            elif similar_arquivo and not force:
-                duplicados.append({"linha": idx, "proposto": payload, "existente": similar_arquivo["existente"]})
-            preparados.append((payload, similar, similar_arquivo))
-            vistos_no_arquivo.append((idx, payload))
-        if duplicados and not force:
-            return {"inseridos": 0, "atualizados": 0, "duplicados": duplicados}
-
-        for payload, similar, similar_arquivo in preparados:
-            if similar and force:
-                cur.execute("""
-                    UPDATE pontos_venda
-                    SET vendedor=%s, vendedor_norm=%s, cliente=%s, cliente_norm=%s, rota=%s, rota_norm=%s,
-                        visita_periodicidade=%s, dia_semana=%s, data_base=%s, observacao=%s, ativo=%s
-                    WHERE id=%s
-                """, (
-                    payload["vendedor"], payload["vendedor_norm"], payload["cliente"], payload["cliente_norm"],
-                    payload["rota"], payload["rota_norm"], payload["visita_periodicidade"], payload["dia_semana"],
-                    payload["data_base"], payload["observacao"], payload["ativo"], _as_int(similar.get("id"), 0)
-                ))
-                atualizados += 1
-            elif similar_arquivo and force:
-                ignorados += 1
-                continue
-            else:
-                cur.execute("""
-                    INSERT INTO pontos_venda (
-                        vendedor, vendedor_norm, cliente, cliente_norm, rota, rota_norm,
-                        visita_periodicidade, dia_semana, data_base, observacao, ativo
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                """, (
-                    payload["vendedor"], payload["vendedor_norm"], payload["cliente"], payload["cliente_norm"],
-                    payload["rota"], payload["rota_norm"], payload["visita_periodicidade"], payload["dia_semana"],
-                    payload["data_base"], payload["observacao"], payload["ativo"]
-                ))
-                inseridos += 1
-        conn.commit()
-        return {"inseridos": inseridos, "atualizados": atualizados, "ignorados": ignorados, "duplicados": duplicados}
-    finally:
-        cur.close()
-        conn.close()
-
-@app.route("/api/pontos_venda/importar_csv", methods=["POST"])
-def importar_pontos_venda_csv():
-    file_storage = request.files.get("arquivo") or request.files.get("csv")
-    force = _as_bool(request.form.get("force"), False)
-    if not file_storage or not getattr(file_storage, "filename", ""):
-        return jsonify({"erro": "envie um arquivo CSV"}), 400
-    try:
-        texto, _, _ = _carregar_csv_texto_fonte(file_storage)
-        rows = _pontos_venda_ler_csv_texto(texto)
-        if not rows:
-            return jsonify({"erro": "csv sem linhas validas"}), 400
-        resultado = _pontos_venda_importar_csv_rows(rows, force=force)
-        if resultado["duplicados"] and not force:
-            return jsonify({"erro": "cadastros semelhantes encontrados", **resultado}), 409
-        return jsonify({"ok": True, **resultado})
-    except ValueError as exc:
-        return jsonify({"erro": str(exc)}), 400
-    except Exception as exc:
-        return jsonify({"erro": f"Falha ao importar pontos de venda: {str(exc)}"}), 500
-
-@app.route("/api/pontos_venda/relatorio", methods=["GET"])
-def relatorio_pontos_venda():
-    data_ref = _parse_data_br(_as_str(request.args.get("data_ref"))) if request.args.get("data_ref") else None
-    base = data_ref or datetime.date.today()
-    semana_inicio = base - datetime.timedelta(days=base.weekday())
-    semana_fim = semana_inicio + datetime.timedelta(days=6)
-    vendedor_filtro = _pv_texto_normalizado(request.args.get("vendedor"))
-    cliente_filtro = _pv_texto_normalizado(request.args.get("cliente"))
-    rota_filtro = _pv_texto_normalizado(request.args.get("rota"))
-    conn = get_conn()
-    cur = conn.cursor(dictionary=True)
-    cur.execute("""
-        SELECT id, vendedor, cliente, rota, visita_periodicidade, dia_semana, data_base, observacao, ativo, criado_em, atualizado_em
-        FROM pontos_venda
-        ORDER BY ativo DESC, vendedor ASC, cliente ASC, rota ASC, dia_semana ASC, id ASC
-    """)
-    rows = cur.fetchall() or []
-    cur.close()
-    conn.close()
-
-    itens = []
-    semanal = 0
-    quinzenal = 0
-    vendedores = set()
-    clientes = set()
-    rotas = set()
-    por_dia = {idx: [] for idx in range(7)}
-    for row in rows:
-        vendedor_norm = _pv_texto_normalizado(row.get("vendedor"))
-        cliente_norm = _pv_texto_normalizado(row.get("cliente"))
-        rota_norm = _pv_texto_normalizado(row.get("rota"))
-        if vendedor_filtro and vendedor_norm != vendedor_filtro:
-            continue
-        if cliente_filtro and cliente_norm != cliente_filtro:
-            continue
-        if rota_filtro and rota_norm != rota_filtro:
-            continue
-        if not _pv_visita_deve_ocorrer_na_semana(row, semana_inicio):
-            continue
-        periodicidade = _pv_periodicidade_normalizada(row.get("visita_periodicidade"))
-        if periodicidade == "quinzenal":
-            quinzenal += 1
-        else:
-            semanal += 1
-        vendedores.add(row.get("vendedor"))
-        clientes.add(row.get("cliente"))
-        rotas.add(row.get("rota"))
-        dia_semana = _pv_dia_semana_normalizado(row.get("dia_semana"))
-        visita_em = _pv_data_visita_na_semana(row, semana_inicio)
-        item = _pv_publico_row(row) | {
-            "visita_em": _fmt_date(visita_em),
-        }
-        itens.append(item)
-        if dia_semana is not None:
-            por_dia[dia_semana].append(item)
-
-    itens.sort(key=lambda item: (_as_int(item.get("dia_semana"), 0), _as_str(item.get("vendedor")), _as_str(item.get("cliente")), _as_str(item.get("rota"))))
-    dias = [{
-        "dia_semana": idx,
-        "dia_semana_label": PONTOS_VENDA_DIAS_SEMANA[idx],
-        "itens": por_dia[idx],
-        "total": len(por_dia[idx]),
-    } for idx in range(7) if por_dia[idx]]
-    return jsonify({
-        "resumo": {
-            "total": len(itens),
-            "semanal": semanal,
-            "quinzenal": quinzenal,
-            "vendedores": len(vendedores),
-            "clientes": len(clientes),
-            "rotas": len(rotas),
-        },
-        "filtros": {
-            "data_ref": _fmt_date(base),
-            "semana_inicio": _fmt_date(semana_inicio),
-            "semana_fim": _fmt_date(semana_fim),
-            "vendedor": vendedor_filtro,
-            "cliente": cliente_filtro,
-            "rota": rota_filtro,
-        },
-        "itens": itens,
-        "dias": dias,
     })
 
 @app.route("/api/comissao/lancamentos", methods=["GET"])
@@ -17665,391 +9025,18 @@ def _build_relatorio_comissao_pdf(rel, filtro_cod=0, filtro_entregador=""):
     doc.build(elementos)
     return arquivo
 
-
-def _abastecimento_critico_data_hora(valor):
-    data = _abastecimento_xml_data(valor)
-    if data:
-        return data.strftime("%d/%m/%Y %H:%M:%S")
-    return _as_str(valor) or "-"
-
-
-def _coletar_abastecimentos_criticos(cur, filtros=None):
-    filtros = filtros or {}
-    where = [
-        "LOWER(COALESCE(v.status, '')) = 'pendente'",
-        """(
-            LOWER(COALESCE(v.vinculacao_origem, '')) = 'placa_similar'
-            OR TRIM(COALESCE(v.placa_xml, '')) = ''
-            OR LOWER(COALESCE(v.motivo, '')) LIKE '%km do xml incompativel%'
-        )""",
-    ]
-    params = []
-    data_expr = (
-        "COALESCE(DATE(LEFT(x.data_emissao, 10)), DATE(v.atualizado_em))"
-    )
-    if filtros.get("data_inicio"):
-        where.append(f"{data_expr} >= %s")
-        params.append(filtros["data_inicio"])
-    if filtros.get("data_fim"):
-        where.append(f"{data_expr} <= %s")
-        params.append(filtros["data_fim"])
-
-    cur.execute(
-        f"""
-        SELECT
-            v.id,
-            v.chave_nfe,
-            v.placa_xml,
-            v.vinculacao_origem,
-            v.motivo,
-            v.atualizado_em,
-            x.posto_nome,
-            x.data_emissao,
-            x.km_final,
-            x.valor_produto,
-            x.valor_total,
-            vei.nome AS veiculo_nome,
-            vei.placa AS veiculo_placa,
-            vei.km_atual AS veiculo_km_atual
-        FROM abastecimento_xml_vinculos v
-        LEFT JOIN importar_xml_abastecimentos x
-            ON x.id = v.importar_xml_abastecimento_id
-        LEFT JOIN veiculos vei
-            ON vei.id = v.veiculo_id
-        WHERE {" AND ".join(where)}
-        ORDER BY
-            COALESCE(NULLIF(TRIM(x.posto_nome), ''), 'Posto não informado'),
-            COALESCE(x.data_emissao, v.atualizado_em) DESC,
-            v.id DESC
-        """,
-        tuple(params),
-    )
-    categorias = {
-        "placas_similares": [],
-        "sem_placa": [],
-        "km_incompativel": [],
-    }
-    for row in cur.fetchall() or []:
-        item = {
-            **row,
-            "posto": _as_str(row.get("posto_nome")) or "Posto não informado",
-            "chave_xml": _normalizar_chave_acesso_nfe(
-                row.get("chave_nfe")
-            ),
-            "valor": _abastecimento_xml_valor(row),
-            "data_hora": _abastecimento_critico_data_hora(
-                row.get("data_emissao") or row.get("atualizado_em")
-            ),
-        }
-        placa_xml = _abastecimento_xml_placa_normalizada(
-            row.get("placa_xml")
-        )
-        origem = _as_str(row.get("vinculacao_origem")).lower()
-        motivo = _as_str(row.get("motivo")).lower()
-        if origem == "placa_similar":
-            categorias["placas_similares"].append(item)
-        if not placa_xml or "xml sem placa" in motivo:
-            categorias["sem_placa"].append(item)
-        if "km do xml incompativel" in motivo:
-            categorias["km_incompativel"].append(item)
-    return categorias
-
-
-def _agrupar_abastecimentos_criticos_por_posto(rows):
-    grupos = defaultdict(list)
-    for row in rows or []:
-        grupos[_as_str(row.get("posto")) or "Posto não informado"].append(
-            row
-        )
-    return [
-        (posto, grupos[posto])
-        for posto in sorted(
-            grupos,
-            key=lambda valor: _normalizar_nome_local(valor),
-        )
-    ]
-
-
-def _build_abastecimentos_criticos_pdf(categorias, filtros=None):
-    filtros = filtros or {}
-    stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    arquivo = os.path.join(
-        "/tmp",
-        f"abastecimentos_criticos_{stamp}.pdf",
-    )
-    doc = SimpleDocTemplate(
-        arquivo,
-        pagesize=landscape(A4),
-        topMargin=92,
-        leftMargin=24,
-        rightMargin=24,
-        bottomMargin=38,
-        title="Relatório crítico de abastecimentos",
-        author="Bebidas Rio Branco",
-    )
-    styles = getSampleStyleSheet()
-    body_style = styles["BodyText"].clone("AbastecimentosCriticosBody")
-    body_style.fontSize = 7.5
-    body_style.leading = 9
-    posto_style = styles["Heading3"].clone("AbastecimentosCriticosPosto")
-    posto_style.fontSize = 10
-    posto_style.leading = 12
-    posto_style.textColor = colors.HexColor("#1f4e78")
-    posto_style.spaceBefore = 5
-    posto_style.spaceAfter = 4
-    emissao = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-
-    def cabecalho_rodape(canvas, doc_obj):
-        canvas.saveState()
-        largura_pagina, altura_pagina = doc_obj.pagesize
-        logo_path = os.path.join(BASE_DIR, "logo.png")
-        if os.path.isfile(logo_path):
-            try:
-                canvas.drawImage(
-                    logo_path,
-                    doc_obj.leftMargin,
-                    altura_pagina - 75,
-                    width=52,
-                    height=52,
-                    preserveAspectRatio=True,
-                    mask="auto",
-                )
-            except Exception:
-                pass
-        texto_x = doc_obj.leftMargin + 62
-        canvas.setFillColor(colors.HexColor("#1f2937"))
-        canvas.setFont("Helvetica-Bold", 11)
-        canvas.drawString(texto_x, altura_pagina - 34, "Bebidas Rio Branco")
-        canvas.setFont("Helvetica", 7)
-        canvas.drawString(
-            texto_x,
-            altura_pagina - 46,
-            "CNPJ: 20.984.401/0001-30",
-        )
-        canvas.drawString(
-            texto_x,
-            altura_pagina - 57,
-            "Rua João Nelson Arcipretti, 278 - Centro, Astorga - PR",
-        )
-        canvas.drawString(
-            texto_x,
-            altura_pagina - 68,
-            "refrigeranteriobranco.com.br | contato@refrigeranteriobranco.com.br",
-        )
-        canvas.setStrokeColor(colors.HexColor("#1f4e78"))
-        canvas.setLineWidth(0.8)
-        canvas.line(
-            doc_obj.leftMargin,
-            altura_pagina - 79,
-            largura_pagina - doc_obj.rightMargin,
-            altura_pagina - 79,
-        )
-
-        canvas.setStrokeColor(colors.HexColor("#cbd5e1"))
-        canvas.line(
-            doc_obj.leftMargin,
-            28,
-            largura_pagina - doc_obj.rightMargin,
-            28,
-        )
-        canvas.setFillColor(colors.HexColor("#475569"))
-        canvas.setFont("Helvetica", 7)
-        canvas.drawString(
-            doc_obj.leftMargin,
-            17,
-            "Bebidas Rio Branco - Gestão de Frota",
-        )
-        canvas.drawRightString(
-            largura_pagina - doc_obj.rightMargin,
-            17,
-            f"Página {doc_obj.page} | Emitido em {emissao}",
-        )
-        canvas.restoreState()
-
-    def tabela(colunas, larguras, registros, montar_linha):
-        dados = [
-            [
-                Paragraph(f"<b>{_pdf_escape(coluna)}</b>", body_style)
-                for coluna in colunas
-            ]
-        ]
-        for registro in registros:
-            dados.append(
-                [
-                    Paragraph(_pdf_escape(valor), body_style)
-                    for valor in montar_linha(registro)
-                ]
-            )
-        table = Table(
-            dados,
-            repeatRows=1,
-            colWidths=larguras,
-            hAlign="LEFT",
-        )
-        table.setStyle(
-            TableStyle(
-                [
-                    (
-                        "BACKGROUND",
-                        (0, 0),
-                        (-1, 0),
-                        colors.HexColor("#5b9bd5"),
-                    ),
-                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                    (
-                        "GRID",
-                        (0, 0),
-                        (-1, -1),
-                        0.35,
-                        colors.HexColor("#cbd5e1"),
-                    ),
-                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                    ("LEFTPADDING", (0, 0), (-1, -1), 4),
-                    ("RIGHTPADDING", (0, 0), (-1, -1), 4),
-                    ("TOPPADDING", (0, 0), (-1, -1), 4),
-                    ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-                    (
-                        "ROWBACKGROUNDS",
-                        (0, 1),
-                        (-1, -1),
-                        [colors.white, colors.HexColor("#eef5fb")],
-                    ),
-                ]
-            )
-        )
-        return table
-
-    def contagem_label(quantidade):
-        return f"{quantidade} registro" if quantidade == 1 else f"{quantidade} registros"
-
-    secoes = [
-        (
-            "Placas similares",
-            categorias.get("placas_similares") or [],
-            [
-                "Placa digitada no XML",
-                "Placa similar cadastrada",
-                "Número do veículo",
-                "Data e hora",
-            ],
-            [190, 190, 150, 160],
-            lambda row: [
-                _as_str(row.get("placa_xml")) or "-",
-                _as_str(row.get("veiculo_placa")) or "-",
-                _as_str(row.get("veiculo_nome")) or "-",
-                row.get("data_hora") or "-",
-            ],
-        ),
-        (
-            "Registros sem placa",
-            categorias.get("sem_placa") or [],
-            ["Chave do XML", "Valor", "Data e hora"],
-            [430, 120, 160],
-            lambda row: [
-                _as_str(row.get("chave_xml")) or "-",
-                _fmt_money_br(row.get("valor")),
-                row.get("data_hora") or "-",
-            ],
-        ),
-        (
-            "Registros com KM incompatível",
-            categorias.get("km_incompativel") or [],
-            [
-                "Placa",
-                "Número do veículo",
-                "KM do XML",
-                "KM atual",
-                "Chave do XML",
-                "Valor",
-                "Data e hora",
-            ],
-            [72, 88, 70, 75, 245, 80, 110],
-            lambda row: [
-                _as_str(row.get("placa_xml")) or "-",
-                _as_str(row.get("veiculo_nome")) or "-",
-                str(_as_int(row.get("km_final"), 0)),
-                str(_as_int(row.get("veiculo_km_atual"), 0)),
-                _as_str(row.get("chave_xml")) or "-",
-                _fmt_money_br(row.get("valor")),
-                row.get("data_hora") or "-",
-            ],
-        ),
-    ]
-
-    elementos = []
-    filtros_resumo = filtros.get("resumo") or ["Período: todos"]
-    for indice, (
-        titulo,
-        registros,
-        colunas,
-        larguras,
-        montar_linha,
-    ) in enumerate(secoes):
-        if indice:
-            elementos.append(PageBreak())
-        elementos.append(
-            Paragraph(
-                f"Relatório crítico de abastecimentos - {_pdf_escape(titulo)}",
-                styles["Heading2"],
-            )
-        )
-        elementos.append(
-            Paragraph(
-                _pdf_escape(
-                    " | ".join(
-                        [
-                            *filtros_resumo,
-                            f"Total: {contagem_label(len(registros))}",
-                        ]
-                    )
-                ),
-                styles["Normal"],
-            )
-        )
-        elementos.append(Spacer(1, 10))
-        grupos = _agrupar_abastecimentos_criticos_por_posto(registros)
-        if not grupos:
-            elementos.append(
-                Paragraph(
-                    "Nenhum registro crítico encontrado no período.",
-                    styles["Normal"],
-                )
-            )
-            continue
-        for posto, registros_posto in grupos:
-            elementos.append(
-                Paragraph(
-                    (
-                        f"Posto: {_pdf_escape(posto)} "
-                        f"({contagem_label(len(registros_posto))})"
-                    ),
-                    posto_style,
-                )
-            )
-            elementos.append(
-                tabela(
-                    colunas,
-                    larguras,
-                    registros_posto,
-                    montar_linha,
-                )
-            )
-            elementos.append(Spacer(1, 8))
-
-    doc.build(
-        elementos,
-        onFirstPage=cabecalho_rodape,
-        onLaterPages=cabecalho_rodape,
-    )
-    return arquivo
-
 def _vendas_config_defaults():
     return {
         "habilitado": True,
         "source_type": "csv_relatorios_dir",
         "csv_dir": VENDAS_RELATORIOS_DIR,
         "active_cache_id": "",
+        "firebird_host": "",
+        "firebird_port": 3050,
+        "firebird_database": "",
+        "firebird_user": "",
+        "firebird_password": "",
+        "firebird_query": "",
         "updated_at": None,
     }
 
@@ -18061,9 +9048,15 @@ def _vendas_config_publico(data=None):
             "source_type": _as_str(data.get("source_type")).lower() or "csv_relatorios_dir",
             "csv_dir": _as_str(data.get("csv_dir")) or VENDAS_RELATORIOS_DIR,
             "active_cache_id": _as_str(data.get("active_cache_id")),
+            "firebird_host": _as_str(data.get("firebird_host")),
+            "firebird_port": _as_int(data.get("firebird_port"), 3050),
+            "firebird_database": _as_str(data.get("firebird_database")),
+            "firebird_user": _as_str(data.get("firebird_user")),
+            "firebird_password": _as_str(data.get("firebird_password")),
+            "firebird_query": _as_str(data.get("firebird_query")),
             "updated_at": _fmt_dt(data.get("updated_at")),
         })
-    if base["source_type"] != "csv_relatorios_dir":
+    if base["source_type"] not in ("csv_relatorios_dir", "firebird"):
         base["source_type"] = "csv_relatorios_dir"
     return base
 
@@ -18103,10 +9096,7 @@ def _vendas_db_list_imports():
         cur = conn.cursor(dictionary=True)
         cur.execute("""
             SELECT id, source_type, source_path, source_name, source_size, source_mtime,
-                   source_signature, rows_importadas, status, ativo,
-                   bonificacoes_cache_json, variacao_preco_cache_json,
-                   dashboard_vendas_json, dashboard_vendas_painel_json,
-                   importado_em, updated_at
+                   source_signature, rows_importadas, status, ativo, importado_em, updated_at
             FROM vendas_relatorios_importados
             ORDER BY ativo DESC, importado_em DESC, id DESC
         """)
@@ -18134,10 +9124,7 @@ def _vendas_db_fetch_import(cache_id):
         cur = conn.cursor(dictionary=True)
         cur.execute("""
             SELECT id, source_type, source_path, source_name, source_size, source_mtime,
-                   source_signature, rows_importadas, status, ativo,
-                   bonificacoes_cache_json, variacao_preco_cache_json,
-                   dashboard_vendas_json, dashboard_vendas_painel_json,
-                   importado_em, updated_at
+                   source_signature, rows_importadas, status, ativo, importado_em, updated_at
             FROM vendas_relatorios_importados
             WHERE id=%s
             LIMIT 1
@@ -18170,10 +9157,7 @@ def _vendas_db_find_import(source_signature="", source_path=""):
         if source_signature:
             cur.execute("""
                 SELECT id, source_type, source_path, source_name, source_size, source_mtime,
-                       source_signature, rows_importadas, status, ativo,
-                       bonificacoes_cache_json, variacao_preco_cache_json,
-                       dashboard_vendas_json, dashboard_vendas_painel_json,
-                       importado_em, updated_at
+                       source_signature, rows_importadas, status, ativo, importado_em, updated_at
                 FROM vendas_relatorios_importados
                 WHERE source_signature=%s
                 ORDER BY importado_em DESC
@@ -18182,14 +9166,10 @@ def _vendas_db_find_import(source_signature="", source_path=""):
             row = cur.fetchone()
             if row:
                 return _vendas_db_row_to_entry(row)
-            return None
         if source_path_abs:
             cur.execute("""
                 SELECT id, source_type, source_path, source_name, source_size, source_mtime,
-                       source_signature, rows_importadas, status, ativo,
-                       bonificacoes_cache_json, variacao_preco_cache_json,
-                       dashboard_vendas_json, dashboard_vendas_painel_json,
-                       importado_em, updated_at
+                       source_signature, rows_importadas, status, ativo, importado_em, updated_at
                 FROM vendas_relatorios_importados
                 WHERE source_path=%s
                 ORDER BY importado_em DESC
@@ -18278,96 +9258,11 @@ def _vendas_db_upsert_import_meta(entry):
                 cur.close()
         except Exception:
             pass
-
-def _vendas_db_update_import_caches(cache_id, bonificacoes_json=None, variacao_preco_json=None, mix_embalagens_json=None, dashboard_vendas_json=None, dashboard_vendas_painel_json=None):
-    cache_id = _as_str(cache_id)
-    if not cache_id:
-        return
-    sets = []
-    params = []
-    if bonificacoes_json is not None:
-        sets.append("bonificacoes_cache_json=%s")
-        params.append(bonificacoes_json)
-    if variacao_preco_json is not None:
-        sets.append("variacao_preco_cache_json=%s")
-        params.append(variacao_preco_json)
-    if mix_embalagens_json is not None:
-        sets.append("mix_embalagens_cache_json=%s")
-        params.append(mix_embalagens_json)
-    if dashboard_vendas_json is not None:
-        sets.append("dashboard_vendas_json=%s")
-        params.append(dashboard_vendas_json)
-    if dashboard_vendas_painel_json is not None:
-        sets.append("dashboard_vendas_painel_json=%s")
-        params.append(dashboard_vendas_painel_json)
-    if not sets:
-        return
-    sets.append("updated_at=NOW()")
-    conn = None
-    cur = None
-    try:
-        conn = get_conn()
-        cur = conn.cursor()
-        cur.execute(
-            f"UPDATE vendas_relatorios_importados SET {', '.join(sets)} WHERE id=%s",
-            tuple(params + [cache_id]),
-        )
-        conn.commit()
-    finally:
-        try:
-            if cur:
-                cur.close()
-        except Exception:
-            pass
         try:
             if conn:
                 conn.close()
         except Exception:
             pass
-
-def _vendas_db_import_cache_json(cache_id, campo):
-    cache_id = _as_str(cache_id)
-    campo = _as_str(campo)
-    if not cache_id or not campo:
-        return None
-    if campo not in {
-        "bonificacoes_cache_json",
-        "variacao_preco_cache_json",
-        "mix_embalagens_cache_json",
-        "dashboard_vendas_json",
-        "dashboard_vendas_painel_json",
-    }:
-        return None
-    conn = None
-    cur = None
-    raw = None
-    try:
-        conn = get_conn()
-        cur = conn.cursor()
-        cur.execute(
-            f"SELECT {campo} FROM vendas_relatorios_importados WHERE id=%s LIMIT 1",
-            (_as_str(cache_id),),
-        )
-        row = cur.fetchone()
-        raw = row[0] if row else None
-    finally:
-        try:
-            if cur:
-                cur.close()
-        except Exception:
-            pass
-        try:
-            if conn:
-                conn.close()
-        except Exception:
-            pass
-    if not raw:
-        return None
-    try:
-        payload = json.loads(raw)
-    except Exception:
-        return None
-    return payload if isinstance(payload, dict) else None
 
 def _vendas_db_delete_import(cache_id):
     cache_id = _as_str(cache_id)
@@ -18392,9 +9287,6 @@ def _vendas_db_delete_import(cache_id):
                 conn.close()
         except Exception:
             pass
-    _vendas_relatorio_cache_limpar(cache_id)
-    _vendas_bonificacoes_cache_limpar(cache_id)
-    _vendas_mix_embalagens_cache_limpar(cache_id)
 
 def _vendas_cache_set_active(cache_id):
     cfg = _carregar_vendas_config()
@@ -18402,24 +9294,30 @@ def _vendas_cache_set_active(cache_id):
     payload = dict(cfg)
     payload["active_cache_id"] = cache_id
     _vendas_db_set_active_flag(cache_id)
-    _vendas_relatorio_cache_limpar()
-    _vendas_bonificacoes_cache_limpar()
-    _vendas_mix_embalagens_cache_limpar()
     return _persistir_vendas_config(payload)
+
+def _vendas_cache_registry_load():
+    data = _load_json_file(VENDAS_CACHE_INDEX_FILE, {"imports": []}) or {"imports": []}
+    imports = data.get("imports")
+    data["imports"] = imports if isinstance(imports, list) else []
+    return data
+
+def _vendas_cache_registry_save(data):
+    payload = data if isinstance(data, dict) else {"imports": []}
+    payload["imports"] = payload.get("imports") if isinstance(payload.get("imports"), list) else []
+    _save_json_file(VENDAS_CACHE_INDEX_FILE, payload)
 
 def _vendas_cache_entry_publico(entry):
     e = entry if isinstance(entry, dict) else {}
-    cache_id = _as_str(e.get("id"))
-    cache_path = _vendas_bonificacoes_cache_path(cache_id)
     return {
-        "id": cache_id,
+        "id": _as_str(e.get("id")),
         "source_type": _as_str(e.get("source_type")),
         "source_path": _as_str(e.get("source_path")),
         "source_name": os.path.basename(_as_str(e.get("source_path"))) if _as_str(e.get("source_path")) else "",
         "source_size": _as_int(e.get("source_size"), 0),
         "source_mtime": _fmt_dt(e.get("source_mtime")),
-        "cache_path": cache_path,
-        "cache_exists": bool(cache_path and os.path.exists(cache_path)),
+        "cache_path": _as_str(e.get("cache_path")),
+        "cache_exists": bool(_as_str(e.get("cache_path")) and os.path.exists(_as_str(e.get("cache_path")))),
         "rows_importadas": _as_int(e.get("rows_importadas"), 0),
         "importado_em": _fmt_dt(e.get("importado_em")),
         "updated_at": _fmt_dt(e.get("updated_at")),
@@ -18432,8 +9330,7 @@ def _vendas_source_signature(path):
     if not path or not os.path.exists(path):
         return ""
     stat = os.stat(path)
-    regras_assinatura = _vendas_import_regras_assinatura()
-    return f"{os.path.abspath(path)}|{int(stat.st_mtime)}|{int(stat.st_size)}|{regras_assinatura}"
+    return f"{os.path.abspath(path)}|{int(stat.st_mtime)}|{int(stat.st_size)}"
 
 def _vendas_csv_nome_valido(nome):
     texto = _as_str(nome)
@@ -18449,13 +9346,19 @@ def _vendas_csv_nome_valido(nome):
 def _vendas_source_descriptor(cfg=None):
     cfg = cfg or _carregar_vendas_config()
     source_type = _as_str(cfg.get("source_type")).lower() or "csv_relatorios_dir"
-    if source_type != "csv_relatorios_dir":
-        source_type = "csv_relatorios_dir"
+    if source_type == "firebird":
+        return {
+            "source_type": "firebird",
+            "ready": False,
+            "message": "Integracao Firebird ainda nao implementada; configuracao reservada para a proxima etapa.",
+            "path": "",
+            "signature": "",
+        }
 
     csv_dir = _as_str(cfg.get("csv_dir")) or VENDAS_RELATORIOS_DIR
     if not os.path.isdir(csv_dir):
         return {
-            "source_type": source_type,
+            "source_type": "csv_relatorios_dir",
             "ready": False,
             "message": f"Diretorio de relatorios nao encontrado: {csv_dir}",
             "path": "",
@@ -18464,22 +9367,15 @@ def _vendas_source_descriptor(cfg=None):
 
     candidatos = []
     for nome in os.listdir(csv_dir):
-        path = os.path.join(csv_dir, nome)
-        if os.path.isfile(path) and _vendas_csv_nome_valido(nome):
-            candidatos.append(path)
-    if not candidatos:
-        for raiz, _, arquivos in os.walk(csv_dir):
-            for nome in arquivos:
-                if not _vendas_csv_nome_valido(nome):
-                    continue
-                path = os.path.join(raiz, nome)
-                if os.path.isfile(path):
-                    candidatos.append(path)
+        if _vendas_csv_nome_valido(nome):
+            path = os.path.join(csv_dir, nome)
+            if os.path.isfile(path):
+                candidatos.append(path)
     if not candidatos:
         return {
-            "source_type": source_type,
+            "source_type": "csv_relatorios_dir",
             "ready": False,
-            "message": f"Nenhum CSV valido encontrado em {csv_dir}. A busca tambem percorre subpastas, mas arquivos auxiliares como :Zone.Identifier sao ignorados.",
+            "message": f"Nenhum CSV valido encontrado em {csv_dir}. Arquivos auxiliares como :Zone.Identifier sao ignorados.",
             "path": "",
             "signature": "",
         }
@@ -18487,7 +9383,7 @@ def _vendas_source_descriptor(cfg=None):
     path = candidatos[0]
     stat = os.stat(path)
     return {
-        "source_type": source_type,
+        "source_type": "csv_relatorios_dir",
         "ready": True,
         "message": "",
         "path": path,
@@ -18496,6 +9392,17 @@ def _vendas_source_descriptor(cfg=None):
         "mtime": _fmt_dt(datetime.datetime.fromtimestamp(stat.st_mtime)),
         "signature": _vendas_source_signature(path),
     }
+
+def _vendas_cache_find_entry(source_signature="", source_path=""):
+    registry = _vendas_cache_registry_load()
+    source_signature = _as_str(source_signature)
+    source_path_abs = os.path.abspath(_as_str(source_path)) if _as_str(source_path) else ""
+    for entry in registry.get("imports", []):
+        if source_signature and _as_str(entry.get("source_signature")) == source_signature:
+            return entry
+        if source_path_abs and os.path.abspath(_as_str(entry.get("source_path"))) == source_path_abs:
+            return entry
+    return None
 
 def _vendas_cache_find_by_id(cache_id):
     return _vendas_db_fetch_import(cache_id)
@@ -18511,48 +9418,9 @@ def _vendas_cache_imports_publicos(cfg=None):
     return itens
 
 def _vendas_normalizar_linha(raw):
-    vendedor_raw = ""
-    for campo in (
-        "Vendedor Pedido",
-        "Vendedor Cadastro",
-        "Supervisor Pedido",
-        "Supervisor Cadastro",
-    ):
-        valor = _as_str(raw.get(campo))
-        if valor:
-            vendedor_raw = valor
-            break
-    vendedor_info = _split_codigo_nome(vendedor_raw)
+    vendedor_info = _split_codigo_nome(raw.get("Vendedor Pedido"))
     vendedor_key = " - ".join(part for part in (vendedor_info["codigo"], vendedor_info["nome"]) if part) or "SEM VENDEDOR"
-    caixa_fisica = _as_float_br(raw.get("Caixa Física"), 0.0)
-    bonificacao = 0.0
-    for campo in (
-        "Bonificação",
-        "Bonificacao",
-        "Valor Bonificação",
-        "Valor Bonificacao",
-        "Valor da Bonificação",
-        "Valor da Bonificacao",
-        "Bonif",
-        "Valor Bonif",
-    ):
-        if campo in raw and _as_str(raw.get(campo)) != "":
-            bonificacao = _as_float_br(raw.get(campo), 0.0)
-            break
-    tab_venda_raw = None
-    for campo in (
-        "Tab Venda",
-        "Tab_Venda",
-        "TabVenda",
-        "TAB VENDA",
-        "TAB_VENDA",
-        "Tab de Venda",
-    ):
-        if campo in raw and _as_str(raw.get(campo)) != "":
-            tab_venda_raw = raw.get(campo)
-            break
-    tab_venda = _vendas_tab_venda_normalizada(tab_venda_raw, raw.get("Tipo Operação"), raw.get("Condição"))
-    row = {
+    return {
         "data": _fmt_date(_parse_data_br(raw.get("Data"))) or _as_str(raw.get("Data")),
         "vendedor_key": vendedor_key,
         "vendedor_codigo": vendedor_info["codigo"],
@@ -18563,25 +9431,17 @@ def _vendas_normalizar_linha(raw):
         "produto": _as_str(raw.get("Produto")),
         "tipo_operacao": _as_str(raw.get("Tipo Operação")),
         "condicao": _as_str(raw.get("Condição")),
-        "tab_venda": tab_venda,
         "quantidade": _as_float_br(raw.get("Quantidade"), 0.0),
         "litros": _as_float_br(raw.get("Litro"), 0.0),
-        "caixas": caixa_fisica,
-        "caixa_fisica": caixa_fisica,
+        "caixas": _as_float_br(raw.get("Caixa Física"), 0.0),
         "valor_venda": _as_float_br(raw.get("Valor Venda"), 0.0),
         "valor_devolvido": _as_float_br(raw.get("Valor Devolvido"), 0.0),
-        "bonificacao": bonificacao,
         "quantidade_devolvida": _as_float_br(raw.get("Quantidade Devolvida"), 0.0),
         "litro_devolvido": _as_float_br(raw.get("Litro Devolvido"), 0.0),
         "caixa_devolvida": _as_float_br(raw.get("Caixa Fisica Devolvida"), 0.0),
     }
-    if tab_venda == 91:
-        if row["valor_venda"] > 0 and row["bonificacao"] <= 0:
-            row["bonificacao"] = row["valor_venda"]
-        row["valor_venda"] = 0.0
-    return row
 
-def _vendas_importacao_meta(source_path, source_type="csv_relatorios_dir"):
+def _vendas_importar_csv_para_cache(source_path, source_type="csv_relatorios_dir"):
     source_path = _as_str(source_path)
     if not source_path or not os.path.exists(source_path):
         raise FileNotFoundError("Arquivo de vendas nao encontrado para importacao.")
@@ -18604,21 +9464,12 @@ def _vendas_importacao_meta(source_path, source_type="csv_relatorios_dir"):
         "status": "importando",
         "ativo": False,
     }
-    return cache_id, meta
-
-def _vendas_importar_csv_para_cache(source_path, source_type="csv_relatorios_dir"):
-    source_path = _as_str(source_path)
-    if not source_path or not os.path.exists(source_path):
-        raise FileNotFoundError("Arquivo de vendas nao encontrado para importacao.")
-
-    cache_id, meta = _vendas_importacao_meta(source_path, source_type)
     _vendas_db_upsert_import_meta(meta)
 
     conn = None
     cur = None
     total_rows = 0
     lote = []
-    regras_importacao = _vendas_import_regras_carregar()
 
     def _flush_rows():
         nonlocal lote, total_rows
@@ -18627,10 +9478,10 @@ def _vendas_importar_csv_para_cache(source_path, source_type="csv_relatorios_dir
         cur.executemany("""
             INSERT INTO vendas_relatorio_itens (
                 import_id, data_ref, data_texto, vendedor_key, vendedor_key_upper, vendedor_codigo,
-                vendedor_nome, numero_nf, cliente, cliente_norm, cidade, grupo_raw, grupo_norm, categoria_norm,
-                produto, tipo_operacao, condicao, tab_venda, quantidade, litros, caixas, caixa_fisica, valor_venda,
-                valor_devolvido, bonificacao, valor_liquido, quantidade_devolvida, litro_devolvido, caixa_devolvida
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                vendedor_nome, numero_nf, cliente, cliente_norm, cidade, produto, tipo_operacao,
+                condicao, quantidade, litros, caixas, valor_venda, valor_devolvido, valor_liquido,
+                quantidade_devolvida, litro_devolvido, caixa_devolvida
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """, lote)
         total_rows += len(lote)
         lote = []
@@ -18641,58 +9492,32 @@ def _vendas_importar_csv_para_cache(source_path, source_type="csv_relatorios_dir
         cur.execute("DELETE FROM vendas_relatorio_itens WHERE import_id=%s", (cache_id,))
         with _vendas_relatorio_open(source_path) as handle:
             leitor = csv.DictReader(handle, delimiter=";")
-            colunas_efetivas = _vendas_import_colunas_efetivas(leitor.fieldnames, regras_importacao)
-            for raw_bruto in leitor:
-                raw = _vendas_import_reter_colunas(raw_bruto, colunas_efetivas)
-                grupo_raw = _as_str(raw.get("Grupo"))
-                categoria_raw = _as_str(raw.get("Categoria"))
-                produto_raw = _as_str(raw.get("Produto"))
-                marca_raw = _as_str(raw.get("Marca"))
-                if _vendas_grupo_deve_descartar(grupo_raw, categoria_raw, produto_raw, regras_importacao):
-                    continue
-
+            for raw in leitor:
                 row = _vendas_normalizar_linha(raw)
-                grupo_norm = _vendas_grupo_normalizado(grupo_raw, categoria_raw, produto_raw, marca_raw, regras_importacao)
-                categoria_norm = grupo_norm or _vendas_texto_sem_acentos(categoria_raw).upper().strip()
-                valor_liquido = round(
-                    _as_float(row.get("valor_venda"), 0.0)
-                    - _as_float(row.get("valor_devolvido"), 0.0)
-                    - _as_float(row.get("bonificacao"), 0.0),
-                    2,
-                )
+                valor_liquido = round(_as_float(row.get("valor_venda"), 0.0) - _as_float(row.get("valor_devolvido"), 0.0), 2)
                 data_ref = _parse_data_br(row.get("data"))
                 vendedor_key = _as_str(row.get("vendedor_key")) or "SEM VENDEDOR"
                 cliente = _as_str(row.get("cliente"))
-                cliente_norm = _as_str(raw.get("Cliente"))[:255].strip().upper()
-                if not cliente_norm:
-                    cliente_norm = cliente.upper()
-                data_texto = _as_str(row.get("data"))
                 lote.append((
                     cache_id,
                     data_ref,
-                    data_texto,
+                    _as_str(row.get("data")),
                     vendedor_key,
                     vendedor_key.upper(),
                     _as_str(row.get("vendedor_codigo")),
                     _as_str(row.get("vendedor_nome")) or vendedor_key,
                     _as_str(row.get("numero_nf")),
                     cliente,
-                    cliente_norm,
+                    cliente.upper(),
                     _as_str(row.get("cidade")),
-                    grupo_raw,
-                    grupo_norm,
-                    categoria_norm,
                     _as_str(row.get("produto")),
                     _as_str(row.get("tipo_operacao")),
                     _as_str(row.get("condicao")),
-                    _as_int(row.get("tab_venda"), 0),
                     round(_as_float(row.get("quantidade"), 0.0), 3),
                     round(_as_float(row.get("litros"), 0.0), 3),
                     round(_as_float(row.get("caixas"), 0.0), 3),
-                    round(_as_float(row.get("caixa_fisica"), 0.0), 3),
                     round(_as_float(row.get("valor_venda"), 0.0), 2),
                     round(_as_float(row.get("valor_devolvido"), 0.0), 2),
-                    round(_as_float(row.get("bonificacao"), 0.0), 2),
                     valor_liquido,
                     round(_as_float(row.get("quantidade_devolvida"), 0.0), 3),
                     round(_as_float(row.get("litro_devolvido"), 0.0), 3),
@@ -18728,52 +9553,7 @@ def _vendas_importar_csv_para_cache(source_path, source_type="csv_relatorios_dir
     meta["status"] = "pronto"
     meta["updated_at"] = datetime.datetime.now()
     _vendas_db_upsert_import_meta(meta)
-    _vendas_relatorio_cache_limpar(cache_id)
     return _vendas_db_fetch_import(cache_id) or _vendas_db_row_to_entry(meta)
-
-def _vendas_importar_csv_assincrono(source_path, source_type="csv_relatorios_dir"):
-    source_path = _as_str(source_path)
-    if not source_path or not os.path.exists(source_path):
-        raise FileNotFoundError("Arquivo de vendas nao encontrado para importacao.")
-
-    cache_id, meta = _vendas_importacao_meta(source_path, source_type)
-
-    with _VENDAS_IMPORTANDO_LOCK:
-        if cache_id in _VENDAS_IMPORTANDO:
-            return cache_id, False
-        _VENDAS_IMPORTANDO.add(cache_id)
-
-    _vendas_db_upsert_import_meta(meta)
-
-    def _worker():
-        try:
-            entry = _vendas_importar_csv_para_cache(source_path, source_type)
-            if entry:
-                try:
-                    _vendas_cache_set_active(_as_str(entry.get("id")))
-                except Exception:
-                    pass
-                try:
-                    _vendas_bonificacoes_processar_cache_assincrono(_as_str(entry.get("id")))
-                except Exception:
-                    pass
-        except Exception as exc:
-            try:
-                app.logger.exception("falha ao importar cache de vendas %s", cache_id)
-            except Exception:
-                pass
-            _vendas_bonificacoes_cache_marcar_status(cache_id, "erro")
-            try:
-                print(f"[vendas-cache] erro na importacao async {cache_id}: {exc}")
-            except Exception:
-                pass
-        finally:
-            with _VENDAS_IMPORTANDO_LOCK:
-                _VENDAS_IMPORTANDO.discard(cache_id)
-
-    thread = threading.Thread(target=_worker, name=f"vendas-import-{cache_id}", daemon=True)
-    thread.start()
-    return cache_id, True
 
 def _vendas_salvar_upload_csv(file_storage):
     nome = secure_filename(getattr(file_storage, "filename", "") or "relatorio_vendas.csv") or "relatorio_vendas.csv"
@@ -18812,1572 +9592,22 @@ def _vendas_obter_cache_ativo(force_refresh=False):
         entry = _vendas_importar_csv_para_cache(source.get("path"), source.get("source_type"))
     return entry, source, cfg
 
-_VENDAS_RELATORIO_CACHE_LOCK = threading.Lock()
-_VENDAS_RELATORIO_CACHE = {}
-_VENDAS_RELATORIO_CACHE_TTL = 300
-_VENDAS_RELATORIO_CACHE_MAX = 24
-
-_VENDAS_BONIFICACOES_CACHE_LOCK = threading.Lock()
-_VENDAS_BONIFICACOES_CACHE = {}
-_VENDAS_MIX_EMBALAGENS_CACHE_LOCK = threading.Lock()
-_VENDAS_MIX_EMBALAGENS_CACHE = {}
-_VENDAS_BONIFICACOES_PROCESSANDO_LOCK = threading.Lock()
-_VENDAS_BONIFICACOES_PROCESSANDO = set()
-_VENDAS_DASHBOARD_PROCESSANDO_LOCK = threading.Lock()
-_VENDAS_DASHBOARD_PROCESSANDO = set()
-_VENDAS_BONIFICACOES_CACHE_VERSAO = 2
-_VENDAS_MIX_EMBALAGENS_CACHE_VERSAO = 2
-_VENDAS_IMPORTANDO_LOCK = threading.Lock()
-_VENDAS_IMPORTANDO = set()
-_VENDAS_AQUECIMENTO_CACHE_EXECUTADO = False
-_VENDAS_AQUECIMENTO_CACHE_LOCK = threading.Lock()
-_VENDAS_IMPORT_REGRAS_LOCK = threading.Lock()
-_VENDAS_IMPORT_REGRAS_CACHE = {"assinatura": "", "payload": None}
-
-_VENDAS_GRUPOS_NORMALIZADOS_PADRAO = [
-    {
-        "codigo": "001005",
-        "nome": "Pet600Ml",
-        "classe": "Descartaveis",
-        "chaves": {"001005", "001.005", "pet600", "pet 600", "pet600ml", "pet 600ml"},
-        "padroes": (r"\bPET\s*600\b", r"\bPET\s*600ML\b"),
-    },
-    {
-        "codigo": "001004",
-        "nome": "Pet2L",
-        "classe": "Descartaveis",
-        "chaves": {"001004", "001.004", "pet2l", "pet 2l", "pet2lt", "pet 2lt"},
-        "padroes": (r"\bPET\s*2L\b", r"\bPET\s*2LT\b", r"\b2LT\b"),
-    },
-    {
-        "codigo": "001006",
-        "nome": "Pet200Ml",
-        "classe": "Descartaveis",
-        "chaves": {"001006", "001.006", "pet200", "pet 200", "pet200ml", "pet 200ml"},
-        "padroes": (r"\bPET\s*200\b", r"\bPET\s*200ML\b"),
-    },
-    {
-        "codigo": "002001",
-        "nome": "Agua",
-        "classe": "Descartaveis",
-        "chaves": {"002001", "002.001", "agua", "agua mineral", "gfa 510", "gfa510", "510ml"},
-        "padroes": (r"\bAGUA\b", r"\bGFA\s*510\b", r"\b510ML\b"),
-    },
-    {
-        "codigo": "001001",
-        "nome": "Grf600Ml",
-        "classe": "Retornaveis",
-        "chaves": {"001001", "001.001", "grf600", "gfa 600", "gfa600", "600ml"},
-        "padroes": (r"\bGFA\s*600\b", r"\bGRF\s*600\b", r"\b600ML\b"),
-    },
-    {
-        "codigo": "001003",
-        "nome": "Grf200Ml",
-        "classe": "Retornaveis",
-        "chaves": {"001003", "001.003", "grf200", "gfa 200", "gfa200", "200ml"},
-        "padroes": (r"\bGFA\s*200\b", r"\bGRF\s*200\b", r"\b200ML\b"),
-    },
-]
-
-_VENDAS_IMPORT_COLUNAS_IGNORADAS_PADRAO = [
-    "de w - cy",
-    "marca - trim",
-    "distribuidor",
-    "supervisor pedido",
-    "vendedor pedido",
-    "vendedor cadastro",
-    "supervisor cadastro",
-    "rota",
-    "peso",
-    "valor custo",
-    "marca",
-    "tabela vendas",
-    "cfo",
-    "fantasia",
-    "fisjur",
-    "embalagem",
-    "ean",
-    "ncm",
-    "cia",
-    "meseano",
-    "bairro",
-    "qtd devolvido",
-    "litro devolvido",
-    "caixa fisica devolvida",
-    "valor devolvido",
-    "meta devolvida",
-    "meta quntidade",
-    "meta caixa",
-    "meta cobertura",
-    "meta per medio",
-    "vendedor 2",
-    "supervisor 2",
-    "rota 2",
-    "trim",
-]
-
-_VENDAS_IMPORT_COLUNAS_UTILIZADAS = [
-    "Data",
-    "Vendedor Pedido",
-    "Vendedor Cadastro",
-    "Supervisor Pedido",
-    "Supervisor Cadastro",
-    "Numero nf",
-    "Cliente",
-    "Cidade",
-    "Grupo",
-    "Categoria",
-    "Produto",
-    "Marca",
-    "Tipo Operacao",
-    "Condicao",
-    "Quantidade",
-    "Litro",
-    "Caixa Fisica",
-    "Valor Venda",
-    "Bonificacao",
-    "Valor Devolvido",
-    "Quantidade Devolvida",
-    "Litro Devolvido",
-    "Caixa Fisica Devolvida",
-]
-
-def _vendas_import_regras_assinatura():
-    if not os.path.exists(VENDAS_IMPORT_RULES_FILE):
+def _vendas_relatorio_csv_path():
+    if not os.path.isdir(VENDAS_RELATORIOS_DIR):
         return ""
-    stat = os.stat(VENDAS_IMPORT_RULES_FILE)
-    return f"{os.path.abspath(VENDAS_IMPORT_RULES_FILE)}|{int(stat.st_mtime)}|{int(stat.st_size)}"
-
-def _vendas_import_regras_padrao():
-    grupos = []
-    for item in _VENDAS_GRUPOS_NORMALIZADOS_PADRAO:
-        codigo = re.sub(r"\D+", "", _as_str(item.get("codigo")))[:6]
-        nome = _as_str(item.get("nome"))
-        grupos.append({
-            "codigo": codigo,
-            "codigo_exibicao": f"{codigo[:3]}.{codigo[3:]}" if len(codigo) == 6 else codigo,
-            "nome": nome,
-            "classe": _as_str(item.get("classe")),
-            "chaves": set(item.get("chaves") or set()),
-            "padroes": tuple(item.get("padroes") or ()),
-        })
-    return {
-        "arquivo": VENDAS_IMPORT_RULES_FILE,
-        "arquivo_relativo": "Relatorios/config-rel-vendas",
-        "arquivo_existe": os.path.exists(VENDAS_IMPORT_RULES_FILE),
-        "arquivo_atualizado_em": _fmt_dt(datetime.datetime.fromtimestamp(os.path.getmtime(VENDAS_IMPORT_RULES_FILE))) if os.path.exists(VENDAS_IMPORT_RULES_FILE) else "",
-        "carregado_de_arquivo": False,
-        "grupos": grupos,
-        "descartar_codigos": ["52", "003"],
-        "descartar_descricoes": ["MATERIAIS", "VASILHAMES"],
-        "descartar_registros": ["52 - Materiais", "003 - Vasilhames"],
-        "colunas_ignoradas": list(_VENDAS_IMPORT_COLUNAS_IGNORADAS_PADRAO),
-        "colunas_utilizadas": list(_VENDAS_IMPORT_COLUNAS_UTILIZADAS),
-    }
-
-def _vendas_import_regras_ler_arquivo():
-    if not os.path.exists(VENDAS_IMPORT_RULES_FILE):
-        return None
-    grupos = []
-    descartar_registros = []
-    colunas_ignoradas = []
-    secao = ""
-    classe = ""
-    try:
-        with open(VENDAS_IMPORT_RULES_FILE, "r", encoding="utf-8", errors="replace") as handle:
-            for raw in handle:
-                linha = _as_str(raw).strip()
-                if not linha:
-                    continue
-                limpa = linha.strip().strip("#").strip()
-                if not limpa:
-                    continue
-                chave = _vendas_texto_sem_acentos(limpa).casefold()
-                if chave == "grupos normalizar para":
-                    secao = "grupos"
-                    continue
-                if chave == "remover registros":
-                    secao = "descartar"
-                    continue
-                if chave == "remover colunas":
-                    secao = "colunas"
-                    continue
-                if secao == "grupos" and chave in {"descartaveis", "retornaveis"}:
-                    classe = limpa
-                    continue
-                if secao == "grupos":
-                    match = re.match(r"^(\d{3}[.\-]?\d{3})\s+(.+)$", limpa)
-                    if not match:
-                        continue
-                    codigo = re.sub(r"\D+", "", match.group(1))[:6]
-                    nome = _as_str(match.group(2)).strip(" -")
-                    if codigo and nome:
-                        grupos.append({"codigo": codigo, "nome": nome, "classe": classe})
-                    continue
-                if secao == "descartar":
-                    descartar_registros.append(limpa)
-                    continue
-                if secao == "colunas":
-                    partes = [parte.strip(" .#\t") for parte in limpa.split(",")] if "," in limpa else [limpa.strip(" .#\t")]
-                    for parte in partes:
-                        if parte:
-                            colunas_ignoradas.append(parte)
-    except Exception:
-        return None
-    return {
-        "grupos": grupos,
-        "descartar_registros": descartar_registros,
-        "colunas_ignoradas": colunas_ignoradas,
-    }
-
-def _vendas_import_regras_carregar(force=False):
-    assinatura = _vendas_import_regras_assinatura()
-    with _VENDAS_IMPORT_REGRAS_LOCK:
-        if not force and _VENDAS_IMPORT_REGRAS_CACHE.get("assinatura") == assinatura:
-            payload = _VENDAS_IMPORT_REGRAS_CACHE.get("payload")
-            if isinstance(payload, dict):
-                return payload
-
-    payload = _vendas_import_regras_padrao()
-    grupos_map = {item.get("codigo"): dict(item) for item in payload.get("grupos") or []}
-    lido = _vendas_import_regras_ler_arquivo()
-    if isinstance(lido, dict):
-        payload["carregado_de_arquivo"] = True
-        for item in lido.get("grupos") or []:
-            codigo = re.sub(r"\D+", "", _as_str(item.get("codigo")))[:6]
-            if not codigo:
-                continue
-            atual = grupos_map.get(codigo, {
-                "codigo": codigo,
-                "codigo_exibicao": f"{codigo[:3]}.{codigo[3:]}" if len(codigo) == 6 else codigo,
-                "nome": "",
-                "classe": "",
-                "chaves": {codigo, f"{codigo[:3]}.{codigo[3:]}"},
-                "padroes": (),
-            })
-            atual["nome"] = _as_str(item.get("nome")) or _as_str(atual.get("nome"))
-            atual["classe"] = _as_str(item.get("classe")) or _as_str(atual.get("classe"))
-            grupos_map[codigo] = atual
-        if lido.get("descartar_registros"):
-            payload["descartar_registros"] = list(dict.fromkeys(_as_str(item) for item in lido.get("descartar_registros") if _as_str(item)))
-        if lido.get("colunas_ignoradas"):
-            payload["colunas_ignoradas"] = list(dict.fromkeys(_as_str(item) for item in lido.get("colunas_ignoradas") if _as_str(item)))
-
-    descartar_codigos = []
-    descartar_descricoes = []
-    for item in payload.get("descartar_registros") or []:
-        texto = _as_str(item).strip()
-        if not texto:
+    candidatos = []
+    for nome in os.listdir(VENDAS_RELATORIOS_DIR):
+        nome_upper = nome.upper()
+        if not nome_upper.endswith(".CSV"):
             continue
-        match = re.match(r"^([0-9]{2,3})\s*-\s*(.+)$", texto)
-        if match:
-            descartar_codigos.append(match.group(1))
-            descartar_descricoes.append(_vendas_texto_sem_acentos(match.group(2)).upper().strip())
-        else:
-            numeros = re.sub(r"\D+", "", texto)
-            if numeros:
-                descartar_codigos.append(numeros)
-            descartar_descricoes.append(_vendas_texto_sem_acentos(texto).upper().strip())
-    payload["descartar_codigos"] = list(dict.fromkeys(descartar_codigos or payload.get("descartar_codigos") or []))
-    payload["descartar_descricoes"] = list(dict.fromkeys(descartar_descricoes or payload.get("descartar_descricoes") or []))
-
-    ordem_codigos = [re.sub(r"\D+", "", _as_str(item.get("codigo")))[:6] for item in (lido or {}).get("grupos") or [] if _as_str(item.get("codigo"))]
-    if not ordem_codigos:
-        ordem_codigos = [item.get("codigo") for item in payload.get("grupos") or [] if item.get("codigo")]
-    grupos = []
-    vistos = set()
-    for codigo in ordem_codigos:
-        item = grupos_map.get(codigo)
-        if not item:
-            continue
-        grupos.append(item)
-        vistos.add(codigo)
-    for codigo, item in grupos_map.items():
-        if codigo in vistos:
-            continue
-        grupos.append(item)
-    payload["grupos"] = grupos
-
-    with _VENDAS_IMPORT_REGRAS_LOCK:
-        _VENDAS_IMPORT_REGRAS_CACHE["assinatura"] = assinatura
-        _VENDAS_IMPORT_REGRAS_CACHE["payload"] = payload
-    return payload
-
-def _vendas_import_regras_publicas():
-    regras = _vendas_import_regras_carregar()
-    colunas_ignoradas = list(regras.get("colunas_ignoradas") or [])
-    ignoradas_norm = {
-        re.sub(r"\s+", " ", _vendas_texto_sem_acentos(item).casefold().replace("_", " ").replace("-", " ")).strip()
-        for item in colunas_ignoradas
-        if _as_str(item)
-    }
-    colunas_utilizadas = [
-        item
-        for item in (regras.get("colunas_utilizadas") or [])
-        if re.sub(r"\s+", " ", _vendas_texto_sem_acentos(item).casefold().replace("_", " ").replace("-", " ")).strip() not in ignoradas_norm
-    ]
-    return {
-        "arquivo": _as_str(regras.get("arquivo")),
-        "arquivo_relativo": _as_str(regras.get("arquivo_relativo")) or "Relatorios/config-rel-vendas",
-        "arquivo_existe": _as_bool(regras.get("arquivo_existe"), False),
-        "arquivo_atualizado_em": _as_str(regras.get("arquivo_atualizado_em")),
-        "carregado_de_arquivo": _as_bool(regras.get("carregado_de_arquivo"), False),
-        "grupos": [
-            {
-                "codigo": _as_str(item.get("codigo")),
-                "codigo_exibicao": _as_str(item.get("codigo_exibicao")),
-                "nome": _as_str(item.get("nome")),
-                "classe": _as_str(item.get("classe")),
-            }
-            for item in (regras.get("grupos") or [])
-            if isinstance(item, dict)
-        ],
-        "descartar_registros": list(regras.get("descartar_registros") or []),
-        "colunas_ignoradas": colunas_ignoradas,
-        "colunas_utilizadas": colunas_utilizadas,
-    }
-
-def _vendas_import_coluna_canonica(nome):
-    texto = _vendas_texto_sem_acentos(nome).casefold().replace("_", " ").replace("-", " ")
-    return re.sub(r"\s+", " ", texto).strip()
-
-def _vendas_import_colunas_efetivas(fieldnames, regras=None):
-    regras = regras or _vendas_import_regras_carregar()
-    nomes = [nome for nome in (fieldnames or []) if _as_str(nome)]
-    ignoradas = {
-        _vendas_import_coluna_canonica(item)
-        for item in (regras.get("colunas_ignoradas") or [])
-        if _as_str(item)
-    }
-    utilizadas = {
-        _vendas_import_coluna_canonica(item)
-        for item in (regras.get("colunas_utilizadas") or [])
-        if _as_str(item)
-    }
-    efetivas = []
-    for nome in nomes:
-        canon = _vendas_import_coluna_canonica(nome)
-        if not canon:
-            continue
-        is_used = not utilizadas or canon in utilizadas
-        if canon in ignoradas and not is_used:
-            continue
-        if utilizadas and not is_used:
-            continue
-        efetivas.append(nome)
-    return efetivas or nomes
-
-def _vendas_import_reter_colunas(raw, colunas_efetivas):
-    if not isinstance(raw, dict):
-        return {}
-    return {
-        nome: raw.get(nome)
-        for nome in (colunas_efetivas or raw.keys())
-        if nome in raw
-    }
-
-def _vendas_mes_chave(data):
-    if isinstance(data, str):
-        data = _parse_data_br(data)
-    if not isinstance(data, datetime.date):
+        candidatos.append(os.path.join(VENDAS_RELATORIOS_DIR, nome))
+    if not candidatos:
         return ""
-    return data.strftime("%Y-%m")
-
-def _vendas_mes_rotulo(chave):
-    if isinstance(chave, datetime.date):
-        chave = chave.strftime("%Y-%m")
-    texto = _as_str(chave)
-    if not re.fullmatch(r"\d{4}-\d{2}", texto):
-        return "-"
-    ano, mes = texto.split("-", 1)
-    meses = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"]
-    idx = max(1, min(12, _as_int(mes, 1))) - 1
-    return f"{meses[idx]} {ano}"
-
-def _vendas_grupo_deve_descartar(grupo_raw="", categoria_raw="", produto="", regras=None):
-    regras = regras or _vendas_import_regras_carregar()
-    descartar_codigos = {re.sub(r"\D+", "", _as_str(item)) for item in (regras.get("descartar_codigos") or []) if _as_str(item)}
-    descartar_descricoes = {
-        _vendas_texto_sem_acentos(item).upper().strip()
-        for item in (regras.get("descartar_descricoes") or [])
-        if _as_str(item)
-    }
-
-    texto_grupo = _as_str(grupo_raw).strip()
-    if texto_grupo:
-        inicio = re.sub(r"[^0-9].*$", "", texto_grupo).strip()
-        inicio = re.sub(r"\D+", "", inicio)
-        if inicio and any(inicio == codigo or inicio.lstrip("0") == codigo.lstrip("0") for codigo in descartar_codigos):
-            return True
-        grupo_norm = _vendas_texto_sem_acentos(texto_grupo).upper().strip()
-        if any(descricao and descricao in grupo_norm for descricao in descartar_descricoes):
-            return True
-
-    texto_categoria = _vendas_texto_sem_acentos(categoria_raw or produto).upper().strip()
-    if texto_categoria and any(descricao and descricao in texto_categoria for descricao in descartar_descricoes):
-        return True
-
-    categoria_cod = re.sub(r"\D+", "", texto_categoria[:6])
-    if categoria_cod and any(categoria_cod == codigo or categoria_cod.lstrip("0") == codigo.lstrip("0") for codigo in descartar_codigos):
-        return True
-    return False
-
-def _vendas_grupo_normalizado(grupo_raw="", categoria_raw="", produto="", marca="", regras=None):
-    regras = regras or _vendas_import_regras_carregar()
-    texto_base = " ".join([
-        _as_str(grupo_raw),
-        _as_str(categoria_raw),
-        _as_str(produto),
-        _as_str(marca),
-    ])
-    texto = _vendas_texto_sem_acentos(texto_base).casefold()
-    if not texto:
-        return ""
-    for item in (regras.get("grupos") or _VENDAS_GRUPOS_NORMALIZADOS_PADRAO):
-        chaves = item.get("chaves") or set()
-        if any(chave in texto for chave in chaves):
-            return f"{item['codigo']} {_as_str(item.get('nome'))}".strip()
-        padroes = item.get("padroes") or ()
-        if any(re.search(padrao, texto, flags=re.IGNORECASE) for padrao in padroes):
-            return f"{item['codigo']} {_as_str(item.get('nome'))}".strip()
-    categoria = _vendas_texto_sem_acentos(categoria_raw).upper().strip()
-    if categoria:
-        return categoria
-    return _vendas_texto_sem_acentos(grupo_raw).upper().strip()
-
-def _vendas_bonificacoes_cache_path(cache_id):
-    cache_id = _as_str(cache_id)
-    if not cache_id:
-        return ""
-    return os.path.join(VENDAS_REPORTS_DIR, f"{cache_id}.json")
-
-def _vendas_bonificacoes_cache_load(cache_id):
-    cache_id = _as_str(cache_id)
-    if not cache_id:
-        return None
-    with _VENDAS_BONIFICACOES_CACHE_LOCK:
-        payload = _VENDAS_BONIFICACOES_CACHE.get(cache_id)
-        if isinstance(payload, dict) and _as_int(payload.get("versao"), 0) == _VENDAS_BONIFICACOES_CACHE_VERSAO:
-            return payload
-    path = _vendas_bonificacoes_cache_path(cache_id)
-    if not path or not os.path.exists(path):
-        payload = _vendas_db_import_cache_json(cache_id, "bonificacoes_cache_json")
-        if isinstance(payload, dict):
-            with _VENDAS_BONIFICACOES_CACHE_LOCK:
-                _VENDAS_BONIFICACOES_CACHE[cache_id] = payload
-            return payload
-        return None
-    payload = _load_json_file(path, {})
-    if not isinstance(payload, dict) or _as_int(payload.get("versao"), 0) != _VENDAS_BONIFICACOES_CACHE_VERSAO:
-        payload = _vendas_db_import_cache_json(cache_id, "bonificacoes_cache_json")
-        if not isinstance(payload, dict) or _as_int(payload.get("versao"), 0) != _VENDAS_BONIFICACOES_CACHE_VERSAO:
-            return None
-    with _VENDAS_BONIFICACOES_CACHE_LOCK:
-        _VENDAS_BONIFICACOES_CACHE[cache_id] = payload
-    return payload
-
-def _vendas_bonificacoes_cache_save(cache_id, payload):
-    cache_id = _as_str(cache_id)
-    if not cache_id or not isinstance(payload, dict):
-        return None
-    payload["versao"] = _VENDAS_BONIFICACOES_CACHE_VERSAO
-    path = _vendas_bonificacoes_cache_path(cache_id)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    _save_json_file(path, payload)
-    try:
-        _vendas_db_update_import_caches(cache_id, bonificacoes_json=json.dumps(payload, ensure_ascii=False))
-    except Exception:
-        pass
-    with _VENDAS_BONIFICACOES_CACHE_LOCK:
-        _VENDAS_BONIFICACOES_CACHE[cache_id] = payload
-    return path
-
-def _vendas_bonificacoes_cache_limpar(cache_id=None):
-    cache_id = _as_str(cache_id)
-    with _VENDAS_BONIFICACOES_CACHE_LOCK:
-        if not cache_id:
-            _VENDAS_BONIFICACOES_CACHE.clear()
-            return
-        _VENDAS_BONIFICACOES_CACHE.pop(cache_id, None)
-    path = _vendas_bonificacoes_cache_path(cache_id)
-    if path and os.path.exists(path):
-        try:
-            os.remove(path)
-        except Exception:
-            pass
-
-def _vendas_bonificacoes_cache_marcar_status(cache_id, status):
-    cache_id = _as_str(cache_id)
-    if not cache_id:
-        return
-    entry = _vendas_cache_find_by_id(cache_id)
-    if not entry:
-        return
-    payload = dict(entry)
-    payload["ativo"] = 1 if _as_bool(entry.get("active"), False) else 0
-    payload["status"] = _as_str(status) or _as_str(payload.get("status")) or "pronto"
-    payload["updated_at"] = datetime.datetime.now()
-    _vendas_db_upsert_import_meta(payload)
-
-def _vendas_bonificacoes_cache_carregar_rows_db(cache_id):
-    cache_id = _as_str(cache_id)
-    if not cache_id:
-        return []
-    conn = None
-    cur = None
-    rows = []
-    try:
-        conn = get_conn()
-        cur = conn.cursor(dictionary=True)
-        cur.execute("""
-            SELECT
-                data_ref, data_texto, vendedor_key, vendedor_key_upper, vendedor_codigo, vendedor_nome,
-                numero_nf, cliente, cliente_norm, cidade, grupo_raw, grupo_norm, categoria_norm,
-                produto, tipo_operacao, condicao, tab_venda, quantidade, litros, caixas, caixa_fisica,
-                valor_venda, valor_devolvido, bonificacao, valor_liquido, quantidade_devolvida,
-                litro_devolvido, caixa_devolvida
-            FROM vendas_relatorio_itens
-            WHERE import_id=%s
-            ORDER BY data_ref ASC, vendedor_nome ASC, cliente ASC, produto ASC, numero_nf ASC
-        """, (cache_id,))
-        rows = cur.fetchall() or []
-    finally:
-        try:
-            if cur:
-                cur.close()
-        except Exception:
-            pass
-        try:
-            if conn:
-                conn.close()
-        except Exception:
-            pass
-    return rows
-
-def _vendas_bonificacoes_processar_cache_assincrono(cache_id):
-    cache_id = _as_str(cache_id)
-    if not cache_id:
-        return False
-
-    with _VENDAS_BONIFICACOES_PROCESSANDO_LOCK:
-        if cache_id in _VENDAS_BONIFICACOES_PROCESSANDO:
-            return False
-        _VENDAS_BONIFICACOES_PROCESSANDO.add(cache_id)
-
-    _vendas_bonificacoes_cache_marcar_status(cache_id, "processando")
-
-    def _worker():
-        try:
-            entry = _vendas_cache_find_by_id(cache_id)
-            if not entry:
-                return
-            source = {
-                "source_type": _as_str(entry.get("source_type")),
-                "ready": True,
-                "message": "",
-                "path": _as_str(entry.get("source_path")),
-                "name": os.path.basename(_as_str(entry.get("source_path"))),
-                "size": _as_int(entry.get("source_size"), 0),
-                "mtime": _fmt_dt(entry.get("source_mtime")),
-                "signature": _as_str(entry.get("source_signature")),
-            }
-            cfg = _carregar_vendas_config()
-            rows = _vendas_bonificacoes_cache_carregar_rows_db(cache_id)
-            _vendas_bonificacoes_cache_processar(cache_id, rows, entry, source, cfg)
-            _vendas_mix_embalagens_cache_processar(cache_id, rows, entry, source, cfg)
-            _vendas_bonificacoes_cache_marcar_status(cache_id, "pronto")
-            try:
-                _coletar_relatorio_vendas_variacao_preco(allow_rebuild=True)
-            except Exception:
-                pass
-            try:
-                _coletar_dashboard_vendas_evolucao(allow_rebuild=True)
-            except Exception:
-                pass
-            _vendas_dashboard_vendas_painel_processar_cache_assincrono(cache_id)
-        except Exception as exc:
-            try:
-                app.logger.exception("falha ao processar cache de vendas %s", cache_id)
-            except Exception:
-                pass
-            _vendas_bonificacoes_cache_marcar_status(cache_id, "erro")
-            try:
-                print(f"[vendas-cache] erro no processamento async {cache_id}: {exc}")
-            except Exception:
-                pass
-        finally:
-            with _VENDAS_BONIFICACOES_PROCESSANDO_LOCK:
-                _VENDAS_BONIFICACOES_PROCESSANDO.discard(cache_id)
-
-    thread = threading.Thread(target=_worker, name=f"vendas-cache-{cache_id}", daemon=True)
-    thread.start()
-    return True
-
-def _vendas_materializar_relatorios_sync(cache_id, cache_entry=None, source=None, cfg=None):
-    cache_id = _as_str(cache_id)
-    if not cache_id:
-        raise RuntimeError("cache de vendas nao encontrado")
-
-    cache_entry = cache_entry or _vendas_cache_find_by_id(cache_id) or _vendas_db_fetch_import(cache_id)
-    if not isinstance(cache_entry, dict):
-        raise RuntimeError("cache de vendas nao encontrado")
-
-    source = source or {
-        "source_type": _as_str(cache_entry.get("source_type")),
-        "ready": True,
-        "message": "",
-        "path": _as_str(cache_entry.get("source_path")),
-        "name": os.path.basename(_as_str(cache_entry.get("source_path"))),
-        "size": _as_int(cache_entry.get("source_size"), 0),
-        "mtime": _fmt_dt(cache_entry.get("source_mtime")),
-        "signature": _as_str(cache_entry.get("source_signature")),
-    }
-    cfg = cfg or _carregar_vendas_config()
-
-    with _VENDAS_BONIFICACOES_PROCESSANDO_LOCK:
-        if cache_id in _VENDAS_BONIFICACOES_PROCESSANDO:
-            raise RuntimeError("Processamento de vendas ja esta em andamento.")
-        _VENDAS_BONIFICACOES_PROCESSANDO.add(cache_id)
-
-    _vendas_bonificacoes_cache_marcar_status(cache_id, "processando")
-    try:
-        rows = _vendas_bonificacoes_cache_carregar_rows_db(cache_id)
-        bonificacoes_payload = _vendas_bonificacoes_cache_processar(cache_id, rows, cache_entry, source, cfg)
-        mix_embalagens_payload = _vendas_mix_embalagens_cache_processar(cache_id, rows, cache_entry, source, cfg)
-        try:
-            _coletar_relatorio_vendas_variacao_preco(allow_rebuild=True)
-        except Exception:
-            pass
-        try:
-            _coletar_dashboard_vendas_evolucao(allow_rebuild=True)
-        except Exception:
-            pass
-        try:
-            _coletar_dashboard_vendas_painel(allow_rebuild=True)
-        except Exception:
-            pass
-        _vendas_bonificacoes_cache_marcar_status(cache_id, "pronto")
-        try:
-            _vendas_cache_set_active(cache_id)
-        except Exception:
-            pass
-        return {
-            "cache": _vendas_cache_entry_publico(_vendas_db_fetch_import(cache_id) or cache_entry),
-            "fonte": source,
-            "config": _carregar_vendas_config(),
-            "processado": {
-                "meses": len(bonificacoes_payload.get("months_order") or []),
-                "clientes": len((mix_embalagens_payload.get("months") or {}).get((mix_embalagens_payload.get("months_order") or [""])[-1], {}).get("clientes") or []) if (mix_embalagens_payload.get("months_order") or []) else len(bonificacoes_payload.get("clientes_disponiveis") or []),
-                "vendedores": len(bonificacoes_payload.get("vendedores_disponiveis") or []),
-            },
-            "mensagem": "Todos dashboards e relatorios criados com sucesso.",
-        }
-    except Exception:
-        _vendas_bonificacoes_cache_marcar_status(cache_id, "erro")
-        raise
-    finally:
-        with _VENDAS_BONIFICACOES_PROCESSANDO_LOCK:
-            _VENDAS_BONIFICACOES_PROCESSANDO.discard(cache_id)
-
-def _vendas_bonificacoes_resumo_grupos(rows):
-    agrupados = {
-        "todos": {
-            "grupo": "todos",
-            "nome": "Todos",
-            "itens": 0,
-            "clientes": set(),
-            "notas": set(),
-            "valor_venda": 0.0,
-            "valor_devolvido": 0.0,
-            "bonificacao": 0.0,
-            "valor_liquido": 0.0,
-            "venda_base": 0.0,
-        },
-        "rio_branco": {
-            "grupo": "rio_branco",
-            "nome": "Rio Branco",
-            "itens": 0,
-            "clientes": set(),
-            "notas": set(),
-            "valor_venda": 0.0,
-            "valor_devolvido": 0.0,
-            "bonificacao": 0.0,
-            "valor_liquido": 0.0,
-            "venda_base": 0.0,
-        },
-        "autonomos": {
-            "grupo": "autonomos",
-            "nome": "Autônomos",
-            "itens": 0,
-            "clientes": set(),
-            "notas": set(),
-            "valor_venda": 0.0,
-            "valor_devolvido": 0.0,
-            "bonificacao": 0.0,
-            "valor_liquido": 0.0,
-            "venda_base": 0.0,
-        },
-    }
-
-    for row in rows or []:
-        cliente = _as_str(row.get("cliente")) or "SEM CLIENTE"
-        numero_nf = _as_str(row.get("numero_nf"))
-        vendedor_nome = _as_str(row.get("vendedor_nome")) or _as_str(row.get("vendedor_key")) or ""
-        vendedor_key = _as_str(row.get("vendedor_key")) or _as_str(row.get("vendedor_key_upper")) or vendedor_nome
-        tipo_vendedor = _vendas_tipo_vendedor(vendedor_nome, vendedor_key)
-        financeiro = _vendas_row_financeiro_ajustado(row)
-        eh_bonificacao = financeiro["eh_bonificacao"]
-        valor_venda = financeiro["valor_venda"]
-        valor_devolvido = financeiro["valor_devolvido"]
-        bonificacao = financeiro["bonificacao"]
-        valor_liquido = financeiro["valor_liquido"]
-        venda_base = valor_venda if valor_venda > 0 else 0.0
-
-        for chave in ("todos", "rio_branco" if tipo_vendedor != "autonomo" else "autonomos"):
-            grupo = agrupados[chave]
-            grupo["itens"] += 1
-            grupo["clientes"].add(cliente)
-            if numero_nf:
-                grupo["notas"].add(numero_nf)
-            if eh_bonificacao:
-                grupo["bonificacao"] += bonificacao
-            else:
-                grupo["valor_venda"] += valor_venda
-                grupo["valor_devolvido"] += valor_devolvido
-                grupo["bonificacao"] += bonificacao
-                grupo["valor_liquido"] += valor_liquido
-                grupo["venda_base"] += venda_base
-
-    retorno = []
-    for chave in ("todos", "rio_branco", "autonomos"):
-        grupo = agrupados[chave]
-        venda_base = round(_as_float(grupo["venda_base"], 0.0), 2)
-        bonificacao = round(_as_float(grupo["bonificacao"], 0.0), 2)
-        retorno.append({
-            "grupo": grupo["grupo"],
-            "nome": grupo["nome"],
-            "itens": _as_int(grupo["itens"], 0),
-            "clientes": len(grupo["clientes"]),
-            "notas": len(grupo["notas"]),
-            "valor_venda": round(_as_float(grupo["valor_venda"], 0.0), 2),
-            "valor_devolvido": round(_as_float(grupo["valor_devolvido"], 0.0), 2),
-            "bonificacao": bonificacao,
-            "valor_liquido": round(_as_float(grupo["valor_liquido"], 0.0), 2),
-            "percentual_bonificacao": round((bonificacao / venda_base) * 100.0, 2) if venda_base > 0 else 0.0,
-            "venda_base": venda_base,
-        })
-    return retorno
-
-def _vendas_bonificacoes_agrupar_rows(rows, filtro_vendedor="", filtro_cliente="", limite_detalhes=0):
-    filtro_vendedor = _as_str(filtro_vendedor).upper()
-    filtro_cliente = _as_str(filtro_cliente).upper()
-    vendedores = {}
-    clientes_map = {}
-    detalhes = []
-    totais = {
-        "vendedores": 0,
-        "clientes": 0,
-        "notas": 0,
-        "itens": 0,
-        "valor_venda": 0.0,
-        "valor_devolvido": 0.0,
-        "bonificacao": 0.0,
-        "valor_liquido": 0.0,
-        "media_percentual_bonificacao": 0.0,
-        "percentual_bonificacao": 0.0,
-    }
-    notas_totais = set()
-    vendedor_medias = []
-
-    for row in rows or []:
-        vendedor_key = _as_str(row.get("vendedor_key_upper")) or _as_str(row.get("vendedor_key")) or "SEM VENDEDOR"
-        cliente_key = _as_str(row.get("cliente_norm")) or "SEM CLIENTE"
-        if filtro_vendedor and vendedor_key.upper() != filtro_vendedor:
-            continue
-        if filtro_cliente and cliente_key != filtro_cliente:
-            continue
-        vendedor_nome = _as_str(row.get("vendedor_nome")) or vendedor_key
-        vendedor_codigo = _as_str(row.get("vendedor_codigo"))
-        cliente_nome = _as_str(row.get("cliente")) or "SEM CLIENTE"
-        numero_nf = _as_str(row.get("numero_nf"))
-        cidade = _as_str(row.get("cidade")) or "SEM CIDADE"
-        produto = _as_str(row.get("produto"))
-        data_texto = _as_str(row.get("data_texto"))
-        tab_venda = _vendas_row_tab_venda(row)
-        financeiro = _vendas_row_financeiro_ajustado(row)
-        valor_venda = financeiro["valor_venda"]
-        valor_devolvido = financeiro["valor_devolvido"]
-        bonificacao = financeiro["bonificacao"]
-        valor_liquido = financeiro["valor_liquido"]
-        eh_bonificacao = financeiro["eh_bonificacao"]
-
-        entry = vendedores.setdefault(vendedor_key, {
-            "chave": vendedor_key,
-            "codigo": vendedor_codigo,
-            "nome": vendedor_nome,
-            "itens": 0,
-            "clientes": set(),
-            "notas": set(),
-            "valor_venda": 0.0,
-            "valor_devolvido": 0.0,
-            "bonificacao": 0.0,
-            "valor_liquido": 0.0,
-            "soma_percentuais": 0.0,
-            "qtde_percentuais": 0,
-            "vendas_base": 0.0,
-        })
-        entry["itens"] += 1
-        entry["clientes"].add(cliente_nome)
-        if numero_nf:
-            entry["notas"].add(numero_nf)
-        if eh_bonificacao:
-            entry["bonificacao"] += bonificacao
-        else:
-            entry["valor_venda"] += valor_venda
-            entry["valor_devolvido"] += valor_devolvido
-            entry["bonificacao"] += bonificacao
-            entry["valor_liquido"] += valor_liquido
-        if not eh_bonificacao and valor_venda > 0:
-            pct_linha = round((bonificacao / valor_venda) * 100.0, 2) if bonificacao > 0 else 0.0
-            entry["soma_percentuais"] += pct_linha
-            entry["qtde_percentuais"] += 1
-            entry["vendas_base"] += valor_venda
-
-        clientes_map.setdefault(cliente_key, {
-            "chave": cliente_key,
-            "cliente": cliente_nome,
-            "cidade": cidade,
-            "vendedores": set(),
-            "notas": set(),
-            "itens": 0,
-            "valor_venda": 0.0,
-            "bonificacao": 0.0,
-        })
-        cliente_entry = clientes_map[cliente_key]
-        cliente_entry["vendedores"].add(vendedor_key)
-        cliente_entry["itens"] += 1
-        if numero_nf:
-            cliente_entry["notas"].add(numero_nf)
-        if not eh_bonificacao:
-            cliente_entry["valor_venda"] += valor_venda
-        cliente_entry["bonificacao"] += bonificacao
-
-        if numero_nf:
-            notas_totais.add(numero_nf)
-        totais["itens"] += 1
-        if not eh_bonificacao:
-            totais["valor_venda"] += valor_venda
-            totais["valor_devolvido"] += valor_devolvido
-            totais["valor_liquido"] += valor_liquido
-        totais["bonificacao"] += bonificacao
-        if (filtro_vendedor or filtro_cliente) and len(detalhes) < max(0, _as_int(limite_detalhes, 0)):
-            detalhes.append({
-                "data": data_texto,
-                "numero_nf": numero_nf,
-                "cliente": cliente_nome,
-                "cidade": cidade,
-                "produto": produto,
-                "tab_venda": tab_venda,
-                "valor_venda": round(valor_venda, 2),
-                "valor_devolvido": round(valor_devolvido, 2),
-                "bonificacao": round(bonificacao, 2),
-                "valor_liquido": round(valor_liquido, 2),
-            })
-
-    vendedores_lista = []
-    for row in vendedores.values():
-        valor_venda = round(_as_float(row["valor_venda"], 0.0), 2)
-        bonificacao = round(_as_float(row["bonificacao"], 0.0), 2)
-        percentual = round((bonificacao / valor_venda) * 100.0, 2) if valor_venda > 0 else 0.0
-        media_percentual = round(_as_float(row["soma_percentuais"], 0.0) / _as_int(row["qtde_percentuais"], 0), 2) if _as_int(row["qtde_percentuais"], 0) > 0 else percentual
-        vendedor_medias.append(media_percentual)
-        vendedores_lista.append({
-            "chave": row["chave"],
-            "codigo": row["codigo"],
-            "nome": row["nome"],
-            "itens": _as_int(row["itens"], 0),
-            "clientes": len(row["clientes"]),
-            "notas": len(row["notas"]),
-            "valor_venda": valor_venda,
-            "valor_devolvido": round(_as_float(row["valor_devolvido"], 0.0), 2),
-            "bonificacao": bonificacao,
-            "valor_liquido": round(_as_float(row["valor_liquido"], 0.0), 2),
-            "percentual": percentual,
-            "media_percentual_bonificacao": media_percentual,
-        })
-
-    vendedores_lista.sort(key=lambda item: (-_as_float(item.get("percentual"), 0.0), _as_str(item.get("nome")), _as_str(item.get("codigo"))))
-    totais["vendedores"] = len(vendedores_lista)
-    totais["clientes"] = len(clientes_map)
-    totais["notas"] = len(notas_totais)
-    totais["percentual_bonificacao"] = round((totais["bonificacao"] / totais["valor_venda"]) * 100.0, 2) if totais["valor_venda"] > 0 else 0.0
-    totais["media_percentual_bonificacao"] = round(sum(vendedor_medias) / len(vendedor_medias), 2) if vendedor_medias else totais["percentual_bonificacao"]
-    totais["valor_venda"] = round(totais["valor_venda"], 2)
-    totais["valor_devolvido"] = round(totais["valor_devolvido"], 2)
-    totais["bonificacao"] = round(totais["bonificacao"], 2)
-    totais["valor_liquido"] = round(totais["valor_liquido"], 2)
-
-    clientes_disponiveis = sorted(
-        [{
-            "chave": row["chave"],
-            "cliente": row["cliente"],
-            "cidade": row["cidade"],
-        } for row in clientes_map.values()],
-        key=lambda item: (_as_str(item.get("cliente")), _as_str(item.get("chave"))),
-    )
-    return {
-        "vendedores": vendedores_lista,
-        "clientes_disponiveis": clientes_disponiveis,
-        "totais": totais,
-        "detalhes": detalhes,
-    }
-
-def _vendas_relatorio_cache_chave(tipo_relatorio, cache_id, vendedor="", cliente="", mes="", data_inicio="", data_fim="", limite="", extra=""):
-    return (
-        "v1",
-        _as_str(tipo_relatorio),
-        _as_str(cache_id),
-        _as_str(vendedor).upper(),
-        _as_str(cliente).upper(),
-        _as_str(mes),
-        _as_str(data_inicio),
-        _as_str(data_fim),
-        _as_str(limite),
-        _as_str(extra),
-    )
-
-def _vendas_relatorio_cache_obter(chave):
-    agora = time.time()
-    with _VENDAS_RELATORIO_CACHE_LOCK:
-        item = _VENDAS_RELATORIO_CACHE.get(chave)
-        if not item:
-            return None
-        if agora - _as_float(item.get("ts"), 0.0) > _VENDAS_RELATORIO_CACHE_TTL:
-            _VENDAS_RELATORIO_CACHE.pop(chave, None)
-            return None
-        return item.get("payload")
-
-def _vendas_relatorio_cache_guardar(chave, payload):
-    with _VENDAS_RELATORIO_CACHE_LOCK:
-        _VENDAS_RELATORIO_CACHE[chave] = {
-            "ts": time.time(),
-            "payload": payload,
-        }
-        while len(_VENDAS_RELATORIO_CACHE) > _VENDAS_RELATORIO_CACHE_MAX:
-            primeiro = next(iter(_VENDAS_RELATORIO_CACHE), None)
-            if primeiro is None:
-                break
-            _VENDAS_RELATORIO_CACHE.pop(primeiro, None)
-
-def _vendas_relatorio_cache_limpar(cache_id=None):
-    cache_id = _as_str(cache_id)
-    with _VENDAS_RELATORIO_CACHE_LOCK:
-        if not cache_id:
-            _VENDAS_RELATORIO_CACHE.clear()
-            return
-        for chave in list(_VENDAS_RELATORIO_CACHE.keys()):
-            if len(chave) > 2 and chave[2] == cache_id:
-                _VENDAS_RELATORIO_CACHE.pop(chave, None)
-
-def _vendas_relatorio_base_rows(data_inicio=None, data_fim=None):
-    cache_entry, _, _ = _vendas_obter_cache_ativo(force_refresh=False)
-    cache_id = _as_str(cache_entry.get("id"))
-    cache_key = _vendas_relatorio_cache_chave(
-        "base_rows",
-        cache_id,
-        "",
-        "",
-        "",
-        _fmt_date(data_inicio) or "",
-        _fmt_date(data_fim) or "",
-    )
-    payload = _vendas_relatorio_cache_obter(cache_key)
-    if isinstance(payload, dict) and isinstance(payload.get("rows"), list):
-        return payload.get("rows") or [], cache_entry
-
-    where = ["import_id=%s"]
-    params = [cache_id]
-    if data_inicio:
-        where.append("data_ref IS NOT NULL AND data_ref >= %s")
-        params.append(data_inicio)
-    if data_fim:
-        where.append("data_ref IS NOT NULL AND data_ref <= %s")
-        params.append(data_fim)
-    where_sql = " AND ".join(where)
-
-    conn = None
-    cur = None
-    rows = []
-    try:
-        conn = get_conn()
-        cur = conn.cursor(dictionary=True)
-        cur.execute(f"""
-            SELECT
-                data_ref,
-                vendedor_key,
-                vendedor_key_upper,
-                vendedor_codigo,
-                vendedor_nome,
-                cliente_norm AS chave,
-                cliente,
-                cidade,
-                numero_nf,
-                produto,
-                tab_venda,
-                quantidade,
-                litros,
-                caixas,
-                caixa_fisica,
-                valor_venda,
-                valor_devolvido,
-                bonificacao
-            FROM vendas_relatorio_itens
-            WHERE {where_sql}
-            ORDER BY vendedor_nome ASC, cliente ASC, cidade ASC, produto ASC, numero_nf ASC
-        """, tuple(params))
-        rows = cur.fetchall() or []
-    finally:
-        try:
-            if cur:
-                cur.close()
-        except Exception:
-            pass
-        try:
-            if conn:
-                conn.close()
-        except Exception:
-            pass
-
-    _vendas_relatorio_cache_guardar(cache_key, {"rows": rows})
-    return rows, cache_entry
-
-def _vendas_mes_inicio(data):
-    if not isinstance(data, datetime.date):
-        return None
-    return datetime.date(data.year, data.month, 1)
-
-def _vendas_mes_subtrair(data_inicio, meses):
-    if not isinstance(data_inicio, datetime.date):
-        return None
-    base = (data_inicio.year * 12) + (data_inicio.month - 1) - _as_int(meses, 0)
-    ano = base // 12
-    mes = (base % 12) + 1
-    return datetime.date(ano, mes, 1)
-
-def _vendas_mes_label(data):
-    if not isinstance(data, datetime.date):
-        return "-"
-    meses = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"]
-    return f"{meses[data.month - 1]} {str(data.year)[-2:]}"
-
-def _vendas_gerar_painel_mensal(rows, referencia=None, limite=12):
-    limite = max(1, min(_as_int(limite, 12), 24))
-    datas = [row.get("data_ref") for row in (rows or []) if isinstance(row.get("data_ref"), datetime.date)]
-    referencia = referencia if isinstance(referencia, datetime.date) else (max(datas) if datas else datetime.date.today())
-    mes_referencia = _vendas_mes_inicio(referencia) or datetime.date.today().replace(day=1)
-    meses = []
-    for idx in range(limite):
-        mes = _vendas_mes_subtrair(mes_referencia, idx)
-        if mes:
-            meses.append(mes)
-    meses_info = [{
-        "key": mes.strftime("%Y-%m"),
-        "label": _vendas_mes_label(mes),
-    } for mes in meses]
-    meses_keys = [item["key"] for item in meses_info]
-
-    vendedores = {}
-    totais_meses = {key: 0.0 for key in meses_keys}
-    for row in rows or []:
-        if _vendas_row_eh_bonificacao(row):
-            continue
-        data_ref = row.get("data_ref")
-        if not isinstance(data_ref, datetime.date):
-            continue
-        mes_key = _vendas_mes_inicio(data_ref)
-        if not mes_key:
-            continue
-        mes_key = mes_key.strftime("%Y-%m")
-        if mes_key not in totais_meses:
-            continue
-        volume = _vendas_row_hectolitros(row)
-        vendedor_key = _as_str(row.get("vendedor_key_upper")) or _as_str(row.get("vendedor_key")) or "SEM VENDEDOR"
-        vendedor_nome = _as_str(row.get("vendedor_nome")) or vendedor_key
-        vendedor_codigo = _as_str(row.get("vendedor_codigo"))
-        entry = vendedores.setdefault(vendedor_key, {
-            "chave": vendedor_key,
-            "codigo": vendedor_codigo,
-            "nome": vendedor_nome,
-            "meses": {key: 0.0 for key in meses_keys},
-            "total": 0.0,
-        })
-        entry["meses"][mes_key] += volume
-        entry["total"] += volume
-        totais_meses[mes_key] += volume
-
-    linhas = []
-    for row in vendedores.values():
-        valores = [round(_as_float(row["meses"].get(item["key"]), 0.0), 3) for item in meses_info]
-        tendencia = round(((valores[0] - valores[1]) / valores[1]) * 100.0, 1) if len(valores) > 1 and valores[1] > 0 else 0.0
-        linhas.append({
-            "chave": row["chave"],
-            "codigo": row["codigo"],
-            "nome": row["nome"],
-            "valores": valores,
-            "total": round(_as_float(row["total"], 0.0), 3),
-            "tendencia": tendencia,
-        })
-
-    linhas.sort(key=lambda item: (-_as_float(item.get("total"), 0.0), _as_str(item.get("nome")), _as_str(item.get("codigo"))))
-    total_valores = [round(_as_float(totais_meses.get(item["key"]), 0.0), 3) for item in meses_info]
-    tendencia_total = round(((total_valores[0] - total_valores[1]) / total_valores[1]) * 100.0, 1) if len(total_valores) > 1 and total_valores[1] > 0 else 0.0
-
-    return {
-        "titulo": "VOLUME EM HL 12 ULTIMOS MESES",
-        "referencia": _fmt_date(referencia),
-        "meses": meses_info,
-        "linhas": linhas,
-        "total": {
-            "codigo": "",
-            "nome": "Total",
-            "valores": total_valores,
-            "total": round(sum(total_valores), 3),
-            "tendencia": tendencia_total,
-        },
-    }
-
-def _vendas_rows_filtradas_base(rows, filtro_vendedor="", filtro_cliente=""):
-    filtro_vendedor = _as_str(filtro_vendedor).upper()
-    filtro_cliente = _as_str(filtro_cliente).upper()
-    filtradas = []
-    for row in rows or []:
-        if _vendas_row_eh_bonificacao(row):
-            continue
-        data_ref = row.get("data_ref")
-        if not isinstance(data_ref, datetime.date):
-            continue
-        vendedor_key = _as_str(row.get("vendedor_key_upper")) or _as_str(row.get("vendedor_key")) or ""
-        cliente_key = _as_str(row.get("chave")) or _as_str(row.get("cliente_norm")) or ""
-        if filtro_vendedor and vendedor_key.upper() != filtro_vendedor:
-            continue
-        if filtro_cliente and cliente_key != filtro_cliente:
-            continue
-        filtradas.append(row)
-    return filtradas
-
-def _vendas_pivot_diario_resumo(rows, titulo="RESUMO DE VOLUME DIARIO"):
-    dias = {}
-    totais = {
-        "itens": 0,
-        "notas": set(),
-        "clientes": set(),
-        "vendedores": set(),
-        "hectolitros": 0.0,
-        "valor_venda": 0.0,
-        "valor_devolvido": 0.0,
-        "bonificacao": 0.0,
-        "valor_liquido": 0.0,
-    }
-    for row in rows or []:
-        data_ref = row.get("data_ref")
-        if not isinstance(data_ref, datetime.date):
-            continue
-        if _vendas_row_eh_bonificacao(row):
-            continue
-        chave = data_ref
-        vendedor = _as_str(row.get("vendedor_nome")) or _as_str(row.get("vendedor_key")) or "SEM VENDEDOR"
-        cliente = _as_str(row.get("cliente")) or "SEM CLIENTE"
-        numero_nf = _as_str(row.get("numero_nf"))
-        volume = _vendas_row_hectolitros(row)
-        valor_venda = _as_float(row.get("valor_venda"), 0.0)
-        valor_devolvido = _as_float(row.get("valor_devolvido"), 0.0)
-        bonificacao = _as_float(row.get("bonificacao"), 0.0)
-        valor_liquido = round(valor_venda - valor_devolvido - bonificacao, 2)
-        dia = dias.setdefault(chave, {
-            "data": chave,
-            "dia_semana": chave.weekday(),
-            "itens": 0,
-            "notas": set(),
-            "clientes": set(),
-            "vendedores": set(),
-            "hectolitros": 0.0,
-            "valor_venda": 0.0,
-            "valor_devolvido": 0.0,
-            "bonificacao": 0.0,
-            "valor_liquido": 0.0,
-        })
-        dia["itens"] += 1
-        dia["hectolitros"] += volume
-        dia["valor_venda"] += valor_venda
-        dia["valor_devolvido"] += valor_devolvido
-        dia["bonificacao"] += bonificacao
-        dia["valor_liquido"] += valor_liquido
-        dia["clientes"].add(cliente)
-        dia["vendedores"].add(vendedor)
-        if numero_nf:
-            dia["notas"].add(numero_nf)
-
-        totais["itens"] += 1
-        totais["hectolitros"] += volume
-        totais["valor_venda"] += valor_venda
-        totais["valor_devolvido"] += valor_devolvido
-        totais["bonificacao"] += bonificacao
-        totais["valor_liquido"] += valor_liquido
-        totais["clientes"].add(cliente)
-        totais["vendedores"].add(vendedor)
-        if numero_nf:
-            totais["notas"].add(numero_nf)
-
-    linhas = []
-    for dia in sorted(dias.keys()):
-        row = dias[dia]
-        linhas.append({
-            "data": _fmt_date(dia),
-            "dia_semana": _pv_dia_semana_label(dia.weekday()),
-            "itens": _as_int(row["itens"], 0),
-            "notas": len(row["notas"]),
-            "clientes": len(row["clientes"]),
-            "vendedores": len(row["vendedores"]),
-            "hectolitros": round(row["hectolitros"], 3),
-            "valor_venda": round(row["valor_venda"], 2),
-            "valor_devolvido": round(row["valor_devolvido"], 2),
-            "bonificacao": round(row["bonificacao"], 2),
-            "valor_liquido": round(row["valor_liquido"], 2),
-        })
-
-    return {
-        "titulo": titulo,
-        "resumo": {
-            "dias": len(linhas),
-            "itens": _as_int(totais["itens"], 0),
-            "notas": len(totais["notas"]),
-            "clientes": len(totais["clientes"]),
-            "vendedores": len(totais["vendedores"]),
-            "hectolitros": round(totais["hectolitros"], 3),
-            "valor_venda": round(totais["valor_venda"], 2),
-            "valor_devolvido": round(totais["valor_devolvido"], 2),
-            "bonificacao": round(totais["bonificacao"], 2),
-            "valor_liquido": round(totais["valor_liquido"], 2),
-        },
-        "dias": linhas,
-    }
-
-def _vendas_pivot_diario_vendedores(rows, titulo="VOLUME DIARIO POR VENDEDOR"):
-    dias = sorted({
-        row.get("data_ref")
-        for row in (rows or [])
-        if isinstance(row.get("data_ref"), datetime.date) and not _vendas_row_eh_bonificacao(row)
-    })
-    vendedores = {}
-    totais = {
-        "itens": 0,
-        "notas": set(),
-        "clientes": set(),
-        "hectolitros": 0.0,
-    }
-    for row in rows or []:
-        data_ref = row.get("data_ref")
-        if not isinstance(data_ref, datetime.date) or _vendas_row_eh_bonificacao(row):
-            continue
-        vendedor_key = _as_str(row.get("vendedor_key_upper")) or _as_str(row.get("vendedor_key")) or "SEM VENDEDOR"
-        vendedor_nome = _as_str(row.get("vendedor_nome")) or vendedor_key
-        vendedor_codigo = _as_str(row.get("vendedor_codigo"))
-        cliente = _as_str(row.get("cliente")) or "SEM CLIENTE"
-        numero_nf = _as_str(row.get("numero_nf"))
-        volume = _vendas_row_hectolitros(row)
-        entry = vendedores.setdefault(vendedor_key, {
-            "chave": vendedor_key,
-            "codigo": vendedor_codigo,
-            "nome": vendedor_nome,
-            "valores": {dia: 0.0 for dia in dias},
-            "total": 0.0,
-            "itens": 0,
-            "notas": set(),
-            "clientes": set(),
-        })
-        if data_ref in entry["valores"]:
-            entry["valores"][data_ref] += volume
-        entry["total"] += volume
-        entry["itens"] += 1
-        entry["clientes"].add(cliente)
-        if numero_nf:
-            entry["notas"].add(numero_nf)
-        totais["itens"] += 1
-        totais["hectolitros"] += volume
-        totais["clientes"].add(cliente)
-        if numero_nf:
-            totais["notas"].add(numero_nf)
-
-    linhas = []
-    for row in vendedores.values():
-        linhas.append({
-            "chave": row["chave"],
-            "codigo": row["codigo"],
-            "nome": row["nome"],
-            "itens": _as_int(row["itens"], 0),
-            "notas": len(row["notas"]),
-            "clientes": len(row["clientes"]),
-            "valores": [round(_as_float(row["valores"].get(dia), 0.0), 3) for dia in dias],
-            "total": round(row["total"], 3),
-        })
-    linhas.sort(key=lambda item: (-_as_float(item.get("total"), 0.0), _as_str(item.get("nome")), _as_str(item.get("codigo"))))
-
-    return {
-        "titulo": titulo,
-        "dias": [{
-            "data": _fmt_date(dia),
-            "label": _fmt_date(dia),
-            "dia_semana": _pv_dia_semana_label(dia.weekday()),
-        } for dia in dias],
-        "resumo": {
-            "dias": len(dias),
-            "vendedores": len(linhas),
-            "itens": _as_int(totais["itens"], 0),
-            "clientes": len(totais["clientes"]),
-            "notas": len(totais["notas"]),
-            "hectolitros": round(totais["hectolitros"], 3),
-        },
-        "linhas": linhas,
-    }
-
-def _vendas_comparativo_anual(rows, titulo="PERCENTUAL DE VENDAS ANUAL", referencia=None):
-    datas = [row.get("data_ref") for row in (rows or []) if isinstance(row.get("data_ref"), datetime.date)]
-    if isinstance(referencia, str):
-        try:
-            referencia = datetime.datetime.strptime(referencia[:10], "%Y-%m-%d").date()
-        except Exception:
-            referencia = None
-    if not isinstance(referencia, datetime.date):
-        referencia = max(datas) if datas else datetime.date.today()
-    ano_atual = referencia.year
-    ano_anterior = ano_atual - 1
-    meses = [{
-        "numero": idx,
-        "label": ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"][idx - 1],
-    } for idx in range(1, 13)]
-    valores = {
-        ano_atual: {idx: 0.0 for idx in range(1, 13)},
-        ano_anterior: {idx: 0.0 for idx in range(1, 13)},
-    }
-    totais = {ano_atual: 0.0, ano_anterior: 0.0}
-    for row in rows or []:
-        data_ref = row.get("data_ref")
-        if not isinstance(data_ref, datetime.date) or _vendas_row_eh_bonificacao(row):
-            continue
-        if data_ref.year not in valores:
-            continue
-        volume = _vendas_row_hectolitros(row)
-        valores[data_ref.year][data_ref.month] += volume
-        totais[data_ref.year] += volume
-
-    atual = [round(valores[ano_atual][m["numero"]], 3) for m in meses]
-    anterior = [round(valores[ano_anterior][m["numero"]], 3) for m in meses]
-    percentual = []
-    for i in range(12):
-        base = anterior[i]
-        pct = round(((atual[i] - base) / base) * 100.0, 2) if base > 0 else 0.0
-        percentual.append(pct)
-    total_pct = round(((totais[ano_atual] - totais[ano_anterior]) / totais[ano_anterior]) * 100.0, 2) if totais[ano_anterior] > 0 else 0.0
-
-    return {
-        "titulo": titulo,
-        "ano_atual": ano_atual,
-        "ano_anterior": ano_anterior,
-        "meses": meses,
-        "linhas": [
-            {
-                "rotulo": str(ano_atual),
-                "valores": atual,
-                "total": round(totais[ano_atual], 3),
-            },
-            {
-                "rotulo": str(ano_anterior),
-                "valores": anterior,
-                "total": round(totais[ano_anterior], 3),
-            },
-            {
-                "rotulo": "%",
-                "valores": percentual,
-                "total": total_pct,
-            },
-        ],
-        "resumo": {
-            "total_atual": round(totais[ano_atual], 3),
-            "total_anterior": round(totais[ano_anterior], 3),
-            "variacao_total": total_pct,
-        },
-    }
-
-def _vendas_comparativo_grupos_anual(rows):
-    base = _vendas_rows_filtradas_base(rows)
-    blocos = []
-    blocos.append({
-        "chave": "white_river",
-        "titulo": "VOLUME EM HL TOTAL WHITE RIVER",
-        "tipo": "anual",
-        "dados": _vendas_comparativo_anual(base, "VOLUME EM HL TOTAL WHITE RIVER"),
-    })
-    blocos.append({
-        "chave": "vendedores",
-        "titulo": "VOLUME EM HL VENDEDORES",
-        "tipo": "vendedores",
-        "dados": _vendas_comparativo_anual(base, "VOLUME EM HL VENDEDORES"),
-    })
-    blocos.append({
-        "chave": "descartavel",
-        "titulo": "VOLUME EM HL DESCARTAVEL TOTAL WHITE RIVER",
-        "tipo": "anual",
-        "dados": _vendas_comparativo_anual(
-            [row for row in base if _vendas_classificar_embalagem_tipo(row.get("produto")) == "pet"],
-            "VOLUME EM HL DESCARTAVEL TOTAL WHITE RIVER",
-        ),
-    })
-    blocos.append({
-        "chave": "retornavel",
-        "titulo": "VOLUME EM HL RETORNAVEL TOTAL WHITE RIVER",
-        "tipo": "anual",
-        "dados": _vendas_comparativo_anual(
-            [row for row in base if _vendas_classificar_embalagem_tipo(row.get("produto")) == "retornavel"],
-            "VOLUME EM HL RETORNAVEL TOTAL WHITE RIVER",
-        ),
-    })
-    return {
-        "titulo": "PERCENTUAL DE VENDAS POR GRUPO",
-        "blocos": blocos,
-    }
+    candidatos.sort(key=lambda path: os.path.getmtime(path), reverse=True)
+    return candidatos[0]
 
 def _vendas_relatorio_open(csv_path):
     return open(csv_path, "r", encoding="cp1252", errors="replace", newline="")
-
-def _vendas_bonificacoes_cache_processar(cache_id, rows, cache_entry=None, source=None, cfg=None):
-    cache_id = _as_str(cache_id)
-    if not cache_id:
-        raise RuntimeError("cache de vendas invalido para processar relatorios.")
-
-    rows = [row for row in (rows or []) if isinstance(row, dict)]
-    meses_map = {}
-    meses_disponiveis = set()
-    clientes_disponiveis = {}
-    vendedores_disponiveis = {}
-
-    for row in rows:
-        data_ref = row.get("data_ref")
-        mes_key = _vendas_mes_chave(data_ref) or _as_str(row.get("mes_ref"))
-        if not mes_key:
-            continue
-        meses_disponiveis.add(mes_key)
-        bucket = meses_map.setdefault(mes_key, {
-            "resumo_grupos": _vendas_bonificacoes_resumo_grupos_inicial(),
-            "rows_count": 0,
-        })
-        cliente_key = _as_str(row.get("cliente_norm")) or ""
-        vendedor_key = _as_str(row.get("vendedor_key_upper")) or _as_str(row.get("vendedor_key")) or ""
-        cliente_nome = _as_str(row.get("cliente")) or ""
-        vendedor_nome = _as_str(row.get("vendedor_nome")) or vendedor_key
-        clientes_disponiveis.setdefault(cliente_key or cliente_nome.upper(), {
-            "chave": cliente_key or cliente_nome.upper(),
-            "cliente": cliente_nome,
-            "cidade": _as_str(row.get("cidade")) or "",
-        })
-        vendedores_disponiveis.setdefault(vendedor_key or vendedor_nome.upper(), {
-            "chave": vendedor_key or vendedor_nome.upper(),
-            "codigo": _as_str(row.get("vendedor_codigo")),
-            "nome": vendedor_nome,
-        })
-        bucket["rows_count"] += 1
-        _vendas_bonificacoes_resumo_grupos_acumular(bucket["resumo_grupos"], row)
-
-    meses_ordenados = sorted(meses_disponiveis)
-    payload = {
-        "cache_id": cache_id,
-        "generated_at": _fmt_dt(datetime.datetime.now()),
-        "versao": _VENDAS_BONIFICACOES_CACHE_VERSAO,
-        "source": {
-            "source_type": _as_str(source.get("source_type")) if isinstance(source, dict) else "",
-            "path": _as_str(source.get("path")) if isinstance(source, dict) else "",
-            "signature": _as_str(source.get("signature")) if isinstance(source, dict) else "",
-        },
-        "cache_entry": _vendas_cache_entry_publico(cache_entry or {}),
-        "months": {},
-        "months_order": meses_ordenados,
-        "clientes_disponiveis": sorted(clientes_disponiveis.values(), key=lambda item: (_as_str(item.get("cliente")), _as_str(item.get("chave")))),
-        "vendedores_disponiveis": sorted(vendedores_disponiveis.values(), key=lambda item: (_as_str(item.get("nome")), _as_str(item.get("codigo")), _as_str(item.get("chave")))),
-    }
-
-    for mes_key in meses_ordenados:
-        mes_bucket = meses_map.get(mes_key, {})
-        payload["months"][mes_key] = {
-            "mes": mes_key,
-            "label": _vendas_mes_rotulo(mes_key),
-            "rows_count": _as_int(mes_bucket.get("rows_count"), 0),
-            "resumo_grupos": _vendas_bonificacoes_resumo_grupos_finalizar(mes_bucket.get("resumo_grupos")),
-        }
-
-    _vendas_bonificacoes_cache_save(cache_id, payload)
-    return payload
-
-def _vendas_bonificacoes_cache_carregar_rows_mes_db(cache_id, mes_key=None, filtro_vendedor="", filtro_cliente=""):
-    cache_id = _as_str(cache_id)
-    mes_key = _as_str(mes_key)
-    if not cache_id or not re.fullmatch(r"\d{4}-\d{2}", mes_key):
-        return []
-
-    try:
-        ano, mes = mes_key.split("-", 1)
-        data_inicio = datetime.date(_as_int(ano, 0), _as_int(mes, 1), 1)
-    except Exception:
-        return []
-    data_fim = _vendas_mes_subtrair(data_inicio, -1)  # próximo mês
-    if not isinstance(data_fim, datetime.date):
-        return []
-
-    filtro_vendedor = _as_str(filtro_vendedor).upper()
-    filtro_cliente = _as_str(filtro_cliente).upper()
-    where = [
-        "import_id=%s",
-        "data_ref IS NOT NULL",
-        "data_ref >= %s",
-        "data_ref < %s",
-    ]
-    params = [cache_id, data_inicio, data_fim]
-    if filtro_vendedor:
-        where.append("vendedor_key_upper=%s")
-        params.append(filtro_vendedor)
-    if filtro_cliente:
-        where.append("cliente_norm=%s")
-        params.append(filtro_cliente)
-    where_sql = " AND ".join(where)
-
-    conn = None
-    cur = None
-    rows = []
-    try:
-        conn = get_conn()
-        cur = conn.cursor(dictionary=True)
-        cur.execute(f"""
-            SELECT
-                data_ref, data_texto, vendedor_key, vendedor_key_upper, vendedor_codigo, vendedor_nome,
-                numero_nf, cliente, cliente_norm, cidade, grupo_raw, grupo_norm, categoria_norm,
-                produto, tipo_operacao, condicao, tab_venda, quantidade, litros, caixas, caixa_fisica,
-                valor_venda, valor_devolvido, bonificacao, valor_liquido, quantidade_devolvida,
-                litro_devolvido, caixa_devolvida
-            FROM vendas_relatorio_itens
-            WHERE {where_sql}
-            ORDER BY data_ref ASC, vendedor_nome ASC, cliente ASC, produto ASC, numero_nf ASC
-        """, tuple(params))
-        rows = cur.fetchall() or []
-    finally:
-        try:
-            if cur:
-                cur.close()
-        except Exception:
-            pass
-        try:
-            if conn:
-                conn.close()
-        except Exception:
-            pass
-    return [dict(row) for row in rows]
 
 def _split_codigo_nome(value):
     texto = _as_str(value)
@@ -20399,83 +9629,14 @@ def _parse_data_br(value):
             continue
     return None
 
-def _vendas_tab_venda_normalizada(tab_venda=None, tipo_operacao="", condicao=""):
-    valor = _as_int(tab_venda, 0)
-    if valor in (1, 2, 91):
-        return valor
-
-    tipo = _as_str(tipo_operacao).upper()
-    cond = _as_str(condicao).upper()
-    if tipo == "BON" or cond == "O":
-        return 91
-    if cond == "A":
-        return 1
-    if cond == "P":
-        return 2
-    return 0
-
-def _vendas_litros_para_hectolitros(valor):
-    return round(_as_float(valor, 0.0) / 100.0, 3)
-
-def _vendas_sql_tab_venda_expr(alias=""):
-    prefixo = f"{alias}." if alias else ""
-    return f"COALESCE(NULLIF({prefixo}tab_venda, 0), CASE WHEN UPPER(COALESCE({prefixo}tipo_operacao, '')) = 'BON' OR UPPER(COALESCE({prefixo}condicao, '')) = 'O' THEN 91 WHEN UPPER(COALESCE({prefixo}condicao, '')) = 'A' THEN 1 WHEN UPPER(COALESCE({prefixo}condicao, '')) = 'P' THEN 2 ELSE 0 END)"
-
-def _vendas_row_tab_venda(row):
-    if not isinstance(row, dict):
-        row = {}
-    return _vendas_tab_venda_normalizada(row.get("tab_venda"), row.get("tipo_operacao"), row.get("condicao"))
-
-def _vendas_row_eh_bonificacao(row):
-    return _vendas_row_tab_venda(row) == 91
-
-def _vendas_row_eh_devolucao(row):
-    if not isinstance(row, dict):
-        row = {}
-    tipo = _as_str(row.get("tipo_operacao")).upper()
-    cond = _as_str(row.get("condicao")).upper()
-    if "DEV" in tipo or "DEV" in cond:
-        return True
-    if cond in {"D", "R"}:
-        return True
-    return any(
-        _as_float(row.get(campo), 0.0) > 0
-        for campo in ("valor_devolvido", "quantidade_devolvida", "litro_devolvido", "caixa_devolvida")
-    )
-
-def _vendas_row_financeiro_ajustado(row):
-    if not isinstance(row, dict):
-        row = {}
-    valor_venda = _as_float(row.get("valor_venda"), 0.0)
-    valor_devolvido = _as_float(row.get("valor_devolvido"), 0.0)
-    bonificacao = _as_float(row.get("bonificacao"), 0.0)
-    eh_bonificacao = _vendas_row_eh_bonificacao(row)
-    if eh_bonificacao:
-        if valor_venda > 0 and bonificacao <= 0:
-            bonificacao = valor_venda
-        valor_venda = 0.0
-    valor_liquido = round(valor_venda - valor_devolvido - bonificacao, 2)
-    return {
-        "eh_bonificacao": eh_bonificacao,
-        "valor_venda": round(valor_venda, 2),
-        "valor_devolvido": round(valor_devolvido, 2),
-        "bonificacao": round(bonificacao, 2),
-        "valor_liquido": valor_liquido,
-    }
-
-def _vendas_row_hectolitros(row):
-    return _vendas_litros_para_hectolitros(row.get("litros"))
-
 def _vendas_relatorio_empty_totais():
     return {
         "notas": 0,
         "clientes": 0,
         "itens": 0,
-        "volumes": 0.0,
         "quantidade": 0.0,
         "litros": 0.0,
         "caixas": 0.0,
-        "bonificacao": 0.0,
         "valor_venda": 0.0,
         "valor_devolvido": 0.0,
         "valor_liquido": 0.0,
@@ -20488,2983 +9649,36 @@ def _vendas_relatorio_publico_totais(totais):
     data = dict(_vendas_relatorio_empty_totais())
     if isinstance(totais, dict):
         data.update(totais)
-    valor_venda = _as_float(data.get("valor_venda"), 0.0)
-    valor_devolvido = _as_float(data.get("valor_devolvido"), 0.0)
-    bonificacao = _as_float(data.get("bonificacao"), 0.0)
-    litros_hl = _vendas_litros_para_hectolitros(data.get("litros"))
     return {
         "notas": _as_int(data.get("notas"), 0),
         "clientes": _as_int(data.get("clientes"), 0),
         "itens": _as_int(data.get("itens"), 0),
-        "volumes": round(_as_float(data.get("volumes"), 0.0), 3),
         "quantidade": round(_as_float(data.get("quantidade"), 0.0), 3),
-        "litros": litros_hl,
-        "hectolitros": litros_hl,
+        "litros": round(_as_float(data.get("litros"), 0.0), 3),
         "caixas": round(_as_float(data.get("caixas"), 0.0), 3),
-        "bonificacao": round(bonificacao, 2),
-        "valor_venda": round(valor_venda, 2),
-        "valor_devolvido": round(valor_devolvido, 2),
-        "valor_liquido": round(valor_venda - valor_devolvido - bonificacao, 2),
+        "valor_venda": round(_as_float(data.get("valor_venda"), 0.0), 2),
+        "valor_devolvido": round(_as_float(data.get("valor_devolvido"), 0.0), 2),
+        "valor_liquido": round(_as_float(data.get("valor_liquido"), 0.0), 2),
         "quantidade_devolvida": round(_as_float(data.get("quantidade_devolvida"), 0.0), 3),
         "litro_devolvido": round(_as_float(data.get("litro_devolvido"), 0.0), 3),
         "caixa_devolvida": round(_as_float(data.get("caixa_devolvida"), 0.0), 3),
     }
 
-def _vendas_classificar_embalagem_tipo(produto):
-    texto = _as_str(produto).upper()
-    if not texto:
-        return "outros"
-    if "PET" in texto or "DESCART" in texto:
-        return "pet"
-    if "RETORN" in texto or "VIDRO" in texto:
-        return "retornavel"
-    return "outros"
-
-def _vendas_texto_sem_acentos(texto):
-    base = unicodedata.normalize("NFKD", _as_str(texto))
-    return "".join(ch for ch in base if not unicodedata.combining(ch))
-
-def _vendas_categoria_produto(produto):
-    texto = _vendas_texto_sem_acentos(produto).upper().strip()
-    if not texto:
-        return "SEM PRODUTO"
-
-    texto = re.sub(r"[\-/_,;:()[\]{}|]+", " ", texto)
-    texto = re.sub(r"\bSEM\s+ACUCAR\b", " ", texto)
-    texto = re.sub(r"\bS/?\s*ACUCAR\b", " ", texto)
-    texto = re.sub(r"\bSABORES?\b", " ", texto)
-    texto = re.sub(r"\bCOM\s+GAS\b", " ", texto)
-    texto = re.sub(r"\bSEM\s+GAS\b", " ", texto)
-    texto = re.sub(r"\s+", " ", texto).strip()
-
-    stop_tokens = {
-        "ZERO", "LIGHT", "DIET", "ORIGINAL", "TRADICIONAL", "NORMAL",
-        "SABOR", "SABORES", "COM", "SEM", "DE", "DA", "DO", "DAS", "DOS",
-        "E", "A", "O", "AS", "OS", "PET", "VIDRO", "LATA", "GARRAFA",
-        "FRASCO", "BAG", "PCT", "CX", "CAIXA", "UN", "UND", "GAS",
-    }
-
-    tokens = []
-    for token in texto.split():
-        if token in stop_tokens:
-            continue
-        if re.fullmatch(r"\d+(?:[.,]\d+)?(?:ML|L|LT|KG|G|GR|GRS|GRA)?", token):
-            continue
-        if re.fullmatch(r"\d+X\d+(?:[.,]\d+)?(?:ML|L|LT|KG|G|GR|GRS|GRA)?", token):
-            continue
-        if re.fullmatch(r"\d+(?:[.,]\d+)?", token):
-            continue
-        tokens.append(token)
-
-    categoria = " ".join(tokens).strip()
-    return categoria or texto or "SEM PRODUTO"
-
-def _vendas_categoria_embalagem_produto(produto):
-    texto = _vendas_texto_sem_acentos(produto).upper().strip()
-    if not texto:
-        return "SEM EMBALAGEM"
-
-    texto = re.sub(r"[\-/_,;:()[\]{}|]+", " ", texto)
-    texto = re.sub(r"\s+", " ", texto).strip()
-
-    embalagem = ""
-    if re.search(r"\bRETORN", texto) or re.search(r"\bVIDRO\b", texto):
-        embalagem = "RETORNAVEL"
-    elif re.search(r"\bPET\b", texto) or re.search(r"\bDESCART", texto) or re.search(r"\bDESC\b", texto):
-        embalagem = "PET"
-
-    tamanho = ""
-    m = re.search(r"\b(\d+(?:[.,]\d+)?)\s*(ML|L|LT|KG|G|GR|GRS|GRA)\b", texto)
-    if m:
-        valor = m.group(1).replace(",", ".")
-        unidade = m.group(2)
-        if unidade == "LT":
-            unidade = "L"
-        if valor.endswith(".0"):
-            valor = valor[:-2]
-        tamanho = f"{valor}{unidade}"
-    else:
-        m = re.search(r"\b(\d+)\s*X\s*(\d+(?:[.,]\d+)?)\s*(ML|L|LT|KG|G|GR|GRS|GRA)\b", texto)
-        if m:
-            qtd = m.group(1)
-            valor = m.group(2).replace(",", ".")
-            unidade = m.group(3)
-            if unidade == "LT":
-                unidade = "L"
-            if valor.endswith(".0"):
-                valor = valor[:-2]
-            tamanho = f"{qtd}X{valor}{unidade}"
-
-    partes = [p for p in (embalagem, tamanho) if p]
-    if partes:
-        return " ".join(partes)
-    return _vendas_categoria_produto(produto)
-
-def _vendas_categoria_variacao_produto(produto):
-    texto = _vendas_texto_sem_acentos(produto).upper().strip()
-    if not texto:
-        return "SEM PRODUTO"
-
-    texto = re.sub(r"^\s*\d+\s*-\s*", "", texto)
-    texto = re.sub(r"[\-/_,;:()[\]{}|]+", " ", texto)
-    texto = re.sub(r"\s+", " ", texto).strip()
-
-    stop_tokens = {
-        "ZERO", "LIGHT", "DIET", "ORIGINAL", "TRADICIONAL", "NORMAL",
-        "SABOR", "SABORES", "COM", "SEM", "DE", "DA", "DO", "DAS", "DOS",
-        "E", "A", "O", "AS", "OS",
-    }
-    sabor_tokens = {
-        "GUARANA", "COLA", "LARANJA", "ABACAXI", "UVA", "FRAMBOESA", "LIMAO",
-        "SODA", "CITRUS", "TUBARIO", "MARACUJA", "PESSEGO", "MORANGO",
-        "MANGA", "GOIABA", "AMEIXA", "PESSEGA", "PINEAPPLE", "LIMONADA",
-    }
-
-    tokens = []
-    for token in texto.split():
-        if token in stop_tokens:
-            continue
-        if token in sabor_tokens:
-            continue
-        if re.fullmatch(r"\d+(?:[.,]\d+)?(?:ML|L|LT|KG|G|GR|GRS|GRA)?", token):
-            tokens.append(token)
-            continue
-        if re.fullmatch(r"\d+X\d+(?:[.,]\d+)?(?:ML|L|LT|KG|G|GR|GRS|GRA)?", token):
-            tokens.append(token)
-            continue
-        if re.fullmatch(r"\d+/\d+(?:[.,]\d+)?(?:ML|L|LT|KG|G|GR|GRS|GRA)?", token):
-            tokens.append(token)
-            continue
-        if re.search(r"\d", token) and any(ch in token for ch in ("X", "/", "L", "M", "G")):
-            tokens.append(token)
-            continue
-        tokens.append(token)
-
-    categoria = " ".join(tokens).strip()
-    return categoria or texto or "SEM PRODUTO"
-
-def _vendas_publicar_opcoes_relatorio(rows):
-    vendedores_map = {}
-    clientes_map = {}
-    for row in rows or []:
-        vendedor_key = _as_str(row.get("vendedor_key")) or _as_str(row.get("vendedor_key_upper")) or "SEM VENDEDOR"
-        vendedor_nome = _as_str(row.get("vendedor_nome")) or vendedor_key
-        vendedor_codigo = _as_str(row.get("vendedor_codigo"))
-        cliente_chave = _as_str(row.get("cliente_norm")) or "SEM CLIENTE"
-        cliente_nome = _as_str(row.get("cliente")) or "SEM CLIENTE"
-        cliente_volumes = _as_float(row.get("caixa_fisica"), 0.0)
-        if cliente_volumes <= 0:
-            cliente_volumes = _as_float(row.get("caixas"), 0.0)
-        if cliente_volumes <= 0:
-            cliente_volumes = _as_float(row.get("quantidade"), 0.0)
-
-        if vendedor_key not in vendedores_map:
-            vendedores_map[vendedor_key] = {
-                "chave": vendedor_key,
-                "codigo": vendedor_codigo,
-                "nome": vendedor_nome,
-            }
-        cli = clientes_map.setdefault(cliente_chave, {
-            "chave": cliente_chave,
-            "cliente": cliente_nome,
-            "qtd_embalagens": 0.0,
-        })
-        cli["qtd_embalagens"] += cliente_volumes
-
-    vendedores = sorted(
-        vendedores_map.values(),
-        key=lambda item: ((_as_str(item.get("codigo")) or ""), (_as_str(item.get("nome")) or ""), (_as_str(item.get("chave")) or "")),
-    )
-    clientes_disponiveis = sorted(
-        clientes_map.values(),
-        key=lambda item: ((_as_str(item.get("cliente")) or ""), (_as_str(item.get("chave")) or "")),
-    )
-    return vendedores, clientes_disponiveis
-
-def _vendas_bonificacoes_normalizar_mes(mes=None, data_inicio=None, data_fim=None, meses_disponiveis=None):
-    if isinstance(mes, str) and re.fullmatch(r"\d{4}-\d{2}", mes.strip()):
-        return mes.strip()
-    if isinstance(data_inicio, str):
-        data_inicio = _parse_data_br(data_inicio)
-    if isinstance(data_fim, str):
-        data_fim = _parse_data_br(data_fim)
-    if isinstance(data_fim, datetime.date):
-        return _vendas_mes_chave(data_fim) or ""
-    if isinstance(data_inicio, datetime.date):
-        return _vendas_mes_chave(data_inicio) or ""
-    meses = list(meses_disponiveis or [])
-    return meses[-1] if meses else ""
-
-def _vendas_bonificacoes_resumo_grupos_inicial():
-    return {
-        "todos": {
-            "grupo": "todos",
-            "nome": "Todos",
-            "itens": 0,
-            "clientes": set(),
-            "notas": set(),
-            "valor_venda": 0.0,
-            "valor_devolvido": 0.0,
-            "bonificacao": 0.0,
-            "valor_liquido": 0.0,
-            "venda_base": 0.0,
-        },
-        "rio_branco": {
-            "grupo": "rio_branco",
-            "nome": "Rio Branco",
-            "itens": 0,
-            "clientes": set(),
-            "notas": set(),
-            "valor_venda": 0.0,
-            "valor_devolvido": 0.0,
-            "bonificacao": 0.0,
-            "valor_liquido": 0.0,
-            "venda_base": 0.0,
-        },
-        "autonomos": {
-            "grupo": "autonomos",
-            "nome": "Autônomos",
-            "itens": 0,
-            "clientes": set(),
-            "notas": set(),
-            "valor_venda": 0.0,
-            "valor_devolvido": 0.0,
-            "bonificacao": 0.0,
-            "valor_liquido": 0.0,
-            "venda_base": 0.0,
-        },
-    }
-
-def _vendas_bonificacoes_resumo_grupos_acumular(agrupados, row):
-    if not isinstance(agrupados, dict):
-        return
-    cliente = _as_str(row.get("cliente")) or "SEM CLIENTE"
-    numero_nf = _as_str(row.get("numero_nf"))
-    vendedor_nome = _as_str(row.get("vendedor_nome")) or _as_str(row.get("vendedor_key")) or ""
-    vendedor_key = _as_str(row.get("vendedor_key")) or _as_str(row.get("vendedor_key_upper")) or vendedor_nome
-    tipo_vendedor = _vendas_tipo_vendedor(vendedor_nome, vendedor_key)
-    financeiro = _vendas_row_financeiro_ajustado(row)
-    eh_bonificacao = financeiro["eh_bonificacao"]
-    valor_venda = financeiro["valor_venda"]
-    valor_devolvido = financeiro["valor_devolvido"]
-    bonificacao = financeiro["bonificacao"]
-    valor_liquido = financeiro["valor_liquido"]
-    venda_base = valor_venda if valor_venda > 0 else 0.0
-
-    for chave in ("todos", "rio_branco" if tipo_vendedor != "autonomo" else "autonomos"):
-        grupo = agrupados.get(chave)
-        if not grupo:
-            continue
-        grupo["itens"] += 1
-        grupo["clientes"].add(cliente)
-        if numero_nf:
-            grupo["notas"].add(numero_nf)
-        if eh_bonificacao:
-            grupo["bonificacao"] += bonificacao
-        else:
-            grupo["valor_venda"] += valor_venda
-            grupo["valor_devolvido"] += valor_devolvido
-            grupo["bonificacao"] += bonificacao
-            grupo["valor_liquido"] += valor_liquido
-            grupo["venda_base"] += venda_base
-
-def _vendas_bonificacoes_resumo_grupos_finalizar(agrupados):
-    if not isinstance(agrupados, dict):
-        return []
-    retorno = []
-    for chave in ("todos", "rio_branco", "autonomos"):
-        grupo = agrupados.get(chave, {})
-        venda_base = round(_as_float(grupo.get("venda_base"), 0.0), 2)
-        bonificacao = round(_as_float(grupo.get("bonificacao"), 0.0), 2)
-        retorno.append({
-            "grupo": _as_str(grupo.get("grupo")) or chave,
-            "nome": _as_str(grupo.get("nome")) or chave,
-            "itens": _as_int(grupo.get("itens"), 0),
-            "clientes": len(grupo.get("clientes") or set()),
-            "notas": len(grupo.get("notas") or set()),
-            "valor_venda": round(_as_float(grupo.get("valor_venda"), 0.0), 2),
-            "valor_devolvido": round(_as_float(grupo.get("valor_devolvido"), 0.0), 2),
-            "bonificacao": bonificacao,
-            "valor_liquido": round(_as_float(grupo.get("valor_liquido"), 0.0), 2),
-            "percentual_bonificacao": round((bonificacao / venda_base) * 100.0, 2) if venda_base > 0 else 0.0,
-            "venda_base": venda_base,
-        })
-    return retorno
-
-def _vendas_cache_bonificacoes_carregar(cache_entry, source, cfg, allow_rebuild=True):
-    cache_id = _as_str(cache_entry.get("id"))
-    payload = _vendas_bonificacoes_cache_load(cache_id)
-    if isinstance(payload, dict):
-        return payload
-    if not allow_rebuild:
-        return None
-
-    conn = None
-    cur = None
-    rows = []
-    try:
-        conn = get_conn()
-        cur = conn.cursor(dictionary=True)
-        cur.execute("""
-            SELECT
-                data_ref, data_texto, vendedor_key, vendedor_key_upper, vendedor_codigo, vendedor_nome,
-                numero_nf, cliente, cliente_norm, cidade, grupo_raw, grupo_norm, categoria_norm,
-                produto, tipo_operacao, condicao, tab_venda, quantidade, litros, caixas, caixa_fisica,
-                valor_venda, valor_devolvido, bonificacao, valor_liquido, quantidade_devolvida,
-                litro_devolvido, caixa_devolvida
-            FROM vendas_relatorio_itens
-            WHERE import_id=%s
-            ORDER BY data_ref ASC, vendedor_nome ASC, cliente ASC, produto ASC, numero_nf ASC
-        """, (cache_id,))
-        for row in cur.fetchall() or []:
-            rows.append(dict(row))
-    finally:
-        try:
-            if cur:
-                cur.close()
-        except Exception:
-            pass
-        try:
-            if conn:
-                conn.close()
-        except Exception:
-            pass
-
-    return _vendas_bonificacoes_cache_processar(cache_id, rows, cache_entry, source, cfg)
-
-def _vendas_bonificacoes_payload(cache_entry, source, cfg, mes=None, data_inicio=None, data_fim=None, filtro_vendedor="", filtro_cliente="", allow_rebuild=False):
-    cache_id = _as_str(cache_entry.get("id"))
-    mes_key_hint = _vendas_bonificacoes_normalizar_mes(mes, data_inicio, data_fim, None)
-    cache_key = _vendas_relatorio_cache_chave(
-        "bonificacoes",
-        cache_id,
-        _as_str(filtro_vendedor),
-        _as_str(filtro_cliente),
-        mes_key_hint,
-        _fmt_date(data_inicio) or "",
-        _fmt_date(data_fim) or "",
-    )
-    cached_payload = _vendas_relatorio_cache_obter(cache_key)
-    if isinstance(cached_payload, dict):
-        return cached_payload
-
-    payload_cache_file = _vendas_bonificacoes_cache_load(cache_id)
-    payload_cache_db = _vendas_db_import_cache_json(cache_id, "bonificacoes_cache_json") if not isinstance(payload_cache_file, dict) else payload_cache_file
-    if isinstance(payload_cache_file, dict):
-        payload_cache = payload_cache_file
-    elif isinstance(payload_cache_db, dict):
-        payload_cache = payload_cache_db
-    else:
-        payload_cache = _vendas_cache_bonificacoes_carregar(cache_entry, source, cfg, allow_rebuild=allow_rebuild)
-    if not isinstance(payload_cache, dict):
-        return {"erro": "Cache de bonificacoes ainda nao processado. Use Processar relatorios uma vez.", "relatorio_tipo": "bonificacoes"}
-    months = payload_cache.get("months") if isinstance(payload_cache, dict) else {}
-    meses_disponiveis = payload_cache.get("months_order") if isinstance(payload_cache, dict) else []
-    if not meses_disponiveis and isinstance(months, dict) and months:
-        meses_disponiveis = sorted(months.keys())
-    mes_key = _vendas_bonificacoes_normalizar_mes(mes, data_inicio, data_fim, meses_disponiveis)
-    if not mes_key and meses_disponiveis:
-        mes_key = meses_disponiveis[-1]
-    if not mes_key and isinstance(months, dict) and months:
-        mes_key = sorted(months.keys())[-1]
-    month_payload = months.get(mes_key) if isinstance(months, dict) else None
-    if not month_payload:
-        month_payload = {"resumo_grupos": []}
-    resumo_grupos = month_payload.get("resumo_grupos") or []
-    clientes_disponiveis = payload_cache.get("clientes_disponiveis") if isinstance(payload_cache, dict) else []
-    vendedores_disponiveis = payload_cache.get("vendedores_disponiveis") if isinstance(payload_cache, dict) else []
-
-    where_sql, params = _vendas_sql_periodo_where(cache_id, mes_key=mes_key, data_inicio=data_inicio, data_fim=data_fim, filtro_vendedor=filtro_vendedor, filtro_cliente=filtro_cliente)
-    finance = _vendas_sql_campos_financeiros()
-    base_sql = f"""
-        SELECT
-            data_ref,
-            data_texto,
-            vendedor_key,
-            vendedor_key_upper,
-            vendedor_codigo,
-            vendedor_nome,
-            cliente_norm,
-            cliente,
-            cidade,
-            numero_nf,
-            produto,
-            grupo_raw,
-            grupo_norm,
-            {finance["tab_venda"]} AS tab_venda_calc,
-            {finance["eh_bonificacao"]} AS eh_bonificacao,
-            {finance["valor_venda"]} AS valor_venda_aj,
-            {finance["valor_devolvido"]} AS valor_devolvido_aj,
-            {finance["bonificacao"]} AS bonificacao_aj,
-            {finance["valor_liquido"]} AS valor_liquido_aj,
-            {finance["tipo_vendedor"]} AS tipo_vendedor
-        FROM vendas_relatorio_itens
-        WHERE {where_sql}
-    """
-
-    conn = None
-    cur = None
-    rows_filtradas = []
-    vendedores = []
-    totais = {
-        "vendedores": 0,
-        "clientes": 0,
-        "notas": 0,
-        "itens": 0,
-        "valor_venda": 0.0,
-        "valor_devolvido": 0.0,
-        "bonificacao": 0.0,
-        "valor_liquido": 0.0,
-        "media_percentual_bonificacao": 0.0,
-        "percentual_bonificacao": 0.0,
-    }
-    detalhes = []
-
-    try:
-        conn = get_conn()
-        cur = conn.cursor(dictionary=True)
-
-        cur.execute(f"""
-            SELECT
-                COUNT(*) AS itens,
-                COUNT(DISTINCT NULLIF(cliente_norm, '')) AS clientes,
-                COUNT(DISTINCT NULLIF(numero_nf, '')) AS notas,
-                COUNT(DISTINCT NULLIF(vendedor_key_upper, '')) AS vendedores,
-                COALESCE(SUM(valor_venda_aj), 0) AS valor_venda,
-                COALESCE(SUM(valor_devolvido_aj), 0) AS valor_devolvido,
-                COALESCE(SUM(bonificacao_aj), 0) AS bonificacao,
-                COALESCE(SUM(valor_liquido_aj), 0) AS valor_liquido
-            FROM ({base_sql}) base
-        """, tuple(params))
-        row_totais = cur.fetchone() or {}
-        totais.update({
-            "vendedores": _as_int(row_totais.get("vendedores"), 0),
-            "clientes": _as_int(row_totais.get("clientes"), 0),
-            "notas": _as_int(row_totais.get("notas"), 0),
-            "itens": _as_int(row_totais.get("itens"), 0),
-            "valor_venda": round(_as_float(row_totais.get("valor_venda"), 0.0), 2),
-            "valor_devolvido": round(_as_float(row_totais.get("valor_devolvido"), 0.0), 2),
-            "bonificacao": round(_as_float(row_totais.get("bonificacao"), 0.0), 2),
-            "valor_liquido": round(_as_float(row_totais.get("valor_liquido"), 0.0), 2),
-        })
-        totais["percentual_bonificacao"] = round((totais["bonificacao"] / totais["valor_venda"]) * 100.0, 2) if totais["valor_venda"] > 0 else 0.0
-
-        cur.execute(f"""
-            SELECT
-                base.vendedor_key AS chave,
-                MAX(base.vendedor_codigo) AS codigo,
-                MAX(base.vendedor_nome) AS nome,
-                COUNT(*) AS itens,
-                COUNT(DISTINCT NULLIF(base.cliente_norm, '')) AS clientes,
-                COUNT(DISTINCT NULLIF(base.numero_nf, '')) AS notas,
-                COALESCE(SUM(base.valor_venda_aj), 0) AS valor_venda,
-                COALESCE(SUM(base.valor_devolvido_aj), 0) AS valor_devolvido,
-                COALESCE(SUM(base.bonificacao_aj), 0) AS bonificacao,
-                COALESCE(SUM(base.valor_liquido_aj), 0) AS valor_liquido,
-                AVG(CASE WHEN base.valor_venda_aj > 0 THEN (base.bonificacao_aj / base.valor_venda_aj) * 100.0 ELSE NULL END) AS media_percentual_bonificacao
-            FROM ({base_sql}) base
-            GROUP BY base.vendedor_key
-            ORDER BY AVG(CASE WHEN base.valor_venda_aj > 0 THEN (base.bonificacao_aj / base.valor_venda_aj) * 100.0 ELSE NULL END) DESC, MAX(base.vendedor_nome) ASC, MAX(base.vendedor_codigo) ASC
-        """, tuple(params))
-        vendedores = []
-        vendedor_medias = []
-        for row in cur.fetchall() or []:
-            valor_venda = round(_as_float(row.get("valor_venda"), 0.0), 2)
-            bonificacao = round(_as_float(row.get("bonificacao"), 0.0), 2)
-            percentual = round((bonificacao / valor_venda) * 100.0, 2) if valor_venda > 0 else 0.0
-            media_percentual = round(_as_float(row.get("media_percentual_bonificacao"), 0.0), 2)
-            if media_percentual <= 0:
-                media_percentual = percentual
-            vendedor_medias.append(media_percentual)
-            vendedores.append({
-                "chave": _as_str(row.get("chave")),
-                "codigo": _as_str(row.get("codigo")),
-                "nome": _as_str(row.get("nome")),
-                "itens": _as_int(row.get("itens"), 0),
-                "clientes": _as_int(row.get("clientes"), 0),
-                "notas": _as_int(row.get("notas"), 0),
-                "valor_venda": valor_venda,
-                "valor_devolvido": round(_as_float(row.get("valor_devolvido"), 0.0), 2),
-                "bonificacao": bonificacao,
-                "valor_liquido": round(_as_float(row.get("valor_liquido"), 0.0), 2),
-                "percentual": percentual,
-                "media_percentual_bonificacao": media_percentual,
-            })
-
-        totais["media_percentual_bonificacao"] = round(sum(vendedor_medias) / len(vendedor_medias), 2) if vendedor_medias else totais["percentual_bonificacao"]
-
-        if filtro_vendedor or filtro_cliente:
-            cur.execute(f"""
-                SELECT
-                    data_ref,
-                    data_texto,
-                    vendedor_key,
-                    vendedor_key_upper,
-                    vendedor_codigo,
-                    vendedor_nome,
-                    cliente_norm,
-                    cliente,
-                    cidade,
-                    numero_nf,
-                    produto,
-                    tab_venda_calc AS tab_venda,
-                    valor_venda_aj AS valor_venda,
-                    valor_devolvido_aj AS valor_devolvido,
-                    bonificacao_aj AS bonificacao,
-                    valor_liquido_aj AS valor_liquido
-                FROM ({base_sql}) base
-                ORDER BY data_ref ASC, vendedor_nome ASC, cliente ASC, produto ASC, numero_nf ASC
-            """, tuple(params))
-            rows_filtradas = [dict(row) for row in (cur.fetchall() or [])]
-            if filtro_vendedor or filtro_cliente:
-                agrupar_base = _vendas_bonificacoes_agrupar_rows(rows_filtradas, filtro_vendedor=filtro_vendedor, filtro_cliente=filtro_cliente, limite_detalhes=300)
-                totais = agrupar_base["totais"]
-                vendedores = agrupar_base["vendedores"]
-                detalhes = agrupar_base["detalhes"]
-                if not resumo_grupos:
-                    resumo_grupos = _vendas_bonificacoes_resumo_grupos(rows_filtradas)
-        else:
-            detalhes = []
-    finally:
-        try:
-            if cur:
-                cur.close()
-        except Exception:
-            pass
-        try:
-            if conn:
-                conn.close()
-        except Exception:
-            pass
-
-    if not resumo_grupos:
-        resumo_grupos = month_payload.get("resumo_grupos") or []
-
-    payload = {
-        "arquivo": {
-            "nome": _as_str(source.get("name")) or os.path.basename(_as_str(cache_entry.get("source_path"))),
-            "tamanho_bytes": _as_int(source.get("size"), _as_int(cache_entry.get("source_size"), 0)),
-            "atualizado_em": _as_str(source.get("mtime")) or _fmt_dt(cache_entry.get("source_mtime")),
-        },
-        "filtros": {
-            "mes": mes_key,
-            "vendedor": _as_str(filtro_vendedor).upper(),
-            "cliente": _as_str(filtro_cliente).upper(),
-        },
-        "cache": _vendas_cache_entry_publico(cache_entry),
-        "fonte": {
-            "source_type": _as_str(cfg.get("source_type")),
-            "ready": True,
-            "message": "",
-        },
-        "relatorio_tipo": "bonificacoes",
-        "meses_disponiveis": meses_disponiveis,
-        "mes_atual": mes_key,
-        "resumo_geral": totais,
-        "resumo_grupos": resumo_grupos,
-        "vendedores": vendedores,
-        "clientes_disponiveis": clientes_disponiveis,
-        "vendedores_disponiveis": vendedores_disponiveis,
-        "detalhes_vendedor": detalhes,
-    }
-    _vendas_relatorio_cache_guardar(cache_key, payload)
-    return payload
-
-_VENDAS_AUTONOMOS_NORMALIZADOS = {
-    _normalizar_chave_texto("Luis Carlos Pires"),
-    _normalizar_chave_texto("Norival Vignoto"),
-    _normalizar_chave_texto("Luiz Humberto Vignoto"),
-}
-
-def _vendas_tipo_vendedor(vendedor_nome="", vendedor_key=""):
-    texto_nome = _normalizar_chave_texto(vendedor_nome)
-    texto_key = _normalizar_chave_texto(vendedor_key)
-    for alvo in _VENDAS_AUTONOMOS_NORMALIZADOS:
-        if alvo and (texto_nome == alvo or texto_key == alvo or alvo in texto_nome or alvo in texto_key):
-            return "autonomo"
-    return "clt"
-
-def _vendas_quantidade_precificacao(row):
-    quantidade = _as_float(row.get("quantidade"), 0.0)
-    if quantidade > 0:
-        return quantidade
-    caixa_fisica = _as_float(row.get("caixa_fisica"), 0.0)
-    if caixa_fisica > 0:
-        return caixa_fisica
-    caixas = _as_float(row.get("caixas"), 0.0)
-    if caixas > 0:
-        return caixas
-    litros = _as_float(row.get("litros"), 0.0)
-    if litros > 0:
-        return litros
-    return 0.0
-
-def _vendas_preco_aplicado_linha(row):
-    quantidade = _vendas_quantidade_precificacao(row)
-    valor_venda = _as_float(row.get("valor_venda"), 0.0)
-    return round(valor_venda / quantidade, 2) if quantidade > 0 else 0.0
-
-def _vendas_sql_campos_financeiros(alias=""):
-    prefixo = f"{alias}." if alias else ""
-    tab_venda_expr = (
-        f"COALESCE(NULLIF({prefixo}tab_venda, 0), "
-        f"CASE "
-        f"WHEN UPPER(COALESCE({prefixo}tipo_operacao, '')) = 'BON' OR UPPER(COALESCE({prefixo}condicao, '')) = 'O' THEN 91 "
-        f"WHEN UPPER(COALESCE({prefixo}condicao, '')) = 'A' THEN 1 "
-        f"WHEN UPPER(COALESCE({prefixo}condicao, '')) = 'P' THEN 2 "
-        f"ELSE 0 END)"
-    )
-    eh_bonificacao_expr = f"CASE WHEN {tab_venda_expr} = 91 THEN 1 ELSE 0 END"
-    eh_devolucao_expr = (
-        f"CASE WHEN "
-        f"UPPER(COALESCE({prefixo}tipo_operacao, '')) LIKE '%DEV%' OR "
-        f"UPPER(COALESCE({prefixo}condicao, '')) IN ('D', 'R') OR "
-        f"COALESCE({prefixo}valor_devolvido, 0) > 0 OR "
-        f"COALESCE({prefixo}quantidade_devolvida, 0) > 0 OR "
-        f"COALESCE({prefixo}litro_devolvido, 0) > 0 OR "
-        f"COALESCE({prefixo}caixa_devolvida, 0) > 0 "
-        f"THEN 1 ELSE 0 END"
-    )
-    valor_venda_expr = f"CASE WHEN {eh_bonificacao_expr} = 1 THEN 0 ELSE COALESCE({prefixo}valor_venda, 0) END"
-    bonificacao_expr = (
-        f"CASE WHEN {eh_bonificacao_expr} = 1 THEN "
-        f"CASE WHEN COALESCE({prefixo}bonificacao, 0) > 0 THEN COALESCE({prefixo}bonificacao, 0) ELSE COALESCE({prefixo}valor_venda, 0) END "
-        f"ELSE COALESCE({prefixo}bonificacao, 0) END"
-    )
-    valor_devolvido_expr = f"COALESCE({prefixo}valor_devolvido, 0)"
-    valor_liquido_expr = f"({valor_venda_expr} - {valor_devolvido_expr} - {bonificacao_expr})"
-    quantidade_precificacao_expr = (
-        f"COALESCE(NULLIF({prefixo}quantidade, 0), NULLIF({prefixo}caixa_fisica, 0), "
-        f"NULLIF({prefixo}caixas, 0), NULLIF({prefixo}litros, 0))"
-    )
-    preco_aplicado_expr = (
-        f"CASE WHEN {quantidade_precificacao_expr} > 0 "
-        f"THEN ROUND(COALESCE({prefixo}valor_venda, 0) / {quantidade_precificacao_expr}, 2) "
-        f"ELSE 0 END"
-    )
-    grupo_expr = f"COALESCE(NULLIF({prefixo}grupo_norm, ''), NULLIF({prefixo}grupo_raw, ''), 'SEM GRUPO')"
-    autonomos_match = " OR ".join([
-        f"UPPER(COALESCE({prefixo}vendedor_nome, '')) LIKE '%LUIS CARLOS PIRES%'",
-        f"UPPER(COALESCE({prefixo}vendedor_nome, '')) LIKE '%NORIVAL VIGNOTO%'",
-        f"UPPER(COALESCE({prefixo}vendedor_nome, '')) LIKE '%LUIZ HUMBERT VIGNOTO%'",
-        f"UPPER(COALESCE({prefixo}vendedor_key, '')) LIKE '%LUIS CARLOS PIRES%'",
-        f"UPPER(COALESCE({prefixo}vendedor_key, '')) LIKE '%NORIVAL VIGNOTO%'",
-        f"UPPER(COALESCE({prefixo}vendedor_key, '')) LIKE '%LUIZ HUMBERT VIGNOTO%'",
-    ])
-    tipo_vendedor_expr = f"CASE WHEN ({autonomos_match}) THEN 'autonomo' ELSE 'clt' END"
-    return {
-        "tab_venda": tab_venda_expr,
-        "eh_bonificacao": eh_bonificacao_expr,
-        "eh_devolucao": eh_devolucao_expr,
-        "valor_venda": valor_venda_expr,
-        "valor_devolvido": valor_devolvido_expr,
-        "bonificacao": bonificacao_expr,
-        "valor_liquido": valor_liquido_expr,
-        "quantidade_precificacao": quantidade_precificacao_expr,
-        "preco_aplicado": preco_aplicado_expr,
-        "grupo": grupo_expr,
-        "tipo_vendedor": tipo_vendedor_expr,
-    }
-
-def _vendas_sql_periodo_where(cache_id, mes_key=None, data_inicio=None, data_fim=None, filtro_vendedor="", filtro_cliente=""):
-    cache_id = _as_str(cache_id)
-    filtro_vendedor = _as_str(filtro_vendedor).upper()
-    filtro_cliente = _as_str(filtro_cliente).upper()
-    where = ["import_id=%s"]
-    params = [cache_id]
-    if isinstance(mes_key, str) and re.fullmatch(r"\d{4}-\d{2}", mes_key):
-        try:
-            ano, mes = mes_key.split("-", 1)
-            data_inicio = datetime.date(_as_int(ano, 0), _as_int(mes, 1), 1)
-            data_fim = _vendas_mes_subtrair(data_inicio, -1)
-        except Exception:
-            data_inicio = None
-            data_fim = None
-    if isinstance(data_inicio, str):
-        data_inicio = _parse_data_br(data_inicio)
-    if isinstance(data_fim, str):
-        data_fim = _parse_data_br(data_fim)
-    if isinstance(data_inicio, datetime.date):
-        where.append("data_ref IS NOT NULL AND data_ref >= %s")
-        params.append(data_inicio)
-    if isinstance(data_fim, datetime.date):
-        where.append("data_ref IS NOT NULL AND data_ref < %s")
-        params.append(data_fim)
-    if filtro_vendedor:
-        where.append("vendedor_key_upper=%s")
-        params.append(filtro_vendedor)
-    if filtro_cliente:
-        where.append("cliente_norm=%s")
-        params.append(filtro_cliente)
-    return " AND ".join(where), params
-
 def _vendas_relatorio_row_publico(row):
-    financeiro = _vendas_row_financeiro_ajustado(row)
-    hectolitros = _vendas_row_hectolitros(row)
     return {
         "data": _as_str(row.get("data")),
         "numero_nf": _as_str(row.get("numero_nf")),
         "cliente": _as_str(row.get("cliente")),
         "cidade": _as_str(row.get("cidade")),
         "produto": _as_str(row.get("produto")),
-        "grupo": _as_str(row.get("grupo_norm")) or _as_str(row.get("grupo_raw")),
         "tipo_operacao": _as_str(row.get("tipo_operacao")),
         "condicao": _as_str(row.get("condicao")),
-        "tab_venda": _vendas_row_tab_venda(row),
         "quantidade": round(_as_float(row.get("quantidade"), 0.0), 3),
-        "litros": hectolitros,
-        "hectolitros": hectolitros,
+        "litros": round(_as_float(row.get("litros"), 0.0), 3),
         "caixas": round(_as_float(row.get("caixas"), 0.0), 3),
-        "preco_aplicado": _vendas_preco_aplicado_linha(row),
-        "bonificacao": financeiro["bonificacao"],
-        "valor_venda": financeiro["valor_venda"],
-        "valor_devolvido": financeiro["valor_devolvido"],
-        "valor_liquido": financeiro["valor_liquido"],
-    }
-
-def _vendas_lista_resumida(valores, limite=3):
-    itens = sorted({
-        _as_str(valor).strip()
-        for valor in (valores or [])
-        if _as_str(valor).strip()
-    })
-    if not itens:
-        return "-"
-    if len(itens) <= limite:
-        return ", ".join(itens)
-    return ", ".join(itens[:limite]) + f" +{len(itens) - limite}"
-
-def _vendas_mix_embalagens_cache_path(cache_id):
-    cache_id = _as_str(cache_id)
-    if not cache_id:
-        return ""
-    return os.path.join(VENDAS_REPORTS_DIR, f"{cache_id}.mix_embalagens.json")
-
-def _vendas_mix_embalagens_cache_load(cache_id):
-    cache_id = _as_str(cache_id)
-    if not cache_id:
-        return None
-    with _VENDAS_MIX_EMBALAGENS_CACHE_LOCK:
-        payload = _VENDAS_MIX_EMBALAGENS_CACHE.get(cache_id)
-        if isinstance(payload, dict) and _as_int(payload.get("versao"), 0) == _VENDAS_MIX_EMBALAGENS_CACHE_VERSAO:
-            return payload
-    def _migrar(payload_antigo):
-        return _vendas_mix_embalagens_cache_migrar(cache_id, payload_antigo)
-    path = _vendas_mix_embalagens_cache_path(cache_id)
-    if path and os.path.exists(path):
-        payload = _load_json_file(path, {})
-        if isinstance(payload, dict) and _as_int(payload.get("versao"), 0) == _VENDAS_MIX_EMBALAGENS_CACHE_VERSAO:
-            with _VENDAS_MIX_EMBALAGENS_CACHE_LOCK:
-                _VENDAS_MIX_EMBALAGENS_CACHE[cache_id] = payload
-            return payload
-        migrado = _migrar(payload)
-        if isinstance(migrado, dict):
-            return migrado
-    payload = _vendas_db_import_cache_json(cache_id, "mix_embalagens_cache_json")
-    if isinstance(payload, dict) and _as_int(payload.get("versao"), 0) == _VENDAS_MIX_EMBALAGENS_CACHE_VERSAO:
-        with _VENDAS_MIX_EMBALAGENS_CACHE_LOCK:
-            _VENDAS_MIX_EMBALAGENS_CACHE[cache_id] = payload
-        return payload
-    migrado = _migrar(payload)
-    if isinstance(migrado, dict):
-        return migrado
-    return None
-
-def _vendas_mix_embalagens_cache_save(cache_id, payload):
-    cache_id = _as_str(cache_id)
-    if not cache_id or not isinstance(payload, dict):
-        return None
-    payload["versao"] = _VENDAS_MIX_EMBALAGENS_CACHE_VERSAO
-    path = _vendas_mix_embalagens_cache_path(cache_id)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    _save_json_file(path, payload)
-    try:
-        _vendas_db_update_import_caches(cache_id, mix_embalagens_json=json.dumps(payload, ensure_ascii=False))
-    except Exception:
-        pass
-    with _VENDAS_MIX_EMBALAGENS_CACHE_LOCK:
-        _VENDAS_MIX_EMBALAGENS_CACHE[cache_id] = payload
-    return path
-
-def _vendas_mix_embalagens_cache_limpar(cache_id=None):
-    cache_id = _as_str(cache_id)
-    with _VENDAS_MIX_EMBALAGENS_CACHE_LOCK:
-        if not cache_id:
-            _VENDAS_MIX_EMBALAGENS_CACHE.clear()
-            return
-        _VENDAS_MIX_EMBALAGENS_CACHE.pop(cache_id, None)
-    path = _vendas_mix_embalagens_cache_path(cache_id)
-    if path and os.path.exists(path):
-        try:
-            os.remove(path)
-        except Exception:
-            pass
-
-def _vendas_mix_embalagens_item_migrar(item):
-    base = dict(item or {})
-    grupos = sorted({
-        _vendas_mix_embalagens_grupo_label(valor)
-        for valor in (base.get("grupos") or [])
-        if _as_str(valor).strip()
-    })
-    qtd_grupos = len(grupos) if grupos else max(1, _as_int(base.get("qtd_grupos"), 0))
-    base["grupos"] = grupos
-    base["qtd_grupos"] = qtd_grupos
-    base["faixa_grupos"] = _vendas_mix_embalagens_bucket(qtd_grupos)
-    base["grupos_lista"] = " | ".join(grupos) if grupos else "SEM GRUPO"
-    return base
-
-def _vendas_mix_embalagens_cache_migrar(cache_id, payload):
-    if not isinstance(payload, dict):
-        return None
-    versao = _as_int(payload.get("versao"), 0)
-    if versao >= _VENDAS_MIX_EMBALAGENS_CACHE_VERSAO:
-        return payload
-    if versao <= 0:
-        return None
-
-    novo = dict(payload)
-    months = {}
-    for mes_key, month in (payload.get("months") or {}).items():
-        month_base = dict(month or {})
-        clientes = [_vendas_mix_embalagens_item_migrar(item) for item in (month_base.get("clientes") or [])]
-        resumo_geral, resumo_faixas = _vendas_mix_embalagens_resumo(clientes)
-        clientes_por_vendedor = {}
-        for vendedor_key, vendedor_bucket in (month_base.get("clientes_por_vendedor") or {}).items():
-            vendedor_base = dict(vendedor_bucket or {})
-            vendedor_base["clientes"] = [_vendas_mix_embalagens_item_migrar(item) for item in (vendedor_base.get("clientes") or [])]
-            clientes_por_vendedor[vendedor_key] = vendedor_base
-        month_base["clientes"] = clientes
-        month_base["clientes_por_vendedor"] = clientes_por_vendedor
-        month_base["resumo_geral"] = resumo_geral
-        month_base["resumo_faixas"] = resumo_faixas
-        months[mes_key] = month_base
-    novo["months"] = months
-    novo["versao"] = _VENDAS_MIX_EMBALAGENS_CACHE_VERSAO
-    _vendas_mix_embalagens_cache_save(cache_id, novo)
-    return novo
-
-def _vendas_mix_embalagens_grupo_label(grupo):
-    texto = _as_str(grupo).strip()
-    if not texto:
-        return "SEM GRUPO"
-    match = re.match(r"^(\d{6})\s+(.+)$", texto)
-    if match:
-        codigo = match.group(1)
-        regras = _vendas_import_regras_carregar()
-        for item in (regras.get("grupos") or []):
-            if _as_str(item.get("codigo")) == codigo:
-                return _as_str(item.get("nome")) or match.group(2).strip()
-        return match.group(2).strip()
-    return texto.upper()
-
-def _vendas_mix_embalagens_bucket(qtd_grupos):
-    qtd = max(0, _as_int(qtd_grupos, 0))
-    if qtd >= 6:
-        return "6"
-    if qtd <= 1:
-        return "1"
-    return str(qtd)
-
-def _vendas_mix_embalagens_cliente_inicial(chave="", cliente=""):
-    return {
-        "chave": _as_str(chave) or "SEM CLIENTE",
-        "cliente": _as_str(cliente) or "SEM CLIENTE",
-        "cidades": set(),
-        "notas": set(),
-        "grupos": set(),
-        "itens": 0,
-        "vendedores": {},
-    }
-
-def _vendas_mix_embalagens_cliente_acumular(acc, row):
-    if not isinstance(acc, dict) or not isinstance(row, dict):
-        return
-    cidade = _as_str(row.get("cidade")) or "SEM CIDADE"
-    numero_nf = _as_str(row.get("numero_nf"))
-    vendedor_key = _as_str(row.get("vendedor_key_upper")) or _as_str(row.get("vendedor_key")) or "SEM VENDEDOR"
-    vendedor_codigo = _as_str(row.get("vendedor_codigo"))
-    vendedor_nome = _as_str(row.get("vendedor_nome")) or vendedor_key
-    grupo = _vendas_mix_embalagens_grupo_label(
-        _as_str(row.get("grupo_norm")) or _as_str(row.get("categoria_norm")) or _as_str(row.get("grupo_raw")) or _as_str(row.get("produto"))
-    )
-    acc["cliente"] = _as_str(acc.get("cliente")) or _as_str(row.get("cliente")) or "SEM CLIENTE"
-    acc["itens"] = _as_int(acc.get("itens"), 0) + 1
-    acc["cidades"].add(cidade)
-    if numero_nf:
-        acc["notas"].add(numero_nf)
-    if grupo:
-        acc["grupos"].add(grupo)
-    vendedores = acc.get("vendedores")
-    if not isinstance(vendedores, dict):
-        vendedores = {}
-        acc["vendedores"] = vendedores
-    vendedores[vendedor_key] = {
-        "chave": vendedor_key,
-        "codigo": vendedor_codigo,
-        "nome": vendedor_nome,
-    }
-
-def _vendas_mix_embalagens_cliente_publico(acc):
-    grupos = sorted({
-        _vendas_mix_embalagens_grupo_label(valor)
-        for valor in (acc.get("grupos") or [])
-        if _as_str(valor).strip()
-    })
-    vendedores = sorted(
-        (acc.get("vendedores") or {}).values(),
-        key=lambda item: (_as_str(item.get("nome")), _as_str(item.get("codigo")), _as_str(item.get("chave"))),
-    )
-    vendedor_labels = [[item.get("codigo"), item.get("nome")] for item in vendedores]
-    vendedor_labels = [" - ".join(part for part in parts if _as_str(part)) for parts in vendedor_labels]
-    vendedor_labels = [label for label in vendedor_labels if label]
-    qtd_grupos = len(grupos)
-    return {
-        "chave": _as_str(acc.get("chave")) or "SEM CLIENTE",
-        "cliente": _as_str(acc.get("cliente")) or "SEM CLIENTE",
-        "cidade": " | ".join(sorted(_as_str(valor) for valor in (acc.get("cidades") or set()) if _as_str(valor))) or "SEM CIDADE",
-        "itens": _as_int(acc.get("itens"), 0),
-        "notas": len(acc.get("notas") or set()),
-        "qtd_grupos": qtd_grupos,
-        "faixa_grupos": _vendas_mix_embalagens_bucket(qtd_grupos),
-        "grupos": grupos,
-        "grupos_lista": " | ".join(grupos) if grupos else "SEM GRUPO",
-        "vendedores": vendedores,
-        "vendedores_lista": " | ".join(vendedor_labels) if vendedor_labels else "SEM VENDEDOR",
-        "vendedor_codigo": vendedores[0].get("codigo") if len(vendedores) == 1 else "",
-        "vendedor": vendedores[0].get("nome") if len(vendedores) == 1 else (_vendas_lista_resumida(vendedor_labels, limite=2) if vendedor_labels else "SEM VENDEDOR"),
-    }
-
-def _vendas_mix_embalagens_resumo(clientes):
-    lista = [item for item in (clientes or []) if isinstance(item, dict)]
-    total_pdvs = len(lista)
-    buckets_map = {chave: 0 for chave in ("6", "5", "4", "3", "2", "1")}
-    grupos_distintos = set()
-    soma_grupos = 0
-    for item in lista:
-        faixa = _vendas_mix_embalagens_bucket(item.get("qtd_grupos"))
-        buckets_map[faixa] = _as_int(buckets_map.get(faixa), 0) + 1
-        soma_grupos += _as_int(item.get("qtd_grupos"), 0)
-        for grupo in item.get("grupos") or []:
-            grupos_distintos.add(_vendas_mix_embalagens_grupo_label(grupo))
-    resumo_faixas = []
-    for faixa in ("6", "5", "4", "3", "2", "1"):
-        qtd = _as_int(buckets_map.get(faixa), 0)
-        resumo_faixas.append({
-            "faixa": faixa,
-            "pdvs": qtd,
-            "percentual": round((qtd / total_pdvs) * 100.0, 2) if total_pdvs > 0 else 0.0,
-        })
-    return {
-        "pdvs": total_pdvs,
-        "grupos_distintos": len(grupos_distintos),
-        "media_grupos_por_pdv": round((soma_grupos / total_pdvs), 2) if total_pdvs > 0 else 0.0,
-        "pdvs_6": _as_int(buckets_map.get("6"), 0),
-        "pdvs_5": _as_int(buckets_map.get("5"), 0),
-        "pdvs_4": _as_int(buckets_map.get("4"), 0),
-        "pdvs_3": _as_int(buckets_map.get("3"), 0),
-        "pdvs_2": _as_int(buckets_map.get("2"), 0),
-        "pdvs_1": _as_int(buckets_map.get("1"), 0),
-    }, resumo_faixas
-
-def _vendas_mix_embalagens_cache_processar(cache_id, rows, cache_entry=None, source=None, cfg=None):
-    cache_id = _as_str(cache_id)
-    if not cache_id:
-        raise RuntimeError("cache de grupos embalagem invalido.")
-
-    meses_map = {}
-    meses_disponiveis = set()
-    for row in (rows or []):
-        if not isinstance(row, dict):
-            continue
-        data_ref = row.get("data_ref")
-        mes_key = _vendas_mes_chave(data_ref) or _as_str(row.get("mes_ref"))
-        if not mes_key:
-            continue
-        if _vendas_row_eh_bonificacao(row) or _vendas_row_eh_devolucao(row):
-            continue
-        cliente_key = _as_str(row.get("cliente_norm")) or (_as_str(row.get("cliente")).upper() or "SEM CLIENTE")
-        vendedor_key = _as_str(row.get("vendedor_key_upper")) or _as_str(row.get("vendedor_key")) or "SEM VENDEDOR"
-        vendedor_codigo = _as_str(row.get("vendedor_codigo"))
-        vendedor_nome = _as_str(row.get("vendedor_nome")) or vendedor_key
-        bucket = meses_map.setdefault(mes_key, {
-            "clientes_total": {},
-            "clientes_por_vendedor": {},
-            "vendedores": {},
-        })
-        meses_disponiveis.add(mes_key)
-
-        total_acc = bucket["clientes_total"].setdefault(
-            cliente_key,
-            _vendas_mix_embalagens_cliente_inicial(cliente_key, _as_str(row.get("cliente"))),
-        )
-        _vendas_mix_embalagens_cliente_acumular(total_acc, row)
-
-        vendedor_bucket = bucket["clientes_por_vendedor"].setdefault(vendedor_key, {})
-        vendedor_acc = vendedor_bucket.setdefault(
-            cliente_key,
-            _vendas_mix_embalagens_cliente_inicial(cliente_key, _as_str(row.get("cliente"))),
-        )
-        _vendas_mix_embalagens_cliente_acumular(vendedor_acc, row)
-        bucket["vendedores"][vendedor_key] = {
-            "chave": vendedor_key,
-            "codigo": vendedor_codigo,
-            "nome": vendedor_nome,
-        }
-
-    meses_ordenados = sorted(meses_disponiveis)
-    payload = {
-        "cache_id": cache_id,
-        "generated_at": _fmt_dt(datetime.datetime.now()),
-        "versao": _VENDAS_MIX_EMBALAGENS_CACHE_VERSAO,
-        "source": {
-            "source_type": _as_str(source.get("source_type")) if isinstance(source, dict) else "",
-            "path": _as_str(source.get("path")) if isinstance(source, dict) else "",
-            "signature": _as_str(source.get("signature")) if isinstance(source, dict) else "",
-        },
-        "cache_entry": _vendas_cache_entry_publico(cache_entry or {}),
-        "months_order": meses_ordenados,
-        "months": {},
-    }
-
-    for mes_key in meses_ordenados:
-        month = meses_map.get(mes_key, {})
-        clientes_total = [
-            _vendas_mix_embalagens_cliente_publico(item)
-            for item in (month.get("clientes_total") or {}).values()
-        ]
-        clientes_total.sort(key=lambda item: (-_as_int(item.get("qtd_grupos"), 0), _as_str(item.get("cliente")), _as_str(item.get("chave"))))
-        resumo_geral, resumo_faixas = _vendas_mix_embalagens_resumo(clientes_total)
-
-        clientes_por_vendedor = {}
-        for vendedor_key, clientes_map in (month.get("clientes_por_vendedor") or {}).items():
-            clientes_vendedor = [
-                _vendas_mix_embalagens_cliente_publico(item)
-                for item in (clientes_map or {}).values()
-            ]
-            clientes_vendedor.sort(key=lambda item: (-_as_int(item.get("qtd_grupos"), 0), _as_str(item.get("cliente")), _as_str(item.get("chave"))))
-            clientes_por_vendedor[vendedor_key] = {
-                "vendedor": dict((month.get("vendedores") or {}).get(vendedor_key) or {"chave": vendedor_key, "codigo": "", "nome": vendedor_key}),
-                "clientes": clientes_vendedor,
-            }
-
-        vendedores = sorted(
-            (month.get("vendedores") or {}).values(),
-            key=lambda item: (_as_str(item.get("nome")), _as_str(item.get("codigo")), _as_str(item.get("chave"))),
-        )
-
-        payload["months"][mes_key] = {
-            "mes": mes_key,
-            "label": _vendas_mes_rotulo(mes_key),
-            "resumo_geral": resumo_geral,
-            "resumo_faixas": resumo_faixas,
-            "clientes": clientes_total,
-            "clientes_por_vendedor": clientes_por_vendedor,
-            "vendedores": vendedores,
-        }
-
-    _vendas_mix_embalagens_cache_save(cache_id, payload)
-    return payload
-
-def _vendas_cache_mix_embalagens_carregar(cache_entry, source, cfg, allow_rebuild=True):
-    cache_id = _as_str(cache_entry.get("id"))
-    payload = _vendas_mix_embalagens_cache_load(cache_id)
-    if isinstance(payload, dict):
-        return payload
-    if not allow_rebuild:
-        return None
-    rows = _vendas_bonificacoes_cache_carregar_rows_db(cache_id)
-    return _vendas_mix_embalagens_cache_processar(cache_id, rows, cache_entry, source, cfg)
-
-def _vendas_mix_embalagens_payload(cache_entry, source, cfg, mes=None, filtro_vendedor="", filtro_cliente="", allow_rebuild=False):
-    cache_id = _as_str(cache_entry.get("id"))
-    cache_key = _vendas_relatorio_cache_chave(
-        "mix_embalagens",
-        cache_id,
-        _as_str(filtro_vendedor),
-        _as_str(filtro_cliente),
-        _as_str(mes),
-        "",
-        "",
-        "",
-    )
-    cached_payload = _vendas_relatorio_cache_obter(cache_key)
-    if isinstance(cached_payload, dict):
-        return cached_payload
-
-    payload_cache = _vendas_mix_embalagens_cache_load(cache_id)
-    if not isinstance(payload_cache, dict):
-        payload_cache = _vendas_cache_mix_embalagens_carregar(cache_entry, source, cfg, allow_rebuild=allow_rebuild)
-    if not isinstance(payload_cache, dict):
-        return {"erro": "Cache de grupos embalagem ainda nao processado. Use Processar relatorios uma vez.", "relatorio_tipo": "grupos_embalagem"}
-
-    meses_disponiveis = payload_cache.get("months_order") if isinstance(payload_cache, dict) else []
-    if not meses_disponiveis and isinstance(payload_cache.get("months"), dict):
-        meses_disponiveis = sorted(payload_cache.get("months").keys())
-    mes_key = _vendas_bonificacoes_normalizar_mes(mes, None, None, meses_disponiveis)
-    if not mes_key and meses_disponiveis:
-        mes_key = meses_disponiveis[-1]
-
-    month_payload = (payload_cache.get("months") or {}).get(mes_key) or {}
-    filtro_vendedor = _as_str(filtro_vendedor).upper()
-    filtro_cliente = _as_str(filtro_cliente).upper()
-    vendedores = list(month_payload.get("vendedores") or [])
-
-    if filtro_vendedor:
-        vendor_bucket = (month_payload.get("clientes_por_vendedor") or {}).get(filtro_vendedor) or {}
-        clientes_base = list(vendor_bucket.get("clientes") or [])
-    else:
-        clientes_base = list(month_payload.get("clientes") or [])
-
-    clientes_disponiveis = sorted(
-        [{
-            "chave": _as_str(item.get("chave")),
-            "cliente": _as_str(item.get("cliente")),
-            "cidade": _as_str(item.get("cidade")),
-            "qtd_grupos": _as_int(item.get("qtd_grupos"), 0),
-        } for item in clientes_base],
-        key=lambda item: (_as_str(item.get("cliente")), _as_str(item.get("chave"))),
-    )
-
-    clientes = [
-        dict(item)
-        for item in clientes_base
-        if not filtro_cliente or _as_str(item.get("chave")).upper() == filtro_cliente
-    ]
-    resumo_geral, resumo_faixas = _vendas_mix_embalagens_resumo(clientes)
-    detalhe_pdv = clientes[0] if filtro_cliente and clientes else None
-
-    payload = {
-        "arquivo": {
-            "nome": _as_str(source.get("name")) or os.path.basename(_as_str(cache_entry.get("source_path"))),
-            "tamanho_bytes": _as_int(source.get("size"), _as_int(cache_entry.get("source_size"), 0)),
-            "atualizado_em": _as_str(source.get("mtime")) or _fmt_dt(cache_entry.get("source_mtime")),
-        },
-        "filtros": {
-            "mes": mes_key,
-            "vendedor": filtro_vendedor,
-            "cliente": filtro_cliente,
-        },
-        "cache": _vendas_cache_entry_publico(cache_entry),
-        "fonte": {
-            "source_type": _as_str(cfg.get("source_type")),
-            "ready": True,
-            "message": "",
-        },
-        "relatorio_tipo": "grupos_embalagem",
-        "meses_disponiveis": meses_disponiveis,
-        "mes_atual": mes_key,
-        "resumo_geral": resumo_geral,
-        "resumo_faixas": resumo_faixas,
-        "clientes": clientes,
-        "clientes_disponiveis": clientes_disponiveis,
-        "vendedores": vendedores,
-        "detalhe_pdv": detalhe_pdv,
-    }
-    _vendas_relatorio_cache_guardar(cache_key, payload)
-    return payload
-
-def _coletar_relatorio_vendas_embalagens(filtro_vendedor="", filtro_cliente="", data_inicio=None, data_fim=None):
-    cache_entry, source, cfg = _vendas_obter_cache_ativo(force_refresh=False)
-
-    filtro_vendedor = _as_str(filtro_vendedor).upper()
-    filtro_cliente = _as_str(filtro_cliente).upper()
-    if isinstance(data_inicio, str):
-        data_inicio = _parse_data_br(data_inicio)
-    if isinstance(data_fim, str):
-        data_fim = _parse_data_br(data_fim)
-
-    where_base = ["import_id=%s"]
-    params_base = [_as_str(cache_entry.get("id"))]
-    if data_inicio:
-        where_base.append("data_ref IS NOT NULL AND data_ref >= %s")
-        params_base.append(data_inicio)
-    if data_fim:
-        where_base.append("data_ref IS NOT NULL AND data_ref <= %s")
-        params_base.append(data_fim)
-    if filtro_vendedor:
-        where_base.append("vendedor_key_upper = %s")
-        params_base.append(filtro_vendedor)
-
-    where_base_sql = " AND ".join(where_base)
-
-    conn = None
-    cur = None
-    rows = []
-    try:
-        conn = get_conn()
-        cur = conn.cursor(dictionary=True)
-        cur.execute(f"""
-            SELECT
-                vendedor_key,
-                vendedor_key_upper,
-                vendedor_codigo,
-                vendedor_nome,
-                cliente_norm,
-                cliente,
-                cidade,
-                numero_nf,
-                produto,
-                caixas,
-                caixa_fisica,
-                bonificacao
-            FROM vendas_relatorio_itens
-            WHERE {where_base_sql}
-            ORDER BY vendedor_nome ASC, cliente ASC, cidade ASC, produto ASC, numero_nf ASC
-        """, tuple(params_base))
-        rows = cur.fetchall() or []
-    finally:
-        try:
-            if cur:
-                cur.close()
-        except Exception:
-            pass
-        try:
-            if conn:
-                conn.close()
-        except Exception:
-            pass
-
-    vendedores, clientes_disponiveis = _vendas_publicar_opcoes_relatorio(rows)
-
-    totais = {
-        "itens": 0,
-        "clientes": 0,
-        "notas": 0,
-        "volumes": 0.0,
-        "qtd_embalagens": 0.0,
-        "retornavel": 0.0,
-        "pet": 0.0,
-        "bonificacao": 0.0,
-        "tipos_utilizados": 0,
-        "tipos_retornavel": 0,
-        "tipos_pet": 0,
-    }
-    clientes_map = {}
-    notas_totais = set()
-    categorias_totais = set()
-    categorias_retornavel_totais = set()
-    categorias_pet_totais = set()
-
-    for row in rows:
-        chave = _as_str(row.get("cliente_norm")) or "SEM CLIENTE"
-        cliente_nome = _as_str(row.get("cliente")) or "SEM CLIENTE"
-        cidade = _as_str(row.get("cidade")) or "SEM CIDADE"
-        numero_nf = _as_str(row.get("numero_nf"))
-        produto = _as_str(row.get("produto"))
-        volumes = _as_float(row.get("caixa_fisica"), _as_float(row.get("caixas"), 0.0))
-        bonificacao = _as_float(row.get("bonificacao"), 0.0)
-        categoria = _vendas_categoria_embalagem_produto(produto)
-        tipo_embalagem = _vendas_classificar_embalagem_tipo(produto)
-        if _vendas_row_eh_bonificacao(row):
-            continue
-
-        if filtro_cliente and chave != filtro_cliente:
-            continue
-
-        totais["itens"] += 1
-        totais["volumes"] += volumes
-        totais["qtd_embalagens"] += volumes
-        if numero_nf:
-            notas_totais.add(numero_nf)
-        if tipo_embalagem == "retornavel":
-            totais["retornavel"] += volumes
-        elif tipo_embalagem == "pet":
-            totais["pet"] += volumes
-        totais["bonificacao"] += bonificacao
-        if categoria:
-            categorias_totais.add(categoria)
-            if tipo_embalagem == "retornavel":
-                categorias_retornavel_totais.add(categoria)
-            elif tipo_embalagem == "pet":
-                categorias_pet_totais.add(categoria)
-
-        cliente_info = clientes_map.setdefault(chave, {
-            "chave": chave,
-            "cliente": cliente_nome,
-            "cidades": set(),
-            "notas": set(),
-            "itens": 0,
-            "volumes": 0.0,
-            "qtd_embalagens": 0.0,
-            "retornavel": 0.0,
-            "pet": 0.0,
-            "bonificacao": 0.0,
-            "categorias": set(),
-            "categorias_retornavel": set(),
-            "categorias_pet": set(),
-        })
-        cliente_info["cidades"].add(cidade)
-        cliente_info["itens"] += 1
-        if numero_nf:
-            cliente_info["notas"].add(numero_nf)
-        cliente_info["volumes"] += volumes
-        cliente_info["qtd_embalagens"] += volumes
-        if tipo_embalagem == "retornavel":
-            cliente_info["retornavel"] += volumes
-            cliente_info["categorias_retornavel"].add(categoria)
-        elif tipo_embalagem == "pet":
-            cliente_info["pet"] += volumes
-            cliente_info["categorias_pet"].add(categoria)
-        cliente_info["bonificacao"] += bonificacao
-        cliente_info["categorias"].add(categoria)
-
-    totais["clientes"] = len(clientes_map)
-    totais["notas"] = len(notas_totais)
-    totais["volumes"] = round(totais["volumes"], 3)
-    totais["qtd_embalagens"] = round(totais["qtd_embalagens"], 3)
-    totais["retornavel"] = round(totais["retornavel"], 3)
-    totais["pet"] = round(totais["pet"], 3)
-    totais["bonificacao"] = round(totais["bonificacao"], 2)
-
-    clientes = []
-    for row in clientes_map.values():
-        categorias = sorted(row["categorias"])
-        clientes.append({
-            "chave": row["chave"],
-            "cliente": row["cliente"],
-            "cidade": " | ".join(sorted(c for c in row["cidades"] if c)) or "SEM CIDADE",
-            "itens": _as_int(row["itens"], 0),
-            "notas": len(row["notas"]),
-            "volumes": round(row["volumes"], 3),
-            "qtd_embalagens": round(row["qtd_embalagens"], 3),
-            "retornavel": round(row["retornavel"], 3),
-            "pet": round(row["pet"], 3),
-            "bonificacao": round(row["bonificacao"], 2),
-            "tipos_utilizados": len(categorias),
-            "tipos_retornavel": len(row["categorias_retornavel"]),
-            "tipos_pet": len(row["categorias_pet"]),
-            "tipos_lista": " | ".join(categorias),
-        })
-    clientes.sort(key=lambda item: (-_as_float(item.get("qtd_embalagens"), 0.0), _as_str(item.get("cliente")), _as_str(item.get("chave"))))
-
-    resumo = {
-        "itens": _as_int(totais.get("itens"), 0),
-        "clientes": _as_int(totais.get("clientes"), 0),
-        "notas": _as_int(totais.get("notas"), 0),
-        "volumes": round(_as_float(totais.get("volumes"), 0.0), 3),
-        "qtd_embalagens": round(_as_float(totais.get("qtd_embalagens"), 0.0), 3),
-        "retornavel": round(_as_float(totais.get("retornavel"), 0.0), 3),
-        "pet": round(_as_float(totais.get("pet"), 0.0), 3),
-        "bonificacao": round(_as_float(totais.get("bonificacao"), 0.0), 2),
-        "tipos_utilizados": len(categorias_totais),
-        "tipos_retornavel": len(categorias_retornavel_totais),
-        "tipos_pet": len(categorias_pet_totais),
-    }
-
-    return {
-        "arquivo": {
-            "nome": _as_str(source.get("name")) or os.path.basename(_as_str(cache_entry.get("source_path"))),
-            "tamanho_bytes": _as_int(source.get("size"), _as_int(cache_entry.get("source_size"), 0)),
-            "atualizado_em": _as_str(source.get("mtime")) or _fmt_dt(cache_entry.get("source_mtime")),
-        },
-        "filtros": {
-            "vendedor": filtro_vendedor,
-            "cliente": filtro_cliente,
-            "data_inicio": _fmt_date(data_inicio),
-            "data_fim": _fmt_date(data_fim),
-        },
-        "cache": _vendas_cache_entry_publico(cache_entry),
-        "fonte": {
-            "source_type": _as_str(cfg.get("source_type")),
-            "ready": True,
-            "message": "",
-        },
-        "relatorio_tipo": "embalagens",
-        "resumo_geral": resumo,
-        "clientes": clientes,
-        "clientes_disponiveis": clientes_disponiveis,
-        "vendedores": vendedores,
-    }
-
-def _vendas_coletar_relatorio_variacao_preco_sql(cache_entry, source, cfg, filtro_vendedor="", mes=None, data_inicio=None, data_fim=None, limite_detalhes=300):
-    cache_id = _as_str(cache_entry.get("id"))
-    filtro_vendedor = _as_str(filtro_vendedor).upper()
-    if isinstance(data_inicio, str):
-        data_inicio = _parse_data_br(data_inicio)
-    if isinstance(data_fim, str):
-        data_fim = _parse_data_br(data_fim)
-    limite_detalhes = max(50, min(_as_int(limite_detalhes, 300), 1000))
-
-    payload_cache = _vendas_cache_bonificacoes_carregar(cache_entry, source, cfg, allow_rebuild=False)
-    if not isinstance(payload_cache, dict):
-        payload_cache = _vendas_bonificacoes_cache_load(cache_id)
-    if not isinstance(payload_cache, dict):
-        return {"erro": "Cache de variacao de preco ainda nao processado. Use Processar relatorios uma vez.", "relatorio_tipo": "variacao_preco"}
-
-    meses_disponiveis = payload_cache.get("months_order") if isinstance(payload_cache, dict) else []
-    if not meses_disponiveis and isinstance(payload_cache, dict):
-        months = payload_cache.get("months") or {}
-        if isinstance(months, dict):
-            meses_disponiveis = sorted(months.keys())
-    mes_key = _vendas_bonificacoes_normalizar_mes(mes, data_inicio, data_fim, meses_disponiveis)
-    if not mes_key and meses_disponiveis:
-        mes_key = meses_disponiveis[-1]
-    if not mes_key and isinstance(payload_cache, dict):
-        months = payload_cache.get("months") or {}
-        if months:
-            mes_key = sorted(months.keys())[-1]
-
-    where_sql, params = _vendas_sql_periodo_where(cache_id, mes_key=mes_key, data_inicio=data_inicio, data_fim=data_fim, filtro_vendedor=filtro_vendedor)
-    finance = _vendas_sql_campos_financeiros()
-    base_sql = f"""
-        SELECT
-            data_ref,
-            data_texto,
-            vendedor_key,
-            vendedor_key_upper,
-            vendedor_codigo,
-            vendedor_nome,
-            cliente_norm,
-            cliente,
-            cidade,
-            numero_nf,
-            produto,
-            {finance["grupo"]} AS grupo_norm_sql,
-            {finance["tab_venda"]} AS tab_venda_calc,
-            {finance["eh_bonificacao"]} AS eh_bonificacao,
-            {finance["eh_devolucao"]} AS eh_devolucao,
-            {finance["valor_venda"]} AS valor_venda_aj,
-            {finance["valor_devolvido"]} AS valor_devolvido_aj,
-            {finance["bonificacao"]} AS bonificacao_aj,
-            {finance["valor_liquido"]} AS valor_liquido_aj,
-            {finance["quantidade_precificacao"]} AS quantidade_precificacao_num,
-            COALESCE({finance["quantidade_precificacao"]}, 0) AS quantidade_precificacao,
-            COALESCE({finance["quantidade_precificacao"]}, 0) AS quantidade,
-            COALESCE({finance["quantidade_precificacao"]}, 0) AS litros,
-            {finance["preco_aplicado"]} AS preco_aplicado,
-            {finance["tipo_vendedor"]} AS tipo_vendedor
-        FROM vendas_relatorio_itens
-        WHERE {where_sql}
-    """
-
-    vendedores_disponiveis = payload_cache.get("vendedores_disponiveis") if isinstance(payload_cache, dict) else []
-    clientes_disponiveis = payload_cache.get("clientes_disponiveis") if isinstance(payload_cache, dict) else []
-
-    conn = None
-    cur = None
-    resumo_geral = {}
-    resumo_grupos = []
-    variacoes = []
-    detalhes = []
-
-    try:
-        conn = get_conn()
-        cur = conn.cursor(dictionary=True)
-
-        cur.execute(f"""
-            SELECT
-                COUNT(*) AS itens,
-                COUNT(DISTINCT NULLIF(vendedor_key, '')) AS vendedores,
-                COUNT(DISTINCT NULLIF(cliente_norm, '')) AS clientes,
-                COUNT(DISTINCT NULLIF(cidade, '')) AS cidades,
-                COUNT(DISTINCT NULLIF(numero_nf, '')) AS notas,
-                COUNT(DISTINCT NULLIF(grupo_norm_sql, '')) AS grupos,
-                COUNT(DISTINCT preco_aplicado) AS precos_distintos,
-                MIN(preco_aplicado) AS preco_min,
-                MAX(preco_aplicado) AS preco_max,
-                COALESCE(SUM(valor_venda_aj), 0) AS valor_venda,
-                COALESCE(SUM(valor_devolvido_aj), 0) AS valor_devolvido,
-                COALESCE(SUM(bonificacao_aj), 0) AS bonificacao,
-                COALESCE(SUM(valor_liquido_aj), 0) AS valor_liquido
-            FROM ({base_sql}) base
-            WHERE base.eh_bonificacao = 0 AND base.eh_devolucao = 0
-        """, tuple(params))
-        total = cur.fetchone() or {}
-        preco_min = round(_as_float(total.get("preco_min"), 0.0), 2)
-        preco_max = round(_as_float(total.get("preco_max"), 0.0), 2)
-        resumo_geral = {
-            "itens": _as_int(total.get("itens"), 0),
-            "vendedores": _as_int(total.get("vendedores"), 0),
-            "grupos": 0,
-            "variacoes": 0,
-            "clientes": _as_int(total.get("clientes"), 0),
-            "cidades": _as_int(total.get("cidades"), 0),
-            "notas": _as_int(total.get("notas"), 0),
-            "precos_distintos": _as_int(total.get("precos_distintos"), 0),
-            "preco_min": preco_min,
-            "preco_max": preco_max,
-            "variacao_valor": round(preco_max - preco_min, 2) if preco_min and preco_max else 0.0,
-            "variacao_percentual": round(((preco_max - preco_min) / preco_min) * 100.0, 2) if preco_min > 0 else 0.0,
-            "variacao_absoluta": round(preco_max - preco_min, 2) if preco_min and preco_max else 0.0,
-            "valor_venda": round(_as_float(total.get("valor_venda"), 0.0), 2),
-            "valor_devolvido": round(_as_float(total.get("valor_devolvido"), 0.0), 2),
-            "bonificacao": round(_as_float(total.get("bonificacao"), 0.0), 2),
-            "valor_liquido": round(_as_float(total.get("valor_liquido"), 0.0), 2),
-        }
-
-        cur.execute(f"""
-            SELECT
-                base.tipo_vendedor AS tipo_vendedor,
-                COUNT(*) AS itens,
-                COUNT(DISTINCT NULLIF(base.vendedor_key, '')) AS vendedores,
-                COUNT(DISTINCT NULLIF(base.cliente_norm, '')) AS clientes,
-                COUNT(DISTINCT NULLIF(base.cidade, '')) AS cidades,
-                COUNT(DISTINCT NULLIF(base.numero_nf, '')) AS notas,
-                COUNT(DISTINCT NULLIF(base.grupo_norm_sql, '')) AS grupos,
-                COUNT(DISTINCT base.preco_aplicado) AS precos_distintos,
-                MIN(base.preco_aplicado) AS preco_min,
-                MAX(base.preco_aplicado) AS preco_max,
-                COALESCE(SUM(base.valor_venda_aj), 0) AS valor_venda,
-                COALESCE(SUM(base.valor_devolvido_aj), 0) AS valor_devolvido,
-                COALESCE(SUM(base.bonificacao_aj), 0) AS bonificacao,
-                COALESCE(SUM(base.valor_liquido_aj), 0) AS valor_liquido
-            FROM ({base_sql}) base
-            WHERE base.eh_bonificacao = 0 AND base.eh_devolucao = 0
-            GROUP BY base.tipo_vendedor
-        """, tuple(params))
-        tipo_rows = [dict(row) for row in (cur.fetchall() or [])]
-
-        cur.execute(f"""
-            SELECT
-                base.vendedor_key AS chave,
-                MAX(base.vendedor_codigo) AS codigo,
-                MAX(base.vendedor_nome) AS vendedor,
-                COALESCE(NULLIF(base.grupo_norm_sql, ''), 'SEM GRUPO') AS grupo,
-                COUNT(*) AS itens,
-                COUNT(DISTINCT NULLIF(base.cliente_norm, '')) AS clientes,
-                COUNT(DISTINCT NULLIF(base.cidade, '')) AS cidades,
-                COUNT(DISTINCT NULLIF(base.numero_nf, '')) AS notas,
-                COUNT(DISTINCT base.preco_aplicado) AS precos_distintos,
-                GROUP_CONCAT(DISTINCT ROUND(base.preco_aplicado, 2) ORDER BY base.preco_aplicado SEPARATOR '||') AS precos,
-                GROUP_CONCAT(DISTINCT base.cidade ORDER BY base.cidade SEPARATOR '||') AS cidades_lista_raw,
-                GROUP_CONCAT(DISTINCT base.cliente ORDER BY base.cliente SEPARATOR '||') AS clientes_lista_raw,
-                MIN(base.preco_aplicado) AS preco_min,
-                MAX(base.preco_aplicado) AS preco_max,
-                COALESCE(SUM(base.valor_venda_aj), 0) AS valor_venda,
-                COALESCE(SUM(base.valor_devolvido_aj), 0) AS valor_devolvido,
-                COALESCE(SUM(base.bonificacao_aj), 0) AS bonificacao,
-                COALESCE(SUM(base.valor_liquido_aj), 0) AS valor_liquido,
-                COALESCE(SUM(base.quantidade_precificacao_num), 0) AS quantidade,
-                COALESCE(SUM(base.litros), 0) AS volumes,
-                MAX(base.tipo_vendedor) AS tipo_vendedor
-            FROM ({base_sql}) base
-            WHERE base.eh_bonificacao = 0 AND base.eh_devolucao = 0
-            GROUP BY base.vendedor_key, COALESCE(NULLIF(base.grupo_norm_sql, ''), 'SEM GRUPO')
-            ORDER BY MAX(base.vendedor_nome) ASC, COALESCE(NULLIF(base.grupo_norm_sql, ''), 'SEM GRUPO') ASC
-        """, tuple(params))
-        combo_rows = [dict(row) for row in (cur.fetchall() or [])]
-
-        if filtro_vendedor:
-            cur.execute(f"""
-                SELECT
-                    data_ref,
-                    data_texto,
-                    vendedor_key,
-                    vendedor_key_upper,
-                    vendedor_codigo,
-                    vendedor_nome,
-                    cliente_norm,
-                    cliente,
-                    cidade,
-                    numero_nf,
-                    produto,
-                    grupo_norm_sql AS grupo,
-                    tab_venda_calc AS tab_venda,
-                    quantidade_precificacao AS quantidade,
-                    preco_aplicado,
-                    valor_venda_aj AS valor_venda,
-                    valor_devolvido_aj AS valor_devolvido,
-                    bonificacao_aj AS bonificacao,
-                    valor_liquido_aj AS valor_liquido
-                FROM ({base_sql}) base
-                WHERE base.eh_bonificacao = 0 AND base.eh_devolucao = 0
-                ORDER BY data_ref ASC, vendedor_nome ASC, cliente ASC, produto ASC, numero_nf ASC
-                LIMIT %s
-            """, tuple(params + [limite_detalhes]))
-            detalhes = [dict(row) for row in (cur.fetchall() or [])]
-    finally:
-        try:
-            if cur:
-                cur.close()
-        except Exception:
-            pass
-        try:
-            if conn:
-                conn.close()
-        except Exception:
-            pass
-
-    tipos = {
-        "todos": {"grupo": "todos", "nome": "Todos", "itens": 0, "vendedores": set(), "grupos": 0, "variacoes": 0, "clientes": set(), "cidades": set(), "notas": set(), "precos": set(), "preco_min": None, "preco_max": None, "valor_venda": 0.0, "valor_devolvido": 0.0, "bonificacao": 0.0, "valor_liquido": 0.0},
-        "rio_branco": {"grupo": "rio_branco", "nome": "Rio Branco", "itens": 0, "vendedores": set(), "grupos": 0, "variacoes": 0, "clientes": set(), "cidades": set(), "notas": set(), "precos": set(), "preco_min": None, "preco_max": None, "valor_venda": 0.0, "valor_devolvido": 0.0, "bonificacao": 0.0, "valor_liquido": 0.0},
-        "autonomos": {"grupo": "autonomos", "nome": "Autônomos", "itens": 0, "vendedores": set(), "grupos": 0, "variacoes": 0, "clientes": set(), "cidades": set(), "notas": set(), "precos": set(), "preco_min": None, "preco_max": None, "valor_venda": 0.0, "valor_devolvido": 0.0, "bonificacao": 0.0, "valor_liquido": 0.0},
-    }
-
-    variacoes = []
-    for row in combo_rows:
-        chave = _as_str(row.get("chave")) or "SEM VENDEDOR"
-        nome = _as_str(row.get("vendedor")) or chave
-        grupo = _as_str(row.get("grupo")) or "SEM GRUPO"
-        tipo = _vendas_tipo_vendedor(nome, chave)
-        tipo_chave = "autonomos" if tipo == "autonomo" else "rio_branco"
-        precos_txt = _as_str(row.get("precos")) or ""
-        precos = []
-        for valor in [p for p in precos_txt.split("||") if p]:
-            try:
-                precos.append(round(_as_float(valor, 0.0), 2))
-            except Exception:
-                continue
-        preco_min = round(_as_float(row.get("preco_min"), 0.0), 2)
-        preco_max = round(_as_float(row.get("preco_max"), 0.0), 2)
-        if not precos and (preco_min or preco_max):
-            precos = sorted({preco_min, preco_max})
-        variacao_valor = round(preco_max - preco_min, 2) if preco_min and preco_max else 0.0
-        variacao_pct = round((variacao_valor / preco_min) * 100.0, 2) if preco_min > 0 else 0.0
-
-        for alvo in ("todos", tipo_chave):
-            grupo_tipo = tipos[alvo]
-            grupo_tipo["grupos"] += 1
-            if _as_int(row.get("precos_distintos"), 0) > 1:
-                grupo_tipo["variacoes"] += 1
-            grupo_tipo["vendedores"].add(chave)
-            grupo_tipo["clientes"].add(chave)
-            if preco_min and (grupo_tipo["preco_min"] is None or preco_min < grupo_tipo["preco_min"]):
-                grupo_tipo["preco_min"] = preco_min
-            if preco_max and (grupo_tipo["preco_max"] is None or preco_max > grupo_tipo["preco_max"]):
-                grupo_tipo["preco_max"] = preco_max
-            grupo_tipo["itens"] += _as_int(row.get("itens"), 0)
-            grupo_tipo["valor_venda"] += _as_float(row.get("valor_venda"), 0.0)
-            grupo_tipo["valor_devolvido"] += _as_float(row.get("valor_devolvido"), 0.0)
-            grupo_tipo["bonificacao"] += _as_float(row.get("bonificacao"), 0.0)
-            grupo_tipo["valor_liquido"] += _as_float(row.get("valor_liquido"), 0.0)
-            grupo_tipo["precos"].update(precos)
-
-        if _as_int(row.get("precos_distintos"), 0) > 1:
-            variacoes.append({
-                "chave": f"{chave}|{grupo}",
-                "codigo": _as_str(row.get("codigo")),
-                "vendedor": nome,
-                "vendedor_key": chave,
-                "grupo": grupo,
-                "produtos": "-",
-                "itens": _as_int(row.get("itens"), 0),
-                "clientes": _as_int(row.get("clientes"), 0),
-                "cidades": _as_int(row.get("cidades"), 0),
-                "notas": _as_int(row.get("notas"), 0),
-                "precos_distintos": _as_int(row.get("precos_distintos"), 0),
-                "precos": ", ".join(_fmt_money_br(valor) for valor in precos) if precos else "-",
-                "cidades_lista": _vendas_lista_resumida((_as_str(row.get("cidades_lista_raw")) or "").split("||"), limite=4),
-                "clientes_lista": _vendas_lista_resumida((_as_str(row.get("clientes_lista_raw")) or "").split("||"), limite=4),
-                "preco_min": preco_min,
-                "preco_max": preco_max,
-                "variacao_valor": variacao_valor,
-                "variacao_percentual": variacao_pct,
-                "valor_venda": round(_as_float(row.get("valor_venda"), 0.0), 2),
-                "valor_devolvido": round(_as_float(row.get("valor_devolvido"), 0.0), 2),
-                "bonificacao": round(_as_float(row.get("bonificacao"), 0.0), 2),
-                "valor_liquido": round(_as_float(row.get("valor_liquido"), 0.0), 2),
-                "quantidade": round(_as_float(row.get("quantidade"), 0.0), 3),
-                "volumes": round(_as_float(row.get("volumes"), 0.0), 3),
-                "tipo_vendedor": tipo,
-            })
-
-    tipo_stats = {}
-    for row in tipo_rows:
-        chave = _as_str(row.get("tipo_vendedor"))
-        alvo = "autonomos" if chave == "autonomo" else "rio_branco"
-        tipo_stats[alvo] = {
-            "clientes": _as_int(row.get("clientes"), 0),
-            "cidades": _as_int(row.get("cidades"), 0),
-            "notas": _as_int(row.get("notas"), 0),
-            "precos_distintos": _as_int(row.get("precos_distintos"), 0),
-            "preco_min": round(_as_float(row.get("preco_min"), 0.0), 2),
-            "preco_max": round(_as_float(row.get("preco_max"), 0.0), 2),
-            "valor_venda": round(_as_float(row.get("valor_venda"), 0.0), 2),
-            "valor_devolvido": round(_as_float(row.get("valor_devolvido"), 0.0), 2),
-            "bonificacao": round(_as_float(row.get("bonificacao"), 0.0), 2),
-            "valor_liquido": round(_as_float(row.get("valor_liquido"), 0.0), 2),
-        }
-
-    resumo_geral["grupos"] = len(combo_rows)
-    resumo_geral["variacoes"] = len(variacoes)
-
-    resumo_grupos = []
-    for chave in ("todos", "rio_branco", "autonomos"):
-        grupo = tipos[chave]
-        stats = tipo_stats.get(chave, {})
-        preco_min = round(_as_float(stats.get("preco_min"), 0.0), 2) if stats else 0.0
-        preco_max = round(_as_float(stats.get("preco_max"), 0.0), 2) if stats else 0.0
-        variacao_valor = round(preco_max - preco_min, 2) if preco_min and preco_max else 0.0
-        variacao_pct = round((variacao_valor / preco_min) * 100.0, 2) if preco_min > 0 else 0.0
-        resumo_grupos.append({
-            "grupo": grupo["grupo"],
-            "nome": grupo["nome"],
-            "itens": _as_int(grupo["itens"], 0) if chave != "todos" else resumo_geral["itens"],
-            "vendedores": len(grupo["vendedores"]) if chave != "todos" else resumo_geral["vendedores"],
-            "grupos": _as_int(grupo["grupos"], 0),
-            "variacoes": _as_int(grupo["variacoes"], 0),
-            "clientes": _as_int(stats.get("clientes"), 0) if stats else (resumo_geral["clientes"] if chave == "todos" else 0),
-            "cidades": _as_int(stats.get("cidades"), 0) if stats else (resumo_geral["cidades"] if chave == "todos" else 0),
-            "notas": _as_int(stats.get("notas"), 0) if stats else (resumo_geral["notas"] if chave == "todos" else 0),
-            "precos_distintos": _as_int(stats.get("precos_distintos"), 0) if stats else (resumo_geral["precos_distintos"] if chave == "todos" else 0),
-            "preco_min": preco_min if chave != "todos" else resumo_geral["preco_min"],
-            "preco_max": preco_max if chave != "todos" else resumo_geral["preco_max"],
-            "variacao_valor": variacao_valor if chave != "todos" else resumo_geral["variacao_valor"],
-            "variacao_percentual": variacao_pct if chave != "todos" else resumo_geral["variacao_percentual"],
-            "valor_venda": _as_float(stats.get("valor_venda"), 0.0) if stats else (resumo_geral["valor_venda"] if chave == "todos" else 0.0),
-            "valor_devolvido": _as_float(stats.get("valor_devolvido"), 0.0) if stats else (resumo_geral["valor_devolvido"] if chave == "todos" else 0.0),
-            "bonificacao": _as_float(stats.get("bonificacao"), 0.0) if stats else (resumo_geral["bonificacao"] if chave == "todos" else 0.0),
-            "valor_liquido": _as_float(stats.get("valor_liquido"), 0.0) if stats else (resumo_geral["valor_liquido"] if chave == "todos" else 0.0),
-        })
-
-    if not detalhes and filtro_vendedor:
-        detalhes = combo_rows[:limite_detalhes]
-
-    payload = {
-        "arquivo": {
-            "nome": _as_str(source.get("name")) or os.path.basename(_as_str(cache_entry.get("source_path"))),
-            "tamanho_bytes": _as_int(source.get("size"), _as_int(cache_entry.get("source_size"), 0)),
-            "atualizado_em": _as_str(source.get("mtime")) or _fmt_dt(cache_entry.get("source_mtime")),
-        },
-        "filtros": {
-            "mes": mes_key,
-            "vendedor": filtro_vendedor,
-            "data_inicio": _fmt_date(data_inicio),
-            "data_fim": _fmt_date(data_fim),
-            "limite_detalhes": limite_detalhes,
-        },
-        "cache": _vendas_cache_entry_publico(cache_entry),
-        "fonte": {
-            "source_type": _as_str(cfg.get("source_type")),
-            "ready": True,
-            "message": "",
-        },
-        "relatorio_tipo": "variacao_preco",
-        "meses_disponiveis": meses_disponiveis,
-        "mes_atual": mes_key,
-        "resumo_geral": resumo_geral,
-        "resumo_grupos": resumo_grupos,
-        "variacoes": variacoes,
-        "vendedores": vendedores_disponiveis,
-        "clientes_disponiveis": clientes_disponiveis,
-        "detalhes_vendedor": detalhes,
-        "detalhes_limitados": bool((filtro_vendedor or len(detalhes) >= limite_detalhes)),
-    }
-    try:
-        _vendas_db_update_import_caches(cache_id, variacao_preco_json=json.dumps(payload, ensure_ascii=False))
-    except Exception:
-        pass
-    _vendas_relatorio_cache_guardar(_vendas_relatorio_cache_chave("variacao_preco", cache_id, filtro_vendedor, "", mes_key, _fmt_date(data_inicio) or "", _fmt_date(data_fim) or "", str(limite_detalhes)), payload)
-    return payload
-
-def _coletar_relatorio_vendas_variacao_preco(filtro_vendedor="", mes=None, data_inicio=None, data_fim=None, limite_detalhes=300, allow_rebuild=False):
-    return _vendas_coletar_relatorio_variacao_preco_sql(*_vendas_obter_cache_ativo(force_refresh=False), filtro_vendedor=filtro_vendedor, mes=mes, data_inicio=data_inicio, data_fim=data_fim, limite_detalhes=limite_detalhes)
-    cache_entry, source, cfg = _vendas_obter_cache_ativo(force_refresh=False)
-
-    filtro_vendedor = _as_str(filtro_vendedor).upper()
-    if isinstance(data_inicio, str):
-        data_inicio = _parse_data_br(data_inicio)
-    if isinstance(data_fim, str):
-        data_fim = _parse_data_br(data_fim)
-    limite_detalhes = max(50, min(_as_int(limite_detalhes, 300), 1000))
-
-    payload_cache = _vendas_cache_bonificacoes_carregar(cache_entry, source, cfg, allow_rebuild=allow_rebuild)
-    if not isinstance(payload_cache, dict):
-        if not allow_rebuild:
-            return {"erro": "Cache de variacao de preco ainda nao processado. Use Processar relatorios uma vez.", "relatorio_tipo": "variacao_preco"}
-        payload_cache = _vendas_cache_bonificacoes_cache_load(_as_str(cache_entry.get("id")))
-    if not isinstance(payload_cache, dict):
-        return {"erro": "Cache de bonificacoes ainda nao processado. Use Processar relatorios uma vez.", "relatorio_tipo": "variacao_preco"}
-    meses_disponiveis = payload_cache.get("months_order") if isinstance(payload_cache, dict) else []
-    if not meses_disponiveis and isinstance(payload_cache, dict):
-        months = payload_cache.get("months") or {}
-        if isinstance(months, dict) and months:
-            meses_disponiveis = sorted(months.keys())
-    mes_key = _vendas_bonificacoes_normalizar_mes(mes, data_inicio, data_fim, meses_disponiveis)
-    if not mes_key and meses_disponiveis:
-        mes_key = meses_disponiveis[-1]
-    if not mes_key and isinstance(payload_cache, dict):
-        months = payload_cache.get("months") or {}
-        if months:
-            mes_key = sorted(months.keys())[-1]
-
-    if mes_key:
-        rows_base = _vendas_bonificacoes_cache_carregar_rows_mes_db(cache_id=_as_str(cache_entry.get("id")), mes_key=mes_key)
-        rows_filtradas = _vendas_bonificacoes_cache_carregar_rows_mes_db(
-            cache_id=_as_str(cache_entry.get("id")),
-            mes_key=mes_key,
-            filtro_vendedor=filtro_vendedor,
-        )
-    else:
-        rows_base, _ = _vendas_relatorio_base_rows(data_inicio, data_fim)
-        rows_filtradas = [row for row in rows_base if not filtro_vendedor or (_as_str(row.get("vendedor_key_upper")) or _as_str(row.get("vendedor_key")) or "").upper() == filtro_vendedor]
-
-    vendedores_disponiveis, clientes_disponiveis = _vendas_publicar_opcoes_relatorio(rows_base)
-    vendedores_disponiveis = vendedores_disponiveis or []
-    clientes_disponiveis = clientes_disponiveis or []
-
-    def _grupo_tipo_vendedor(vendedor_nome="", vendedor_key=""):
-        tipo = _vendas_tipo_vendedor(vendedor_nome, vendedor_key)
-        return "autonomos" if tipo == "autonomo" else "rio_branco"
-
-    tipos = {
-        "todos": {
-            "grupo": "todos",
-            "nome": "Todos",
-            "itens": 0,
-            "vendedores": set(),
-            "grupos": 0,
-            "variacoes": 0,
-            "clientes": set(),
-            "cidades": set(),
-            "notas": set(),
-            "precos": set(),
-            "preco_min": None,
-            "preco_max": None,
-            "valor_venda": 0.0,
-            "valor_devolvido": 0.0,
-            "bonificacao": 0.0,
-            "valor_liquido": 0.0,
-        },
-        "rio_branco": {
-            "grupo": "rio_branco",
-            "nome": "Rio Branco",
-            "itens": 0,
-            "vendedores": set(),
-            "grupos": 0,
-            "variacoes": 0,
-            "clientes": set(),
-            "cidades": set(),
-            "notas": set(),
-            "precos": set(),
-            "preco_min": None,
-            "preco_max": None,
-            "valor_venda": 0.0,
-            "valor_devolvido": 0.0,
-            "bonificacao": 0.0,
-            "valor_liquido": 0.0,
-        },
-        "autonomos": {
-            "grupo": "autonomos",
-            "nome": "Autônomos",
-            "itens": 0,
-            "vendedores": set(),
-            "grupos": 0,
-            "variacoes": 0,
-            "clientes": set(),
-            "cidades": set(),
-            "notas": set(),
-            "precos": set(),
-            "preco_min": None,
-            "preco_max": None,
-            "valor_venda": 0.0,
-            "valor_devolvido": 0.0,
-            "bonificacao": 0.0,
-            "valor_liquido": 0.0,
-        },
-    }
-
-    variacoes_map = {}
-    clientes_totais = set()
-    cidades_totais = set()
-    vendedores_totais = set()
-    grupos_totais = set()
-    precos_totais = set()
-    notas_totais = set()
-    linhas_detalhe = []
-
-    for row in rows_filtradas:
-        if _vendas_row_eh_bonificacao(row) or _vendas_row_eh_devolucao(row):
-            continue
-        volumes = _vendas_row_hectolitros(row)
-        preco_aplicado = _vendas_preco_aplicado_linha(row)
-        if volumes <= 0 or preco_aplicado <= 0:
-            continue
-
-        vendedor_key = _as_str(row.get("vendedor_key_upper")) or _as_str(row.get("vendedor_key")) or "SEM VENDEDOR"
-        vendedor_nome = _as_str(row.get("vendedor_nome")) or vendedor_key
-        cliente_nome = _as_str(row.get("cliente")) or "SEM CLIENTE"
-        cliente_key = _as_str(row.get("cliente_norm")) or cliente_nome.upper()
-        cidade = _as_str(row.get("cidade")) or "SEM CIDADE"
-        numero_nf = _as_str(row.get("numero_nf"))
-        grupo = _as_str(row.get("grupo_norm")) or _as_str(row.get("grupo_raw")) or _vendas_categoria_variacao_produto(row.get("produto")) or "SEM GRUPO"
-        produto = _as_str(row.get("produto")) or _vendas_categoria_variacao_produto(row.get("produto")) or "SEM PRODUTO"
-        tipo_vendedor = _grupo_tipo_vendedor(vendedor_nome, vendedor_key)
-        valor_venda = _as_float(row.get("valor_venda"), 0.0)
-        valor_devolvido = _as_float(row.get("valor_devolvido"), 0.0)
-        bonificacao = _as_float(row.get("bonificacao"), 0.0)
-        valor_liquido = round(valor_venda - valor_devolvido - bonificacao, 2)
-
-        clientes_totais.add(cliente_key)
-        cidades_totais.add(cidade)
-        vendedores_totais.add(vendedor_key)
-        grupos_totais.add(grupo)
-        precos_totais.add(preco_aplicado)
-        if numero_nf:
-            notas_totais.add(numero_nf)
-
-        for chave_tipo in ("todos", tipo_vendedor):
-            grupo_tipo = tipos[chave_tipo]
-            grupo_tipo["itens"] += 1
-            grupo_tipo["vendedores"].add(vendedor_key)
-            grupo_tipo["clientes"].add(cliente_key)
-            grupo_tipo["cidades"].add(cidade)
-            if numero_nf:
-                grupo_tipo["notas"].add(numero_nf)
-            grupo_tipo["precos"].add(preco_aplicado)
-            grupo_tipo["valor_venda"] += valor_venda
-            grupo_tipo["valor_devolvido"] += valor_devolvido
-            grupo_tipo["bonificacao"] += bonificacao
-            grupo_tipo["valor_liquido"] += valor_liquido
-            if grupo_tipo["preco_min"] is None or preco_aplicado < grupo_tipo["preco_min"]:
-                grupo_tipo["preco_min"] = preco_aplicado
-            if grupo_tipo["preco_max"] is None or preco_aplicado > grupo_tipo["preco_max"]:
-                grupo_tipo["preco_max"] = preco_aplicado
-
-        entry = variacoes_map.setdefault((vendedor_key, grupo), {
-            "chave": f"{vendedor_key}|{grupo}",
-            "vendedor": vendedor_nome,
-            "codigo": _as_str(row.get("vendedor_codigo")),
-            "vendedor_key": vendedor_key,
-            "grupo": grupo,
-            "produtos": set(),
-            "itens": 0,
-            "clientes": set(),
-            "cidades": set(),
-            "notas": set(),
-            "precos": set(),
-            "valor_venda": 0.0,
-            "valor_devolvido": 0.0,
-            "bonificacao": 0.0,
-            "valor_liquido": 0.0,
-            "quantidade": 0.0,
-            "volumes": 0.0,
-            "tipo_vendedor": tipo_vendedor,
-            "preco_min": None,
-            "preco_max": None,
-        })
-        entry["itens"] += 1
-        entry["produtos"].add(produto)
-        entry["clientes"].add(cliente_nome)
-        entry["cidades"].add(cidade)
-        if numero_nf:
-            entry["notas"].add(numero_nf)
-        entry["precos"].add(preco_aplicado)
-        entry["valor_venda"] += valor_venda
-        entry["valor_devolvido"] += valor_devolvido
-        entry["bonificacao"] += bonificacao
-        entry["valor_liquido"] += valor_liquido
-        entry["quantidade"] += _as_float(row.get("quantidade"), 0.0)
-        entry["volumes"] += volumes
-        if entry["preco_min"] is None or preco_aplicado < entry["preco_min"]:
-            entry["preco_min"] = preco_aplicado
-        if entry["preco_max"] is None or preco_aplicado > entry["preco_max"]:
-            entry["preco_max"] = preco_aplicado
-
-    variacoes = []
-    for entry in variacoes_map.values():
-        precos = sorted(entry["precos"])
-        if len(precos) < 2:
-            continue
-        preco_min = round(_as_float(entry["preco_min"], 0.0), 2)
-        preco_max = round(_as_float(entry["preco_max"], 0.0), 2)
-        variacao_valor = round(preco_max - preco_min, 2)
-        variacao_pct = round((variacao_valor / preco_min) * 100.0, 2) if preco_min > 0 else 0.0
-        variacoes.append({
-            "chave": entry["chave"],
-            "codigo": entry["codigo"],
-            "vendedor": entry["vendedor"],
-            "vendedor_key": entry["vendedor_key"],
-            "grupo": entry["grupo"],
-            "produtos": _vendas_lista_resumida(entry["produtos"], limite=4),
-            "itens": _as_int(entry["itens"], 0),
-            "clientes": len(entry["clientes"]),
-            "cidades": len(entry["cidades"]),
-            "notas": len(entry["notas"]),
-            "precos_distintos": len(precos),
-            "precos": ", ".join(_fmt_money_br(valor) for valor in precos),
-            "cidades_lista": _vendas_lista_resumida(entry["cidades"], limite=4),
-            "clientes_lista": _vendas_lista_resumida(entry["clientes"], limite=4),
-            "preco_min": preco_min,
-            "preco_max": preco_max,
-            "variacao_valor": variacao_valor,
-            "variacao_percentual": variacao_pct,
-            "valor_venda": round(_as_float(entry["valor_venda"], 0.0), 2),
-            "valor_devolvido": round(_as_float(entry["valor_devolvido"], 0.0), 2),
-            "bonificacao": round(_as_float(entry["bonificacao"], 0.0), 2),
-            "valor_liquido": round(_as_float(entry["valor_liquido"], 0.0), 2),
-            "quantidade": round(_as_float(entry["quantidade"], 0.0), 3),
-            "volumes": round(_as_float(entry["volumes"], 0.0), 3),
-            "tipo_vendedor": entry["tipo_vendedor"],
-        })
-    variacoes.sort(key=lambda item: (-_as_float(item.get("variacao_percentual"), 0.0), -_as_float(item.get("variacao_valor"), 0.0), _as_str(item.get("vendedor")), _as_str(item.get("grupo"))))
-
-    for entry in variacoes_map.values():
-        chave_tipo = entry["tipo_vendedor"]
-        for grupo_tipo in ("todos", chave_tipo):
-            if grupo_tipo not in tipos:
-                continue
-            tipos[grupo_tipo]["grupos"] += 1
-            if len(entry["precos"]) > 1:
-                tipos[grupo_tipo]["variacoes"] += 1
-
-    def _finalizar_tipo(grupo):
-        precos = sorted(grupo.get("precos") or [])
-        preco_min = round(_as_float(grupo.get("preco_min"), 0.0), 2) if grupo.get("preco_min") is not None else 0.0
-        preco_max = round(_as_float(grupo.get("preco_max"), 0.0), 2) if grupo.get("preco_max") is not None else 0.0
-        variacao_valor = round(preco_max - preco_min, 2) if preco_min and preco_max else 0.0
-        variacao_pct = round((variacao_valor / preco_min) * 100.0, 2) if preco_min > 0 else 0.0
-        return {
-            "grupo": grupo["grupo"],
-            "nome": grupo["nome"],
-            "itens": _as_int(grupo["itens"], 0),
-            "vendedores": len(grupo["vendedores"]),
-            "grupos": _as_int(grupo["grupos"], 0),
-            "variacoes": _as_int(grupo["variacoes"], 0),
-            "clientes": len(grupo["clientes"]),
-            "cidades": len(grupo["cidades"]),
-            "notas": len(grupo["notas"]),
-            "precos_distintos": len(precos),
-            "preco_min": preco_min,
-            "preco_max": preco_max,
-            "variacao_valor": variacao_valor,
-            "variacao_percentual": variacao_pct,
-            "valor_venda": round(_as_float(grupo["valor_venda"], 0.0), 2),
-            "valor_devolvido": round(_as_float(grupo["valor_devolvido"], 0.0), 2),
-            "bonificacao": round(_as_float(grupo["bonificacao"], 0.0), 2),
-            "valor_liquido": round(_as_float(grupo["valor_liquido"], 0.0), 2),
-        }
-
-    resumo_grupos = [_finalizar_tipo(tipos[chave]) for chave in ("todos", "rio_branco", "autonomos")]
-    resumo_geral = {
-        "itens": len(rows_filtradas),
-        "vendedores": len(vendedores_totais),
-        "grupos": len(grupos_totais),
-        "variacoes": len(variacoes),
-        "clientes": len(clientes_totais),
-        "cidades": len(cidades_totais),
-        "notas": len(notas_totais),
-        "precos_distintos": len(precos_totais),
-        "preco_min": round(min(precos_totais), 2) if precos_totais else 0.0,
-        "preco_max": round(max(precos_totais), 2) if precos_totais else 0.0,
-        "variacao_valor": round((max(precos_totais) - min(precos_totais)), 2) if precos_totais else 0.0,
-        "variacao_percentual": round(((max(precos_totais) - min(precos_totais)) / min(precos_totais)) * 100.0, 2) if len(precos_totais) > 0 and min(precos_totais) > 0 else 0.0,
-        "variacao_absoluta": round((max(precos_totais) - min(precos_totais)), 2) if precos_totais else 0.0,
-        "valor_venda": round(sum(_as_float(row.get("valor_venda"), 0.0) for row in rows_filtradas), 2),
-        "valor_devolvido": round(sum(_as_float(row.get("valor_devolvido"), 0.0) for row in rows_filtradas), 2),
-        "bonificacao": round(sum(_as_float(row.get("bonificacao"), 0.0) for row in rows_filtradas), 2),
-        "valor_liquido": round(sum(_as_float(row.get("valor_venda"), 0.0) - _as_float(row.get("valor_devolvido"), 0.0) - _as_float(row.get("bonificacao"), 0.0) for row in rows_filtradas), 2),
-    }
-
-    detalhes = []
-    if filtro_vendedor:
-        for row in rows_filtradas:
-            if _vendas_row_eh_bonificacao(row) or _vendas_row_eh_devolucao(row):
-                continue
-            preco_aplicado = _vendas_preco_aplicado_linha(row)
-            if preco_aplicado <= 0:
-                continue
-            detalhes.append(_vendas_relatorio_row_publico(row))
-            if len(detalhes) >= limite_detalhes:
-                break
-
-    return {
-        "arquivo": {
-            "nome": _as_str(source.get("name")) or os.path.basename(_as_str(cache_entry.get("source_path"))),
-            "tamanho_bytes": _as_int(source.get("size"), _as_int(cache_entry.get("source_size"), 0)),
-            "atualizado_em": _as_str(source.get("mtime")) or _fmt_dt(cache_entry.get("source_mtime")),
-        },
-        "filtros": {
-            "mes": mes_key,
-            "vendedor": filtro_vendedor,
-            "data_inicio": _fmt_date(data_inicio),
-            "data_fim": _fmt_date(data_fim),
-            "limite_detalhes": limite_detalhes,
-        },
-        "cache": _vendas_cache_entry_publico(cache_entry),
-        "fonte": {
-            "source_type": _as_str(cfg.get("source_type")),
-            "ready": True,
-            "message": "",
-        },
-        "relatorio_tipo": "variacao_preco",
-        "meses_disponiveis": meses_disponiveis,
-        "mes_atual": mes_key,
-        "resumo_geral": resumo_geral,
-        "resumo_grupos": resumo_grupos,
-        "variacoes": variacoes,
-        "vendedores": vendedores_disponiveis,
-        "clientes_disponiveis": clientes_disponiveis,
-        "detalhes_vendedor": detalhes,
-        "detalhes_limitados": bool(filtro_vendedor and len(detalhes) >= limite_detalhes),
-    }
-    try:
-        _vendas_db_update_import_caches(cache_id, variacao_preco_json=json.dumps(payload, ensure_ascii=False))
-    except Exception:
-        pass
-    return payload
-
-def _coletar_dashboard_vendas_evolucao(allow_rebuild=False):
-    cache_entry, source, cfg = _vendas_obter_cache_ativo(force_refresh=False)
-
-    cache_id = _as_str(cache_entry.get("id"))
-    cache_key = _vendas_relatorio_cache_chave("dashboard_vendas", cache_id)
-    payload = _vendas_relatorio_cache_obter(cache_key)
-    if payload is not None:
-        return payload
-    payload = _vendas_db_import_cache_json(cache_id, "dashboard_vendas_json")
-    if isinstance(payload, dict):
-        _vendas_relatorio_cache_guardar(cache_key, payload)
-        return payload
-    if not allow_rebuild:
-        return {"erro": "Dashboard de vendas ainda nao processado. Use Processar relatorios uma vez."}
-
-    conn = None
-    cur = None
-    meses = []
-    linhas = []
-    try:
-        conn = get_conn()
-        cur = conn.cursor(dictionary=True)
-        cur.execute("""
-            SELECT DISTINCT DATE_FORMAT(data_ref, '%%Y-%%m') AS mes
-            FROM vendas_relatorio_itens
-            WHERE import_id=%s AND data_ref IS NOT NULL
-            ORDER BY mes ASC
-        """, (cache_id,))
-        meses = [_as_str(row.get("mes")) for row in (cur.fetchall() or []) if _as_str(row.get("mes"))]
-
-        if meses:
-            cur.execute("""
-                SELECT
-                    base.mes AS mes,
-                    base.vendedor_key AS vendedor_key,
-                    MAX(base.vendedor_codigo) AS vendedor_codigo,
-                    MAX(base.vendedor_nome) AS vendedor_nome,
-                    COUNT(*) AS itens,
-                    COUNT(DISTINCT NULLIF(base.cliente_norm, '')) AS clientes,
-                    COUNT(DISTINCT NULLIF(base.numero_nf, '')) AS notas,
-                    COALESCE(SUM(base.valor_venda), 0) AS valor_venda,
-                    COALESCE(SUM(base.valor_devolvido), 0) AS valor_devolvido,
-                    COALESCE(SUM(base.bonificacao), 0) AS bonificacao,
-                    COALESCE(SUM(base.valor_venda), 0) - COALESCE(SUM(base.valor_devolvido), 0) - COALESCE(SUM(base.bonificacao), 0) AS valor_liquido
-                FROM (
-                    SELECT
-                        DATE_FORMAT(data_ref, '%%Y-%%m') AS mes,
-                        COALESCE(NULLIF(vendedor_key_upper, ''), NULLIF(vendedor_key, ''), UPPER(COALESCE(vendedor_nome, '')), 'SEM VENDEDOR') AS vendedor_key,
-                        vendedor_codigo,
-                        vendedor_nome,
-                        cliente_norm,
-                        numero_nf,
-                        valor_venda,
-                        valor_devolvido,
-                        bonificacao
-                    FROM vendas_relatorio_itens
-                    WHERE import_id=%s AND data_ref IS NOT NULL
-                ) AS base
-                GROUP BY base.mes, base.vendedor_key
-                ORDER BY MAX(base.vendedor_nome) ASC, base.mes ASC
-            """, (cache_id,))
-            linhas = cur.fetchall() or []
-    finally:
-        try:
-            if cur:
-                cur.close()
-        except Exception:
-            pass
-        try:
-            if conn:
-                conn.close()
-        except Exception:
-            pass
-
-    totais_mensais = {mes: {"valor_liquido": 0.0, "valor_venda": 0.0, "valor_devolvido": 0.0, "bonificacao": 0.0} for mes in meses}
-    vendedores_map = {}
-    for row in linhas:
-        mes = _as_str(row.get("mes"))
-        if not mes:
-            continue
-        vendedor_key = _as_str(row.get("vendedor_key")) or "SEM VENDEDOR"
-        vendedor_nome = _as_str(row.get("vendedor_nome")) or vendedor_key
-        entry = vendedores_map.setdefault(vendedor_key, {
-            "chave": vendedor_key,
-            "codigo": _as_str(row.get("vendedor_codigo")),
-            "nome": vendedor_nome,
-            "meses": {},
-            "total_valor_liquido": 0.0,
-            "total_valor_venda": 0.0,
-            "total_bonificacao": 0.0,
-            "total_valor_devolvido": 0.0,
-            "itens": 0,
-            "clientes": 0,
-            "notas": 0,
-        })
-        valor_venda = round(_as_float(row.get("valor_venda"), 0.0), 2)
-        valor_devolvido = round(_as_float(row.get("valor_devolvido"), 0.0), 2)
-        bonificacao = round(_as_float(row.get("bonificacao"), 0.0), 2)
-        valor_liquido = round(_as_float(row.get("valor_liquido"), 0.0), 2)
-        entry["meses"][mes] = {
-            "valor_venda": valor_venda,
-            "valor_devolvido": valor_devolvido,
-            "bonificacao": bonificacao,
-            "valor_liquido": valor_liquido,
-            "itens": _as_int(row.get("itens"), 0),
-            "clientes": _as_int(row.get("clientes"), 0),
-            "notas": _as_int(row.get("notas"), 0),
-        }
-        entry["total_valor_liquido"] += valor_liquido
-        entry["total_valor_venda"] += valor_venda
-        entry["total_bonificacao"] += bonificacao
-        entry["total_valor_devolvido"] += valor_devolvido
-        entry["itens"] += _as_int(row.get("itens"), 0)
-        entry["clientes"] += _as_int(row.get("clientes"), 0)
-        entry["notas"] += _as_int(row.get("notas"), 0)
-        total_mes = totais_mensais.setdefault(mes, {"valor_liquido": 0.0, "valor_venda": 0.0, "valor_devolvido": 0.0, "bonificacao": 0.0})
-        total_mes["valor_liquido"] += valor_liquido
-        total_mes["valor_venda"] += valor_venda
-        total_mes["valor_devolvido"] += valor_devolvido
-        total_mes["bonificacao"] += bonificacao
-
-    mes_atual = meses[-1] if meses else ""
-    mes_anterior = meses[-2] if len(meses) > 1 else ""
-    valor_atual = round(_as_float(totais_mensais.get(mes_atual, {}).get("valor_liquido"), 0.0), 2) if mes_atual else 0.0
-    valor_anterior = round(_as_float(totais_mensais.get(mes_anterior, {}).get("valor_liquido"), 0.0), 2) if mes_anterior else 0.0
-    variacao_valor = round(valor_atual - valor_anterior, 2)
-    variacao_percentual = round((variacao_valor / valor_anterior) * 100.0, 2) if valor_anterior > 0 else 0.0
-
-    vendedores = []
-    cresceu = caiu = estavel = 0
-    for entry in vendedores_map.values():
-        serie = entry.get("meses") or {}
-        ultimo = round(_as_float(serie.get(mes_atual, {}).get("valor_liquido"), 0.0), 2) if mes_atual else 0.0
-        anterior = round(_as_float(serie.get(mes_anterior, {}).get("valor_liquido"), 0.0), 2) if mes_anterior else 0.0
-        delta = round(ultimo - anterior, 2)
-        delta_pct = round((delta / anterior) * 100.0, 2) if anterior > 0 else 0.0
-        if delta > 0:
-            cresceu += 1
-        elif delta < 0:
-            caiu += 1
-        else:
-            estavel += 1
-        vendedores.append({
-            "chave": entry["chave"],
-            "codigo": entry["codigo"],
-            "nome": entry["nome"],
-            "meses": serie,
-            "total_valor_liquido": round(_as_float(entry.get("total_valor_liquido"), 0.0), 2),
-            "total_valor_venda": round(_as_float(entry.get("total_valor_venda"), 0.0), 2),
-            "total_bonificacao": round(_as_float(entry.get("total_bonificacao"), 0.0), 2),
-            "total_valor_devolvido": round(_as_float(entry.get("total_valor_devolvido"), 0.0), 2),
-            "ultimo_valor_liquido": ultimo,
-            "anterior_valor_liquido": anterior,
-            "delta_ultimo_mes": delta,
-            "delta_percentual_ultimo_mes": delta_pct,
-            "itens": _as_int(entry.get("itens"), 0),
-            "clientes": _as_int(entry.get("clientes"), 0),
-            "notas": _as_int(entry.get("notas"), 0),
-        })
-
-    vendedores.sort(key=lambda item: (-_as_float(item.get("ultimo_valor_liquido"), 0.0), _as_str(item.get("nome")), _as_str(item.get("codigo"))))
-
-    payload = {
-        "arquivo": {
-            "nome": _as_str(source.get("name")) or os.path.basename(_as_str(cache_entry.get("source_path"))),
-            "tamanho_bytes": _as_int(source.get("size"), _as_int(cache_entry.get("source_size"), 0)),
-            "atualizado_em": _as_str(source.get("mtime")) or _fmt_dt(cache_entry.get("source_mtime")),
-        },
-        "cache": _vendas_cache_entry_publico(cache_entry),
-        "fonte": {
-            "source_type": _as_str(cfg.get("source_type")),
-            "ready": True,
-            "message": "",
-        },
-        "relatorio_tipo": "dashboard_vendas",
-        "meses_disponiveis": meses,
-        "mes_atual": mes_atual,
-        "mes_anterior": mes_anterior,
-        "resumo_geral": {
-            "vendedores": len(vendedores),
-            "meses": len(meses),
-            "valor_atual": valor_atual,
-            "valor_anterior": valor_anterior,
-            "variacao_valor": variacao_valor,
-            "variacao_percentual": variacao_percentual,
-            "cresceu": cresceu,
-            "caiu": caiu,
-            "estavel": estavel,
-        },
-        "vendedores": vendedores,
-    }
-    _vendas_relatorio_cache_guardar(cache_key, payload)
-    try:
-        _vendas_db_update_import_caches(cache_id, dashboard_vendas_json=json.dumps(payload, ensure_ascii=False))
-    except Exception:
-        pass
-    return payload
-
-def _coletar_dashboard_vendas_painel(allow_rebuild=False):
-    cache_entry, source, cfg = _vendas_obter_cache_ativo(force_refresh=False)
-
-    cache_id = _as_str(cache_entry.get("id"))
-    cache_key = _vendas_relatorio_cache_chave("dashboard_vendas_painel", cache_id)
-    payload = _vendas_relatorio_cache_obter(cache_key)
-    if payload is not None:
-        return payload
-    payload = _vendas_db_import_cache_json(cache_id, "dashboard_vendas_painel_json")
-    if isinstance(payload, dict):
-        _vendas_relatorio_cache_guardar(cache_key, payload)
-        if isinstance(payload.get("bonificacoes"), dict) and isinstance(payload.get("variacao_preco"), dict) and isinstance(payload.get("mensal"), dict):
-            return payload
-        payload_incompleto = payload
-    else:
-        payload_incompleto = None
-
-    if isinstance(payload_incompleto, dict):
-        if not allow_rebuild:
-            return {
-                "erro": "Dashboard de vendas ainda nao processado. Use Processar relatorios uma vez.",
-                "dashboard_tipo": "vendas",
-            }
-
-        mes_atual = _as_str(payload_incompleto.get("mes_atual")) or ""
-        if not isinstance(payload_incompleto.get("bonificacoes"), dict):
-            payload_incompleto["bonificacoes"] = _vendas_dashboard_bonificacoes_compactar(_vendas_bonificacoes_payload(
-                cache_entry,
-                source,
-                cfg,
-                mes=mes_atual,
-            ))
-        if not isinstance(payload_incompleto.get("variacao_preco"), dict):
-            payload_incompleto["variacao_preco"] = _vendas_dashboard_variacao_compactar(_coletar_relatorio_vendas_variacao_preco(
-                mes=mes_atual,
-                limite_detalhes=120,
-            ))
-        if not isinstance(payload_incompleto.get("mensal"), dict):
-            rows, _ = _vendas_relatorio_base_rows()
-            payload_incompleto["mensal"] = _vendas_dashboard_mensal_grupos(rows)
-        if isinstance(payload_incompleto.get("bonificacoes"), dict) and isinstance(payload_incompleto.get("variacao_preco"), dict) and isinstance(payload_incompleto.get("mensal"), dict):
-            _vendas_relatorio_cache_guardar(cache_key, payload_incompleto)
-            try:
-                _vendas_db_update_import_caches(cache_id, dashboard_vendas_painel_json=json.dumps(payload_incompleto, ensure_ascii=False))
-            except Exception:
-                pass
-            return payload_incompleto
-
-    if not allow_rebuild:
-        return {"erro": "Dashboard de vendas ainda nao processado. Use Processar relatorios uma vez."}
-
-    rows, _ = _vendas_relatorio_base_rows()
-    meses = sorted({
-        row.get("data_ref").strftime("%Y-%m")
-        for row in rows
-        if isinstance(row.get("data_ref"), datetime.date)
-    })
-    if len(meses) > 12:
-        meses = meses[-12:]
-
-    mes_atual = meses[-1] if meses else ""
-    mes_anterior = meses[-2] if len(meses) > 1 else ""
-
-    mensal = _vendas_dashboard_mensal_grupos(rows)
-    bonificacoes = _vendas_dashboard_bonificacoes_compactar(_vendas_bonificacoes_payload(
-        cache_entry,
-        source,
-        cfg,
-        mes=mes_atual,
-    ))
-    variacao_preco = _vendas_dashboard_variacao_compactar(_coletar_relatorio_vendas_variacao_preco(
-        mes=mes_atual,
-        limite_detalhes=120,
-    ))
-
-    payload = {
-        "arquivo": {
-            "nome": _as_str(source.get("name")) or os.path.basename(_as_str(cache_entry.get("source_path"))),
-            "tamanho_bytes": _as_int(source.get("size"), _as_int(cache_entry.get("source_size"), 0)),
-            "atualizado_em": _as_str(source.get("mtime")) or _fmt_dt(cache_entry.get("source_mtime")),
-        },
-        "cache": _vendas_cache_entry_publico(cache_entry),
-        "fonte": {
-            "source_type": _as_str(cfg.get("source_type")),
-            "ready": True,
-            "message": "",
-        },
-        "dashboard_tipo": "vendas",
-        "meses_disponiveis": meses,
-        "mes_atual": mes_atual,
-        "mes_anterior": mes_anterior,
-        "bonificacoes": bonificacoes,
-        "variacao_preco": variacao_preco,
-        "mensal": mensal,
-    }
-    _vendas_relatorio_cache_guardar(cache_key, payload)
-    try:
-        _vendas_db_update_import_caches(cache_id, dashboard_vendas_painel_json=json.dumps(payload, ensure_ascii=False))
-    except Exception:
-        pass
-    return payload
-
-def _vendas_dashboard_vendas_painel_processar_cache_assincrono(cache_id):
-    cache_id = _as_str(cache_id)
-    if not cache_id:
-        return False
-
-    with _VENDAS_DASHBOARD_PROCESSANDO_LOCK:
-        if cache_id in _VENDAS_DASHBOARD_PROCESSANDO:
-            return False
-        _VENDAS_DASHBOARD_PROCESSANDO.add(cache_id)
-
-    def _worker():
-        try:
-            _coletar_dashboard_vendas_painel(allow_rebuild=True)
-        except Exception as exc:
-            try:
-                app.logger.exception("falha ao processar dashboard de vendas %s", cache_id)
-            except Exception:
-                pass
-            try:
-                print(f"[vendas-cache] erro no dashboard async {cache_id}: {exc}")
-            except Exception:
-                pass
-        finally:
-            with _VENDAS_DASHBOARD_PROCESSANDO_LOCK:
-                _VENDAS_DASHBOARD_PROCESSANDO.discard(cache_id)
-
-    thread = threading.Thread(target=_worker, name=f"vendas-dashboard-{cache_id}", daemon=True)
-    thread.start()
-    return True
-
-def _vendas_dashboard_bonificacoes_compactar(payload):
-    if not isinstance(payload, dict):
-        return payload
-    keys = (
-        "arquivo",
-        "cache",
-        "fonte",
-        "relatorio_tipo",
-        "meses_disponiveis",
-        "mes_atual",
-        "resumo_geral",
-        "resumo_grupos",
-        "vendedores",
-    )
-    return {key: payload.get(key) for key in keys if key in payload}
-
-def _vendas_dashboard_variacao_compactar(payload):
-    if not isinstance(payload, dict):
-        return payload
-    keys = (
-        "arquivo",
-        "cache",
-        "fonte",
-        "relatorio_tipo",
-        "meses_disponiveis",
-        "mes_atual",
-        "resumo_geral",
-        "resumo_grupos",
-        "variacoes",
-    )
-    return {key: payload.get(key) for key in keys if key in payload}
-
-def _vendas_dashboard_mensal_grupos(rows):
-    meses = sorted({
-        row.get("data_ref").strftime("%Y-%m")
-        for row in (rows or [])
-        if isinstance(row.get("data_ref"), datetime.date)
-    })
-    if len(meses) > 12:
-        meses = meses[-12:]
-
-    def _base_grupo():
-        return {
-            "itens": 0,
-            "clientes": set(),
-            "notas": set(),
-            "valor_venda": 0.0,
-            "valor_devolvido": 0.0,
-            "bonificacao": 0.0,
-            "valor_liquido": 0.0,
-        }
-
-    meses_map = {}
-    for row in rows or []:
-        data_ref = row.get("data_ref")
-        if not isinstance(data_ref, datetime.date):
-            continue
-        mes_key = data_ref.strftime("%Y-%m")
-        if mes_key not in meses:
-            continue
-        vendedor_nome = _as_str(row.get("vendedor_nome")) or _as_str(row.get("vendedor_key")) or "SEM VENDEDOR"
-        vendedor_key = _as_str(row.get("vendedor_key")) or _as_str(row.get("vendedor_key_upper")) or vendedor_nome
-        tipo_vendedor = _vendas_tipo_vendedor(vendedor_nome, vendedor_key)
-        financeiro = _vendas_row_financeiro_ajustado(row)
-        numero_nf = _as_str(row.get("numero_nf"))
-        cliente = _as_str(row.get("cliente")) or "SEM CLIENTE"
-        entry = meses_map.setdefault(mes_key, {
-            "autonomo": _base_grupo(),
-            "clt": _base_grupo(),
-            "total": _base_grupo(),
-        })
-        for grupo_chave in (tipo_vendedor, "total"):
-            grupo = entry[grupo_chave]
-            grupo["itens"] += 1
-            grupo["clientes"].add(cliente)
-            if numero_nf:
-                grupo["notas"].add(numero_nf)
-            grupo["valor_venda"] += financeiro["valor_venda"]
-            grupo["valor_devolvido"] += financeiro["valor_devolvido"]
-            grupo["bonificacao"] += financeiro["bonificacao"]
-            grupo["valor_liquido"] += financeiro["valor_liquido"]
-
-    linhas = []
-    anterior_map = None
-    for mes_key in meses:
-        mes_date = datetime.datetime.strptime(mes_key + "-01", "%Y-%m-%d").date()
-        current = meses_map.get(mes_key, {
-            "autonomo": _base_grupo(),
-            "clt": _base_grupo(),
-            "total": _base_grupo(),
-        })
-        grupos_out = {}
-        for grupo_chave, nome in (("autonomo", "Autônomos"), ("clt", "CLT"), ("total", "Total")):
-            grupo = current[grupo_chave]
-            anterior = (anterior_map or {}).get(grupo_chave, {})
-            valor_atual = round(_as_float(grupo.get("valor_liquido"), 0.0), 2)
-            valor_anterior = round(_as_float(anterior.get("valor_liquido"), 0.0), 2) if anterior else None
-            delta = round(valor_atual - valor_anterior, 2) if valor_anterior is not None else 0.0
-            delta_pct = round((delta / abs(valor_anterior)) * 100.0, 2) if valor_anterior not in (None, 0) else 0.0
-            grupos_out[grupo_chave] = {
-                "grupo": grupo_chave,
-                "nome": nome,
-                "itens": _as_int(grupo.get("itens"), 0),
-                "clientes": len(grupo.get("clientes") or []),
-                "notas": len(grupo.get("notas") or []),
-                "valor_venda": round(_as_float(grupo.get("valor_venda"), 0.0), 2),
-                "valor_devolvido": round(_as_float(grupo.get("valor_devolvido"), 0.0), 2),
-                "bonificacao": round(_as_float(grupo.get("bonificacao"), 0.0), 2),
-                "valor_liquido": valor_atual,
-                "anterior_valor_liquido": valor_anterior,
-                "delta_valor_liquido": delta,
-                "delta_percentual": delta_pct,
-            }
-        linhas.append({
-            "mes": mes_key,
-            "label": _vendas_mes_label(mes_date),
-            "grupos": grupos_out,
-        })
-        anterior_map = current
-
-    if meses:
-        mes_atual = meses[-1]
-        mes_anterior = meses[-2] if len(meses) > 1 else ""
-    else:
-        mes_atual = ""
-        mes_anterior = ""
-    atual = meses_map.get(mes_atual, {
-        "autonomo": _base_grupo(),
-        "clt": _base_grupo(),
-        "total": _base_grupo(),
-    })
-    anterior = meses_map.get(mes_anterior, {
-        "autonomo": _base_grupo(),
-        "clt": _base_grupo(),
-        "total": _base_grupo(),
-    })
-
-    resumo_grupos = []
-    for grupo_chave, nome in (("autonomo", "Autônomos"), ("clt", "CLT"), ("total", "Total")):
-        grupo_atual = atual[grupo_chave]
-        grupo_anterior = anterior[grupo_chave]
-        valor_atual = round(_as_float(grupo_atual.get("valor_liquido"), 0.0), 2)
-        valor_anterior = round(_as_float(grupo_anterior.get("valor_liquido"), 0.0), 2)
-        delta = round(valor_atual - valor_anterior, 2)
-        delta_pct = round((delta / abs(valor_anterior)) * 100.0, 2) if valor_anterior not in (0, None) else 0.0
-        resumo_grupos.append({
-            "grupo": grupo_chave,
-            "nome": nome,
-            "itens": _as_int(grupo_atual.get("itens"), 0),
-            "clientes": len(grupo_atual.get("clientes") or []),
-            "notas": len(grupo_atual.get("notas") or []),
-            "valor_venda": round(_as_float(grupo_atual.get("valor_venda"), 0.0), 2),
-            "valor_devolvido": round(_as_float(grupo_atual.get("valor_devolvido"), 0.0), 2),
-            "bonificacao": round(_as_float(grupo_atual.get("bonificacao"), 0.0), 2),
-            "valor_liquido": valor_atual,
-            "valor_anterior": valor_anterior,
-            "delta_valor_liquido": delta,
-            "delta_percentual": delta_pct,
-        })
-
-    resumo_geral = {
-        "meses": len(meses),
-        "autonomo": round(_as_float(atual["autonomo"].get("valor_liquido"), 0.0), 2),
-        "clt": round(_as_float(atual["clt"].get("valor_liquido"), 0.0), 2),
-        "total": round(_as_float(atual["total"].get("valor_liquido"), 0.0), 2),
-        "valor_anterior": round(_as_float(anterior["total"].get("valor_liquido"), 0.0), 2),
-        "variacao_valor": round(_as_float(atual["total"].get("valor_liquido"), 0.0) - _as_float(anterior["total"].get("valor_liquido"), 0.0), 2),
-    }
-    resumo_geral["variacao_percentual"] = round((resumo_geral["variacao_valor"] / resumo_geral["valor_anterior"]) * 100.0, 2) if resumo_geral["valor_anterior"] > 0 else 0.0
-
-    return {
-        "meses_disponiveis": meses,
-        "mes_atual": mes_atual,
-        "mes_anterior": mes_anterior,
-        "resumo_geral": resumo_geral,
-        "resumo_grupos": resumo_grupos,
-        "linhas": linhas,
-    }
-
-def _coletar_relatorio_vendas_consolidado(filtro_vendedor="", filtro_cliente="", data_inicio=None, data_fim=None):
-    cache_entry, source, cfg = _vendas_obter_cache_ativo(force_refresh=False)
-
-    filtro_vendedor = _as_str(filtro_vendedor).upper()
-    filtro_cliente = _as_str(filtro_cliente).upper()
-    if isinstance(data_inicio, str):
-        data_inicio = _parse_data_br(data_inicio)
-    if isinstance(data_fim, str):
-        data_fim = _parse_data_br(data_fim)
-    rows_base, _ = _vendas_relatorio_base_rows(data_inicio, data_fim)
-    vendedores, clientes_disponiveis = _vendas_publicar_opcoes_relatorio(rows_base)
-    rows_filtradas = []
-    totais_vendedor_categoria = {}
-    for row in rows_base:
-        chave = _as_str(row.get("chave")) or "SEM CLIENTE"
-        vendedor_key = _as_str(row.get("vendedor_key_upper")) or _as_str(row.get("vendedor_key")) or ""
-        categoria = _vendas_categoria_variacao_produto(row.get("produto"))
-        if _vendas_row_eh_bonificacao(row):
-            continue
-        volumes = _vendas_row_hectolitros(row)
-        if not filtro_vendedor or vendedor_key.upper() == filtro_vendedor:
-            totais_vendedor_categoria[categoria] = totais_vendedor_categoria.get(categoria, 0.0) + volumes
-        if filtro_vendedor and vendedor_key.upper() != filtro_vendedor:
-            continue
-        if filtro_cliente and chave != filtro_cliente:
-            continue
-        rows_filtradas.append(row)
-
-    grupos = {}
-    cidades_totais = set()
-    categorias_totais = set()
-    clientes_totais = set()
-    notas_totais = set()
-    totais = {
-        "itens": 0,
-        "clientes": 0,
-        "notas": 0,
-        "cidades": 0,
-        "categorias": 0,
-        "volumes_cliente": 0.0,
-        "volumes_vendedor": 0.0,
-        "participacao_total": 0.0,
-        "valor_venda": 0.0,
-        "valor_devolvido": 0.0,
-        "bonificacao": 0.0,
-        "valor_liquido": 0.0,
-    }
-    grupos_vendedor = {
-        "autonomo": {
-            "grupo": "autonomo",
-            "nome": "Autônomos",
-            "itens": 0,
-            "vendedores": set(),
-            "clientes": set(),
-            "notas": set(),
-            "volumes_cliente": 0.0,
-            "volumes_vendedor": 0.0,
-            "valor_venda": 0.0,
-            "valor_devolvido": 0.0,
-            "bonificacao": 0.0,
-            "valor_liquido": 0.0,
-        },
-        "clt": {
-            "grupo": "clt",
-            "nome": "CLT",
-            "itens": 0,
-            "vendedores": set(),
-            "clientes": set(),
-            "notas": set(),
-            "volumes_cliente": 0.0,
-            "volumes_vendedor": 0.0,
-            "valor_venda": 0.0,
-            "valor_devolvido": 0.0,
-            "bonificacao": 0.0,
-            "valor_liquido": 0.0,
-        },
-        "total": {
-            "grupo": "total",
-            "nome": "Total",
-            "itens": 0,
-            "vendedores": set(),
-            "clientes": set(),
-            "notas": set(),
-            "volumes_cliente": 0.0,
-            "volumes_vendedor": 0.0,
-            "valor_venda": 0.0,
-            "valor_devolvido": 0.0,
-            "bonificacao": 0.0,
-            "valor_liquido": 0.0,
-        },
-    }
-
-    for row in rows_filtradas:
-        chave = _as_str(row.get("chave")) or "SEM CLIENTE"
-        cliente_nome = _as_str(row.get("cliente")) or "SEM CLIENTE"
-        cidade = _as_str(row.get("cidade")) or "SEM CIDADE"
-        numero_nf = _as_str(row.get("numero_nf"))
-        produto = _as_str(row.get("produto"))
-        vendedor_nome = _as_str(row.get("vendedor_nome")) or _as_str(row.get("vendedor_key")) or "SEM VENDEDOR"
-        vendedor_key = _as_str(row.get("vendedor_key")) or _as_str(row.get("vendedor_key_upper")) or vendedor_nome
-        categoria = _vendas_categoria_variacao_produto(produto)
-        if _vendas_row_eh_bonificacao(row):
-            continue
-        volumes = _vendas_row_hectolitros(row)
-        valor_venda = _as_float(row.get("valor_venda"), 0.0)
-        valor_devolvido = _as_float(row.get("valor_devolvido"), 0.0)
-        bonificacao = _as_float(row.get("bonificacao"), 0.0)
-        valor_liquido = round(valor_venda - valor_devolvido - bonificacao, 2)
-        volumes_vendedor = _as_float(totais_vendedor_categoria.get(categoria), 0.0)
-        percentual = round((volumes / volumes_vendedor) * 100.0, 2) if volumes_vendedor > 0 else 0.0
-        tipo_vendedor = _vendas_tipo_vendedor(vendedor_nome, vendedor_key)
-
-        clientes_totais.add(chave)
-        cidades_totais.add(cidade)
-        categorias_totais.add(categoria)
-        if numero_nf:
-            notas_totais.add(numero_nf)
-
-        totais["itens"] += 1
-        totais["volumes_cliente"] += volumes
-        totais["valor_venda"] += valor_venda
-        totais["valor_devolvido"] += valor_devolvido
-        totais["bonificacao"] += bonificacao
-        totais["valor_liquido"] += valor_liquido
-
-        for grupo_chave in (tipo_vendedor, "total"):
-            grupo = grupos_vendedor[grupo_chave]
-            grupo["itens"] += 1
-            grupo["vendedores"].add(vendedor_key or vendedor_nome)
-            grupo["clientes"].add(chave)
-            if numero_nf:
-                grupo["notas"].add(numero_nf)
-            grupo["volumes_cliente"] += volumes
-            grupo["volumes_vendedor"] += volumes_vendedor
-            grupo["valor_venda"] += valor_venda
-            grupo["valor_devolvido"] += valor_devolvido
-            grupo["bonificacao"] += bonificacao
-            grupo["valor_liquido"] += valor_liquido
-
-        key = (cidade, categoria)
-        grupo = grupos.setdefault(key, {
-            "cidade": cidade,
-            "categoria": categoria,
-            "itens": 0,
-            "notas": set(),
-            "volumes_cliente": 0.0,
-            "volumes_vendedor": 0.0,
-            "valor_venda": 0.0,
-            "valor_devolvido": 0.0,
-            "bonificacao": 0.0,
-            "valor_liquido": 0.0,
-        })
-        grupo["itens"] += 1
-        if numero_nf:
-            grupo["notas"].add(numero_nf)
-        grupo["volumes_cliente"] += volumes
-        grupo["volumes_vendedor"] += volumes_vendedor
-        grupo["valor_venda"] += valor_venda
-        grupo["valor_devolvido"] += valor_devolvido
-        grupo["bonificacao"] += bonificacao
-        grupo["valor_liquido"] += valor_liquido
-
-    consolidados = []
-    for grupo in grupos.values():
-        volumes_vendedor = _as_float(grupo["volumes_vendedor"], 0.0)
-        volumes_cliente = _as_float(grupo["volumes_cliente"], 0.0)
-        percentual = round((volumes_cliente / volumes_vendedor) * 100.0, 2) if volumes_vendedor > 0 else 0.0
-        consolidados.append({
-            "cidade": grupo["cidade"],
-            "categoria": grupo["categoria"],
-            "itens": _as_int(grupo["itens"], 0),
-            "notas": len(grupo["notas"]),
-            "hectolitros_cliente": round(volumes_cliente, 3),
-            "hectolitros_vendedor": round(volumes_vendedor, 3),
-            "volumes_cliente": round(volumes_cliente, 3),
-            "volumes_vendedor": round(volumes_vendedor, 3),
-            "percentual": percentual,
-            "valor_venda": round(grupo["valor_venda"], 2),
-            "valor_devolvido": round(grupo["valor_devolvido"], 2),
-            "bonificacao": round(grupo["bonificacao"], 2),
-            "valor_liquido": round(grupo["valor_liquido"], 2),
-        })
-    consolidados.sort(key=lambda item: (_as_str(item.get("categoria")), _as_str(item.get("cidade"))))
-
-    totais["clientes"] = len(clientes_totais)
-    totais["notas"] = len(notas_totais)
-    totais["cidades"] = len(cidades_totais)
-    totais["categorias"] = len(categorias_totais)
-    totais["volumes_cliente"] = round(totais["volumes_cliente"], 3)
-    totais["hectolitros_cliente"] = totais["volumes_cliente"]
-    totais["volumes_vendedor"] = round(sum(_as_float(totais_vendedor_categoria.get(cat), 0.0) for cat in categorias_totais), 3)
-    totais["hectolitros_vendedor"] = totais["volumes_vendedor"]
-    totais["participacao_total"] = round((totais["volumes_cliente"] / totais["volumes_vendedor"]) * 100.0, 2) if totais["volumes_vendedor"] > 0 else 0.0
-    totais["valor_venda"] = round(totais["valor_venda"], 2)
-    totais["valor_devolvido"] = round(totais["valor_devolvido"], 2)
-    totais["bonificacao"] = round(totais["bonificacao"], 2)
-    totais["valor_liquido"] = round(totais["valor_liquido"], 2)
-
-    resumo_grupos = []
-    for grupo_chave in ("autonomo", "clt", "total"):
-        grupo = grupos_vendedor[grupo_chave]
-        volumes_cliente = round(_as_float(grupo["volumes_cliente"], 0.0), 3)
-        volumes_vendedor = round(_as_float(grupo["volumes_vendedor"], 0.0), 3)
-        resumo_grupos.append({
-            "grupo": grupo["grupo"],
-            "nome": grupo["nome"],
-            "vendedores": len(grupo["vendedores"]),
-            "clientes": len(grupo["clientes"]),
-            "notas": len(grupo["notas"]),
-            "itens": _as_int(grupo["itens"], 0),
-            "hectolitros_cliente": volumes_cliente,
-            "hectolitros_vendedor": volumes_vendedor,
-            "participacao_total": round((volumes_cliente / volumes_vendedor) * 100.0, 2) if volumes_vendedor > 0 else 0.0,
-            "valor_venda": round(_as_float(grupo["valor_venda"], 0.0), 2),
-            "valor_devolvido": round(_as_float(grupo["valor_devolvido"], 0.0), 2),
-            "bonificacao": round(_as_float(grupo["bonificacao"], 0.0), 2),
-            "valor_liquido": round(_as_float(grupo["valor_liquido"], 0.0), 2),
-        })
-
-    return {
-        "arquivo": {
-            "nome": _as_str(source.get("name")) or os.path.basename(_as_str(cache_entry.get("source_path"))),
-            "tamanho_bytes": _as_int(source.get("size"), _as_int(cache_entry.get("source_size"), 0)),
-            "atualizado_em": _as_str(source.get("mtime")) or _fmt_dt(cache_entry.get("source_mtime")),
-        },
-        "filtros": {
-            "vendedor": filtro_vendedor,
-            "cliente": filtro_cliente,
-            "data_inicio": _fmt_date(data_inicio),
-            "data_fim": _fmt_date(data_fim),
-        },
-        "cache": _vendas_cache_entry_publico(cache_entry),
-        "fonte": {
-            "source_type": _as_str(cfg.get("source_type")),
-            "ready": True,
-            "message": "",
-        },
-        "relatorio_tipo": "consolidado_venda",
-        "resumo_geral": totais,
-        "resumo_grupos": resumo_grupos,
-        "painel_mensal": _vendas_gerar_painel_mensal(rows_filtradas),
-        "consolidados": consolidados,
-        "clientes_disponiveis": clientes_disponiveis,
-        "vendedores": vendedores,
-    }
-
-def _coletar_relatorio_vendas_bonificacao_percentual(filtro_vendedor="", filtro_cliente="", data_inicio=None, data_fim=None):
-    cache_entry, source, cfg = _vendas_obter_cache_ativo(force_refresh=False)
-
-    filtro_vendedor = _as_str(filtro_vendedor).upper()
-    filtro_cliente = _as_str(filtro_cliente).upper()
-    if isinstance(data_inicio, str):
-        data_inicio = _parse_data_br(data_inicio)
-    if isinstance(data_fim, str):
-        data_fim = _parse_data_br(data_fim)
-
-    rows_base, _ = _vendas_relatorio_base_rows(data_inicio, data_fim)
-    vendedores, clientes_disponiveis = _vendas_publicar_opcoes_relatorio(rows_base)
-
-    por_vendedor = {}
-    clientes_totais = set()
-    notas_totais = set()
-    totais = {
-        "vendedores": 0,
-        "itens": 0,
-        "clientes": 0,
-        "notas": 0,
-        "bonificacao": 0.0,
-        "valor_liquido": 0.0,
-        "percentual": 0.0,
-    }
-
-    for row in rows_base:
-        vendedor_key = _as_str(row.get("vendedor_key_upper")) or _as_str(row.get("vendedor_key")) or "SEM VENDEDOR"
-        cliente_key = _as_str(row.get("chave")) or "SEM CLIENTE"
-        if filtro_vendedor and vendedor_key.upper() != filtro_vendedor:
-            continue
-        if filtro_cliente and cliente_key != filtro_cliente:
-            continue
-
-        cliente_nome = _as_str(row.get("cliente")) or "SEM CLIENTE"
-        numero_nf = _as_str(row.get("numero_nf"))
-        vendedor_nome = _as_str(row.get("vendedor_nome")) or vendedor_key
-        vendedor_codigo = _as_str(row.get("vendedor_codigo"))
-        entry = por_vendedor.setdefault(vendedor_key, {
-            "chave": vendedor_key,
-            "codigo": vendedor_codigo,
-            "nome": vendedor_nome,
-            "itens": 0,
-            "clientes": set(),
-            "notas": set(),
-            "bonificacao": 0.0,
-            "valor_liquido": 0.0,
-        })
-
-        entry["itens"] += 1
-        entry["clientes"].add(cliente_nome)
-        if numero_nf:
-            entry["notas"].add(numero_nf)
-
-        financeiro = _vendas_row_financeiro_ajustado(row)
-        if financeiro["eh_bonificacao"]:
-            entry["bonificacao"] += financeiro["bonificacao"]
-        else:
-            entry["valor_liquido"] += financeiro["valor_liquido"]
-
-        clientes_totais.add(cliente_key)
-        if numero_nf:
-            notas_totais.add(numero_nf)
-
-    vendedores_lista = []
-    for row in por_vendedor.values():
-        bonificacao = round(_as_float(row["bonificacao"], 0.0), 2)
-        valor_liquido = round(_as_float(row["valor_liquido"], 0.0), 2)
-        percentual = round((bonificacao / valor_liquido) * 100.0, 2) if valor_liquido > 0 else 0.0
-        totais["bonificacao"] += bonificacao
-        totais["valor_liquido"] += valor_liquido
-        totais["itens"] += _as_int(row.get("itens"), 0)
-        vendedores_lista.append({
-            "chave": row["chave"],
-            "codigo": row["codigo"],
-            "nome": row["nome"],
-            "itens": _as_int(row.get("itens"), 0),
-            "clientes": len(row["clientes"]),
-            "notas": len(row["notas"]),
-            "bonificacao": bonificacao,
-            "valor_liquido": valor_liquido,
-            "percentual": percentual,
-        })
-
-    vendedores_lista.sort(key=lambda item: (-_as_float(item.get("percentual"), 0.0), -_as_float(item.get("bonificacao"), 0.0), _as_str(item.get("nome")), _as_str(item.get("codigo"))))
-
-    totais["vendedores"] = len(vendedores_lista)
-    totais["clientes"] = len(clientes_totais)
-    totais["notas"] = len(notas_totais)
-    totais["percentual"] = round((totais["bonificacao"] / totais["valor_liquido"]) * 100.0, 2) if totais["valor_liquido"] > 0 else 0.0
-    totais["bonificacao"] = round(totais["bonificacao"], 2)
-    totais["valor_liquido"] = round(totais["valor_liquido"], 2)
-
-    return {
-        "arquivo": {
-            "nome": _as_str(source.get("name")) or os.path.basename(_as_str(cache_entry.get("source_path"))),
-            "tamanho_bytes": _as_int(source.get("size"), _as_int(cache_entry.get("source_size"), 0)),
-            "atualizado_em": _as_str(source.get("mtime")) or _fmt_dt(cache_entry.get("source_mtime")),
-        },
-        "filtros": {
-            "vendedor": filtro_vendedor,
-            "cliente": filtro_cliente,
-            "data_inicio": _fmt_date(data_inicio),
-            "data_fim": _fmt_date(data_fim),
-        },
-        "cache": _vendas_cache_entry_publico(cache_entry),
-        "fonte": {
-            "source_type": _as_str(cfg.get("source_type")),
-            "ready": True,
-            "message": "",
-        },
-        "relatorio_tipo": "bonificacao_percentual",
-        "resumo_geral": totais,
-        "vendedores": vendedores_lista,
-        "clientes_disponiveis": clientes_disponiveis,
+        "valor_venda": round(_as_float(row.get("valor_venda"), 0.0), 2),
+        "valor_devolvido": round(_as_float(row.get("valor_devolvido"), 0.0), 2),
+        "valor_liquido": round(_as_float(row.get("valor_liquido"), 0.0), 2),
     }
 
 def _coletar_relatorio_vendas(filtro_vendedor="", data_inicio=None, data_fim=None, limite_detalhes=300):
@@ -23488,12 +9702,10 @@ def _coletar_relatorio_vendas(filtro_vendedor="", data_inicio=None, data_fim=Non
         where.append("vendedor_key_upper = %s")
         params.append(filtro_vendedor)
     where_sql = " AND ".join(where)
-    where_sql_sem_bonificacao = f"{where_sql} AND ({_vendas_sql_tab_venda_expr()} <> 91)"
 
     conn = None
     cur = None
     detalhes = []
-    clientes_disponiveis = []
     try:
         conn = get_conn()
         cur = conn.cursor(dictionary=True)
@@ -23507,32 +9719,14 @@ def _coletar_relatorio_vendas(filtro_vendedor="", data_inicio=None, data_fim=Non
                 COALESCE(SUM(caixas), 0) AS caixas,
                 COALESCE(SUM(valor_venda), 0) AS valor_venda,
                 COALESCE(SUM(valor_devolvido), 0) AS valor_devolvido,
-                COALESCE(SUM(bonificacao), 0) AS bonificacao,
-                COALESCE(SUM(valor_venda), 0) - COALESCE(SUM(valor_devolvido), 0) - COALESCE(SUM(bonificacao), 0) AS valor_liquido,
+                COALESCE(SUM(valor_liquido), 0) AS valor_liquido,
                 COALESCE(SUM(quantidade_devolvida), 0) AS quantidade_devolvida,
                 COALESCE(SUM(litro_devolvido), 0) AS litro_devolvido,
                 COALESCE(SUM(caixa_devolvida), 0) AS caixa_devolvida
             FROM vendas_relatorio_itens
-            WHERE {where_sql_sem_bonificacao}
+            WHERE {where_sql}
         """, tuple(params))
         totais = _vendas_relatorio_publico_totais(cur.fetchone() or {})
-
-        cur.execute(f"""
-            SELECT
-                vendedor_key,
-                vendedor_key_upper,
-                vendedor_codigo,
-                vendedor_nome,
-                cliente_norm,
-                cliente,
-                caixa_fisica,
-                caixas,
-                quantidade
-            FROM vendas_relatorio_itens
-            WHERE {where_sql_sem_bonificacao}
-            ORDER BY vendedor_nome ASC, cliente ASC
-        """, tuple(params))
-        _, clientes_disponiveis = _vendas_publicar_opcoes_relatorio(cur.fetchall() or [])
 
         cur.execute(f"""
             SELECT
@@ -23547,13 +9741,12 @@ def _coletar_relatorio_vendas(filtro_vendedor="", data_inicio=None, data_fim=Non
                 COALESCE(SUM(caixas), 0) AS caixas,
                 COALESCE(SUM(valor_venda), 0) AS valor_venda,
                 COALESCE(SUM(valor_devolvido), 0) AS valor_devolvido,
-                COALESCE(SUM(bonificacao), 0) AS bonificacao,
-                COALESCE(SUM(valor_venda), 0) - COALESCE(SUM(valor_devolvido), 0) - COALESCE(SUM(bonificacao), 0) AS valor_liquido,
+                COALESCE(SUM(valor_liquido), 0) AS valor_liquido,
                 COALESCE(SUM(quantidade_devolvida), 0) AS quantidade_devolvida,
                 COALESCE(SUM(litro_devolvido), 0) AS litro_devolvido,
                 COALESCE(SUM(caixa_devolvida), 0) AS caixa_devolvida
             FROM vendas_relatorio_itens
-            WHERE {where_sql_sem_bonificacao}
+            WHERE {where_sql}
             GROUP BY vendedor_key
             ORDER BY valor_liquido DESC, nome ASC, codigo ASC
         """, tuple(params))
@@ -23578,13 +9771,12 @@ def _coletar_relatorio_vendas(filtro_vendedor="", data_inicio=None, data_fim=Non
                 COALESCE(SUM(caixas), 0) AS caixas,
                 COALESCE(SUM(valor_venda), 0) AS valor_venda,
                 COALESCE(SUM(valor_devolvido), 0) AS valor_devolvido,
-                COALESCE(SUM(bonificacao), 0) AS bonificacao,
-                COALESCE(SUM(valor_venda), 0) - COALESCE(SUM(valor_devolvido), 0) - COALESCE(SUM(bonificacao), 0) AS valor_liquido,
+                COALESCE(SUM(valor_liquido), 0) AS valor_liquido,
                 COALESCE(SUM(quantidade_devolvida), 0) AS quantidade_devolvida,
                 COALESCE(SUM(litro_devolvido), 0) AS litro_devolvido,
                 COALESCE(SUM(caixa_devolvida), 0) AS caixa_devolvida
             FROM vendas_relatorio_itens
-            WHERE {where_sql_sem_bonificacao}
+            WHERE {where_sql}
             GROUP BY cidade
             ORDER BY valor_liquido DESC, nome ASC
         """, tuple(params))
@@ -23608,13 +9800,12 @@ def _coletar_relatorio_vendas(filtro_vendedor="", data_inicio=None, data_fim=Non
                 COALESCE(SUM(caixas), 0) AS caixas,
                 COALESCE(SUM(valor_venda), 0) AS valor_venda,
                 COALESCE(SUM(valor_devolvido), 0) AS valor_devolvido,
-                COALESCE(SUM(bonificacao), 0) AS bonificacao,
-                COALESCE(SUM(valor_venda), 0) - COALESCE(SUM(valor_devolvido), 0) - COALESCE(SUM(bonificacao), 0) AS valor_liquido,
+                COALESCE(SUM(valor_liquido), 0) AS valor_liquido,
                 COALESCE(SUM(quantidade_devolvida), 0) AS quantidade_devolvida,
                 COALESCE(SUM(litro_devolvido), 0) AS litro_devolvido,
                 COALESCE(SUM(caixa_devolvida), 0) AS caixa_devolvida
             FROM vendas_relatorio_itens
-            WHERE {where_sql_sem_bonificacao}
+            WHERE {where_sql}
             GROUP BY produto
             ORDER BY valor_liquido DESC, nome ASC
         """, tuple(params))
@@ -23631,10 +9822,9 @@ def _coletar_relatorio_vendas(filtro_vendedor="", data_inicio=None, data_fim=Non
                 SELECT
                     data_texto AS data, numero_nf, cliente, cidade, produto,
                     tipo_operacao, condicao, quantidade, litros, caixas,
-                    bonificacao, valor_venda, valor_devolvido,
-                    COALESCE(valor_venda, 0) - COALESCE(valor_devolvido, 0) - COALESCE(bonificacao, 0) AS valor_liquido
+                    valor_venda, valor_devolvido, valor_liquido
                 FROM vendas_relatorio_itens
-                WHERE {where_sql_sem_bonificacao}
+                WHERE {where_sql}
                 ORDER BY data_ref DESC, id DESC
                 LIMIT %s
             """, tuple(params + [limite_detalhes]))
@@ -23670,107 +9860,11 @@ def _coletar_relatorio_vendas(filtro_vendedor="", data_inicio=None, data_fim=Non
             "message": _as_str(source.get("message")),
         },
         "resumo_geral": totais,
-        "painel_mensal": _vendas_gerar_painel_mensal(rows_base),
         "vendedores": vendedores,
-        "clientes_disponiveis": clientes_disponiveis,
         "cidades": cidades,
         "produtos": produtos,
         "detalhes_vendedor": detalhes,
         "detalhes_limitados": bool(filtro_vendedor and len(detalhes) >= limite_detalhes),
-    }
-
-def _vendas_intervalo_default(rows):
-    datas = [row.get("data_ref") for row in (rows or []) if isinstance(row.get("data_ref"), datetime.date)]
-    if not datas:
-        hoje = datetime.date.today()
-        return hoje - datetime.timedelta(days=30), hoje
-    fim = max(datas)
-    inicio = fim - datetime.timedelta(days=30)
-    return inicio, fim
-
-def _coletar_relatorio_vendas_volume_diario_resumo(filtro_vendedor="", filtro_cliente="", data_inicio=None, data_fim=None):
-    rows_base, _ = _vendas_relatorio_base_rows(data_inicio, data_fim)
-    if not data_inicio and not data_fim:
-        inicio, fim = _vendas_intervalo_default(rows_base)
-        rows_base, _ = _vendas_relatorio_base_rows(inicio, fim)
-        data_inicio = inicio
-        data_fim = fim
-    filas = _vendas_rows_filtradas_base(rows_base, filtro_vendedor, filtro_cliente)
-    resumo = _vendas_pivot_diario_resumo(filas, "RESUMO DE VOLUME DIARIO")
-    return {
-        "arquivo": {"nome": "", "tamanho_bytes": 0, "atualizado_em": ""},
-        "filtros": {
-            "vendedor": _as_str(filtro_vendedor).upper(),
-            "cliente": _as_str(filtro_cliente).upper(),
-            "data_inicio": _fmt_date(data_inicio),
-            "data_fim": _fmt_date(data_fim),
-        },
-        "relatorio_tipo": "volume_diario_resumo",
-        "resumo_geral": resumo["resumo"],
-        "dias": resumo["dias"],
-    }
-
-def _coletar_relatorio_vendas_volume_diario_vendedor(filtro_vendedor="", filtro_cliente="", data_inicio=None, data_fim=None):
-    rows_base, _ = _vendas_relatorio_base_rows(data_inicio, data_fim)
-    if not data_inicio and not data_fim:
-        inicio, fim = _vendas_intervalo_default(rows_base)
-        rows_base, _ = _vendas_relatorio_base_rows(inicio, fim)
-        data_inicio = inicio
-        data_fim = fim
-    filas = _vendas_rows_filtradas_base(rows_base, filtro_vendedor, filtro_cliente)
-    resumo = _vendas_pivot_diario_vendedores(filas, "VOLUME DIARIO POR VENDEDOR")
-    return {
-        "arquivo": {"nome": "", "tamanho_bytes": 0, "atualizado_em": ""},
-        "filtros": {
-            "vendedor": _as_str(filtro_vendedor).upper(),
-            "cliente": _as_str(filtro_cliente).upper(),
-            "data_inicio": _fmt_date(data_inicio),
-            "data_fim": _fmt_date(data_fim),
-        },
-        "relatorio_tipo": "volume_diario_vendedor",
-        "resumo_geral": resumo["resumo"],
-        "dias": resumo["dias"],
-        "vendedores": resumo["linhas"],
-    }
-
-def _coletar_relatorio_vendas_percentual_vendas_anual(filtro_vendedor="", filtro_cliente="", data_inicio=None, data_fim=None):
-    rows_base, _ = _vendas_relatorio_base_rows(data_inicio, data_fim)
-    filas = _vendas_rows_filtradas_base(rows_base, filtro_vendedor, filtro_cliente)
-    anual = _vendas_comparativo_anual(filas, "PERCENTUAL DE VENDAS ANUAL")
-    return {
-        "arquivo": {"nome": "", "tamanho_bytes": 0, "atualizado_em": ""},
-        "filtros": {
-            "vendedor": _as_str(filtro_vendedor).upper(),
-            "cliente": _as_str(filtro_cliente).upper(),
-            "data_inicio": _fmt_date(data_inicio),
-            "data_fim": _fmt_date(data_fim),
-        },
-        "relatorio_tipo": "percentual_vendas_anual",
-        "resumo_geral": anual["resumo"],
-        "meses": anual["meses"],
-        "linhas": anual["linhas"],
-        "ano_atual": anual["ano_atual"],
-        "ano_anterior": anual["ano_anterior"],
-    }
-
-def _coletar_relatorio_vendas_percentual_vendas_grupo_anual(filtro_vendedor="", filtro_cliente="", data_inicio=None, data_fim=None):
-    rows_base, _ = _vendas_relatorio_base_rows(data_inicio, data_fim)
-    filas = _vendas_rows_filtradas_base(rows_base, filtro_vendedor, filtro_cliente)
-    grupos = _vendas_comparativo_grupos_anual(filas)
-    resumo = {
-        "blocos": len(grupos["blocos"]),
-    }
-    return {
-        "arquivo": {"nome": "", "tamanho_bytes": 0, "atualizado_em": ""},
-        "filtros": {
-            "vendedor": _as_str(filtro_vendedor).upper(),
-            "cliente": _as_str(filtro_cliente).upper(),
-            "data_inicio": _fmt_date(data_inicio),
-            "data_fim": _fmt_date(data_fim),
-        },
-        "relatorio_tipo": "percentual_vendas_grupo_anual",
-        "resumo_geral": resumo,
-        "blocos": grupos["blocos"],
     }
 
 @app.route("/api/comissao/relatorios", methods=["GET"])
@@ -23792,142 +9886,17 @@ def relatorios_comissao_pdf():
 @app.route("/api/vendas/relatorio", methods=["GET"])
 def relatorio_vendas():
     try:
-        tipo_relatorio = _as_str(request.args.get("tipo_relatorio") or request.args.get("tipo") or "bonificacoes").lower()
-        tipo_relatorio_norm = tipo_relatorio.replace("-", "_")
-        cache_entry, source, cfg = _vendas_obter_cache_ativo(force_refresh=False)
-        cache_id = _as_str(cache_entry.get("id"))
-        cache_key = _vendas_relatorio_cache_chave(
-            tipo_relatorio_norm,
-            cache_id,
-            request.args.get("vendedor"),
-            request.args.get("cliente"),
-            _as_str(request.args.get("mes")),
-            _fmt_date(_parse_data_br(request.args.get("data_inicio"))) if request.args.get("data_inicio") else "",
-            _fmt_date(_parse_data_br(request.args.get("data_fim"))) if request.args.get("data_fim") else "",
-            request.args.get("limite"),
+        payload = _coletar_relatorio_vendas(
+            filtro_vendedor=request.args.get("vendedor"),
+            data_inicio=request.args.get("data_inicio"),
+            data_fim=request.args.get("data_fim"),
+            limite_detalhes=request.args.get("limite"),
         )
-        payload = _vendas_relatorio_cache_obter(cache_key)
-        if payload is not None:
-            return jsonify(payload)
-        if tipo_relatorio_norm in {"bonificacoes", "bonificacao", "bonificacao_percentual", "bonificacao_vendedor", "resumo"}:
-            payload = _vendas_bonificacoes_payload(
-                cache_entry,
-                source,
-                cfg,
-                mes=request.args.get("mes") or request.args.get("data_inicio") or request.args.get("data_fim"),
-                data_inicio=request.args.get("data_inicio"),
-                data_fim=request.args.get("data_fim"),
-                filtro_vendedor=request.args.get("vendedor"),
-                filtro_cliente=request.args.get("cliente"),
-            )
-        elif tipo_relatorio_norm in {"variacao_preco", "variacaopreco", "variacao_venda", "variacaovenda"}:
-            payload = _coletar_relatorio_vendas_variacao_preco(
-                filtro_vendedor=request.args.get("vendedor"),
-                mes=request.args.get("mes") or request.args.get("data_inicio") or request.args.get("data_fim"),
-                data_inicio=request.args.get("data_inicio"),
-                data_fim=request.args.get("data_fim"),
-                limite_detalhes=request.args.get("limite"),
-            )
-        elif tipo_relatorio_norm in {"mix_embalagens", "mixembalagens", "tipos_embalagem", "tipo_embalagem_pdv", "embalagens_mix", "grupos_embalagem", "gruposembalagem"}:
-            payload = _vendas_mix_embalagens_payload(
-                cache_entry,
-                source,
-                cfg,
-                mes=request.args.get("mes") or request.args.get("data_inicio") or request.args.get("data_fim"),
-                filtro_vendedor=request.args.get("vendedor"),
-                filtro_cliente=request.args.get("cliente"),
-            )
-        elif tipo_relatorio_norm in {"embalagens", "embalagem", "embalagens_cliente", "embalagens_por_cliente"}:
-            payload = _coletar_relatorio_vendas_embalagens(
-                filtro_vendedor=request.args.get("vendedor"),
-                filtro_cliente=request.args.get("cliente"),
-                data_inicio=request.args.get("data_inicio"),
-                data_fim=request.args.get("data_fim"),
-            )
-        elif tipo_relatorio_norm in {"consolidado_venda", "consolidadovenda", "consolidado", "consolidado_vendas"}:
-            payload = _coletar_relatorio_vendas_consolidado(
-                filtro_vendedor=request.args.get("vendedor"),
-                filtro_cliente=request.args.get("cliente"),
-                data_inicio=request.args.get("data_inicio"),
-                data_fim=request.args.get("data_fim"),
-            )
-        elif tipo_relatorio_norm in {"volume_diario_resumo", "resumo_volume_diario", "diario_resumo"}:
-            payload = _coletar_relatorio_vendas_volume_diario_resumo(
-                filtro_vendedor=request.args.get("vendedor"),
-                filtro_cliente=request.args.get("cliente"),
-                data_inicio=request.args.get("data_inicio"),
-                data_fim=request.args.get("data_fim"),
-            )
-        elif tipo_relatorio_norm in {"volume_diario_vendedor", "diario_vendedor", "volume_diario_por_vendedor"}:
-            payload = _coletar_relatorio_vendas_volume_diario_vendedor(
-                filtro_vendedor=request.args.get("vendedor"),
-                filtro_cliente=request.args.get("cliente"),
-                data_inicio=request.args.get("data_inicio"),
-                data_fim=request.args.get("data_fim"),
-            )
-        elif tipo_relatorio_norm in {"percentual_vendas_anual", "vendas_anual", "percentual_anual"}:
-            payload = _coletar_relatorio_vendas_percentual_vendas_anual(
-                filtro_vendedor=request.args.get("vendedor"),
-                filtro_cliente=request.args.get("cliente"),
-                data_inicio=request.args.get("data_inicio"),
-                data_fim=request.args.get("data_fim"),
-            )
-        elif tipo_relatorio_norm in {"percentual_vendas_grupo_anual", "grupo_anual", "vendas_grupo_anual"}:
-            payload = _coletar_relatorio_vendas_percentual_vendas_grupo_anual(
-                filtro_vendedor=request.args.get("vendedor"),
-                filtro_cliente=request.args.get("cliente"),
-                data_inicio=request.args.get("data_inicio"),
-                data_fim=request.args.get("data_fim"),
-            )
-        else:
-            payload = _vendas_bonificacoes_payload(
-                cache_entry,
-                source,
-                cfg,
-                mes=request.args.get("mes") or request.args.get("data_inicio") or request.args.get("data_fim"),
-                data_inicio=request.args.get("data_inicio"),
-                data_fim=request.args.get("data_fim"),
-                filtro_vendedor=request.args.get("vendedor"),
-                filtro_cliente=request.args.get("cliente"),
-            )
-        if _as_str(payload.get("erro")):
-            return jsonify(payload), 409
-        _vendas_relatorio_cache_guardar(cache_key, payload)
     except FileNotFoundError as exc:
         return jsonify({"erro": str(exc)}), 404
-    except RuntimeError as exc:
-        return jsonify({"erro": str(exc)}), 409
     except Exception as exc:
         return jsonify({"erro": f"Falha ao ler relatorio de vendas: {str(exc)}"}), 500
     return jsonify(payload)
-
-@app.route("/api/vendas/dashboard", methods=["GET"])
-def dashboard_vendas():
-    try:
-        payload = _coletar_dashboard_vendas_evolucao()
-        if _as_str(payload.get("erro")):
-            return jsonify(payload), 409
-        return jsonify(payload)
-    except FileNotFoundError as exc:
-        return jsonify({"erro": str(exc)}), 404
-    except RuntimeError as exc:
-        return jsonify({"erro": str(exc)}), 409
-    except Exception as exc:
-        return jsonify({"erro": f"Falha ao ler dashboard de vendas: {str(exc)}"}), 500
-
-@app.route("/api/dashboard_vendas", methods=["GET"])
-def dashboard_vendas_painel():
-    try:
-        payload = _coletar_dashboard_vendas_painel()
-        if _as_str(payload.get("erro")):
-            return jsonify(payload), 409
-        return jsonify(payload)
-    except FileNotFoundError as exc:
-        return jsonify({"erro": str(exc)}), 404
-    except RuntimeError as exc:
-        return jsonify({"erro": str(exc)}), 409
-    except Exception as exc:
-        return jsonify({"erro": f"Falha ao ler dashboard de vendas: {str(exc)}"}), 500
 
 @app.route("/api/vendas/config", methods=["GET", "PUT"])
 def vendas_config_api():
@@ -23938,7 +9907,6 @@ def vendas_config_api():
             "config": cfg,
             "fonte": source,
             "imports": _vendas_cache_imports_publicos(cfg),
-            "regras_importacao": _vendas_import_regras_publicas(),
         })
 
     data = request.get_json(silent=True) or {}
@@ -23949,7 +9917,6 @@ def vendas_config_api():
         "config": cfg,
         "fonte": source,
         "imports": _vendas_cache_imports_publicos(cfg),
-        "regras_importacao": _vendas_import_regras_publicas(),
     })
 
 @app.route("/api/vendas/cache/importar", methods=["POST"])
@@ -23958,52 +9925,21 @@ def vendas_cache_importar():
         file_storage = request.files.get("arquivo") or request.files.get("csv")
         if file_storage and getattr(file_storage, "filename", ""):
             source_path = _vendas_salvar_upload_csv(file_storage)
-            cache_id, started = _vendas_importar_csv_assincrono(source_path, "csv_upload")
-            cfg = _carregar_vendas_config()
-            entry = _vendas_db_fetch_import(cache_id) if cache_id else None
+            entry = _vendas_importar_csv_para_cache(source_path, "csv_upload")
+            cfg = _vendas_cache_set_active(_as_str(entry.get("id")))
             source = {
                 "source_type": "csv_upload",
                 "ready": True,
-                "message": "Importacao iniciada em segundo plano.",
-                "path": _as_str(entry.get("source_path")) if entry else source_path,
-                "name": os.path.basename(_as_str(entry.get("source_path")) if entry else source_path),
-                "size": _as_int(entry.get("source_size"), 0) if entry else _as_int(os.path.getsize(source_path), 0),
-                "mtime": _fmt_dt(entry.get("source_mtime")) if entry else _fmt_dt(datetime.datetime.fromtimestamp(os.path.getmtime(source_path))),
-                "signature": _as_str(entry.get("source_signature")) if entry else _vendas_source_signature(source_path),
+                "message": "",
+                "path": _as_str(entry.get("source_path")),
+                "name": os.path.basename(_as_str(entry.get("source_path"))),
+                "size": _as_int(entry.get("source_size"), 0),
+                "mtime": _fmt_dt(entry.get("source_mtime")),
+                "signature": _as_str(entry.get("source_signature")),
             }
-            mensagem = "Importacao iniciada em segundo plano."
-            processando = True
-            code = 202
         else:
-            cfg = _carregar_vendas_config()
-            source = _vendas_source_descriptor(cfg)
-            if not source.get("ready"):
-                imports = _vendas_db_list_imports()
-                if imports:
-                    raise RuntimeError("Nenhum relatorio importado esta marcado como em uso. Ative um relatorio em Config > Vendas.")
-                raise RuntimeError(source.get("message") or "Fonte de vendas indisponivel.")
-            entry = _vendas_db_find_import(source_signature=source.get("signature"), source_path=source.get("path"))
-            if (
-                entry is None
-                or _as_str(entry.get("status")) in {"erro", "importando"}
-                or _as_int(entry.get("rows_importadas"), 0) <= 0
-                or not _as_bool(entry.get("cache_exists"), False)
-            ):
-                cache_id, started = _vendas_importar_csv_assincrono(source.get("path"), source.get("source_type"))
-                entry = _vendas_db_fetch_import(cache_id) if cache_id else None
-                if entry is None:
-                    entry = _vendas_db_find_import(source_signature=source.get("signature"), source_path=source.get("path"))
-                source["message"] = "Importacao iniciada em segundo plano."
-                cfg = _carregar_vendas_config()
-                mensagem = "Importacao iniciada em segundo plano."
-                processando = True
-                code = 202
-            else:
-                source["message"] = "CSV ja esta importado e pronto para uso."
-                cfg = _carregar_vendas_config()
-                mensagem = source["message"]
-                processando = False
-                code = 200
+            entry, source, cfg = _vendas_obter_cache_ativo(force_refresh=True)
+            cfg = _vendas_cache_set_active(_as_str(entry.get("id")))
     except FileNotFoundError as exc:
         return jsonify({"erro": str(exc)}), 404
     except RuntimeError as exc:
@@ -24017,61 +9953,13 @@ def vendas_cache_importar():
         "fonte": source,
         "cache": _vendas_cache_entry_publico(entry),
         "imports": _vendas_cache_imports_publicos(cfg),
-        "regras_importacao": _vendas_import_regras_publicas(),
-        "processando": processando,
-        "processando_importacao": processando,
-        "mensagem": mensagem if 'mensagem' in locals() else (source.get("message") or "Todos dashboards e relatorios criados com sucesso."),
-    }), code
-
-@app.route("/api/vendas/cache/processar", methods=["POST"])
-def vendas_cache_processar():
-    try:
-        data = request.get_json(silent=True) or {}
-        cfg = _carregar_vendas_config()
-        cache_id = _as_str(data.get("cache_id")) or _as_str(cfg.get("active_cache_id"))
-        if not cache_id:
-            active_entry, _, _ = _vendas_obter_cache_ativo(force_refresh=False)
-            cache_id = _as_str(active_entry.get("id")) if active_entry else ""
-        entry = _vendas_cache_find_by_id(cache_id) if cache_id else None
-        if entry is None:
-            return jsonify({"erro": "cache de vendas nao encontrado"}), 404
-        if _as_str(entry.get("status")) == "importando":
-            return jsonify({"erro": "Importacao ainda em andamento. Aguarde concluir antes de processar os relatorios."}), 409
-        source = {
-            "source_type": _as_str(entry.get("source_type")),
-            "ready": True,
-            "message": "",
-            "path": _as_str(entry.get("source_path")),
-            "name": os.path.basename(_as_str(entry.get("source_path"))),
-            "size": _as_int(entry.get("source_size"), 0),
-            "mtime": _fmt_dt(entry.get("source_mtime")),
-            "signature": _as_str(entry.get("source_signature")),
-        }
-        materializado = _vendas_materializar_relatorios_sync(cache_id, cache_entry=entry, source=source, cfg=cfg)
-        processado = materializado.get("processado") or {}
-        return jsonify({
-            "ok": True,
-            "cache": materializado.get("cache") or _vendas_cache_entry_publico(entry),
-            "fonte": materializado.get("fonte") or source,
-            "config": materializado.get("config") or cfg,
-            "regras_importacao": _vendas_import_regras_publicas(),
-            "mensagem": materializado.get("mensagem") or "Todos dashboards e relatorios criados com sucesso.",
-            "processado": {
-                "meses": _as_int(processado.get("meses"), 0),
-                "clientes": _as_int(processado.get("clientes"), 0),
-                "vendedores": _as_int(processado.get("vendedores"), 0),
-            },
-        })
-    except Exception as exc:
-        return jsonify({"erro": f"Falha ao processar relatorios: {str(exc)}"}), 500
+    })
 
 @app.route("/api/vendas/cache/<cache_id>/ativar", methods=["PUT"])
 def vendas_cache_ativar(cache_id):
     entry = _vendas_cache_find_by_id(cache_id)
     if entry is None:
         return jsonify({"erro": "cache de vendas nao encontrado"}), 404
-    if _as_str(entry.get("status")) == "importando":
-        return jsonify({"erro": "Importacao ainda em andamento. Aguarde concluir antes de ativar este relatorio."}), 409
     cfg = _vendas_cache_set_active(cache_id)
     source = {
         "source_type": _as_str(entry.get("source_type")),
@@ -24088,7 +9976,6 @@ def vendas_cache_ativar(cache_id):
         "config": cfg,
         "fonte": source,
         "imports": _vendas_cache_imports_publicos(cfg),
-        "regras_importacao": _vendas_import_regras_publicas(),
     })
 
 @app.route("/api/vendas/cache/<cache_id>", methods=["DELETE"])
@@ -24112,656 +9999,17 @@ def vendas_cache_excluir(cache_id):
         "ok": True,
         "config": cfg,
         "imports": _vendas_cache_imports_publicos(cfg),
-        "regras_importacao": _vendas_import_regras_publicas(),
-    })
-
-
-def _normalizar_colaborador_payload(data, atual=None):
-    data = data or {}
-    atual = atual or {}
-    nome = _as_str(data.get("nome")) if "nome" in data or not atual else _as_str(atual.get("nome"))
-    email = _as_str(data.get("email")) if "email" in data or not atual else _as_str(atual.get("email"))
-    cpf = _as_str(data.get("cpf")) if "cpf" in data or not atual else _as_str(atual.get("cpf"))
-    usuario_id = _as_int(data.get("usuario_id")) if "usuario_id" in data or not atual else _as_int(atual.get("usuario_id"))
-    papeis_informados = any(k in data for k in ("is_motorista", "is_entregador", "is_ajudante", "is_conferente", "is_vendedor"))
-    possui_usuario = any(
-        _as_str(data.get(k))
-        for k in ("login", "senha", "sip_usuario", "sip_senha", "sip_ramal", "codbar_modo")
-    ) or _as_bool(data.get("sip_habilitado"), False) or usuario_id > 0
-
-    if atual:
-        is_motorista = _as_bool(data.get("is_motorista"), _as_bool(atual.get("is_motorista"), False)) if "is_motorista" in data else _as_bool(atual.get("is_motorista"), False)
-        is_entregador = _as_bool(data.get("is_entregador"), _as_bool(atual.get("is_entregador"), False)) if "is_entregador" in data else _as_bool(atual.get("is_entregador"), False)
-        is_ajudante = _as_bool(data.get("is_ajudante"), _as_bool(atual.get("is_ajudante"), False)) if "is_ajudante" in data else _as_bool(atual.get("is_ajudante"), False)
-        is_conferente = _as_bool(data.get("is_conferente"), _as_bool(atual.get("is_conferente"), False)) if "is_conferente" in data else _as_bool(atual.get("is_conferente"), False)
-        is_vendedor = _as_bool(data.get("is_vendedor"), _as_bool(atual.get("is_vendedor"), False)) if "is_vendedor" in data else _as_bool(atual.get("is_vendedor"), False)
-    elif papeis_informados:
-        is_motorista = _as_bool(data.get("is_motorista"), False)
-        is_entregador = _as_bool(data.get("is_entregador"), False)
-        is_ajudante = _as_bool(data.get("is_ajudante"), False)
-        is_conferente = _as_bool(data.get("is_conferente"), False)
-        is_vendedor = _as_bool(data.get("is_vendedor"), False)
-    elif possui_usuario:
-        is_motorista = False
-        is_entregador = False
-        is_ajudante = False
-        is_conferente = False
-        is_vendedor = False
-    else:
-        is_motorista = True
-        is_entregador = True
-        is_ajudante = False
-        is_conferente = False
-        is_vendedor = False
-
-    payload = {
-        "nome": nome,
-        "email": email,
-        "cpf": cpf,
-        "usuario_id": usuario_id or None,
-        "is_motorista": 1 if is_motorista else 0,
-        "is_entregador": 1 if is_entregador else 0,
-        "is_ajudante": 1 if is_ajudante else 0,
-        "is_conferente": 1 if is_conferente else 0,
-        "is_vendedor": 1 if is_vendedor else 0,
-    }
-    return payload
-
-
-def _validar_colaborador_payload(payload):
-    if not _as_str(payload.get("nome")):
-        return "nome e obrigatorio"
-    if not any(_as_bool(payload.get(k), False) for k in ("is_motorista", "is_entregador", "is_ajudante", "is_conferente", "is_vendedor")):
-        possui_usuario = any(_as_str(payload.get(k)) for k in ("login", "senha", "sip_usuario", "sip_senha", "sip_ramal")) or _as_bool(payload.get("sip_habilitado"), False) or _as_int(payload.get("usuario_id"), 0) > 0
-        if not possui_usuario:
-            return "marque pelo menos uma funcao para o colaborador ou informe os dados de acesso"
-    return ""
-
-
-def _normalizar_usuario_colaborador_payload(data, atual=None):
-    data = data or {}
-    atual = atual or {}
-    usuario_src = data.get("usuario_dados") or {}
-
-    def _campo(nome, default=""):
-        if nome in data and data.get(nome) not in (None, ""):
-            return _as_str(data.get(nome))
-        if nome in usuario_src and usuario_src.get(nome) not in (None, ""):
-            return _as_str(usuario_src.get(nome))
-        return _as_str(atual.get(nome)) if atual else default
-
-    login = _campo("login")
-    senha = _as_str(data.get("senha")) if "senha" in data else (_as_str(usuario_src.get("senha")) if "senha" in usuario_src else "")
-    sip_habilitado = 1 if _as_bool(data.get("sip_habilitado"), _as_bool(usuario_src.get("sip_habilitado"), _as_bool(atual.get("sip_habilitado"), False))) else 0
-    sip_usuario = _campo("sip_usuario", login)
-    sip_senha = _campo("sip_senha")
-    sip_ramal = _campo("sip_ramal")
-    codbar_modo = _normalizar_codbar_modo(data.get("codbar_modo") if "codbar_modo" in data else (usuario_src.get("codbar_modo") if "codbar_modo" in usuario_src else atual.get("codbar_modo")))
-
-    return {
-        "login": login,
-        "senha": senha,
-        "sip_habilitado": sip_habilitado,
-        "sip_usuario": sip_usuario,
-        "sip_senha": sip_senha,
-        "sip_ramal": sip_ramal,
-        "codbar_modo": codbar_modo,
-    }
-
-
-def _sincronizar_usuario_do_colaborador(cur, colaborador_id, payload, atual=None):
-    atual = atual or {}
-    payload = payload or {}
-    usuario_id = _as_int(payload.get("usuario_id"), 0) or _as_int(atual.get("usuario_id"), 0) or None
-    login = _as_str(payload.get("login")) or _as_str(atual.get("login"))
-    senha = _as_str(payload.get("senha"))
-    sip_habilitado = 1 if _as_bool(payload.get("sip_habilitado"), _as_bool(atual.get("sip_habilitado"), False)) else 0
-    sip_usuario = _as_str(payload.get("sip_usuario")) or _as_str(atual.get("sip_usuario")) or login
-    sip_senha = _as_str(payload.get("sip_senha")) if "sip_senha" in payload else _as_str(atual.get("sip_senha"))
-    sip_ramal = _as_str(payload.get("sip_ramal")) if "sip_ramal" in payload else _as_str(atual.get("sip_ramal"))
-    codbar_modo = _normalizar_codbar_modo(payload.get("codbar_modo") if "codbar_modo" in payload else atual.get("codbar_modo"))
-    nome = _as_str(payload.get("nome")) or _as_str(atual.get("nome"))
-
-    usuario_atual = None
-    if usuario_id:
-        cur.execute(
-            "SELECT id, nome, login, senha, sip_habilitado, sip_usuario, sip_senha, sip_ramal, codbar_modo FROM usuarios WHERE id=%s LIMIT 1",
-            (usuario_id,),
-        )
-        usuario_atual = cur.fetchone()
-        if not usuario_atual:
-            usuario_id = None
-
-    login = login or (_as_str(usuario_atual.get("login")) if usuario_atual else "")
-    senha_hash_final = _as_str(usuario_atual.get("senha")) if usuario_atual else ""
-    if login and not usuario_id and not senha:
-        raise ValueError("login e senha sao obrigatorios para vincular usuario")
-
-    if usuario_id:
-        if login:
-            cur.execute("SELECT id FROM usuarios WHERE login=%s AND id<>%s LIMIT 1", (login, usuario_id))
-            if cur.fetchone():
-                raise ValueError("login ja existe")
-        senha_final = _as_str(usuario_atual.get("senha")) if usuario_atual else ""
-        if senha:
-            senha_final = generate_password_hash(senha)
-        senha_hash_final = senha_final or senha_hash_final
-        if usuario_atual:
-            cur.execute(
-                """
-                UPDATE usuarios
-                SET nome=%s, login=%s, senha=%s, ativo=1,
-                    sip_habilitado=%s, sip_usuario=%s, sip_senha=%s, sip_ramal=%s, codbar_modo=%s
-                WHERE id=%s
-                """,
-                (
-                    nome,
-                    login or _as_str(usuario_atual.get("login")),
-                    senha_final or _as_str(usuario_atual.get("senha")),
-                    sip_habilitado,
-                    sip_usuario or login,
-                    sip_senha,
-                    sip_ramal,
-                    codbar_modo,
-                    usuario_id,
-                ),
-            )
-        else:
-            if not login:
-                raise ValueError("login e obrigatorio")
-            if not senha:
-                raise ValueError("senha e obrigatoria")
-            cur.execute(
-                """
-                INSERT INTO usuarios (
-                    nome, login, senha, ativo,
-                    sip_habilitado, sip_usuario, sip_senha, sip_ramal, codbar_modo
-                ) VALUES (%s, %s, %s, 1, %s, %s, %s, %s, %s)
-                """,
-                (
-                    nome,
-                    login,
-                    generate_password_hash(senha),
-                    sip_habilitado,
-                    sip_usuario or login,
-                    sip_senha,
-                    sip_ramal,
-                    codbar_modo,
-                ),
-            )
-            usuario_id = cur.lastrowid
-            senha_hash_final = generate_password_hash(senha)
-    elif login:
-        if not senha:
-            raise ValueError("login e senha sao obrigatorios para vincular usuario")
-        cur.execute(
-            "SELECT id FROM usuarios WHERE login=%s LIMIT 1",
-            (login,),
-        )
-        if cur.fetchone():
-            raise ValueError("login ja existe")
-        cur.execute(
-            """
-            INSERT INTO usuarios (
-                nome, login, senha, ativo,
-                sip_habilitado, sip_usuario, sip_senha, sip_ramal, codbar_modo
-            ) VALUES (%s, %s, %s, 1, %s, %s, %s, %s, %s)
-            """,
-            (
-                nome,
-                login,
-                generate_password_hash(senha),
-                sip_habilitado,
-                sip_usuario or login,
-                sip_senha,
-                sip_ramal,
-                codbar_modo,
-            ),
-        )
-        usuario_id = cur.lastrowid
-        senha_hash_final = generate_password_hash(senha)
-
-    if usuario_id:
-        try:
-            _sincronizar_usuarios_sip(cur.connection, senha_plana_por_id={usuario_id: senha or sip_senha or ""}, apenas_ids=[usuario_id])
-        except Exception:
-            pass
-        try:
-            _sincronizar_usuario_freepbx_best_effort(usuario_id)
-        except Exception:
-            pass
-
-    return {
-        "usuario_id": usuario_id,
-        "login": login,
-        "senha": senha_hash_final,
-        "sip_habilitado": sip_habilitado,
-        "sip_usuario": sip_usuario or login,
-        "sip_senha": sip_senha,
-        "sip_ramal": sip_ramal,
-        "codbar_modo": codbar_modo,
-    }
-
-
-def _validar_colaboradores_frete(cur, motorista_id, entregador_id):
-    motorista_id = _as_int(motorista_id, 0) or None
-    entregador_id = _as_int(entregador_id, 0) or None
-
-    if not motorista_id:
-        return "cada veiculo precisa de motorista"
-
-    ids = sorted({x for x in (motorista_id, entregador_id) if x})
-    cur.execute(
-        "SELECT id, nome, COALESCE(is_motorista,0) AS is_motorista, COALESCE(is_entregador,0) AS is_entregador, COALESCE(is_ajudante,0) AS is_ajudante FROM colaboradores WHERE id IN (" + ",".join(["%s"] * len(ids)) + ")",
-        tuple(ids)
-    )
-    rows = cur.fetchall() or []
-    colaboradores = {int(r["id"]): r for r in rows if r.get("id") is not None}
-
-    motorista = colaboradores.get(motorista_id)
-    if not motorista:
-        return "motorista informado nao foi encontrado"
-    if not _as_bool(motorista.get("is_motorista"), False):
-        return f"{_as_str(motorista.get('nome')) or 'colaborador'} nao esta marcado como motorista"
-    motorista_entregador = _as_bool(motorista.get("is_entregador"), False)
-
-    if entregador_id == motorista_id:
-        if motorista_entregador:
-            return ""
-        return f"{_as_str(motorista.get('nome')) or 'colaborador'} nao esta marcado como entregador para ir sozinho"
-
-    if not entregador_id:
-        if motorista_entregador:
-            return ""
-        return "cada veiculo precisa de entregador ou de um motorista-entregador"
-
-    entregador = colaboradores.get(entregador_id)
-    if not entregador:
-        return "entregador informado nao foi encontrado"
-    apoio_entregador = _as_bool(entregador.get("is_entregador"), False)
-    apoio_ajudante = _as_bool(entregador.get("is_ajudante"), False)
-    if not apoio_entregador and not apoio_ajudante:
-        return f"{_as_str(entregador.get('nome')) or 'colaborador'} nao esta marcado como entregador nem ajudante"
-    if not motorista_entregador and not apoio_entregador:
-        return f"{_as_str(entregador.get('nome')) or 'colaborador'} precisa estar marcado como entregador com este motorista"
-
-    return ""
-
-
-def _resolver_motorista_legacy_id_por_colaborador(cur, colaborador_id, fallback_motorista_id=None):
-    colaborador_id = _as_int(colaborador_id, 0) or None
-    fallback_motorista_id = _as_int(fallback_motorista_id, 0) or None
-    if fallback_motorista_id:
-        return fallback_motorista_id
-    if not colaborador_id:
-        return fallback_motorista_id
-
-    cur.execute(
-        """
-        SELECT m.id
-        FROM colaboradores c
-        JOIN motoristas m
-          ON LOWER(TRIM(COALESCE(m.nome, ''))) = LOWER(TRIM(COALESCE(c.nome, '')))
-        WHERE c.id = %s
-        ORDER BY m.id
-        LIMIT 1
-        """,
-        (colaborador_id,),
-    )
-    row = cur.fetchone() or {}
-    return _as_int(row.get("id"), 0) or None
-
-
-def _validar_duplicidade_escala_frete(cur, frete_id, status, motorista_id, entregador_id):
-    status = _as_str(status)
-    if status not in ("chegada", "descarregado", "liberado"):
-        return ""
-
-    ids = sorted({
-        _as_int(motorista_id, 0) or 0,
-        _as_int(entregador_id, 0) or 0,
-    } - {0})
-    if not ids:
-        return ""
-
-    cur.execute(
-        "SELECT id, nome FROM colaboradores WHERE id IN (" + ",".join(["%s"] * len(ids)) + ")",
-        tuple(ids)
-    )
-    nomes = {int(r["id"]): _as_str(r.get("nome")) for r in (cur.fetchall() or []) if r.get("id") is not None}
-
-    params = ["chegada", "descarregado", "liberado"]
-    query = """
-        SELECT
-            f.id,
-            f.colaborador_motorista_id AS motorista_id,
-            f.colaborador_entregador_id AS entregador_id,
-            COALESCE(v.nome, f.nome, CONCAT('frete ', f.id)) AS veiculo_nome
-        FROM fretes f
-        LEFT JOIN veiculos v ON v.id = f.veiculo_id
-        WHERE f.status IN (%s, %s, %s)
-    """
-    if frete_id:
-        query += " AND f.id <> %s"
-        params.append(frete_id)
-    query += " AND (f.colaborador_motorista_id IN (" + ",".join(["%s"] * len(ids)) + ") OR f.colaborador_entregador_id IN (" + ",".join(["%s"] * len(ids)) + "))"
-    params.extend(ids)
-    params.extend(ids)
-
-    cur.execute(query, tuple(params))
-    conflitos = cur.fetchall() or []
-    for conflito in conflitos:
-        usados = {
-            _as_int(conflito.get("motorista_id"), 0) or None,
-            _as_int(conflito.get("entregador_id"), 0) or None,
-        }
-        for pessoa_id in ids:
-            if pessoa_id not in usados:
-                continue
-            nome = nomes.get(pessoa_id) or "Colaborador"
-            veiculo = _as_str(conflito.get("veiculo_nome")) or f"frete {conflito.get('id')}"
-            return f"{nome} ja esta escalado no veiculo {veiculo}"
-
-    return ""
-
-@app.route("/api/cargas/importar_csv", methods=["POST"])
-def importar_cargas_csv():
-    try:
-        file_storage = request.files.get("arquivo") or request.files.get("csv")
-        veiculo_override = _as_str(request.form.get("veiculo_numero") or request.form.get("veiculo") or request.form.get("numero_veiculo"))
-        texto, source_name, source_path = _carregar_csv_texto_fonte(file_storage)
-        resultado = _importar_cargas_csv_texto(texto, source_name, veiculo_override)
-        if source_path:
-            resultado["source_path"] = source_path
-    except FileNotFoundError as exc:
-        return jsonify({"erro": str(exc)}), 404
-    except RuntimeError as exc:
-        return jsonify({"erro": str(exc)}), 400
-    except Exception as exc:
-        return jsonify({"erro": f"Falha ao importar CSV de cargas: {str(exc)}"}), 500
-
-    return jsonify(resultado)
-
-@app.route("/api/cargas/importar_pdf", methods=["POST"])
-def importar_cargas_pdf():
-    source_path = ""
-    try:
-        file_storage = request.files.get("arquivo") or request.files.get("pdf")
-        veiculo_override = _as_str(request.form.get("veiculo_numero") or request.form.get("veiculo") or request.form.get("numero_veiculo"))
-        pdf_bytes, source_name, source_path = _carregar_pdf_cargas_fonte(file_storage)
-        resultado = _importar_cargas_pdf_bytes(
-            pdf_bytes,
-            source_name=source_name,
-            veiculo_override=veiculo_override,
-            usuario=_usuario_ator_req(),
-        )
-        if source_path:
-            resultado["source_path"] = source_path
-    except FileNotFoundError as exc:
-        return jsonify({"erro": str(exc)}), 404
-    except RuntimeError as exc:
-        return jsonify({"erro": str(exc)}), 400
-    except Exception as exc:
-        return jsonify({"erro": f"Falha ao importar PDF de cargas: {str(exc)}"}), 500
-
-    return jsonify(resultado)
-
-@app.route("/api/cargas/<int:carga_id>/detalhes", methods=["GET"])
-def detalhes_carga_importada(carga_id):
-    conn = get_conn()
-    cur = conn.cursor(dictionary=True)
-    try:
-        cur.execute("SELECT * FROM cargas WHERE id=%s LIMIT 1", (carga_id,))
-        carga = cur.fetchone()
-        if not carga:
-            return jsonify({"erro": "carga nao encontrada"}), 404
-
-        cur.execute(
-            """
-            SELECT id
-            FROM fretes
-            WHERE carga_id=%s
-            ORDER BY id ASC
-            LIMIT 1
-            """,
-            (carga_id,),
-        )
-        frete_ref = cur.fetchone()
-        frete = None
-        if frete_ref and _as_int(frete_ref.get("id"), 0) > 0:
-            frete = _buscar_frete_detalhado(cur, _as_int(frete_ref.get("id"), 0))
-
-        cur.execute(
-            """
-            SELECT
-                id,
-                carga_id,
-                linha_num,
-                cliente,
-                cidade,
-                rota,
-                veiculo_numero,
-                numero_nf,
-                produto,
-                quantidade,
-                litro,
-                peso,
-                valor_venda,
-                dados_json,
-                criado_em
-            FROM cargas_import_linhas
-            WHERE carga_id=%s
-            ORDER BY linha_num ASC, id ASC
-            """,
-            (carga_id,),
-        )
-        linhas_raw = cur.fetchall() or []
-        cur.execute(
-            """
-            SELECT
-                id,
-                carga_id,
-                produto_id,
-                item_seq,
-                grupo_produto,
-                codigo_produto,
-                codigo_barras,
-                nome_produto,
-                embalagem,
-                unidade_embalagem,
-                quantidade_embalagem,
-                unidade_solta,
-                quantidade_solta,
-                fator_embalagem,
-                quantidade_total,
-                estoque_movimento_id,
-                baixado_em,
-                dados_json,
-                criado_em
-            FROM cargas_estoque_itens
-            WHERE carga_id=%s
-            ORDER BY item_seq ASC, id ASC
-            """,
-            (carga_id,),
-        )
-        itens_estoque_raw = cur.fetchall() or []
-    finally:
-        cur.close()
-        conn.close()
-
-    linhas = []
-    cidades = []
-    for linha in linhas_raw:
-        dados_json = linha.get("dados_json")
-        dados = None
-        if dados_json:
-            try:
-                dados = json.loads(dados_json)
-            except Exception:
-                dados = dados_json
-        linhas.append({
-            "id": _as_int(linha.get("id"), 0),
-            "carga_id": _as_int(linha.get("carga_id"), 0),
-            "linha_num": _as_int(linha.get("linha_num"), 0),
-            "cliente": _as_str(linha.get("cliente")),
-            "cidade": _as_str(linha.get("cidade")),
-            "rota": _as_str(linha.get("rota")),
-            "veiculo_numero": _as_str(linha.get("veiculo_numero")),
-            "numero_nf": _as_str(linha.get("numero_nf")),
-            "produto": _as_str(linha.get("produto")),
-            "quantidade": _as_float(linha.get("quantidade"), 0.0),
-            "litro": _as_float(linha.get("litro"), 0.0),
-            "peso": _as_float(linha.get("peso"), 0.0),
-            "valor_venda": _as_float(linha.get("valor_venda"), 0.0),
-            "dados_json": dados,
-            "criado_em": _fmt_dt(linha.get("criado_em")),
-        })
-        cidade_linha = _as_str(linha.get("cidade"))
-        if cidade_linha and cidade_linha not in cidades:
-            cidades.append(cidade_linha)
-    if not cidades:
-        for cidade_linha in re.split(r"\s*-\s*", _as_str(carga.get("cidade"))):
-            cidade_linha = _as_str(cidade_linha)
-            if cidade_linha and cidade_linha not in cidades:
-                cidades.append(cidade_linha)
-
-    itens_estoque = []
-    itens_estoque_baixados = 0
-    for item in itens_estoque_raw:
-        dados_json = item.get("dados_json")
-        dados = None
-        if dados_json:
-            try:
-                dados = json.loads(dados_json)
-            except Exception:
-                dados = dados_json
-        estoque_movimento_id = _as_int(item.get("estoque_movimento_id"), 0)
-        if estoque_movimento_id > 0:
-            itens_estoque_baixados += 1
-        itens_estoque.append({
-            "id": _as_int(item.get("id"), 0),
-            "carga_id": _as_int(item.get("carga_id"), 0),
-            "produto_id": _as_int(item.get("produto_id"), 0),
-            "item_seq": _as_int(item.get("item_seq"), 0),
-            "grupo_produto": _as_str(item.get("grupo_produto")),
-            "codigo_produto": _as_str(item.get("codigo_produto")),
-            "codigo_barras": _as_str(item.get("codigo_barras")),
-            "nome_produto": _as_str(item.get("nome_produto")),
-            "embalagem": _as_str(item.get("embalagem")),
-            "unidade_embalagem": _as_str(item.get("unidade_embalagem")),
-            "quantidade_embalagem": _as_float(item.get("quantidade_embalagem"), 0.0),
-            "unidade_solta": _as_str(item.get("unidade_solta")),
-            "quantidade_solta": _as_float(item.get("quantidade_solta"), 0.0),
-            "fator_embalagem": _as_float(item.get("fator_embalagem"), 0.0),
-            "quantidade_total": _as_float(item.get("quantidade_total"), 0.0),
-            "estoque_movimento_id": estoque_movimento_id,
-            "baixado_em": _fmt_dt(item.get("baixado_em")),
-            "dados_json": dados,
-            "criado_em": _fmt_dt(item.get("criado_em")),
-        })
-
-    carga_resp = {
-        "id": _as_int(carga.get("id"), 0),
-        "nome": _as_str(carga.get("nome")),
-        "cidade": _as_str(carga.get("cidade")),
-        "cidades": cidades,
-        "rota": _as_str(carga.get("rota")),
-        "veiculo_numero": _as_str(carga.get("veiculo_numero")),
-        "origem_csv": _as_str(carga.get("origem_csv")),
-        "arquivo_origem": _as_str(carga.get("arquivo_origem")) or _as_str(carga.get("origem_csv")),
-        "tipo_importacao": _as_str(carga.get("tipo_importacao")),
-        "mapa_numero": _as_str(carga.get("mapa_numero")),
-        "data_carga": _fmt_date(carga.get("data_carga")),
-        "numero_entregas": _as_int(carga.get("numero_entregas"), 0),
-        "volumes_total": _as_float(carga.get("volumes_total"), 0.0),
-        "valor_bonificacao": _as_float(carga.get("valor_bonificacao"), 0.0),
-        "registros_importados": _as_int(carga.get("registros_importados"), 0),
-        "clientes_distintos": _as_int(carga.get("clientes_distintos"), 0),
-        "quantidade_total": _as_float(carga.get("quantidade_total"), 0.0),
-        "litros_total": _as_float(carga.get("litros_total"), 0.0),
-        "peso_total": _as_float(carga.get("peso_total"), 0.0),
-        "valor_total": _as_float(carga.get("valor_total"), 0.0),
-        "estoque_baixado_em": _fmt_dt(carga.get("estoque_baixado_em")),
-        "estoque_baixado_por": _as_str(carga.get("estoque_baixado_por")),
-        "created_at": _fmt_dt(carga.get("created_at")),
-        "atualizado_em": _fmt_dt(carga.get("atualizado_em")),
-    }
-    return jsonify({
-        "ok": True,
-        "carga": carga_resp,
-        "frete": frete,
-        "linhas": linhas,
-        "itens_estoque": itens_estoque,
-        "estoque": {
-            "baixado": bool(carga.get("estoque_baixado_em")),
-            "baixado_em": _fmt_dt(carga.get("estoque_baixado_em")),
-            "baixado_por": _as_str(carga.get("estoque_baixado_por")),
-            "itens_total": len(itens_estoque),
-            "itens_baixados": itens_estoque_baixados,
-        },
-        "resumo": {
-            "linhas": len(linhas),
-            "itens_estoque": len(itens_estoque),
-            "clientes": carga_resp["clientes_distintos"],
-            "peso_total": carga_resp["peso_total"],
-            "valor_total": carga_resp["valor_total"],
-            "quantidade_total": carga_resp["quantidade_total"],
-            "litros_total": carga_resp["litros_total"],
-        },
     })
 
 @app.route("/api/<tabela>", methods=["GET"])
 def listar_generico(tabela):
-    permitidas = ["cargas", "motoristas", "veiculos", "conferentes", "colaboradores"]
+    permitidas = ["cargas", "motoristas", "veiculos", "conferentes"]
     if tabela not in permitidas:
         return jsonify({"erro": "Tabela não permitida"}), 400
 
     conn = get_conn()
     cursor = conn.cursor(dictionary=True)
-    if tabela == "motoristas":
-        cursor.execute(
-            """
-            SELECT
-                id,
-                nome,
-                COALESCE(is_motorista, 0) AS is_motorista,
-                COALESCE(is_entregador, 0) AS is_entregador,
-                COALESCE(is_ajudante, 0) AS is_ajudante,
-                created_at
-            FROM motoristas
-            ORDER BY nome
-            """
-        )
-    elif tabela == "colaboradores":
-        cursor.execute(
-            """
-            SELECT
-                c.id,
-                c.nome,
-                c.email,
-                c.cpf,
-                COALESCE(c.login, u.login, '') AS login,
-                COALESCE(c.sip_habilitado, u.sip_habilitado, 0) AS sip_habilitado,
-                COALESCE(c.sip_usuario, u.sip_usuario, '') AS sip_usuario,
-                COALESCE(c.sip_senha, u.sip_senha, '') AS sip_senha,
-                COALESCE(c.sip_ramal, u.sip_ramal, '') AS sip_ramal,
-                COALESCE(c.codbar_modo, u.codbar_modo, 'bip') AS codbar_modo,
-                COALESCE(c.is_motorista, 0) AS is_motorista,
-                COALESCE(c.is_entregador, 0) AS is_entregador,
-                COALESCE(c.is_ajudante, 0) AS is_ajudante,
-                COALESCE(c.is_conferente, 0) AS is_conferente,
-                COALESCE(c.is_vendedor, 0) AS is_vendedor,
-                COALESCE(c.usuario_id, 0) AS usuario_id,
-                u.login AS usuario_login,
-                c.created_at,
-                c.updated_at
-            FROM colaboradores c
-            LEFT JOIN usuarios u ON u.id = c.usuario_id
-            ORDER BY c.nome
-            """
-        )
-    else:
-        cursor.execute(f"SELECT * FROM {tabela}")
+    cursor.execute(f"SELECT * FROM {tabela}")
     dados = cursor.fetchall()
     cursor.close()
     conn.close()
@@ -24769,7 +10017,7 @@ def listar_generico(tabela):
 
 @app.route("/api/<tabela>", methods=["POST"])
 def criar_generico(tabela):
-    permitidas = ["cargas", "motoristas", "veiculos", "conferentes", "colaboradores"]
+    permitidas = ["cargas", "motoristas", "veiculos", "conferentes"]
     if tabela not in permitidas:
         return jsonify({"erro": "Tabela não permitida"}), 400
 
@@ -24778,101 +10026,12 @@ def criar_generico(tabela):
     cursor = conn.cursor()
 
     if tabela == "veiculos":
-        try:
-            combustivel_padrao = _combustivel_padrao_para_modelo(
-                data.get("modelo"),
-                data.get("combustivel_padrao") or "diesel_500",
-            )
-        except ValueError as exc:
-            cursor.close()
-            conn.close()
-            return jsonify({"erro": str(exc)}), 400
         cursor.execute(
             """
-            INSERT INTO veiculos (
-                nome, placa, modelo, km_atual, intervalo_manut_km, intervalo_oleo_km, combustivel_padrao
-            )
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO veiculos (nome, placa, modelo, km_atual, intervalo_manut_km, intervalo_oleo_km)
+            VALUES (%s, %s, %s, %s, %s, %s)
             """,
-            (
-                data.get("nome"),
-                data.get("placa"),
-                data.get("modelo"),
-                data.get("km_atual"),
-                data.get("intervalo_manut_km"),
-                data.get("intervalo_oleo_km"),
-                combustivel_padrao,
-            )
-        )
-    elif tabela == "motoristas":
-        payload = _normalizar_colaborador_payload(data)
-        erro = _validar_colaborador_payload(payload)
-        if erro:
-            cursor.close()
-            conn.close()
-            return jsonify({"erro": erro}), 400
-        cursor.execute(
-            """
-            INSERT INTO motoristas (nome, is_motorista, is_entregador, is_ajudante)
-            VALUES (%s, %s, %s, %s)
-            """,
-            (payload["nome"], payload["is_motorista"], payload["is_entregador"], payload["is_ajudante"])
-        )
-    elif tabela == "colaboradores":
-        payload = _normalizar_colaborador_payload(data)
-        erro = _validar_colaborador_payload(payload)
-        if erro:
-            cursor.close()
-            conn.close()
-            return jsonify({"erro": erro}), 400
-        usuario_payload = _normalizar_usuario_colaborador_payload(data, payload)
-        try:
-            usuario_payload = _sincronizar_usuario_do_colaborador(cursor, None, {**payload, **usuario_payload}, {})
-        except ValueError as exc:
-            cursor.close()
-            conn.close()
-            return jsonify({"erro": str(exc)}), 400
-        payload.update(usuario_payload)
-        cursor.execute(
-            """
-            INSERT INTO colaboradores (
-                nome, email, cpf, login, senha, sip_habilitado, sip_usuario, sip_senha, sip_ramal, codbar_modo,
-                is_motorista, is_entregador, is_ajudante, is_conferente, is_vendedor, usuario_id
-            )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            """,
-            (
-                payload["nome"],
-                payload["email"],
-                payload["cpf"],
-                payload.get("login", ""),
-                payload.get("senha", ""),
-                payload.get("sip_habilitado", 0),
-                payload.get("sip_usuario", ""),
-                payload.get("sip_senha", ""),
-                payload.get("sip_ramal", ""),
-                payload.get("codbar_modo", "bip"),
-                payload["is_motorista"],
-                payload["is_entregador"],
-                payload["is_ajudante"],
-                payload["is_conferente"],
-                payload["is_vendedor"],
-                payload["usuario_id"],
-            )
-        )
-
-        conn.commit()
-        cursor.close()
-        conn.close()
-
-        return jsonify({"ok": True})
-    elif tabela == "cargas":
-        cursor.execute(
-            """
-            INSERT INTO cargas (nome, veiculo_numero)
-            VALUES (%s, %s)
-            """,
-            (_as_str(data.get("nome")), _as_str(data.get("veiculo_numero"))),
+            (data.get("nome"), data.get("placa"), data.get("modelo"), data.get("km_atual"), data.get("intervalo_manut_km"), data.get("intervalo_oleo_km"))
         )
     else:
         cursor.execute(f"INSERT INTO {tabela} (nome) VALUES (%s)", (data.get("nome"),))
@@ -24880,184 +10039,26 @@ def criar_generico(tabela):
     conn.commit()
     cursor.close()
     conn.close()
-    resposta = {"ok": True}
-    if tabela == "veiculos":
-        resposta["sincronizacao_xml"] = _sincronizar_xml_apos_cadastro_veiculo()
-    return jsonify(resposta)
+    return jsonify({"ok": True})
 
 @app.route("/api/<tabela>/<int:id>", methods=["PUT"])
 def atualizar_generico(tabela, id):
-    permitidas = ["cargas", "motoristas", "veiculos", "conferentes", "colaboradores"]
+    permitidas = ["cargas", "motoristas", "veiculos", "conferentes"]
     if tabela not in permitidas:
         return jsonify({"erro": "Tabela inválida"}), 400
 
     data = request.json or {}
     conn = get_conn()
-    cursor = conn.cursor(dictionary=True)
+    cursor = conn.cursor()
 
     if tabela == "veiculos":
-        cursor.execute("SELECT combustivel_padrao FROM veiculos WHERE id=%s", (id,))
-        veiculo_atual = cursor.fetchone()
-        if not veiculo_atual:
-            cursor.close()
-            conn.close()
-            return jsonify({"erro": "registro nao encontrado"}), 404
-        try:
-            combustivel_padrao = _combustivel_padrao_para_modelo(
-                data.get("modelo"),
-                data.get("combustivel_padrao")
-                or veiculo_atual.get("combustivel_padrao")
-                or "diesel_500",
-            )
-        except ValueError as exc:
-            cursor.close()
-            conn.close()
-            return jsonify({"erro": str(exc)}), 400
         cursor.execute(
             """
             UPDATE veiculos
-            SET nome=%s,
-                placa=%s,
-                modelo=%s,
-                km_atual=%s,
-                intervalo_manut_km=%s,
-                intervalo_oleo_km=%s,
-                combustivel_padrao=%s
+            SET nome=%s, placa=%s, modelo=%s, km_atual=%s, intervalo_manut_km=%s, intervalo_oleo_km=%s
             WHERE id=%s
             """,
-            (
-                data.get("nome"),
-                data.get("placa"),
-                data.get("modelo"),
-                data.get("km_atual"),
-                data.get("intervalo_manut_km"),
-                data.get("intervalo_oleo_km"),
-                combustivel_padrao,
-                id,
-            )
-        )
-    elif tabela == "motoristas":
-        cursor.execute(
-            """
-            SELECT
-                id,
-                nome,
-                COALESCE(is_motorista, 0) AS is_motorista,
-                COALESCE(is_entregador, 0) AS is_entregador,
-                COALESCE(is_ajudante, 0) AS is_ajudante
-            FROM motoristas
-            WHERE id=%s
-            """,
-            (id,)
-        )
-        atual = cursor.fetchone()
-        if not atual:
-            cursor.close()
-            conn.close()
-            return jsonify({"erro": "registro nao encontrado"}), 404
-        payload = _normalizar_colaborador_payload(data, atual)
-        erro = _validar_colaborador_payload(payload)
-        if erro:
-            cursor.close()
-            conn.close()
-            return jsonify({"erro": erro}), 400
-        cursor.execute(
-            """
-            UPDATE motoristas
-            SET nome=%s, is_motorista=%s, is_entregador=%s, is_ajudante=%s
-            WHERE id=%s
-            """,
-            (payload["nome"], payload["is_motorista"], payload["is_entregador"], payload["is_ajudante"], id)
-        )
-    elif tabela == "colaboradores":
-        cursor.execute(
-            """
-            SELECT
-                id,
-                nome,
-                email,
-                cpf,
-                COALESCE(login, '') AS login,
-                COALESCE(senha, '') AS senha,
-                COALESCE(sip_habilitado, 0) AS sip_habilitado,
-                COALESCE(sip_usuario, '') AS sip_usuario,
-                COALESCE(sip_senha, '') AS sip_senha,
-                COALESCE(sip_ramal, '') AS sip_ramal,
-                COALESCE(codbar_modo, 'bip') AS codbar_modo,
-                COALESCE(is_motorista, 0) AS is_motorista,
-                COALESCE(is_entregador, 0) AS is_entregador,
-                COALESCE(is_ajudante, 0) AS is_ajudante,
-                COALESCE(is_conferente, 0) AS is_conferente,
-                COALESCE(is_vendedor, 0) AS is_vendedor,
-                usuario_id
-            FROM colaboradores
-            WHERE id=%s
-            """,
-            (id,)
-        )
-        atual = cursor.fetchone()
-        if not atual:
-            cursor.close()
-            conn.close()
-            return jsonify({"erro": "registro nao encontrado"}), 404
-        payload = _normalizar_colaborador_payload(data, atual)
-        erro = _validar_colaborador_payload(payload)
-        if erro:
-            cursor.close()
-            conn.close()
-            return jsonify({"erro": erro}), 400
-        usuario_payload = _normalizar_usuario_colaborador_payload(data, atual)
-        try:
-            usuario_payload = _sincronizar_usuario_do_colaborador(cursor, id, {**payload, **usuario_payload}, atual)
-        except ValueError as exc:
-            cursor.close()
-            conn.close()
-            return jsonify({"erro": str(exc)}), 400
-        payload.update(usuario_payload)
-        cursor.execute(
-            """
-            UPDATE colaboradores
-            SET nome=%s, email=%s, cpf=%s,
-                login=%s, senha=%s,
-                sip_habilitado=%s, sip_usuario=%s, sip_senha=%s, sip_ramal=%s, codbar_modo=%s,
-                is_motorista=%s, is_entregador=%s, is_ajudante=%s, is_conferente=%s, is_vendedor=%s, usuario_id=%s
-            WHERE id=%s
-            """,
-            (
-                payload["nome"],
-                payload["email"],
-                payload["cpf"],
-                payload.get("login", ""),
-                payload.get("senha", ""),
-                payload.get("sip_habilitado", 0),
-                payload.get("sip_usuario", ""),
-                payload.get("sip_senha", ""),
-                payload.get("sip_ramal", ""),
-                payload.get("codbar_modo", "bip"),
-                payload["is_motorista"],
-                payload["is_entregador"],
-                payload["is_ajudante"],
-                payload["is_conferente"],
-                payload["is_vendedor"],
-                payload["usuario_id"],
-                id,
-            )
-        )
-    elif tabela == "cargas":
-        cursor.execute(
-            "SELECT veiculo_numero FROM cargas WHERE id=%s",
-            (id,),
-        )
-        atual = cursor.fetchone() or {}
-        veiculo_numero = _as_str(data.get("veiculo_numero")) if "veiculo_numero" in data else _as_str(atual.get("veiculo_numero"))
-        cursor.execute(
-            """
-            UPDATE cargas
-            SET nome=%s,
-                veiculo_numero=%s
-            WHERE id=%s
-            """,
-            (_as_str(data.get("nome")), veiculo_numero, id)
+            (data.get("nome"), data.get("placa"), data.get("modelo"), data.get("km_atual"), data.get("intervalo_manut_km"), data.get("intervalo_oleo_km"), id)
         )
     else:
         cursor.execute(f"UPDATE {tabela} SET nome=%s WHERE id=%s", (data.get("nome"), id))
@@ -25065,14 +10066,11 @@ def atualizar_generico(tabela, id):
     conn.commit()
     cursor.close()
     conn.close()
-    resposta = {"ok": True}
-    if tabela == "veiculos":
-        resposta["sincronizacao_xml"] = _sincronizar_xml_apos_cadastro_veiculo()
-    return jsonify(resposta)
+    return jsonify({"ok": True})
 
 @app.route("/api/<tabela>/<int:id>", methods=["DELETE"])
 def deletar_generico(tabela, id):
-    permitidas = ["cargas", "motoristas", "veiculos", "conferentes", "colaboradores"]
+    permitidas = ["cargas", "motoristas", "veiculos", "conferentes"]
     if tabela not in permitidas:
         return jsonify({"erro": "Tabela inválida"}), 400
 
@@ -25081,8 +10079,6 @@ def deletar_generico(tabela, id):
     cursor = conn.cursor(dictionary=True)
     if tabela == "veiculos":
         cursor.execute("SELECT id, nome, placa, modelo FROM veiculos WHERE id=%s", (id,))
-    elif tabela == "colaboradores":
-        cursor.execute("SELECT id, nome, usuario_id FROM colaboradores WHERE id=%s", (id,))
     else:
         cursor.execute(f"SELECT id, nome FROM {tabela} WHERE id=%s", (id,))
     row = cursor.fetchone()
@@ -25094,10 +10090,6 @@ def deletar_generico(tabela, id):
     cursor.execute(f"DELETE FROM {tabela} WHERE id=%s", (id,))
     if tabela == "veiculos":
         descricao = f"veiculo id={id} nome={_as_str(row.get('nome'))} placa={_as_str(row.get('placa'))} modelo={_as_str(row.get('modelo'))}"
-    elif tabela == "motoristas" or tabela == "colaboradores":
-        usuario_id_remover = _as_int(row.get("usuario_id"), 0)
-        extra = f" usuario_id={usuario_id_remover} preservado" if tabela == "colaboradores" and usuario_id_remover > 0 else ""
-        descricao = f"colaborador id={id} nome={_as_str(row.get('nome'))}{extra}"
     else:
         descricao = f"{tabela[:-1]} id={id} nome={_as_str(row.get('nome'))}"
     _registrar_log_exclusao(cursor, usuario, tabela, id, descricao)
@@ -25111,135 +10103,6 @@ def deletar_generico(tabela, id):
 # =========================================================
 # (7.5) GESTÃO DE FROTA (PERSISTÊNCIA)
 # =========================================================
-@app.route("/api/abastecimentos/importacoes-xml", methods=["GET"])
-def listar_vinculos_abastecimentos_xml():
-    conn = get_conn()
-    cur = conn.cursor(dictionary=True)
-    try:
-        cur.execute(
-            """
-            SELECT
-                v.id,
-                v.nota_key,
-                v.importar_xml_abastecimento_id,
-                v.chave_nfe,
-                v.numero_nota,
-                v.abastecimento_id,
-                v.veiculo_id,
-                v.placa_xml,
-                v.vinculacao_origem,
-                v.status,
-                v.motivo,
-                v.atualizado_em,
-                x.data_emissao,
-                x.posto_nome,
-                x.combustivel,
-                x.litros,
-                x.valor_produto,
-                x.valor_total,
-                vei.nome AS veiculo_nome,
-                vei.placa AS veiculo_placa
-            FROM abastecimento_xml_vinculos v
-            LEFT JOIN importar_xml_abastecimentos x
-                ON x.id=v.importar_xml_abastecimento_id
-            LEFT JOIN veiculos vei ON vei.id=v.veiculo_id
-            ORDER BY
-                CASE v.status WHEN 'pendente' THEN 0 ELSE 1 END,
-                v.atualizado_em DESC,
-                v.id DESC
-            """
-        )
-        rows = cur.fetchall() or []
-    finally:
-        cur.close()
-        conn.close()
-    return jsonify(
-        {
-            "rows": [
-                {
-                    "id": _as_int(row.get("id"), 0),
-                    "nota_key": _as_str(row.get("nota_key")),
-                    "xml_id": _as_int(
-                        row.get("importar_xml_abastecimento_id"),
-                        0,
-                    ),
-                    "chave_nfe": _normalizar_chave_acesso_nfe(
-                        row.get("chave_nfe")
-                    ),
-                    "numero_nota": _as_str(row.get("numero_nota")),
-                    "abastecimento_id": _as_int(
-                        row.get("abastecimento_id"),
-                        0,
-                    ),
-                    "veiculo_id": _as_int(row.get("veiculo_id"), 0),
-                    "placa_xml": _as_str(row.get("placa_xml")),
-                    "veiculo_nome": _as_str(row.get("veiculo_nome")),
-                    "veiculo_placa": _as_str(row.get("veiculo_placa")),
-                    "vinculacao_origem": _as_str(
-                        row.get("vinculacao_origem")
-                    ),
-                    "status": _as_str(row.get("status")),
-                    "motivo": _as_str(row.get("motivo")),
-                    "data_emissao": _as_str(row.get("data_emissao")),
-                    "posto_nome": _as_str(row.get("posto_nome")),
-                    "combustivel": _as_str(row.get("combustivel")),
-                    "litros": _as_float(row.get("litros"), 0.0),
-                    "valor": _as_float(
-                        row.get("valor_produto"),
-                        _as_float(row.get("valor_total"), 0.0),
-                    ),
-                    "atualizado_em": _fmt_dt(row.get("atualizado_em")),
-                }
-                for row in rows
-            ],
-            "meta": {
-                "total": len(rows),
-                "vinculados": sum(
-                    1
-                    for row in rows
-                    if _as_str(row.get("status")) == "vinculado"
-                ),
-                "criados": sum(
-                    1
-                    for row in rows
-                    if _as_str(row.get("status")) == "criado"
-                ),
-                "pendentes": sum(
-                    1
-                    for row in rows
-                    if _as_str(row.get("status")) == "pendente"
-                ),
-                "ignoradas": sum(
-                    1
-                    for row in rows
-                    if _as_str(row.get("status")) == "ignorado"
-                ),
-                "manutencoes_pendentes": sum(
-                    1
-                    for row in rows
-                    if _as_str(row.get("status")) == "manutencao_pendente"
-                ),
-                "manutencoes_confirmadas": sum(
-                    1
-                    for row in rows
-                    if _as_str(row.get("status")) == "manutencao_confirmada"
-                ),
-            },
-        }
-    )
-
-
-@app.route("/api/abastecimentos/importacoes-xml/sincronizar", methods=["POST"])
-def sincronizar_vinculos_abastecimentos_xml():
-    data = request.get_json(silent=True) or {}
-    dry_run = _as_bool(data.get("dry_run"), False)
-    try:
-        resumo = sincronizar_abastecimentos_xml(dry_run=dry_run)
-    except Exception as exc:
-        return jsonify({"erro": str(exc)}), 500
-    return jsonify({"ok": True, "resumo": resumo})
-
-
 @app.route("/api/abastecimentos", methods=["GET"])
 def listar_abastecimentos():
     status_filtro = _as_str(request.args.get("status"))
@@ -25263,8 +10126,7 @@ def listar_abastecimentos():
             a.data_abastecimento,
             v.nome AS veiculo_nome,
             v.placa,
-            v.modelo,
-            v.combustivel_padrao
+            v.modelo
         FROM abastecimentos a
         LEFT JOIN veiculos v ON v.id = a.veiculo_id
     """
@@ -25278,7 +10140,29 @@ def listar_abastecimentos():
     cur.close()
     conn.close()
 
-    metricas = _calcular_metricas_abastecimentos(rows)
+    # Calcula histórico de km/l por veículo com base em abastecimentos concluídos.
+    prev_km_by_veiculo = {}
+    metricas = {}
+    for r in rows:
+        rid = _as_int(r.get("id"), 0)
+        vid = _as_int(r.get("veiculo_id"), 0)
+        status = _as_str(r.get("status")).lower()
+        combustivel_tipo = _normalizar_combustivel_tipo(r.get("combustivel_tipo"))
+        km = _as_int(r.get("km"), 0)
+        qtd = _as_float(r.get("quantidade_litros"), 0.0)
+
+        km_rodado = None
+        km_l = None
+        if status == "abastecido" and combustivel_tipo == "diesel":
+            prev_km = prev_km_by_veiculo.get(vid)
+            if prev_km is not None:
+                km_rodado_calc = km - prev_km
+                if km_rodado_calc > 0:
+                    km_rodado = km_rodado_calc
+                    if qtd > 0:
+                        km_l = km_rodado_calc / qtd
+            prev_km_by_veiculo[vid] = km
+        metricas[rid] = {"km_rodado": km_rodado, "km_l": km_l}
 
     # Entrega em ordem mais recente primeiro.
     out = []
@@ -25290,18 +10174,13 @@ def listar_abastecimentos():
             "veiculo_nome": r.get("veiculo_nome") or "",
             "placa": r.get("placa") or "",
             "modelo": r.get("modelo") or "",
-            "combustivel_padrao": _normalizar_combustivel_padrao_veiculo(r.get("combustivel_padrao")),
             "km": _as_int(r.get("km"), 0),
-            "km_inicial": metricas.get(rid, {}).get("km_inicial"),
-            "km_atual": metricas.get(rid, {}).get("km_atual"),
-            "km_final": metricas.get(rid, {}).get("km_atual"),
             "posto": _as_str(r.get("posto")),
             "combustivel_tipo": _normalizar_combustivel_tipo(r.get("combustivel_tipo")),
             "chave_acesso_nfe": _normalizar_chave_acesso_nfe(r.get("chave_acesso_nfe")),
             "numero_nota": _as_str(r.get("numero_nota")),
             "emitente_nome": _as_str(r.get("emitente_nome")),
             "valor": _as_float(r.get("valor"), 0.0) if r.get("valor") is not None else None,
-            "valor_litro": metricas.get(rid, {}).get("valor_litro"),
             "quantidade_litros": _as_float(r.get("quantidade_litros"), 0.0) if r.get("quantidade_litros") is not None else None,
             "status": _as_str(r.get("status")) or "liberado",
             "data_liberacao": _fmt_dt(r.get("data_liberacao")),
@@ -25318,12 +10197,7 @@ def liberar_abastecimento():
     veiculo_id = _as_int(data.get("veiculo_id"), 0)
     km = _as_int(data.get("km"), 0)
     posto = _as_str(data.get("posto"))
-    combustivel_solicitado = _as_str(data.get("combustivel_tipo")).strip()
-    try:
-        if combustivel_solicitado:
-            combustivel_solicitado = _validar_combustivel_tipo(combustivel_solicitado)
-    except ValueError as exc:
-        return jsonify({"erro": str(exc)}), 400
+    combustivel_tipo = _normalizar_combustivel_tipo(data.get("combustivel_tipo"))
     chave_acesso_nfe = _normalizar_chave_acesso_nfe(data.get("chave_acesso_nfe"))
     numero_nota = _as_str(data.get("numero_nota"))
     emitente_nome = _as_str(data.get("emitente_nome"))
@@ -25336,18 +10210,12 @@ def liberar_abastecimento():
         return jsonify({"erro": "posto é obrigatório"}), 400
 
     conn = get_conn()
-    cur = conn.cursor(dictionary=True)
+    cur = conn.cursor()
     try:
         try:
-            combustivel_tipo = _validar_combustivel_para_veiculo(
-                cur,
-                veiculo_id,
-                combustivel_solicitado,
-            )
             _validar_nota_duplicada_abastecimento(cur, numero_nota=numero_nota, chave_acesso_nfe=chave_acesso_nfe)
         except ValueError as exc:
-            status_code = 409 if "ja cadastrada" in str(exc).lower() else 400
-            return jsonify({"erro": str(exc)}), status_code
+            return jsonify({"erro": str(exc)}), 409
 
         cur.execute(
             """
@@ -25406,12 +10274,7 @@ def concluir_abastecimento(abastecimento_id):
     data = request.json or {}
     valor = _as_float(data.get("valor"), 0.0)
     quantidade_litros = _as_float(data.get("quantidade_litros"), 0.0)
-    combustivel_solicitado = _as_str(data.get("combustivel_tipo")).strip()
-    try:
-        if combustivel_solicitado:
-            combustivel_solicitado = _validar_combustivel_tipo(combustivel_solicitado)
-    except ValueError as exc:
-        return jsonify({"erro": str(exc)}), 400
+    combustivel_tipo = _normalizar_combustivel_tipo(data.get("combustivel_tipo"))
     chave_acesso_nfe = _normalizar_chave_acesso_nfe(data.get("chave_acesso_nfe"))
     numero_nota = _as_str(data.get("numero_nota"))
     emitente_nome = _as_str(data.get("emitente_nome"))
@@ -25435,11 +10298,6 @@ def concluir_abastecimento(abastecimento_id):
         return jsonify({"erro": "somente status liberado pode ser concluído"}), 400
 
     try:
-        combustivel_tipo = _validar_combustivel_para_veiculo(
-            cur,
-            row.get("veiculo_id"),
-            combustivel_solicitado,
-        )
         _validar_nota_duplicada_abastecimento(
             cur,
             numero_nota=numero_nota,
@@ -25486,148 +10344,6 @@ def concluir_abastecimento(abastecimento_id):
     cur.close()
     conn.close()
     return jsonify({"ok": True, "id": abastecimento_id, "status": "abastecido"})
-
-@app.route("/api/abastecimentos/<int:abastecimento_id>", methods=["PUT"])
-def editar_abastecimento(abastecimento_id):
-    data = request.get_json(silent=True) or {}
-    veiculo_id = _as_int(data.get("veiculo_id"), 0)
-    km = _as_int(data.get("km"), 0)
-    posto = _as_str(data.get("posto")).strip()
-    valor = _as_float(data.get("valor"), 0.0)
-    quantidade_litros = _as_float(data.get("quantidade_litros"), 0.0)
-    chave_acesso_nfe = _normalizar_chave_acesso_nfe(data.get("chave_acesso_nfe"))
-    numero_nota = _as_str(data.get("numero_nota")).strip()
-    emitente_nome = _as_str(data.get("emitente_nome")).strip()
-    data_abastecimento = _as_str(data.get("data_abastecimento")).strip()
-    combustivel_solicitado = _as_str(data.get("combustivel_tipo")).strip()
-    try:
-        if combustivel_solicitado:
-            combustivel_solicitado = _validar_combustivel_tipo(combustivel_solicitado)
-    except ValueError as exc:
-        return jsonify({"erro": str(exc)}), 400
-
-    if veiculo_id <= 0:
-        return jsonify({"erro": "veiculo_id invalido"}), 400
-    if km <= 0:
-        return jsonify({"erro": "km invalido"}), 400
-    if not posto:
-        return jsonify({"erro": "posto e obrigatorio"}), 400
-    if valor <= 0:
-        return jsonify({"erro": "valor invalido"}), 400
-    if quantidade_litros <= 0:
-        return jsonify({"erro": "quantidade_litros invalido"}), 400
-    if chave_acesso_nfe and len(chave_acesso_nfe) != 44:
-        return jsonify({"erro": "a chave de acesso da NF-e precisa ter 44 digitos"}), 400
-
-    data_abastecimento_sql = None
-    if data_abastecimento:
-        try:
-            data_abastecimento_sql = datetime.datetime.fromisoformat(
-                data_abastecimento.replace("Z", "+00:00")
-            ).replace(tzinfo=None)
-        except ValueError:
-            return jsonify({"erro": "data_abastecimento invalida"}), 400
-
-    conn = get_conn()
-    cur = conn.cursor(dictionary=True)
-    row_atual = None
-    try:
-        cur.execute(
-            "SELECT id, status, data_abastecimento FROM abastecimentos WHERE id=%s",
-            (abastecimento_id,),
-        )
-        row_atual = cur.fetchone()
-        if not row_atual:
-            return jsonify({"erro": "abastecimento nao encontrado"}), 404
-        if _as_str(row_atual.get("status")).lower() != "abastecido":
-            return jsonify({"erro": "somente abastecimentos concluidos podem ser editados"}), 400
-
-        try:
-            combustivel_tipo = _validar_combustivel_para_veiculo(
-                cur,
-                veiculo_id,
-                combustivel_solicitado,
-            )
-            _validar_nota_duplicada_abastecimento(
-                cur,
-                numero_nota=numero_nota,
-                chave_acesso_nfe=chave_acesso_nfe,
-                exclude_id=abastecimento_id,
-            )
-        except ValueError as exc:
-            return jsonify({"erro": str(exc)}), 409
-
-        cur.execute(
-            """
-            UPDATE abastecimentos
-            SET
-                veiculo_id=%s,
-                km=%s,
-                posto=%s,
-                combustivel_tipo=%s,
-                chave_acesso_nfe=%s,
-                numero_nota=%s,
-                emitente_nome=%s,
-                valor=%s,
-                quantidade_litros=%s,
-                data_abastecimento=%s
-            WHERE id=%s
-            """,
-            (
-                veiculo_id,
-                km,
-                posto,
-                combustivel_tipo,
-                chave_acesso_nfe,
-                numero_nota,
-                emitente_nome,
-                valor,
-                quantidade_litros,
-                data_abastecimento_sql or row_atual.get("data_abastecimento") or datetime.datetime.now(),
-                abastecimento_id,
-            ),
-        )
-        cur.execute(
-            """
-            UPDATE veiculos
-            SET km_atual = CASE
-                WHEN km_atual IS NULL OR km_atual < %s THEN %s
-                ELSE km_atual
-            END
-            WHERE id = %s
-            """,
-            (km, km, veiculo_id),
-        )
-        conn.commit()
-    finally:
-        cur.close()
-        conn.close()
-
-    conn_pdf = get_conn()
-    cur_pdf = conn_pdf.cursor(dictionary=True)
-    try:
-        cur_pdf.execute(
-            """
-            SELECT a.*, v.nome AS veiculo_nome, v.placa, v.modelo
-            FROM abastecimentos a
-            LEFT JOIN veiculos v ON v.id = a.veiculo_id
-            WHERE a.id=%s
-            """,
-            (abastecimento_id,),
-        )
-        row_pdf = cur_pdf.fetchone()
-    finally:
-        cur_pdf.close()
-        conn_pdf.close()
-    if row_pdf:
-        _build_abastecimento_pdf(row_pdf)
-
-    return jsonify({
-        "ok": True,
-        "id": abastecimento_id,
-        "status": "abastecido",
-        "combustivel_tipo": combustivel_tipo,
-    })
 
 @app.route("/api/abastecimentos/<int:abastecimento_id>/importar_nfe", methods=["POST"])
 def importar_nfe_abastecimento(abastecimento_id):
@@ -25676,8 +10392,6 @@ def importar_nfe_dfe_abastecimento(abastecimento_id):
     chave_acesso_esperada = _normalizar_chave_acesso_nfe(payload.get("chave_acesso_esperada") or payload.get("chave_acesso"))
     combustivel_tipo = payload.get("combustivel_tipo")
     manifestar_automaticamente = payload.get("manifestar_automaticamente")
-    if manifestar_automaticamente is None:
-        manifestar_automaticamente = False
 
     if len(chave_acesso_esperada) != 44:
         return jsonify({"erro": "a chave de acesso da NF-e precisa ter 44 digitos."}), 400
@@ -25687,44 +10401,16 @@ def importar_nfe_dfe_abastecimento(abastecimento_id):
             chave_acesso_esperada,
             manifestar_automaticamente=manifestar_automaticamente,
         )
-        xml_text = _as_str(resultado_dfe.get("xml_text"))
-        if not xml_text:
-            resumo_doc = _nfe_resumo_documento(resultado_dfe, chave_acesso=chave_acesso_esperada)
-            detalhe = _as_str(resumo_doc.get("limitation_message")) or (
-                "Documento localizado, mas a SEFAZ ainda nao liberou o XML completo."
-            )
-            return jsonify({
-                "erro": (
-                    f"{detalhe} Use o XML manual da NF-e ou conclua o abastecimento preenchendo os dados da nota manualmente."
-                ),
-                "nfe": {
-                    "numero_nota": _as_str(resumo_doc.get("numero_nota")),
-                    "chave_acesso_nfe": _normalizar_chave_acesso_nfe(
-                        resumo_doc.get("chave_acesso") or chave_acesso_esperada
-                    ),
-                    "emitente_nome": _as_str(resumo_doc.get("emitente_nome")),
-                    "combustivel_tipo": _normalizar_combustivel_tipo(resumo_doc.get("combustivel_tipo")),
-                    "valor": _as_float(resumo_doc.get("valor_total"), 0.0) if resumo_doc.get("valor_total") not in (None, "") else None,
-                    "quantidade_litros": _as_float(resumo_doc.get("quantidade_litros"), 0.0) if resumo_doc.get("quantidade_litros") not in (None, "") else None,
-                },
-                "dfe": _nfe_resumo_distribuicao_publico(resultado_dfe),
-                "limite_consultas": resultado_dfe.get("limite_consultas") or _nfe_dfe_limite_status(),
-            }), 409
         resumo_nfe = _importar_nfe_abastecimento_por_xml_text(
             abastecimento_id,
-            xml_text,
+            resultado_dfe.get("xml_text"),
             chave_acesso_esperada=chave_acesso_esperada,
             combustivel_tipo=combustivel_tipo,
         )
-    except (RuntimeError, ValueError) as exc:
+    except ValueError as exc:
         msg = str(exc)
         status_code = 404 if "nao encontrado" in msg else (409 if "somente" in msg.lower() or "ja cadastrada" in msg.lower() else 400)
-        return jsonify({"erro": msg, "limite_consultas": _nfe_dfe_limite_status()}), status_code
-    except Exception as exc:
-        return jsonify({
-            "erro": f"Falha ao consultar DF-e do abastecimento: {str(exc)}",
-            "limite_consultas": _nfe_dfe_limite_status(),
-        }), 500
+        return jsonify({"erro": msg}), status_code
 
     return jsonify({
         "ok": True,
@@ -25738,7 +10424,6 @@ def importar_nfe_dfe_abastecimento(abastecimento_id):
         "quantidade_litros": _as_float(resumo_nfe.get("quantidade_litros"), 0.0),
         "itens_encontrados": _as_int(resumo_nfe.get("itens_encontrados"), 0),
         "dfe": _nfe_resumo_distribuicao_publico(resultado_dfe),
-        "limite_consultas": resultado_dfe.get("limite_consultas") or _nfe_dfe_limite_status(),
     })
 
 @app.route("/api/abastecimentos/<int:abastecimento_id>", methods=["DELETE"])
@@ -25817,321 +10502,43 @@ def pdf_abastecimento(abastecimento_id):
     arquivo = _build_abastecimento_pdf(row)
     return send_file(arquivo, as_attachment=False, mimetype="application/pdf")
 
-@app.route("/api/manutencoes/importacoes-xml", methods=["GET"])
-def listar_pre_lancamentos_manutencao_xml():
-    status = _as_str(request.args.get("status")).lower() or "pendente"
-    conn = get_conn()
-    cur = conn.cursor(dictionary=True)
-    try:
-        params = []
-        where = ""
-        if status in {"pendente", "confirmado", "descartado"}:
-            where = "WHERE p.status=%s"
-            params.append(status)
-        cur.execute(
-            f"""
-            SELECT
-                p.*,
-                v.nome AS veiculo_nome,
-                v.placa AS veiculo_placa,
-                v.modelo AS veiculo_modelo
-            FROM manutencao_xml_pre_lancamentos p
-            LEFT JOIN veiculos v ON v.id=p.veiculo_id
-            {where}
-            ORDER BY p.atualizado_em DESC, p.id DESC
-            """,
-            tuple(params),
-        )
-        rows = cur.fetchall() or []
-    finally:
-        cur.close()
-        conn.close()
-    return jsonify(
-        {
-            "rows": [
-                {
-                    "id": _as_int(row.get("id"), 0),
-                    "nota_key": _as_str(row.get("nota_key")),
-                    "xml_id": _as_int(
-                        row.get("importar_xml_abastecimento_id"),
-                        0,
-                    ),
-                    "chave_nfe": _normalizar_chave_acesso_nfe(
-                        row.get("chave_nfe")
-                    ),
-                    "numero_nota": _as_str(row.get("numero_nota")),
-                    "veiculo_id": _as_int(row.get("veiculo_id"), 0),
-                    "veiculo_nome": _as_str(row.get("veiculo_nome")),
-                    "veiculo_placa": _as_str(row.get("veiculo_placa")),
-                    "veiculo_modelo": _as_str(row.get("veiculo_modelo")),
-                    "placa_xml": _as_str(row.get("placa_xml")),
-                    "sugestao_confianca": _as_float(
-                        row.get("sugestao_confianca"),
-                        0.0,
-                    ),
-                    "origem_veiculo": _as_str(row.get("origem_veiculo")),
-                    "status": _as_str(row.get("status")),
-                    "motivo": _as_str(row.get("motivo")),
-                    "emitente_nome": _as_str(row.get("emitente_nome")),
-                    "data_documento": _fmt_date(row.get("data_documento")),
-                    "km": _as_int(row.get("km"), 0),
-                    "valor": _as_float(row.get("valor"), 0.0),
-                    "itens": _normalizar_itens_manutencao_payload(
-                        _json_list_or_empty(row.get("itens_json"))
-                    ),
-                    "manutencao_id": _as_int(
-                        row.get("manutencao_id"),
-                        0,
-                    ),
-                    "atualizado_em": _fmt_dt(row.get("atualizado_em")),
-                }
-                for row in rows
-            ],
-            "meta": {
-                "total": len(rows),
-                "pendentes": sum(
-                    1
-                    for row in rows
-                    if _as_str(row.get("status")) == "pendente"
-                ),
-            },
-        }
-    )
-
-
-@app.route(
-    "/api/manutencoes/importacoes-xml/<int:pre_lancamento_id>/descartar",
-    methods=["POST"],
-)
-def descartar_pre_lancamento_manutencao_xml(pre_lancamento_id):
-    conn = get_conn()
-    cur = conn.cursor(dictionary=True)
-    try:
-        cur.execute(
-            """
-            SELECT nota_key, status
-            FROM manutencao_xml_pre_lancamentos
-            WHERE id=%s
-            FOR UPDATE
-            """,
-            (pre_lancamento_id,),
-        )
-        row = cur.fetchone()
-        if not row:
-            return jsonify({"erro": "pre-lancamento nao encontrado"}), 404
-        if _as_str(row.get("status")) == "confirmado":
-            return jsonify(
-                {"erro": "esta manutencao ja foi confirmada"}
-            ), 409
-        cur.execute(
-            """
-            UPDATE manutencao_xml_pre_lancamentos
-            SET status='descartado', atualizado_em=NOW()
-            WHERE id=%s
-            """,
-            (pre_lancamento_id,),
-        )
-        cur.execute(
-            """
-            UPDATE abastecimento_xml_vinculos
-            SET status='ignorado', vinculacao_origem='manutencao_descartada',
-                motivo='Pre-lancamento de manutencao descartado na conferencia.',
-                atualizado_em=NOW()
-            WHERE nota_key=%s
-            """,
-            (_as_str(row.get("nota_key")),),
-        )
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        cur.close()
-        conn.close()
-    return jsonify({"ok": True})
-
-
 @app.route("/api/manutencoes", methods=["POST"])
 def criar_manutencao():
     data = request.json or {}
-    pre_lancamento_id = _as_int(data.get("pre_lancamento_id"), 0)
-    conn = get_conn()
-    cur = conn.cursor(dictionary=True)
+    veiculo_id = _as_int(data.get("veiculo_id"), 0)
+    if veiculo_id <= 0:
+        return jsonify({"erro": "veiculo_id inválido"}), 400
+
+    tipo = _as_str(data.get("tipo"))
+    km = _as_int(data.get("km"), 0)
+    valor = data.get("valor")
     try:
-        pre_lancamento = {}
-        if pre_lancamento_id > 0:
-            cur.execute(
-                """
-                SELECT *
-                FROM manutencao_xml_pre_lancamentos
-                WHERE id=%s
-                FOR UPDATE
-                """,
-                (pre_lancamento_id,),
-            )
-            pre_lancamento = cur.fetchone() or {}
-            if not pre_lancamento:
-                return jsonify(
-                    {"erro": "pre-lancamento de manutencao nao encontrado"}
-                ), 404
-            if _as_str(pre_lancamento.get("status")) == "confirmado":
-                return jsonify(
-                    {"erro": "este pre-lancamento ja foi confirmado"}
-                ), 409
+        valor = float(valor) if valor is not None and str(valor).strip() != "" else 0.0
+    except:
+        valor = 0.0
 
-        veiculo_id = _as_int(
-            data.get("veiculo_id"),
-            _as_int(pre_lancamento.get("veiculo_id"), 0),
-        )
-        if veiculo_id <= 0:
-            return jsonify({"erro": "veiculo_id inválido"}), 400
-
-        itens_payload = data.get("itens_json")
-        if itens_payload is None and pre_lancamento:
-            itens_payload = _json_list_or_empty(
-                pre_lancamento.get("itens_json")
-            )
-        if itens_payload is None and isinstance(
-            (data.get("ocr_preview") or {}).get("itens"),
-            list,
-        ):
-            itens_payload = (data.get("ocr_preview") or {}).get("itens")
-        itens_normalizados = _normalizar_itens_manutencao_payload(
-            itens_payload if isinstance(itens_payload, list) else []
-        )
-
-        tipo = (
-            _as_str(data.get("tipo"))
-            or _resumir_itens_manutencao(itens_normalizados)
-        )
-        km = _as_int(
-            data.get("km"),
-            _as_int(pre_lancamento.get("km"), 0),
-        )
-        numero_nota = (
-            _as_str(data.get("numero_nota"))
-            or _as_str(pre_lancamento.get("numero_nota"))
-        )
-        emitente_nome = (
-            _as_str(data.get("emitente_nome"))
-            or _as_str(pre_lancamento.get("emitente_nome"))
-        )
-        data_documento = (
-            _normalizar_data_documento(data.get("data_documento"))
-            or _normalizar_data_documento(
-                pre_lancamento.get("data_documento")
-            )
-        )
-        ocr_preview = (
-            data.get("ocr_preview")
-            if isinstance(data.get("ocr_preview"), dict)
-            else {}
-        )
-        if not numero_nota:
-            numero_nota = _as_str(ocr_preview.get("numero_nota"))
-        if not emitente_nome:
-            emitente_nome = _as_str(ocr_preview.get("emitente_nome"))
-        if not data_documento:
-            data_documento = _normalizar_data_documento(
-                ocr_preview.get("data_documento")
-                or ocr_preview.get("data_emissao")
-            )
-        valor = _as_float(
-            data.get("valor"),
-            _as_float(pre_lancamento.get("valor"), 0.0),
-        )
-        if valor <= 0 and ocr_preview.get("valor_total") not in (None, ""):
-            valor = _as_float(ocr_preview.get("valor_total"), 0.0)
-        if valor <= 0 and itens_normalizados:
-            valor = sum(
-                _as_float(item.get("valor_total"), 0.0)
-                for item in itens_normalizados
-            )
-
-        itens_json = (
-            json.dumps(itens_normalizados, ensure_ascii=False)
-            if itens_normalizados
-            else None
-        )
-        ocr_texto = _as_str(
-            data.get("ocr_texto")
-            or ocr_preview.get("texto_bruto")
-        )
-        ocr_origem = _as_str(
-            data.get("ocr_origem")
-            or ocr_preview.get("arquivo_origem")
-            or (
-                f"Importar XML #{pre_lancamento_id}"
-                if pre_lancamento_id > 0
-                else ""
-            )
-        )
-
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO manutencoes (veiculo_id, tipo, km, valor) VALUES (%s,%s,%s,%s)",
+        (veiculo_id, tipo, km, valor)
+    )
+    if km > 0:
         cur.execute(
             """
-            INSERT INTO manutencoes (
-                veiculo_id, tipo, km, valor,
-                numero_nota, emitente_nome, data_documento,
-                itens_json, ocr_texto, ocr_origem
-            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            UPDATE veiculos
+            SET km_atual = CASE
+                WHEN km_atual IS NULL OR km_atual < %s THEN %s
+                ELSE km_atual
+            END
+            WHERE id = %s
             """,
-            (
-                veiculo_id, tipo, km, valor,
-                numero_nota, emitente_nome, data_documento,
-                itens_json, ocr_texto, ocr_origem,
-            )
+            (km, km, veiculo_id)
         )
-        manutencao_id = _as_int(cur.lastrowid, 0)
-        if km > 0:
-            cur.execute(
-                """
-                UPDATE veiculos
-                SET km_atual = CASE
-                    WHEN km_atual IS NULL OR km_atual < %s THEN %s
-                    ELSE km_atual
-                END
-                WHERE id = %s
-                """,
-                (km, km, veiculo_id)
-            )
-        if pre_lancamento_id > 0:
-            cur.execute(
-                """
-                UPDATE manutencao_xml_pre_lancamentos
-                SET veiculo_id=%s, status='confirmado',
-                    manutencao_id=%s, confirmado_em=NOW(), atualizado_em=NOW()
-                WHERE id=%s
-                """,
-                (veiculo_id, manutencao_id, pre_lancamento_id),
-            )
-            cur.execute(
-                """
-                UPDATE abastecimento_xml_vinculos
-                SET veiculo_id=%s, status='manutencao_confirmada',
-                    vinculacao_origem='manutencao_confirmada',
-                    motivo='Nota conferida e lancada no modulo de manutencoes.',
-                    atualizado_em=NOW()
-                WHERE nota_key=%s
-                """,
-                (
-                    veiculo_id,
-                    _as_str(pre_lancamento.get("nota_key")),
-                ),
-            )
-        conn.commit()
-        return jsonify(
-            {
-                "ok": True,
-                "id": manutencao_id,
-                "pre_lancamento_id": pre_lancamento_id,
-            }
-        )
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        cur.close()
-        conn.close()
+    conn.commit()
+    cur.close()
+    conn.close()
+    return jsonify({"ok": True})
 
 @app.route("/api/manutencoes", methods=["GET"])
 def listar_manutencoes():
@@ -26144,11 +10551,6 @@ def listar_manutencoes():
             m.tipo,
             m.km,
             m.valor,
-            m.numero_nota,
-            m.emitente_nome,
-            m.data_documento,
-            m.itens_json,
-            m.ocr_origem,
             m.data_registro,
             v.nome AS veiculo_nome,
             v.placa,
@@ -26161,7 +10563,7 @@ def listar_manutencoes():
     cur.close()
     conn.close()
     return jsonify([
-        (lambda itens: {
+        {
             "id": _as_int(r.get("id"), 0),
             "veiculo_id": _as_int(r.get("veiculo_id"), 0),
             "veiculo_nome": _as_str(r.get("veiculo_nome")),
@@ -26170,15 +10572,8 @@ def listar_manutencoes():
             "tipo": _as_str(r.get("tipo")),
             "km": _as_int(r.get("km"), 0),
             "valor": _as_float(r.get("valor"), 0.0),
-            "numero_nota": _as_str(r.get("numero_nota")),
-            "emitente_nome": _as_str(r.get("emitente_nome")),
-            "data_documento": _fmt_date(r.get("data_documento")),
-            "itens": itens,
-            "itens_count": len(itens),
-            "itens_resumo": _resumir_itens_manutencao(itens),
-            "ocr_origem": _as_str(r.get("ocr_origem")),
             "data_registro": _fmt_dt(r.get("data_registro")),
-        })(_normalizar_itens_manutencao_payload(_json_list_or_empty(r.get("itens_json")))) for r in rows
+        } for r in rows
     ])
 
 @app.route("/api/trocas_oleo", methods=["POST"])
@@ -26475,38 +10870,12 @@ def relatorio_frota_pdf():
     conn = get_conn()
     cur = conn.cursor(dictionary=True)
     filtros_frete = _coletar_filtros_relatorio_fretes_req()
-    filtros_abastecimentos = (
-        _coletar_filtros_relatorio_abastecimentos_req()
-        if tipo in {
-            "abastecimentos",
-            "abastecimentos_criticos",
-            "abastecimentos_sem_placa",
-        }
-        else None
-    )
 
     titulo = "Relatório da Frota"
     slug = tipo
     headers = []
     rows = []
 
-    if tipo == "abastecimentos_criticos":
-        categorias = _coletar_abastecimentos_criticos(
-            cur,
-            filtros_abastecimentos,
-        )
-        cur.close()
-        conn.close()
-        arquivo = _build_abastecimentos_criticos_pdf(
-            categorias,
-            filtros_abastecimentos,
-        )
-        return send_file(
-            arquivo,
-            as_attachment=False,
-            download_name="abastecimentos_criticos.pdf",
-            mimetype="application/pdf",
-        )
     if tipo == "resumo":
         titulo = "Relatório da Frota"
         headers = ["Caminhão", "Placa", "Modelo", "KM Atual", "Ult. Óleo", "Manutenções", "Custo Total", "Falta Manut.", "Falta Óleo"]
@@ -26521,11 +10890,7 @@ def relatorio_frota_pdf():
                 v.intervalo_oleo_km,
                 (SELECT o.km FROM trocas_oleo o WHERE o.veiculo_id=v.id ORDER BY o.km DESC, o.id DESC LIMIT 1) AS ultimo_oleo_km,
                 (SELECT COUNT(*) FROM manutencoes m WHERE m.veiculo_id=v.id) AS manut_count,
-                (
-                    (SELECT COALESCE(SUM(m.valor),0) FROM manutencoes m WHERE m.veiculo_id=v.id)
-                    +
-                    (SELECT COALESCE(SUM(a.valor),0) FROM abastecimentos a WHERE a.veiculo_id=v.id AND LOWER(COALESCE(a.status, ''))='abastecido' AND LOWER(COALESCE(a.combustivel_tipo, '')) IN ('arla', 'arla32', 'arla 32'))
-                ) AS custo_total,
+                (SELECT COALESCE(SUM(m.valor),0) FROM manutencoes m WHERE m.veiculo_id=v.id) AS custo_total,
                 (SELECT m.km FROM manutencoes m WHERE m.veiculo_id=v.id ORDER BY m.km DESC, m.id DESC LIMIT 1) AS ultima_manut_km
             FROM veiculos v
             ORDER BY v.nome ASC, v.id ASC
@@ -26624,26 +10989,37 @@ def relatorio_frota_pdf():
             _fmt_money_br(r.get("valor_total")),
             r.get("localizacao") or "-",
         ] for r in (cur.fetchall() or [])]
-    elif tipo in {"abastecimentos", "abastecimentos_sem_placa"}:
-        somente_sem_placa = tipo == "abastecimentos_sem_placa"
-        titulo = (
-            "Relatório de Abastecimentos sem Placa Identificada"
-            if somente_sem_placa
-            else "Relatório de Abastecimentos por Tipo e Posto"
-        )
-        rows = _coletar_abastecimentos_relatorio(
-            cur,
-            filtros_abastecimentos,
-            somente_sem_placa=somente_sem_placa,
-        )
-        if somente_sem_placa:
-            filtros_abastecimentos = {
-                **(filtros_abastecimentos or {}),
-                "resumo": [
-                    *((filtros_abastecimentos or {}).get("resumo") or []),
-                    "Situação: veículo sem placa identificada",
-                ],
-            }
+    elif tipo == "abastecimentos":
+        titulo = "Relatório de Abastecimentos"
+        headers = ["Data", "Caminhao", "Placa", "Combustivel", "KM", "Posto", "NF-e", "Qtd", "Valor", "Status"]
+        cur.execute("""
+            SELECT
+                COALESCE(a.data_abastecimento, a.data_liberacao) AS data_evento,
+                a.km,
+                a.posto,
+                a.combustivel_tipo,
+                a.numero_nota,
+                a.quantidade_litros,
+                a.valor,
+                a.status,
+                v.nome AS veiculo_nome,
+                v.placa
+            FROM abastecimentos a
+            LEFT JOIN veiculos v ON v.id = a.veiculo_id
+            ORDER BY a.id DESC
+        """)
+        rows = [[
+            _fmt_dt(r.get("data_evento")) or "-",
+            r.get("veiculo_nome") or "-",
+            r.get("placa") or "-",
+            _combustivel_tipo_label(r.get("combustivel_tipo")),
+            str(_as_int(r.get("km"), 0)),
+            r.get("posto") or "-",
+            r.get("numero_nota") or "-",
+            str(_as_float(r.get("quantidade_litros"), 0.0)),
+            _fmt_money_br(r.get("valor")),
+            r.get("status") or "-",
+        ] for r in (cur.fetchall() or [])]
     elif tipo == "lavagens":
         titulo = "Relatório de Lavagens"
         headers = ["Data", "Caminhão", "Placa", "KM", "Local", "Valor", "Observação"]
@@ -26728,20 +11104,6 @@ def relatorio_frota_pdf():
     cur.close()
     conn.close()
 
-    if tipo in {"abastecimentos", "abastecimentos_sem_placa"}:
-        arquivo = _build_abastecimentos_report_pdf(
-            rows,
-            filtros_abastecimentos,
-            titulo=titulo,
-            slug=slug,
-        )
-        return send_file(
-            arquivo,
-            as_attachment=False,
-            download_name=f"{slug}.pdf",
-            mimetype="application/pdf"
-        )
-
     filtros_pdf = None
     if tipo == "escala":
         filtros_pdf = list(filtros_frete.get("resumo") or [])
@@ -26773,11 +11135,7 @@ def frota_resumo():
       v.intervalo_oleo_km,
       (SELECT o.km FROM trocas_oleo o WHERE o.veiculo_id=v.id ORDER BY o.km DESC, o.id DESC LIMIT 1) AS ultimo_oleo_km,
       (SELECT COUNT(*) FROM manutencoes m WHERE m.veiculo_id=v.id) AS manut_count,
-      (
-        (SELECT COALESCE(SUM(m.valor),0) FROM manutencoes m WHERE m.veiculo_id=v.id)
-        +
-        (SELECT COALESCE(SUM(a.valor),0) FROM abastecimentos a WHERE a.veiculo_id=v.id AND LOWER(COALESCE(a.status, ''))='abastecido' AND LOWER(COALESCE(a.combustivel_tipo, '')) IN ('arla', 'arla32', 'arla 32'))
-      ) AS custo_total,
+      (SELECT COALESCE(SUM(m.valor),0) FROM manutencoes m WHERE m.veiculo_id=v.id) AS custo_total,
       (SELECT m.km FROM manutencoes m WHERE m.veiculo_id=v.id ORDER BY m.km DESC, m.id DESC LIMIT 1) AS ultima_manut_km
     FROM veiculos v
     ORDER BY v.id DESC
@@ -26836,23 +11194,8 @@ def dashboard_frota():
         # último frete por veículo (por id mais alto)
         try:
             cur.execute("""
-                SELECT
-                    f1.*,
-                    c.nome AS carga_nome,
-                    c.veiculo_numero AS carga_veiculo_numero,
-                    cil.carga_cidades
+                SELECT f1.*
                 FROM fretes f1
-                LEFT JOIN cargas c ON c.id = f1.carga_id
-                LEFT JOIN (
-                    SELECT x.carga_id, GROUP_CONCAT(x.cidade ORDER BY x.primeira_linha SEPARATOR ' - ') AS carga_cidades
-                    FROM (
-                        SELECT carga_id, cidade, MIN(linha_num) AS primeira_linha
-                        FROM cargas_import_linhas
-                        WHERE TRIM(COALESCE(cidade, '')) <> ''
-                        GROUP BY carga_id, cidade
-                    ) x
-                    GROUP BY x.carga_id
-                ) cil ON cil.carga_id = c.id
                 INNER JOIN (
                     SELECT veiculo_id, MAX(id) AS max_id
                     FROM fretes
@@ -26934,7 +11277,7 @@ def dashboard_frota():
         by = {}
         for r in rows:
             vid = _as_int(r.get("veiculo_id"), 0)
-            if not _combustivel_move_veiculo(r.get("combustivel_tipo")):
+            if _normalizar_combustivel_tipo(r.get("combustivel_tipo")) != "diesel":
                 continue
             by.setdefault(vid, []).append({
                 "km": _as_int(r.get("km"), 0),
@@ -26976,11 +11319,6 @@ def dashboard_frota():
 
         f = frete_por_veiculo.get(vid) or {}
         mid = _as_int(f.get("motorista_id"), 0)
-        nome_frete_exibicao = _montar_nome_frete_exibicao(
-            f.get("carga_cidades"),
-            f.get("carga_veiculo_numero") or f.get("veiculo_nome_resolvido") or f.get("veiculo_nome"),
-            f.get("carga_nome") or f.get("nome"),
-        )
         row = {
             "veiculo_id": vid,
             "veiculo_nome": v.get("nome") or "",
@@ -26990,8 +11328,7 @@ def dashboard_frota():
             "intervalo_manut_km": int_manut,
             "intervalo_oleo_km": int_oleo,
             "frete_id": f.get("id"),
-            "frete_nome": nome_frete_exibicao or f.get("nome") or f.get("descricao") or "",
-            "frete_nome_original": f.get("nome") or f.get("descricao") or "",
+            "frete_nome": f.get("nome") or f.get("descricao") or "",
             "frete_status": f.get("status") or "",
             "motorista_nome": motorista_nome.get(mid) or "",
             "ultimo_oleo_km": u_oleo,
@@ -27050,7 +11387,7 @@ def frota_historico(veiculo_id):
         frete = {}
 
     cur.execute("""
-        SELECT id, tipo, km, valor, itens_json, data_registro
+        SELECT id, tipo, km, valor, data_registro
         FROM manutencoes
         WHERE veiculo_id = %s
         ORDER BY km DESC, id DESC
@@ -27129,20 +11466,23 @@ def frota_historico(veiculo_id):
     falta_manut = (ultima_manut_km + int_manut) - km_atual if int_manut > 0 else 0
     falta_oleo = (ultimo_oleo_km + int_oleo) - km_atual if int_oleo > 0 else 0
 
-    metricas_abastecimentos = _calcular_metricas_abastecimentos(abastecimentos)
     medias_validas = []
+    prev_km_abast = None
     for ab in abastecimentos:
-        km_l = metricas_abastecimentos.get(_as_int(ab.get("id"), 0), {}).get("km_l")
-        if km_l is not None and km_l > 0:
+        if _as_str(ab.get("status")).lower() != "abastecido":
+            continue
+        if _normalizar_combustivel_tipo(ab.get("combustivel_tipo")) != "diesel":
+            continue
+        km = _as_int(ab.get("km"), 0)
+        qtd = _as_float(ab.get("quantidade_litros"), 0.0)
+        km_l = 0.0
+        if prev_km_abast is not None and km > prev_km_abast and qtd > 0:
+            km_l = (km - prev_km_abast) / qtd
+        prev_km_abast = km
+        if km_l > 0:
             medias_validas.append(km_l)
-    medias_validas = medias_validas[-6:]
+    medias_validas = medias_validas[:6]
     media_km = (sum(medias_validas) / len(medias_validas)) if medias_validas else None
-    abastecimentos_arla = [
-        a for a in abastecimentos
-        if _as_str(a.get("status")).lower() == "abastecido"
-        and _normalizar_combustivel_tipo(a.get("combustivel_tipo")) == "arla"
-    ]
-    arla_custo_total = sum([_as_float(a.get("valor"), 0.0) for a in abastecimentos_arla])
 
     out = {
         "veiculo": {
@@ -27174,9 +11514,7 @@ def frota_historico(veiculo_id):
             "falta_manut_km": falta_manut,
             "falta_oleo_km": falta_oleo,
             "manut_count": len(manutencoes),
-            "manut_custo_total": sum([_as_float(m.get("valor"), 0.0) for m in manutencoes]) + arla_custo_total,
-            "arla_count": len(abastecimentos_arla),
-            "arla_custo_total": arla_custo_total,
+            "manut_custo_total": sum([_as_float(m.get("valor"), 0.0) for m in manutencoes]),
             "trocas_oleo_count": len(trocas_oleo),
             "trocas_pneu_count": len(trocas_pneu),
             "abastecimentos_count": len(abastecimentos),
@@ -27184,15 +11522,13 @@ def frota_historico(veiculo_id):
         },
         "historico": {
             "manutencoes": [
-                (lambda itens: {
+                {
                     "id": _as_int(m.get("id"), 0),
                     "tipo": _as_str(m.get("tipo")),
                     "km": _as_int(m.get("km"), 0),
                     "valor": _as_float(m.get("valor"), 0.0),
-                    "itens": itens,
-                    "itens_count": len(itens),
                     "data_manutencao": _fmt_dt(m.get("data_registro")),
-                })(_normalizar_itens_manutencao_payload(_json_list_or_empty(m.get("itens_json")))) for m in manutencoes
+                } for m in manutencoes
             ],
             "trocas_oleo": [
                 {
@@ -27234,30 +11570,30 @@ def frota_historico(veiculo_id):
         }
     }
 
+    prev_km_abast = None
     for a in abastecimentos:
-        aid = _as_int(a.get("id"), 0)
         km = _as_int(a.get("km"), 0)
+        qtd = _as_float(a.get("quantidade_litros"), 0.0)
         status = _as_str(a.get("status"))
-        metrica = metricas_abastecimentos.get(aid, {})
+        km_l = None
+        if status.lower() == "abastecido" and _normalizar_combustivel_tipo(a.get("combustivel_tipo")) == "diesel":
+            if prev_km_abast is not None and km > prev_km_abast and qtd > 0:
+                km_l = (km - prev_km_abast) / qtd
+            prev_km_abast = km
         out["historico"]["abastecimentos"].append({
-            "id": aid,
+            "id": _as_int(a.get("id"), 0),
             "km": km,
-            "km_inicial": metrica.get("km_inicial"),
-            "km_atual": metrica.get("km_atual") if metrica.get("km_atual") is not None else km,
-            "km_final": metrica.get("km_atual") if metrica.get("km_atual") is not None else km,
-            "km_rodado": metrica.get("km_rodado"),
             "posto": _as_str(a.get("posto")),
             "combustivel_tipo": _normalizar_combustivel_tipo(a.get("combustivel_tipo")),
             "chave_acesso_nfe": _normalizar_chave_acesso_nfe(a.get("chave_acesso_nfe")),
             "numero_nota": _as_str(a.get("numero_nota")),
             "emitente_nome": _as_str(a.get("emitente_nome")),
             "valor": _as_float(a.get("valor"), 0.0),
-            "valor_litro": metrica.get("valor_litro"),
             "quantidade_litros": _as_float(a.get("quantidade_litros"), 0.0),
             "status": status,
             "data_liberacao": _fmt_dt(a.get("data_liberacao")),
             "data_abastecimento": _fmt_dt(a.get("data_abastecimento")),
-            "km_l": metrica.get("km_l"),
+            "km_l": km_l,
         })
 
     out["historico"]["abastecimentos"].sort(key=lambda x: x.get("id", 0), reverse=True)
@@ -27267,57 +11603,6 @@ def frota_historico(veiculo_id):
 # =========================================================
 # (8) SERVIR HTML/ARQUIVOS
 # =========================================================
-def _carregar_agent_ia_module():
-    global _AGENT_IA_MODULE
-    if _AGENT_IA_MODULE is not None:
-        return _AGENT_IA_MODULE
-    agent_path = os.path.join(BASE_DIR, "tools", "riob_agent_web.py")
-    spec = importlib.util.spec_from_file_location("riob_agent_web_embedded", agent_path)
-    if not spec or not spec.loader:
-        raise RuntimeError("Nao foi possivel carregar o modulo do Agent IA.")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    _AGENT_IA_MODULE = module
-    return module
-
-
-@app.route("/api/agent/chat", methods=["POST"])
-def agent_ia_chat():
-    try:
-        module = _carregar_agent_ia_module()
-        payload = request.json or {}
-        headers = {k: v for k, v in request.headers.items()}
-        if not _as_str(headers.get("X-Usuario-Id")):
-            usuario_id = _as_int(payload.get("usuario_id"), 0)
-            if usuario_id > 0:
-                headers["X-Usuario-Id"] = str(usuario_id)
-                headers["X-Usuario-Login"] = _as_str(payload.get("usuario_login"))
-                headers["X-Usuario-Nome"] = _as_str(payload.get("usuario_nome"))
-                if headers["X-Usuario-Nome"] or headers["X-Usuario-Login"]:
-                    headers["X-Usuario-Logado"] = f"{headers['X-Usuario-Nome']} ({headers['X-Usuario-Login']})".strip()
-        if _as_bool(payload.get("stream"), False):
-            def _generate():
-                token = module.set_current_request_headers(headers)
-                try:
-                    for event in module.handle_chat_stream(payload):
-                        yield json.dumps(event, ensure_ascii=False) + "\n"
-                finally:
-                    module.reset_current_request_headers(token)
-
-            resp = Response(_generate(), content_type="application/x-ndjson; charset=utf-8")
-            resp.headers["Cache-Control"] = "no-cache"
-            resp.headers["X-Accel-Buffering"] = "no"
-            return resp
-
-        token = module.set_current_request_headers(headers)
-        try:
-            return jsonify(module.handle_chat(payload))
-        finally:
-            module.reset_current_request_headers(token)
-    except Exception as exc:
-        return jsonify({"reply": f"Erro no Agent IA: {str(exc)}"}), 500
-
-
 @app.route("/")
 def index():
     return send_from_directory(BASE_DIR, "RioBranco.html")
@@ -27340,11 +11625,6 @@ def monitor_esxi_proxy(subpath):
 @app.route("/monitor/cameras/<path:subpath>", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
 def monitor_cameras_proxy(subpath):
     return _proxy_monitor("cameras", subpath)
-
-@app.route("/monitor/automacao/", defaults={"subpath": ""}, methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
-@app.route("/monitor/automacao/<path:subpath>", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
-def monitor_automacao_proxy(subpath):
-    return _proxy_monitor("automacao", subpath)
 
 @app.route("/<path:path>")
 def static_files(path):

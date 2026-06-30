@@ -206,21 +206,12 @@ textarea {
     display: none;
 }
 
-.vsphere-panel-hidden,
-.workspace-column-hidden {
-    display: none !important;
-}
-
 .workspace {
     display: grid;
     gap: 24px;
     grid-template-columns: minmax(320px, 400px) minmax(0, 1fr);
     align-items: start;
     isolation: isolate;
-}
-
-.workspace.workspace-single {
-    grid-template-columns: minmax(0, 1fr);
 }
 
 .sidebar,
@@ -399,12 +390,6 @@ textarea:focus {
     background: linear-gradient(135deg, #f5b76a, #e9982a);
 }
 
-.button-danger {
-    color: #fff7f4;
-    background: linear-gradient(135deg, #b42318, #7a140d);
-    box-shadow: 0 10px 20px rgba(180, 35, 24, 0.18);
-}
-
 .button-ghost {
     color: var(--primary-strong);
     background: rgba(18, 91, 80, 0.09);
@@ -570,20 +555,6 @@ tbody tr.selected {
     border-radius: 16px;
     background: rgba(18, 91, 80, 0.05);
     border: 1px solid rgba(18, 91, 80, 0.12);
-}
-
-.snapshot-task-warning {
-    display: grid;
-    gap: 4px;
-    padding: 14px;
-    border-radius: 16px;
-    color: #6b3f00;
-    background: rgba(245, 158, 11, 0.14);
-    border: 1px solid rgba(245, 158, 11, 0.32);
-}
-
-.snapshot-task-warning span {
-    font-size: 0.92rem;
 }
 
 .snapshot-card strong {

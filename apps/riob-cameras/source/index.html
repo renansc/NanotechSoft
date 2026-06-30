@@ -1,4 +1,4 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="pt-br">
 <head>
   <meta charset="utf-8" />
@@ -10,7 +10,6 @@
     :root{--bg:#f4f6f9;--card:#ffffff;--muted:#64748b;--text:#1f2937;--btn:#ff9800;--btn-hover:#e68900;--danger:#c62828;--line:#e5e7eb;}
     *{box-sizing:border-box}
     body{margin:0;font-family:'Oswald',Arial,sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
-    body.modal-open{overflow:hidden;overscroll-behavior:none}
     header{position:sticky;top:0;background:#ffffff;border-bottom:1px solid var(--line);padding:12px 14px;z-index:10}
     .wrap{max-width:none;width:100%;margin:0 auto;padding:14px 24px}
     .grid{display:flex;flex-direction:column;gap:12px;min-height:calc(100vh - 96px)}
@@ -43,7 +42,7 @@
     .cam-grid-item .name{font-weight:700;font-size:14px;margin-bottom:6px}
     .cam-grid-item .url{font-size:11px;color:var(--muted);word-break:break-all;min-height:34px}
     .cam-grid-item .meta{font-size:11px;color:var(--muted);margin-top:6px}
-    .dvr-modal{position:fixed;inset:0;background:rgba(0,0,0,.65);display:flex;align-items:center;justify-content:center;padding:16px;z-index:3000;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
+    .dvr-modal{position:fixed;inset:0;background:rgba(0,0,0,.65);display:flex;align-items:center;justify-content:center;padding:16px;z-index:3000}
     .dvr-modal.hidden{display:none}
     .dvr-content{width:min(1280px,100%);max-height:92vh;background:#fff;border-radius:12px;overflow:hidden;display:flex;flex-direction:column}
     .dvr-header{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-bottom:1px solid var(--line)}
@@ -125,7 +124,7 @@
       </div>
     </div>
     <div style="height:8px"></div>
-    <div class="muted">RTSP/ONVIF nÃ£o abre direto no browser â€” precisa virar .m3u8 (HLS).</div>
+    <div class="muted">RTSP/ONVIF não abre direto no browser — precisa virar .m3u8 (HLS).</div>
   </div>
 
   <div class="card card-webcam hidden">
@@ -143,6 +142,50 @@
     </div>
     <div style="height:8px"></div>
     <div class="muted">Dica: costuma funcionar melhor em <b>http://127.0.0.1:8080</b> (no mesmo aparelho).</div>
+  </div>
+
+  <div class="card" id="cameraFormCard">
+    <div class="title-row">
+      <h3>Inserir / editar câmera</h3>
+      <div class="row" style="gap:8px">
+        <button class="secondary" id="btnEditSelected" type="button">Editar selecionada</button>
+        <button class="secondary" id="btnClearForm" type="button">Novo cadastro</button>
+      </div>
+    </div>
+    <div class="row">
+      <div style="flex:1;min-width:220px">
+        <label>Nome</label>
+        <input id="camFormName" placeholder="Ex: Portão" />
+      </div>
+
+      <div style="flex:1;min-width:220px">
+        <label>Tipo</label>
+        <select id="camFormMode">
+          <option value="rtsp">RTSP (recomendado)</option>
+          <option value="hls">HLS (.m3u8 pronto)</option>
+        </select>
+      </div>
+
+      <div style="flex:2;min-width:260px">
+        <label>Conexão</label>
+        <input id="camFormValue" placeholder="rtsp://usuario:senha@ip:554/..." />
+        <div class="muted" id="camFormHint">Cole a URL RTSP (rtsp://...). O servidor vai gerar /cams/NOME/live.m3u8 automaticamente.</div>
+      </div>
+
+      <div style="flex:1;min-width:180px" id="camFormTransportBox">
+        <label>Transporte RTSP</label>
+        <select id="camFormTransport">
+          <option value="udp">UDP</option>
+          <option value="tcp">TCP</option>
+        </select>
+      </div>
+
+      <div style="align-self:flex-end">
+        <button id="btnSaveCam" type="button">Inserir câmera</button>
+      </div>
+    </div>
+    <div style="height:8px"></div>
+    <div class="muted" id="camFormState">Modo atual: inserção.</div>
   </div>
 
 </div>
@@ -193,11 +236,23 @@
   const btnOpenVlc = document.getElementById('btnOpenVlc');
   const webcamInfo = document.getElementById('webcamInfo');
 
+  const btnEditSelected = document.getElementById('btnEditSelected');
+  const btnClearForm = document.getElementById('btnClearForm');
+  const btnSaveCam = document.getElementById('btnSaveCam');
+  const camFormName = document.getElementById('camFormName');
+  const camFormMode = document.getElementById('camFormMode');
+  const camFormValue = document.getElementById('camFormValue');
+  const camFormTransport = document.getElementById('camFormTransport');
+  const camFormTransportBox = document.getElementById('camFormTransportBox');
+  const camFormHint = document.getElementById('camFormHint');
+  const camFormState = document.getElementById('camFormState');
+
   let hls = null;
   let webcamStream = null;
   let hlsAutoTcpTried = false;
   let cachedCams = [];
   let dvrPlayers = [];
+  let editingCamId = null;
 
   function setStatus(t){ statusEl.textContent = t; }
 
@@ -223,11 +278,64 @@
     return (cachedCams || []).filter(c => c && c.hls);
   }
 
+  function updateCameraFormModeUI(){
+    const mode = (camFormMode && camFormMode.value) || "rtsp";
+    if (camFormTransportBox) {
+      camFormTransportBox.style.display = mode === "rtsp" ? "block" : "none";
+    }
+    if (camFormValue) {
+      camFormValue.placeholder = mode === "rtsp"
+        ? "rtsp://usuario:senha@ip:554/..."
+        : "http://IP:8080/cams/cam2/live.m3u8";
+    }
+    if (camFormHint) {
+      camFormHint.innerHTML = mode === "rtsp"
+        ? 'Cole a URL RTSP (rtsp://...). O servidor vai gerar <b>/cams/NOME/live.m3u8</b> automaticamente.'
+        : 'Cole a URL HLS (.m3u8) pronta (já gerada por ffmpeg em outro lugar).';
+    }
+  }
+
+  function setCameraFormState(){
+    if (!camFormState || !btnSaveCam) return;
+    if (editingCamId) {
+      camFormState.textContent = `Editando câmera: ${editingCamId}`;
+      btnSaveCam.textContent = "Salvar alterações";
+    } else {
+      camFormState.textContent = "Modo atual: inserção.";
+      btnSaveCam.textContent = "Inserir câmera";
+    }
+  }
+
+  function clearCameraForm(){
+    editingCamId = null;
+    if (camFormName) camFormName.value = "";
+    if (camFormMode) camFormMode.value = "rtsp";
+    if (camFormValue) camFormValue.value = "";
+    if (camFormTransport) camFormTransport.value = "udp";
+    updateCameraFormModeUI();
+    setCameraFormState();
+  }
+
+  function loadCameraIntoForm(cam){
+    if (!cam) return;
+    editingCamId = cam.id || null;
+    if (camFormName) camFormName.value = cam.name || "";
+    if (camFormMode) camFormMode.value = (cam.mode || "rtsp").toLowerCase();
+    if (camFormValue) camFormValue.value = cam.mode === "hls" ? (cam.hls || "") : (cam.rtsp || "");
+    if (camFormTransport) camFormTransport.value = (cam.transport || "udp").toLowerCase() === "tcp" ? "tcp" : "udp";
+    updateCameraFormModeUI();
+    setCameraFormState();
+  }
+
   function setPanelMode(mode){
     const next = mode === "webcam" ? "webcam" : "player";
     if (panelMode) panelMode.value = next;
     if (cardPlayer) cardPlayer.classList.toggle("hidden", next !== "player");
     if (cardWebcam) cardWebcam.classList.toggle("hidden", next !== "webcam");
+  }
+
+  if (camFormMode) {
+    camFormMode.addEventListener("change", updateCameraFormModeUI);
   }
 
   function renderPlayerCamsGrid(){
@@ -334,7 +442,7 @@
     });
 
     dvrModal.classList.remove("hidden");
-    document.body.classList.add("modal-open");
+    document.body.style.overflow = "hidden";
   }
 
   function closeDvrModal(ev){
@@ -342,7 +450,7 @@
     if (!dvrModal) return;
     dvrModal.classList.add("hidden");
     stopDvrPlayers();
-    document.body.classList.remove("modal-open");
+    document.body.style.overflow = "";
   }
 
   window.closeDvrModal = closeDvrModal;
@@ -402,7 +510,7 @@
     getPlayableCams().forEach(c => {
       const opt = document.createElement("option");
       opt.value = c.id;
-      opt.textContent = `${c.name} â€” ${c.hls || ""}`;
+      opt.textContent = `${c.name} — ${c.hls || ""}`;
       camSelect.appendChild(opt);
     });
     if(selectId){
@@ -453,6 +561,64 @@
     await api("/api/remove", "POST", { id });
     await refreshList();
   });
+
+  if (btnEditSelected) {
+    btnEditSelected.addEventListener("click", () => {
+      const cam = (cachedCams || []).find(x => x.id === camSelect.value);
+      if (!cam) {
+        alert("Selecione uma câmera para editar.");
+        return;
+      }
+      loadCameraIntoForm(cam);
+      setPanelMode("player");
+      const card = document.getElementById("cameraFormCard");
+      if (card && typeof card.scrollIntoView === "function") {
+        card.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    });
+  }
+
+  if (btnClearForm) {
+    btnClearForm.addEventListener("click", () => {
+      clearCameraForm();
+    });
+  }
+
+  if (btnSaveCam) {
+    btnSaveCam.addEventListener("click", async () => {
+      const wasEditing = !!editingCamId;
+      const name = (camFormName && camFormName.value || "").trim();
+      const mode = (camFormMode && camFormMode.value || "rtsp").trim();
+      const value = (camFormValue && camFormValue.value || "").trim();
+      const transport = (camFormTransport && camFormTransport.value || "udp").trim();
+      const currentCam = editingCamId ? (cachedCams || []).find(x => String(x.id || "") === String(editingCamId)) : null;
+      const effectiveValue = value || (currentCam ? (mode === "hls" ? (currentCam.hls || "") : (currentCam.rtsp || "")) : "");
+
+      if (!name || !mode || (!effectiveValue && !editingCamId)) {
+        alert("Preencha Nome, Tipo e Conexão.");
+        return;
+      }
+
+      try {
+        setStatus(wasEditing ? "Salvando edição..." : "Inserindo...");
+        const payload = { name, mode, value: effectiveValue, transport };
+        let res;
+        if (wasEditing) {
+          res = await api("/api/update", "POST", { id: editingCamId, ...payload });
+        } else {
+          res = await api("/api/add", "POST", payload);
+        }
+        const nextId = (res && res.cam && res.cam.id) ? res.cam.id : editingCamId;
+        clearCameraForm();
+        await refreshList(nextId);
+        setStatus("Pronto");
+      } catch (e) {
+        console.error(e);
+        alert(e.message || "Falha ao salvar câmera.");
+        setStatus("Erro");
+      }
+    });
+  }
 
   if (panelMode) {
     panelMode.addEventListener("change", () => {
@@ -554,9 +720,9 @@
 
   // Boot
   setPanelMode("player");
+  updateCameraFormModeUI();
+  clearCameraForm();
   refreshList().catch(e => { console.error(e); setStatus("Erro"); });
 </script>
 </body>
 </html>
-
-

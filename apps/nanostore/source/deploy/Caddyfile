@@ -1,0 +1,14 @@
+:80 {
+  reverse_proxy app:5000
+}
+
+:443 {
+  tls internal
+  header {
+    Permissions-Policy "camera=(self)"
+    Referrer-Policy "strict-origin-when-cross-origin"
+    X-Content-Type-Options "nosniff"
+    X-Frame-Options "SAMEORIGIN"
+  }
+  reverse_proxy app:5000
+}

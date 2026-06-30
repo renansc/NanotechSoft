@@ -34,6 +34,24 @@ Esse compose publica o banco na porta `3307` por padrao para nao conflitar com o
 
 Com o banco do compose, mantenha `NS_DB_PORT=3307` no `.env`.
 
+## Scripts operacionais
+
+Os atalhos da raiz podem ser usados com ou sem `.sh`:
+
+```bash
+./up
+./down
+./git-safe -m "mensagem do commit"
+```
+
+- `./up` sobe ou recria `mysql` e `app`, valida os manifests dos apps e espera `/login` responder.
+- `./down` para somente o container `app`, preservando o banco e o volume MySQL.
+- `./git-safe` bloqueia arquivos sensiveis/runtime, valida Python, valida `source_dir` dos apps, executa `docker compose config`, opcionalmente builda/testa o container e envia a branch atual para `origin`.
+
+Os scripts detectam `docker compose`, `docker-compose` ou `podman compose`. Se o Docker CLI nao estiver disponivel no terminal atual, execute os scripts fora de sandboxes que nao exponham Docker, como alguns ambientes Flatpak, ou instale o plugin Compose.
+
+Em um ambiente sem Docker CLI, `./git-safe --skip-compose -m "mensagem"` permite commitar/enviar depois das validacoes de Python e manifests, pulando build e healthcheck do container explicitamente.
+
 ## Apps dinamicos
 
 Os apps ficam dentro de `apps/`. Cada subpasta pode ter um `app.json`; tambem existe a tabela `installed_apps` para cadastro via banco.

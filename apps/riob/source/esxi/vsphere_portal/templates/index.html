@@ -43,19 +43,15 @@
         </div>
     </header>
 
-    <nav class="view-switch" aria-label="Navegacao do monitor">
-        <button class="view-switch-button is-active" type="button" data-vsphere-target="infra">Infra vSphere</button>
-        <button class="view-switch-button" type="button" data-vsphere-target="vms">Maquinas virtuais</button>
-        <button class="view-switch-button" type="button" data-vsphere-target="operations">Operacoes VM</button>
-        <button class="view-switch-button" type="button" data-vsphere-target="storage">ISO / Nova VM</button>
-        <button class="view-switch-button" type="button" data-vsphere-target="host">Diagnostico Host</button>
+    <nav class="view-switch" aria-label="Modulos">
+        <button class="view-switch-button is-active" type="button" data-page-target="vsphere">Infra vSphere</button>
         <button class="view-switch-button" type="button" data-page-target="containers">Containers</button>
     </nav>
 
     <section id="page-vsphere" class="page-shell">
     <main class="workspace">
         <aside class="sidebar">
-            <section class="panel" data-vsphere-panel="infra">
+            <section class="panel">
                 <div class="panel-heading">
                     <div>
                         <p class="section-kicker">Sessao</p>
@@ -114,7 +110,7 @@
                 </dl>
             </section>
 
-            <section class="panel" data-vsphere-panel="infra">
+            <section class="panel">
                 <div class="panel-heading">
                     <div>
                         <p class="section-kicker">Resumo</p>
@@ -125,7 +121,7 @@
                 <div id="summary-cards" class="metric-grid"></div>
             </section>
 
-            <section class="panel" data-vsphere-panel="infra">
+            <section class="panel">
                 <div class="panel-heading">
                     <div>
                         <p class="section-kicker">Hosts</p>
@@ -154,7 +150,7 @@
         </aside>
 
         <section class="main-column">
-            <section class="panel" data-vsphere-panel="vms">
+            <section class="panel">
                 <div class="panel-heading">
                     <div>
                         <p class="section-kicker">Inventario</p>
@@ -184,7 +180,7 @@
                 </div>
             </section>
 
-            <section class="panel" data-vsphere-panel="operations storage">
+            <section class="panel">
                 <div class="panel-heading">
                     <div>
                         <p class="section-kicker">Operacoes</p>
@@ -194,7 +190,7 @@
                 </div>
 
                 <div class="operations-grid">
-                    <section class="operation-card operation-card-wide" data-vsphere-card="operations">
+                    <section class="operation-card operation-card-wide">
                         <h3>Resumo operacional</h3>
                         <div id="vm-overview-cards" class="metric-grid metric-grid-wide"></div>
                         <div class="detail-columns">
@@ -213,7 +209,7 @@
                         </div>
                     </section>
 
-                    <section class="operation-card operation-card-wide" data-vsphere-card="operations">
+                    <section class="operation-card operation-card-wide">
                         <h3>Acesso remoto</h3>
                         <div id="remote-access-summary" class="stack-list">
                             <p class="empty-card">Selecione uma VM para montar os atalhos de acesso remoto.</p>
@@ -271,7 +267,7 @@
                         </div>
                     </section>
 
-                    <section class="operation-card" data-vsphere-card="operations">
+                    <section class="operation-card">
                         <h3>Energia</h3>
                         <div class="button-grid">
                             <button class="button button-primary vm-action" data-action="power_on" type="button">Power On</button>
@@ -280,11 +276,10 @@
                             <button class="button button-secondary vm-action" data-action="suspend" type="button">Suspend</button>
                             <button class="button button-ghost vm-action" data-action="shutdown_guest" type="button">Shutdown Guest</button>
                             <button class="button button-ghost vm-action" data-action="reboot_guest" type="button">Reboot Guest</button>
-                            <button class="button button-danger vm-action" data-action="delete" type="button">Excluir VM</button>
                         </div>
                     </section>
 
-                    <section class="operation-card" data-vsphere-card="operations">
+                    <section class="operation-card">
                         <h3>Rename</h3>
                         <form id="rename-form" class="stack-form">
                             <label>
@@ -295,7 +290,7 @@
                         </form>
                     </section>
 
-                    <section class="operation-card" data-vsphere-card="operations">
+                    <section class="operation-card">
                         <h3>CPU / RAM</h3>
                         <form id="hardware-form" class="stack-form">
                             <div class="field-row">
@@ -312,7 +307,7 @@
                         </form>
                     </section>
 
-                    <section class="operation-card" data-vsphere-card="operations">
+                    <section class="operation-card">
                         <h3>Snapshot</h3>
                         <form id="snapshot-form" class="stack-form">
                             <label>
@@ -341,7 +336,7 @@
                         </div>
                     </section>
 
-                    <section class="operation-card operation-card-wide" data-vsphere-card="operations">
+                    <section class="operation-card operation-card-wide">
                         <h3>Clone</h3>
                         <form id="clone-form" class="stack-form">
                             <div class="field-row">
@@ -387,7 +382,7 @@
                         </form>
                     </section>
 
-                    <section class="operation-card operation-card-wide" data-vsphere-card="storage">
+                    <section class="operation-card operation-card-wide">
                         <h3>Nova VM por ISO</h3>
                         <form id="create-vm-form" class="stack-form">
                             <div class="field-row">
@@ -481,7 +476,7 @@
                         </form>
                     </section>
 
-                    <section class="operation-card operation-card-wide" data-vsphere-card="storage">
+                    <section class="operation-card operation-card-wide">
                         <h3>ISO / Datastore</h3>
                         <form id="iso-upload-form" class="stack-form" enctype="multipart/form-data">
                             <div class="field-row">
@@ -533,7 +528,7 @@
                 </div>
             </section>
 
-            <section class="panel" data-vsphere-panel="host">
+            <section class="panel">
                 <div class="panel-heading">
                     <div>
                         <p class="section-kicker">Host</p>

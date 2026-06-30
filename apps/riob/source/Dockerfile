@@ -6,11 +6,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl   \
     ffmpeg \
     libgl1 \
     libglib2.0-0 \
-    libzbar0 \
     mariadb-client \
     openssh-client \
     poppler-utils \

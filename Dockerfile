@@ -7,7 +7,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl ffmpeg openssh-client \
+    && apt-get install -y --no-install-recommends curl ffmpeg openssh-client tesseract-ocr tesseract-ocr-por \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt ./

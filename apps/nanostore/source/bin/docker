@@ -1,0 +1,22 @@
+#!/bin/bash
+
+set -e
+
+for candidate in \
+  /usr/bin/docker \
+  /usr/local/bin/docker \
+  /bin/docker \
+  /snap/bin/docker
+do
+  if [ -x "$candidate" ]; then
+    exec "$candidate" "$@"
+  fi
+done
+
+if [ -x /usr/bin/flatpak-spawn ]; then
+  exec /usr/bin/flatpak-spawn --host /usr/bin/docker "$@"
+fi
+
+echo "docker: binario nao encontrado nos caminhos padrao." >&2
+echo "Se estiver usando VSCodium em sandbox, confirme se 'flatpak-spawn --host /usr/bin/docker --version' funciona." >&2
+exit 127

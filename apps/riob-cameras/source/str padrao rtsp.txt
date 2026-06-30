@@ -1,0 +1,8 @@
+cameras ip intelbras
+rtsp://usuario:senha@192.0.2.10:554/cam/realmonitor?channel=1&subtype=0
+
+cameras xmeye dvr
+rtsp://usuario:senha@192.0.2.10:554/user=usuario&password=senha&channel=1&stream=0.sdp?real_stream
+
+##testar cameras yousee
+rtsp://usuario:senha@192.0.2.10:554/stream1

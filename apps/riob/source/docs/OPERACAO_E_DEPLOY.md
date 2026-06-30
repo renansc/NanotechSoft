@@ -17,14 +17,10 @@ Ele foi escrito para manter o deploy o mais automatico possivel, com foco em:
 flowchart LR
     U[Usuarios] --> P[Nginx proxy]
     P --> A[Flask app]
-    U --> W[Open WebUI]
-    W --> O[Ollama / Qwen]
-    A --> O
     A --> DB[(MariaDB)]
     A --> PBX[FreePBX]
     A --> M1[Monitor ESXi]
     A --> M2[Monitor Cameras]
-    A --> M3[Monitor Automacao]
     A --> FS[Volumes persistentes]
     C[cert-bootstrap] --> P
     C --> PBX
@@ -46,7 +42,6 @@ flowchart LR
 - WSS/HTTP do FreePBX habilitado
 - tronco SIP funcional no FreePBX para chamadas externas
 - ESXi/vCenter acessivel, se o monitor for usado
-- projeto do monitor industrial disponivel no caminho de `RB_AUTOMACAO_MONITOR_PATH`
 
 ## 4. Arquivos e diretorios importantes
 
@@ -54,15 +49,13 @@ flowchart LR
 - `.env.example`
 - `docker-compose.yml`
 - `deploy/db/restore-latest-backup.sh`
-- `deploy/lib/ollama.sh`
-- `deploy/ollama/pull-model.sh`
 - `deploy/sync-production-to-homolog.sh`
 - `deploy/certs/bootstrap_trust.py`
 - `deploy/nginx/http.conf.template`
 - `deploy/nginx/https.conf.template`
 - `docs/index.html`
 - `certs/`
-- `backupsSql/`
+- `backups sql/`
 - `Relatorios/`
 - `nfe-cache/`
 - `sync-import/`
@@ -75,11 +68,7 @@ Observacao adicional:
 - para OCR de fotos grandes, o proxy usa timeouts maiores; depois de alterar os templates do Nginx, recrie pelo menos `proxy`
 - o monitor de cameras foi reorganizado para operacao desktop: grid lateral de cameras clicaveis e player dominante na largura restante da tela
 - o cadastro de novas cameras fica em `Config > Cameras`; o monitor ficou focado em visualizacao e playback
-- o menu `Monitor > Automacao` integra o app industrial externo sob `/monitor/automacao/`
 - no portal assistido da NF-e, a consulta publica pode abrir com a chave bipada ja na URL, reduzindo o processo operacional ao `reCAPTCHA` e ao uso do bookmarklet
-- o frontend principal passou a receber `no-store/no-cache` tambem em `/`, `RioBranco.html`, `script.js` e `style.css`, diminuindo problema de cache apos deploy
-- o menu `Cargas` ganhou uma view de `Escala` para ajustar equipe e acompanhar pendencias antes do carregamento
-- o cadastro de motoristas passou a representar colaboradores com papeis de motorista, entregador e ajudante
 
 ## 5. Variaveis de ambiente criticas
 
@@ -99,6 +88,8 @@ Observacao adicional:
 - `RB_PUBLIC_BASE_URL`
 - `RB_HTTP_PORT`
 - `RB_HTTPS_PORT`
+- `RB_HTTP_BIND`
+- `RB_HTTPS_BIND`
 - `RB_CERT_BOOTSTRAP`
 - `RB_CA_CERT_CN`
 - `RB_CA_CERT_DAYS`
@@ -116,31 +107,7 @@ Observacao adicional:
 - `RB_FREEPBX_PJSIP_TRANSPORT`
 - `RB_FREEPBX_PJSIP_ALLOW`
 
-### 5.4 Agent IA / Ollama
-
-- `RB_AGENT_LLM_PROVIDER`
-- `RB_MANAGED_OLLAMA`
-- `RB_MANAGED_OLLAMA_MODEL`
-- `RB_OLLAMA_REMOVE_MODELS`
-- `RB_OLLAMA_IMAGE`
-- `RB_OLLAMA_BIND`
-- `RB_OLLAMA_PORT`
-- `RB_AGENT_OLLAMA_URL`
-- `RB_AGENT_OLLAMA_MODEL`
-- `RB_AGENT_OLLAMA_TIMEOUT`
-- `RB_AGENT_OLLAMA_TEMPERATURE`
-
-### 5.5 Open WebUI
-
-- `RB_OPEN_WEBUI_IMAGE`
-- `RB_OPEN_WEBUI_PORT`
-- `RB_OPEN_WEBUI_NAME`
-- `RB_OPEN_WEBUI_SECRET_KEY`
-- `RB_OPEN_WEBUI_ENABLE_SIGNUP`
-- `RB_OPEN_WEBUI_OLLAMA_URL`
-- `RB_OPEN_WEBUI_VOLUME`
-
-### 5.6 SIP frontend
+### 5.4 SIP frontend
 
 - `RB_SIP_HABILITADO`
 - `RB_SIP_MODO_ATIVO`
@@ -148,16 +115,15 @@ Observacao adicional:
 - `RB_SIP_FREEPBX_DOMINIO`
 - `RB_SIP_FREEPBX_REGISTRAR_SERVER`
 
-### 5.7 Monitores
+### 5.5 Monitores
 
 - `ESXI_HOST`
 - `ESXI_USER`
 - `ESXI_PASS`
 - `ESXI_SSH_PORT`
 - `RB_VSPHERE_CLIENT_PATH`
-- `RB_AUTOMACAO_MONITOR_PATH`
 
-### 5.8 Sincronizacao producao para homologacao
+### 5.6 Sincronizacao producao para homologacao
 
 - `RB_SYNC_PROD_BASE_URL`
 - `RB_SYNC_PROD_HOST`
@@ -171,26 +137,6 @@ Observacao adicional:
 - `RB_SYNC_CURL_INSECURE`
 - `RB_SYNC_BACKUP_DIR`
 
-### 5.9 Importacao automatica de XML por e-mail
-
-- `RB_EMAIL_AUTO_IMPORT`
-- `RB_EMAIL_AUTO_INTERVAL_MINUTES`
-- `RB_EMAIL_BUSINESS_START`
-- `RB_EMAIL_BUSINESS_END`
-- `RB_EMAIL_BUSINESS_DAYS`
-- `RB_EMAIL_XML_MAX_FILE_MB`
-- `RB_EMAIL_XML_ZIP_MAX_ENTRIES`
-- `RB_EMAIL_XML_ZIP_MAX_TOTAL_MB`
-- `RB_EMAIL_XML_TRUSTED_SENDERS`
-- `RB_EMAIL_XML_TRUSTED_ZIP_MAX_ENTRIES`
-- `RB_EMAIL_XML_LOCAL_BACKLOG_MAX_ATTACHMENTS`
-
-O remetente `bebidasriobranco8@gmail.com` e confiavel por padrao para remessas
-ZIP com ate `1000` XMLs. Antes de consultar o POP3, cada ciclo tambem
-reprocessa anexos XML/ZIP salvos localmente que ainda nao possuem importacao
-concluida. A deduplicacao continua sendo feita pela chave da NF-e e pelo hash
-do conteudo.
-
 ## 6. Padrao de `.env`
 
 ### 6.1 Producao oficial
@@ -200,9 +146,9 @@ Use este modelo na VM que e dona do certificado WSS do FreePBX:
 ```env
 RB_ENABLE_HTTPS=1
 RB_SERVER_NAME=192.168.200.254
-RB_PUBLIC_BASE_URL=https://192.168.200.254
-RB_HTTP_PORT=80
-RB_HTTPS_PORT=443
+RB_PUBLIC_BASE_URL=https://192.168.200.254:8443
+RB_HTTP_PORT=8080
+RB_HTTPS_PORT=8443
 RB_CERT_BOOTSTRAP=1
 RB_CERT_APP_HOSTS=192.168.200.254
 RB_CERT_PBX_HOSTS=192.168.200.253,freepbx.sangoma.local,localhost,127.0.0.1
@@ -219,9 +165,9 @@ Use este modelo quando a VM apontar para o mesmo FreePBX da producao:
 ```env
 RB_ENABLE_HTTPS=1
 RB_SERVER_NAME=192.168.200.250
-RB_PUBLIC_BASE_URL=https://192.168.200.250
-RB_HTTP_PORT=80
-RB_HTTPS_PORT=443
+RB_PUBLIC_BASE_URL=https://192.168.200.250:8443
+RB_HTTP_PORT=8080
+RB_HTTPS_PORT=8443
 RB_CERT_BOOTSTRAP=0
 RB_FREEPBX_HOST=192.168.200.253
 RB_FREEPBX_SSH_PORT=22
@@ -232,7 +178,6 @@ RB_FREEPBX_SSH_PASS=troque-esta-senha
 Regra critica:
 
 - so uma VM deve usar `RB_CERT_BOOTSTRAP=1` para o mesmo FreePBX
-- todas as VMs ainda emitem seu proprio certificado HTTPS para `RB_SERVER_NAME`
 
 ## 7. Fluxo de deploy
 
@@ -243,14 +188,10 @@ flowchart TD
     C --> D[db-restore verifica backup]
     D --> E[cert-bootstrap emite CA e certificados]
     E --> F[cert-bootstrap instala WSS no FreePBX]
-    F --> G[Ollama sobe]
-    G --> H[ollama-model-init garante Qwen]
-    H --> I[Open WebUI sobe com Qwen padrao]
-    H --> J[app sobe]
-    J --> K[ensure_schema atualiza schema]
-    K --> L[proxy sobe]
-    I --> M[sistema pronto]
-    L --> M
+    F --> G[app sobe]
+    G --> H[ensure_schema atualiza schema]
+    H --> I[proxy sobe]
+    I --> J[sistema pronto]
 ```
 
 ## 8. Primeira subida
@@ -262,11 +203,6 @@ flowchart TD
 3. Confirme o papel da VM:
    - producao oficial: `RB_CERT_BOOTSTRAP=1`
    - secundaria/homologacao: `RB_CERT_BOOTSTRAP=0`
-4. Gere `RB_OPEN_WEBUI_SECRET_KEY`:
-
-```bash
-openssl rand -hex 32
-```
 
 ### 8.2 Comando
 
@@ -279,8 +215,6 @@ docker compose up -d --build
 ```bash
 docker compose ps
 docker compose logs --tail=200 cert-bootstrap
-docker compose logs --tail=200 ollama-model-init
-docker compose logs --tail=200 open-webui
 docker compose logs --tail=200 app
 docker compose logs --tail=200 proxy
 ```
@@ -290,9 +224,6 @@ Checklist:
 - `db` deve estar `healthy`
 - `db-restore` deve concluir com sucesso ou pular restauracao
 - `cert-bootstrap` deve concluir com sucesso ou sair rapidamente quando desabilitado
-- `ollama` deve estar `healthy`
-- `ollama-model-init` deve concluir depois de instalar ou confirmar o Qwen
-- `open-webui` deve estar `healthy` e listar `qwen2.5:3b`
 - `app` deve subir sem erro de schema
 - `proxy` deve publicar as portas esperadas
 
@@ -334,8 +265,6 @@ Observacao importante:
 
 - isso evita subir `db-restore`, mas o backend ainda executa `ensure_schema()` ao inicializar
 
-- a antiga migração `usuarios -> colaboradores` ja foi executada em producao e nao roda mais no fluxo de atualizacao
-
 ### 9.4 Validacao rapida em homologacao para chat, SIP e vendas
 
 Quando a mudanca for apenas de interface/backend do app:
@@ -366,7 +295,7 @@ Persistencia principal:
 - `db_data`
   - MariaDB
 - `app_data`
-  - anexos do chat, fotos, requisicoes, cache local de XML da NF-e, uploads manuais do modulo de vendas e SQLite do monitor de automacao
+  - anexos do chat, fotos, requisicoes, cache local de XML da NF-e e uploads manuais do modulo de vendas
 
 ### 10.1 Importacao persistida de vendas
 
@@ -377,7 +306,6 @@ Diretorios/arquivos relevantes:
 - `Relatorios/`
   - origem atual do CSV externo
   - precisa estar montada em `/app/Relatorios` no container `app` para o botao `Importar do diretorio` enxergar o arquivo atual
-  - contem tambem o arquivo `config-rel-vendas`, com as regras operacionais da importacao do CSV
 
 - `DATA_ROOT/vendas-cache/`
   - uploads manuais do CSV feitos pela tela `Config -> Vendas`
@@ -401,34 +329,15 @@ Fluxo atual:
 6. a tela de `Vendas -> Relatorio` exibe totais por vendedor, cidade e produto
 7. ao excluir um relatorio importado, o sistema remove o registro e as linhas dele do banco
 
-Regras de importacao:
-
-1. o backend le `Relatorios/config-rel-vendas` para descobrir os grupos normalizados e os registros que devem ser descartados
-2. as regras entram na assinatura do cache, entao alterar esse arquivo exige nova importacao/processamento para refletir no sistema
-3. o import usa apenas as colunas necessarias do CSV e ignora colunas extras listadas nesse arquivo
-4. se uma coluna aparecer ao mesmo tempo como necessaria e como descartada, a regra de descarte tem prioridade
-
 - `app_data`
   - dados persistentes da aplicacao
 
 - `cameras_data`
-  - banco SQLite e segmentos HLS gerados pelo monitor de cameras
-
-- `ollama_data`
-  - modelos gerenciados pelo Ollama, incluindo `qwen2.5:3b`
-
-- `open_webui_data`
-  - usuarios, conversas, configuracoes e cache do Open WebUI
-
-Observacao de backup:
-
-- o backup completo atual cobre banco, `app_data`, `cameras_data` e `Relatorios/`
-- `ollama_data` pode ser recriado pelo `ollama-model-init`
-- `open_webui_data` exige backup separado quando for necessario preservar usuarios e conversas
+  - persistencia das cameras
 
 Persistencia por bind mount:
 
-- `backupsSql/`
+- `backups sql/`
   - dumps SQL
 
 - `certs/`
@@ -436,9 +345,6 @@ Persistencia por bind mount:
 
 - `esxi/`
   - monitor ESXi versionado
-
-- caminho de `RB_AUTOMACAO_MONITOR_PATH`
-  - codigo externo do monitor industrial montado somente para leitura em `/opt/automacao-monitor`
 
 - `sync-backups/`
   - backups locais gerados antes da sincronizacao producao -> homologacao
@@ -453,7 +359,6 @@ Persistencia por bind mount:
 Pelo frontend:
 
 - `Config` -> gerar backup SQL
-- `Config` -> gerar backup completo
 
 Pela API:
 
@@ -464,61 +369,14 @@ curl -k -O https://HOST:PORT/api/backup
 Comportamento:
 
 - o backend executa `mariadb-dump --skip-ssl`
-- salva o dump em `backupsSql/backup_YYYYMMDD_HHMMSS.sql`
+- salva o dump em `backups sql/backup_YYYYMMDD_HHMMSS.sql`
 - devolve o mesmo arquivo no download HTTP
-
-Esse backup SQL e indicado para:
-
-- restore automatico do banco pelo container `db-restore`
-- sincronizacao producao -> homologacao
-- copia rapida somente do MariaDB
-
-### 11.1.1 Backup completo para recuperar outro ambiente
-
-Para migrar ou recuperar uma VM inteira, use o backup completo:
-
-```bash
-curl -k -O https://HOST:PORT/api/backup/full
-```
-
-Ou pelo assistente local:
-
-```bash
-./riob-agent.sh full-backup
-```
-
-Comportamento:
-
-- gera `backupsSql/backup_full_YYYYMMDD_HHMMSS.tar.gz`
-- inclui `manifest.json`
-- inclui `db/backup.sql` com tabelas, dados, triggers, eventos e rotinas
-- inclui `app_data`, com fotos de devolucoes, requisicoes PDF, anexos do chat, XML/cache de NF-e, uploads/cache de vendas, configuracoes locais e o SQLite do monitor de automacao
-- inclui `cameras_data`, com cadastro/banco local do monitor de cameras e dados persistidos no volume
-- inclui `relatorios`, com a origem local dos CSVs e `config-rel-vendas`
-
-Por seguranca, o pacote completo nao inclui `.env`, certificados privados, senhas externas de infraestrutura nem chaves SSH. Em outro ambiente, configure `.env` e certificados antes ou depois do restore conforme a necessidade operacional.
-
-Chaves privadas SSH, arquivos `*.key`, `*.p12` e `*.pfx` tambem nao devem ser
-versionados. Use secrets externos ou arquivos locais protegidos.
-
-Restore em ambiente novo:
-
-```bash
-git clone <repo> riob
-cd riob
-cp .env.example .env
-# ajuste senhas, IPs, portas e RB_CERT_BOOTSTRAP conforme o papel da VM
-./deploy/restore-full-backup.sh backupsSql/backup_full_YYYYMMDD_HHMMSS.tar.gz --yes
-docker compose up -d --build app proxy
-```
-
-Use o restore completo somente em ambiente novo ou depois de gerar backup local do ambiente atual, porque ele substitui banco, `app_data`, `cameras_data` e `Relatorios/`.
 
 ### 11.2 Restore automatico
 
 O container `db-restore`:
 
-- localiza o backup mais recente em `backupsSql/`
+- localiza o backup mais recente em `backups sql/`
 - verifica se o banco esta vazio
 - importa o arquivo automaticamente apenas quando o banco estiver vazio
 
@@ -532,7 +390,7 @@ RB_DB_RESTORE_FORCE=1 docker compose up db-restore
 
 - nao usar `docker compose down -v`
 - nao apagar `db_data`
-- nao limpar `backupsSql/` sem politica definida
+- nao limpar `backups sql/` sem politica definida
 
 ### 11.4 Sincronizacao producao -> homologacao
 
@@ -672,8 +530,6 @@ docker compose logs --tail=200 app
 docker compose logs --tail=200 proxy
 docker compose logs --tail=200 cert-bootstrap
 docker compose logs --tail=200 db
-docker compose logs --tail=200 ollama
-docker compose logs --tail=200 open-webui
 ```
 
 ### 14.3 Validacao de HTTPS
@@ -691,7 +547,7 @@ openssl s_client -connect PBX:8089 -servername PBX </dev/null
 
 ## 15. Troubleshooting
 
-### 15.1 `https://IP-DA-VM` nao abre
+### 15.1 `https://host:8443` nao abre
 
 Verifique:
 
@@ -699,26 +555,6 @@ Verifique:
 - `proxy` em execucao
 - arquivos em `certs/fullchain.pem` e `certs/privkey.pem`
 - logs do `proxy`
-- se o navegador confia na CA interna do RioBranco
-
-Na producao, baixe a CA sem depender do HTTPS:
-
-```text
-http://192.168.200.254/api/ca/cert.crt
-```
-
-No Windows, instale o arquivo em `Autoridades de Certificacao Raiz Confiaveis`.
-Em um PowerShell executado como administrador:
-
-```powershell
-certutil -addstore -f Root .\riobranco-ca.crt
-```
-
-Depois feche e abra novamente o navegador e acesse:
-
-```text
-https://192.168.200.254
-```
 
 ### 15.2 `Cliente web: SIP desconectado do servidor`
 
@@ -768,7 +604,7 @@ Se ainda houver erro:
 
 Validar:
 
-- existencia de arquivo em `backupsSql/`
+- existencia de arquivo em `backups sql/`
 - banco realmente vazio
 - logs de `db-restore`
 - `RB_DB_RESTORE_FORCE`
@@ -821,8 +657,6 @@ Modo TV com `dashboards.html`:
 - nao manter senhas reais versionadas
 - limitar acesso SSH ao FreePBX
 - proteger a aplicacao com rede interna ou controle adicional
-- usar uma chave aleatoria longa em `RB_OPEN_WEBUI_SECRET_KEY`
-- desativar `RB_OPEN_WEBUI_ENABLE_SIGNUP` depois de criar a conta administradora
 - revisar o uso de `localStorage` para sessao
 - manter os certificados e chaves privados apenas no servidor
 
@@ -842,148 +676,7 @@ O sistema foi preparado para que esse fluxo:
 - reaplique schema
 - restaure backup apenas quando o banco estiver vazio
 - mantenha onboarding de certificados padronizado
-- mantenha Ollama/Qwen e Open WebUI no mesmo compose oficial
 
 O principal cuidado para ambientes multiplos continua sendo:
 
 - apenas uma VM deve controlar o certificado WSS do mesmo FreePBX
-
-## 19. Agent IA no navegador
-
-O sistema principal tem um menu `Agent IA` em `RioBranco.html`.
-A conversa fica preservada no navegador entre recargas, para manter contexto de uso.
-Tambem existe um atalho `Agent IA` no chat de `Comunicacao`, para abrir o painel sem
-sair do fluxo principal.
-
-Ali voce pode:
-
-- conversar com o assistente em portugues
-- pedir explicacao de rotinas do sistema
-- analisar um pedido antes de editar
-- validar baseline rapido
-- listar cargas do kanban
-- mover fretes entre status
-- executar backup, deploy, update, logs e diagnostico
-
-Se o Ollama estiver disponivel, o chat usa o modelo configurado em `RB_AGENT_OLLAMA_MODEL`.
-Se o modelo nao estiver acessivel, o sistema cai para o agente local existente, sem bloquear o uso da interface.
-
-Exemplo de configuracao:
-
-```env
-RB_AGENT_LLM_PROVIDER=auto
-RB_MANAGED_OLLAMA=1
-RB_MANAGED_OLLAMA_MODEL=qwen2.5:3b
-RB_OLLAMA_REMOVE_MODELS=qwen2.5:7b
-RB_OLLAMA_IMAGE=ollama/ollama:latest
-RB_OLLAMA_BIND=127.0.0.1
-RB_OLLAMA_PORT=11434
-RB_AGENT_OLLAMA_URL=http://ollama:11434
-RB_AGENT_OLLAMA_MODEL=qwen2.5:3b
-RB_OPEN_WEBUI_IMAGE=ghcr.io/open-webui/open-webui:v0.9.6
-RB_OPEN_WEBUI_COMPAT_IMAGE=riob-open-webui:v0.9.6-numpy2.2.6
-RB_OPEN_WEBUI_NUMPY_VERSION=2.2.6
-RB_OPEN_WEBUI_PORT=3000
-RB_OPEN_WEBUI_NAME=RioBranco IA
-RB_OPEN_WEBUI_SECRET_KEY=gere-com-openssl-rand-hex-32
-RB_OPEN_WEBUI_ENABLE_SIGNUP=true
-RB_OPEN_WEBUI_OFFLINE_MODE=true
-RB_OPEN_WEBUI_HF_HUB_OFFLINE=1
-RB_OPEN_WEBUI_OLLAMA_URL=http://ollama:11434
-```
-
-Em deploy Docker, o projeto sobe um container `riobranco-ollama` com volume
-persistente `ollama_data` e um container `riobranco-open-webui` com volume
-persistente `open_webui_data`. Os scripts `./up.sh` e `./update.sh` executam o
-bootstrap `ollama-model-init`, que faz `ollama pull` do modelo definido em
-`RB_AGENT_OLLAMA_MODEL`, sobem o WebUI e validam que ele consegue listar esse
-mesmo modelo. A logica comum dos atalhos fica em `deploy/lib/ollama.sh`; o pull
-do modelo fica em `deploy/ollama/pull-model.sh`.
-
-O Open WebUI e construido sobre a imagem oficial definida em
-`RB_OPEN_WEBUI_IMAGE`, com NumPy `2.2.6` fixado por
-`RB_OPEN_WEBUI_NUMPY_VERSION`. Isso preserva compatibilidade com o Xeon E5410
-de producao, que nao oferece todas as instrucoes exigidas por `x86-64-v2`.
-
-Por padrao, `RB_OPEN_WEBUI_OFFLINE_MODE=true` e
-`RB_OPEN_WEBUI_HF_HUB_OFFLINE=1` evitam downloads de modelos auxiliares no
-startup. Isso nao afeta o chat com o Qwen. RAG, documentos e transcricao
-precisam de modelos locais adicionais caso esses recursos sejam habilitados.
-
-Para producao usando o Ollama gerenciado pelo compose:
-
-1. mantenha `RB_MANAGED_OLLAMA=1`
-2. deixe `RB_AGENT_OLLAMA_URL=http://ollama:11434`
-3. defina `RB_AGENT_OLLAMA_MODEL` com o mesmo Qwen validado na homologacao
-4. deixe `RB_OPEN_WEBUI_OLLAMA_URL=http://ollama:11434`
-5. gere uma chave longa para `RB_OPEN_WEBUI_SECRET_KEY`
-6. execute `./update.sh`
-
-No modo gerenciado, `RB_MANAGED_OLLAMA_MODEL` define o modelo oficial e assume
-`qwen2.5:3b` quando nao estiver presente. Depois do pull e da validacao, o
-bootstrap remove os modelos listados em `RB_OLLAMA_REMOVE_MODELS`; o padrao
-remove `qwen2.5:7b`.
-
-O proxy e o Open WebUI sao publicados em todas as interfaces da VM. Os scripts
-`./up.sh` e `./update.sh` validam `/api/status` pelo valor de
-`RB_PUBLIC_BASE_URL`, impedindo que um deploy aparentemente saudavel fique
-acessivel apenas por `localhost`.
-
-Se for necessario usar um Ollama externo, defina `RB_MANAGED_OLLAMA=0` e informe
-`RB_AGENT_OLLAMA_URL`; nesse modo o deploy nao instala modelo no servidor externo,
-mas a validacao final ainda falha se o modelo configurado nao estiver acessivel.
-
-O Open WebUI fica disponivel por padrao em `http://IP-DA-VM:3000`. A primeira
-conta cadastrada se torna administradora. Depois do primeiro cadastro, defina
-`RB_OPEN_WEBUI_ENABLE_SIGNUP=false` e execute `./update.sh` para bloquear novos
-registros publicos.
-
-Nao mantenha uma segunda instalacao nativa do Ollama nem outro compose separado
-do Open WebUI na mesma VM. O deploy oficial passa a administrar ambos pelo
-`docker-compose.yml` deste repositorio.
-
-## 20. Migracao dos combustiveis da frota
-
-O cadastro de cada veiculo define o diesel padrao: `diesel_s10` ou
-`diesel_500`. Veiculos Diesel S10 tambem permitem lancamentos de Arla; veiculos
-Diesel 500 nao permitem Arla.
-
-Para classificar o cadastro e os lancamentos existentes, primeiro simule:
-
-```bash
-./deploy/db/migrate-abastecimentos-combustivel.sh --dry-run
-```
-
-Depois aplique:
-
-```bash
-./deploy/db/migrate-abastecimentos-combustivel.sh
-```
-
-O script considera os veiculos `60`, `61`, `30`, `31`, `58`, `57` e `59`
-como Diesel S10. Todos os demais ficam como Diesel 500. Lancamentos de Arla
-sao preservados somente nos veiculos Diesel S10. O script e idempotente e pode
-ser executado novamente para conferir ou reaplicar essa classificacao.
-
-Fluxo de uso:
-
-1. Abra `RioBranco.html`
-2. Clique em `Agent IA`
-3. Digite sua pergunta ou comando
-4. Use os botoes sugeridos quando o sistema pedir confirmacao ou precisar de uma mensagem de commit
-
-## 21. Revisao de abastecimentos importados por XML
-
-Quando o contador de abastecimentos XML indicar pendencias:
-
-1. abra `Importar XML > Abastecimentos`
-2. na caixa `Pendencias de abastecimento`, clique em `Revisar`
-3. selecione o veiculo e confira KM, combustivel, quantidade, valor, data e
-   posto
-4. clique em `Salvar e finalizar`
-
-O sistema atualiza os dados importados e executa novamente a integracao com a
-frota. A pendencia desaparece quando o vinculo passa para `criado` ou
-`vinculado`. Para produtos que nao sao abastecimento, como filtros e itens de
-manutencao, use `Ignorar esta pendencia` e informe o motivo. Itens ignorados nao
-voltam a ser processados na sincronizacao de inicializacao.

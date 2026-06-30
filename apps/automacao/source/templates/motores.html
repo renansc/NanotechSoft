@@ -1,0 +1,80 @@
+{% extends 'base.html' %}
+
+{% block content %}
+
+<h1>Motores</h1>
+
+<div class="card">
+
+<form method="post" action="/motor/novo">
+
+<input
+    type="text"
+    name="nome"
+    placeholder="Nome do Motor"
+    required>
+
+<select name="setor_id" required>
+
+{% for setor in setores %}
+
+<option value="{{ setor.id }}">
+{{ setor.nome }}
+</option>
+
+{% endfor %}
+
+</select>
+
+<button type="submit">
+Adicionar
+</button>
+
+</form>
+
+</div>
+
+<div class="card">
+
+<table>
+
+<tr>
+<th>ID</th>
+<th>Motor</th>
+<th>Setor</th>
+<th>Ações</th>
+</tr>
+
+{% for motor in motores %}
+
+<tr>
+
+<td>{{ motor.id }}</td>
+
+<td>{{ motor.nome }}</td>
+
+<td>{{ motor.setor }}</td>
+
+<td>
+
+<a href="/motor/editar/{{ motor.id }}">
+Editar
+</a>
+
+|
+
+<a href="/motor/excluir/{{ motor.id }}">
+Excluir
+</a>
+
+</td>
+
+</tr>
+
+{% endfor %}
+
+</table>
+
+</div>
+
+{% endblock %}

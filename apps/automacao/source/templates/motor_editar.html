@@ -1,0 +1,86 @@
+{% extends 'base.html' %}
+
+{% block content %}
+
+<h1>Editar Motor</h1>
+
+<div class="card">
+
+<form
+    action="/motor/salvar/{{ motor.id }}"
+    method="post">
+
+<label>Nome</label>
+
+<input
+    type="text"
+    name="nome"
+    value="{{ motor.nome }}"
+    required>
+
+<br><br>
+
+<label>Setor</label>
+
+<select name="setor_id">
+
+{% for setor in setores %}
+
+<option
+value="{{ setor.id }}"
+{% if setor.id == motor.setor_id %}
+selected
+{% endif %}
+>
+
+{{ setor.nome }}
+
+</option>
+
+{% endfor %}
+
+</select>
+
+<br><br>
+
+<label>RPM Alerta</label>
+
+<input
+type="number"
+step="0.01"
+name="rpm_alerta"
+value="{{ motor.rpm_alerta }}">
+
+<br><br>
+
+<label>Temperatura Alerta</label>
+
+<input
+type="number"
+step="0.01"
+name="temperatura_alerta"
+value="{{ motor.temperatura_alerta }}">
+
+<br><br>
+
+<label>Vibração Alerta</label>
+
+<input
+type="number"
+step="0.01"
+name="vibracao_alerta"
+value="{{ motor.vibracao_alerta }}">
+
+<br><br>
+
+<button type="submit">
+
+Salvar Alterações
+
+</button>
+
+</form>
+
+</div>
+
+{% endblock %}

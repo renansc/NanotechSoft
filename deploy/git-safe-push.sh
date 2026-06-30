@@ -9,6 +9,7 @@ MESSAGE=""
 NO_PUSH=0
 SKIP_BUILD=0
 SKIP_HEALTH=0
+SKIP_COMPOSE=0
 YES=0
 
 usage() {
@@ -22,12 +23,13 @@ Opcoes:
   --no-push             Commitar, mas nao enviar para origin
   --skip-build          Pular docker compose build app
   --skip-health         Pular checagem local do app
+  --skip-compose        Pular validacao/build/health com Docker Compose
   -h, --help            Mostrar ajuda
 
 O script:
   - bloqueia arquivos sensiveis/runtime do stage
   - adiciona somente arquivos seguros
-  - valida Python e docker compose
+  - valida Python, manifests dos apps e docker compose
   - opcionalmente builda e testa o container app
   - commita e envia a branch atual para origin
 EOF
@@ -41,6 +43,7 @@ is_risky_path() {
   [[ "$path" == "__pycache__/"* ]] && return 0
   [[ "$path" == *.log ]] && return 0
   [[ "$path" == deploy/tmp/* ]] && return 0
+  [[ "$path" == "apps/riob/source/config" ]] && return 0
   return 1
 }
 
@@ -79,6 +82,12 @@ while [[ $# -gt 0 ]]; do
       SKIP_HEALTH=1
       shift
       ;;
+    --skip-compose)
+      SKIP_COMPOSE=1
+      SKIP_BUILD=1
+      SKIP_HEALTH=1
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -90,8 +99,10 @@ while [[ $# -gt 0 ]]; do
 done
 
 ensure_command git
-ensure_command docker
 cd_project
+if [[ "$SKIP_COMPOSE" != "1" ]]; then
+  require_compose
+fi
 
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "nao estou dentro de um repositorio Git"
 
@@ -158,12 +169,14 @@ git diff --cached --stat
 
 log "rodando validacoes"
 git diff --check
-python_cmd="python3"
-if [[ -x ".venv/bin/python" ]]; then
-  python_cmd=".venv/bin/python"
+PYTHON_CMD="$(python_cmd)" || die "python nao encontrado"
+"$PYTHON_CMD" -m py_compile app.py
+validate_app_sources
+if [[ "$SKIP_COMPOSE" != "1" ]]; then
+  compose config >/tmp/nanotechsoft-compose-config.yml
+else
+  log "validacao Docker Compose pulada por --skip-compose"
 fi
-"$python_cmd" -m py_compile app.py
-compose config >/tmp/nanotechsoft-compose-config.yml
 
 if [[ "$SKIP_BUILD" != "1" ]]; then
   log "validando build da imagem app"

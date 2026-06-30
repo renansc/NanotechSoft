@@ -294,21 +294,6 @@ class VsphereService:
         self._wait_for_task(action_map[action](), f"Falha ao executar {action} na VM.")
         return self.get_virtual_machine_details(moid)
 
-    def delete_virtual_machine(self, moid: str) -> dict[str, Any]:
-        vm = self._find_object(vim.VirtualMachine, moid)
-        vm_name = getattr(vm, "name", None) or moid
-        power_state = str(getattr(getattr(vm, "runtime", None), "powerState", "unknown"))
-        if power_state != "poweredOff":
-            raise VsphereError("A VM precisa estar desligada (Power Off) para ser excluida.")
-
-        self._ensure_vm_without_running_tasks(vm)
-        try:
-            task = vm.Destroy_Task()
-        except Exception as exc:
-            self._raise_vm_task_error(vm, exc, "Falha ao excluir VM.")
-        self._wait_for_task(task, "Falha ao excluir VM.")
-        return {"moid": moid, "name": vm_name}
-
     def rename_virtual_machine(self, moid: str, new_name: str) -> dict[str, Any]:
         vm = self._find_object(vim.VirtualMachine, moid)
         self._wait_for_task(vm.Rename_Task(new_name), "Falha ao renomear a VM.")
@@ -349,43 +334,28 @@ class VsphereService:
         quiesce: bool,
     ) -> dict[str, Any]:
         vm = self._find_object(vim.VirtualMachine, moid)
-        self._ensure_vm_without_running_tasks(vm)
-        try:
-            task = vm.CreateSnapshot_Task(
+        self._wait_for_task(
+            vm.CreateSnapshot_Task(
                 name=name,
                 description=description,
                 memory=include_memory,
                 quiesce=quiesce,
-            )
-        except Exception as exc:
-            self._raise_vm_task_error(vm, exc, "Falha ao criar snapshot.")
-        self._wait_for_task(
-            task,
+            ),
             "Falha ao criar snapshot.",
         )
         return self.get_virtual_machine_details(moid)
 
     def revert_snapshot(self, moid: str, snapshot_moid: str) -> dict[str, Any]:
         vm = self._find_object(vim.VirtualMachine, moid)
-        self._ensure_vm_without_running_tasks(vm)
         snapshot = self._find_snapshot(vm, snapshot_moid)
-        try:
-            task = snapshot.RevertToSnapshot_Task()
-        except Exception as exc:
-            self._raise_vm_task_error(vm, exc, "Falha ao reverter snapshot.")
-        self._wait_for_task(task, "Falha ao reverter snapshot.")
+        self._wait_for_task(snapshot.RevertToSnapshot_Task(), "Falha ao reverter snapshot.")
         return self.get_virtual_machine_details(moid)
 
     def delete_snapshot(self, moid: str, snapshot_moid: str) -> dict[str, Any]:
         vm = self._find_object(vim.VirtualMachine, moid)
-        self._ensure_vm_without_running_tasks(vm)
         snapshot = self._find_snapshot(vm, snapshot_moid)
-        try:
-            task = snapshot.RemoveSnapshot_Task(removeChildren=False, consolidate=True)
-        except Exception as exc:
-            self._raise_vm_task_error(vm, exc, "Falha ao remover snapshot.")
         self._wait_for_task(
-            task,
+            snapshot.RemoveSnapshot_Task(removeChildren=False, consolidate=True),
             "Falha ao remover snapshot.",
         )
         return self.get_virtual_machine_details(moid)
@@ -874,67 +844,6 @@ class VsphereService:
                 return node.snapshot
         raise VsphereError("Snapshot nao encontrado.")
 
-    def _ensure_vm_without_running_tasks(self, vm) -> None:
-        running_tasks = self._serialize_running_tasks(vm)
-        if running_tasks:
-            raise VsphereError(self._running_tasks_message(running_tasks))
-
-    def _raise_vm_task_error(self, vm, exc: Exception, default_message: str) -> None:
-        running_tasks = self._serialize_running_tasks(vm)
-        text = self._extract_fault_message(exc)
-        if running_tasks or self._looks_like_task_in_progress(exc, text):
-            raise VsphereError(self._running_tasks_message(running_tasks)) from exc
-        raise VsphereError(text or default_message) from exc
-
-    def _serialize_running_tasks(self, obj) -> list[dict[str, Any]]:
-        tasks = []
-        for task in getattr(obj, "recentTask", []) or []:
-            info = getattr(task, "info", None)
-            if not info:
-                continue
-            state = self._task_state_name(getattr(info, "state", ""))
-            if state not in {"queued", "running"}:
-                continue
-            tasks.append(self._serialize_task_info(info))
-        return tasks
-
-    def _serialize_task_info(self, info) -> dict[str, Any]:
-        return {
-            "name": getattr(info, "name", None) or getattr(info, "descriptionId", None) or "Tarefa em andamento",
-            "state": self._task_state_name(getattr(info, "state", "")),
-            "progress": getattr(info, "progress", None),
-            "started_at": self._serialize_datetime(getattr(info, "startTime", None)),
-            "entity_name": getattr(info, "entityName", None),
-        }
-
-    def _task_state_name(self, value: Any) -> str:
-        return str(value or "").split(".")[-1]
-
-    def _running_tasks_message(self, tasks: list[dict[str, Any]]) -> str:
-        if tasks:
-            task = tasks[0]
-            progress = task.get("progress")
-            progress_text = f" ({progress}%)" if progress is not None else ""
-            task_name = task.get("name") or "tarefa"
-            return (
-                f"O ESXi informou que esta VM ja tem uma tarefa em andamento: {task_name}{progress_text}. "
-                "Aguarde a tarefa finalizar no ESXi/vCenter e tente novamente."
-            )
-        return (
-            "O ESXi informou que esta VM ja tem outra tarefa em andamento. "
-            "Aguarde a tarefa finalizar no ESXi/vCenter e tente novamente."
-        )
-
-    def _extract_fault_message(self, exc: Exception) -> str:
-        return str(getattr(exc, "msg", None) or getattr(exc, "message", None) or exc or "").strip()
-
-    def _looks_like_task_in_progress(self, exc: Exception, text: str) -> bool:
-        task_in_progress = getattr(getattr(vim, "fault", None), "TaskInProgress", None)
-        if task_in_progress is not None and isinstance(exc, task_in_progress):
-            return True
-        normalized = (text or "").lower()
-        return ("another task" in normalized and "progress" in normalized) or "already in progress" in normalized
-
     def _walk_snapshot_tree(self, nodes: Iterable[Any]):
         for node in nodes:
             yield node
@@ -950,9 +859,7 @@ class VsphereService:
 
         error = getattr(task.info, "error", None)
         if error is not None:
-            message = self._extract_fault_message(error)
-            if self._looks_like_task_in_progress(error, message):
-                message = self._running_tasks_message([])
+            message = getattr(error, "msg", None) or str(error)
             raise VsphereError(message)
         raise VsphereError(default_message)
 
@@ -1293,7 +1200,6 @@ class VsphereService:
             return {}
 
         assignment = None
-        source = "unavailable"
         assignment_manager = getattr(manager, "licenseAssignmentManager", None)
         if assignment_manager is not None:
             try:
@@ -1302,26 +1208,10 @@ class VsphereService:
             except Exception:
                 assignment = None
 
-            if assignment is None:
-                try:
-                    assigned = assignment_manager.QueryAssignedLicenses(None) or []
-                    assignment = self._find_host_license_assignment(host, assigned)
-                except Exception:
-                    assignment = None
-
         try:
             usage = manager.QueryUsage(host)
         except Exception:
             usage = None
-
-        available_licenses = list(getattr(manager, "licenses", []) or [])
-        effective_license = getattr(assignment, "assignedLicense", None) if assignment is not None else None
-        if effective_license is None:
-            effective_license = self._find_effective_license(manager, available_licenses)
-            if effective_license is not None:
-                source = "license_manager"
-        else:
-            source = "assignment"
 
         evaluation = getattr(manager, "evaluation", None)
         evaluation_properties = self._serialize_key_any_values(getattr(evaluation, "properties", []) or [])
@@ -1334,35 +1224,20 @@ class VsphereService:
         remaining_hours = None
         for key, value in evaluation_properties.items():
             normalized_key = str(key).lower()
-            if (
-                "hour" in normalized_key
-                and (
-                    "remaining" in normalized_key
-                    or "expiration" in normalized_key
-                    or "expire" in normalized_key
-                )
-            ):
-                remaining_hours = self._coerce_int(value)
+            if "remaining" in normalized_key and "hour" in normalized_key:
+                try:
+                    remaining_hours = int(value)
+                except (TypeError, ValueError):
+                    remaining_hours = None
                 break
 
-        assigned_license = self._serialize_license_assignment(assignment)
-        effective_license_record = self._serialize_license_record(effective_license)
-        edition = (
-            getattr(manager, "licensedEdition", None)
-            or (effective_license_record or {}).get("name")
-            or (effective_license_record or {}).get("edition_key")
-        )
-
         return {
-            "edition": edition,
-            "assigned_license": assigned_license,
-            "effective_license": effective_license_record,
-            "available_licenses": [self._serialize_license_record(item) for item in available_licenses],
+            "edition": getattr(manager, "licensedEdition", None),
+            "assigned_license": self._serialize_license_assignment(assignment),
             "usage": self._serialize_license_usage(usage),
             "evaluation": evaluation_properties,
             "expires_on": expires_on,
             "remaining_hours": remaining_hours,
-            "source": source,
         }
 
     def _find_license_expiration(self, *, usage, assignment, evaluation_properties: dict[str, Any]) -> str | None:
@@ -1384,50 +1259,13 @@ class VsphereService:
 
         for key, value in evaluation_properties.items():
             normalized_key = str(key).lower()
-            if "expiration" in normalized_key or "expire" in normalized_key or "end" in normalized_key:
-                expires_on = self._coerce_datetime(value)
-                if expires_on is not None:
-                    candidates.append(expires_on)
+            if isinstance(value, datetime) and ("expire" in normalized_key or "end" in normalized_key):
+                candidates.append(value)
 
         if not candidates:
             return None
         candidates.sort()
         return self._serialize_datetime(candidates[0])
-
-    def _find_host_license_assignment(self, host, assignments: Iterable[Any]) -> Any | None:
-        host_moid = getattr(host, "_moId", None)
-        host_name = getattr(host, "name", None)
-        for assignment in assignments or []:
-            entity_id = getattr(assignment, "entityId", None)
-            display_name = getattr(assignment, "entityDisplayName", None)
-            if entity_id and entity_id == host_moid:
-                return assignment
-            if display_name and host_name and display_name == host_name:
-                return assignment
-        return None
-
-    def _find_effective_license(self, manager, licenses: list[Any]) -> Any | None:
-        if not licenses:
-            return None
-
-        licensed_edition = getattr(manager, "licensedEdition", None)
-        if licensed_edition:
-            for license_info in licenses:
-                if getattr(license_info, "editionKey", None) == licensed_edition:
-                    return license_info
-
-        used_licenses = [
-            license_info
-            for license_info in licenses
-            if (getattr(license_info, "used", None) or 0) > 0
-        ]
-        if len(used_licenses) == 1:
-            return used_licenses[0]
-
-        if len(licenses) == 1:
-            return licenses[0]
-
-        return None
 
     def _serialize_license_assignment(self, assignment) -> dict[str, Any] | None:
         if assignment is None:
@@ -1618,42 +1456,11 @@ class VsphereService:
             if key is None:
                 continue
             value = getattr(item, "value", None)
-            result[str(key)] = self._serialize_key_any_value(value)
+            if isinstance(value, datetime):
+                result[str(key)] = self._serialize_datetime(value)
+            else:
+                result[str(key)] = value
         return result
-
-    def _serialize_key_any_value(self, value: Any) -> Any:
-        if isinstance(value, datetime):
-            return self._serialize_datetime(value)
-        if value is None or isinstance(value, (str, int, float, bool)):
-            return value
-        if isinstance(value, (list, tuple)):
-            return [self._serialize_key_any_value(item) for item in value]
-        if isinstance(value, dict):
-            return {str(key): self._serialize_key_any_value(item) for key, item in value.items()}
-        return str(value)
-
-    def _coerce_datetime(self, value: Any) -> datetime | None:
-        if isinstance(value, datetime):
-            return value
-        if not isinstance(value, str):
-            return None
-
-        normalized = value.strip()
-        if not normalized:
-            return None
-        if normalized.endswith("Z"):
-            normalized = f"{normalized[:-1]}+00:00"
-
-        try:
-            return datetime.fromisoformat(normalized)
-        except ValueError:
-            return None
-
-    def _coerce_int(self, value: Any) -> int | None:
-        try:
-            return int(value)
-        except (TypeError, ValueError):
-            return None
 
     def _serialize_guest_disks(self, vm) -> list[dict[str, Any]]:
         result = []
@@ -1902,7 +1709,6 @@ class VsphereService:
             "guest_disk_free_gb": round(guest_disk_free / (1024 ** 3), 2) if guest_disk_capacity else None,
             "uptime_seconds": getattr(quick_stats, "uptimeSeconds", None),
             "overall_status": str(getattr(vm, "overallStatus", "unknown")),
-            "active_tasks": self._serialize_running_tasks(vm),
         }
 
     def _serialize_snapshot_tree(self, nodes: Iterable[Any]) -> list[dict[str, Any]]:

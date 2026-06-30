@@ -19,12 +19,6 @@ Este diretorio concentra a documentacao tecnica principal do sistema.
 - `API_E_DADOS.md`
   - referencia de API, dominios funcionais, principais payloads, entidades e modelo de dados
 
-- `AI_CONTEXT.md`
-  - resumo curto para agentes e manutencao, com mapa do projeto, comandos uteis e ordem de leitura
-
-- `PLANO_REFATORACAO_E_PENDENCIAS.md`
-  - backlog tecnico priorizado para refatoracao, comentarios, codigo desnecessario, dependencias e documentacao pendente
-
 ## Ordem sugerida de leitura
 
 1. `ARQUITETURA_SISTEMA.md`
@@ -32,8 +26,6 @@ Este diretorio concentra a documentacao tecnica principal do sistema.
 3. `OPERACAO_E_DEPLOY.md`
 4. `NFE_RECEITA_E_INTEGRACAO.md`
 5. `API_E_DADOS.md`
-6. `AI_CONTEXT.md`
-7. `PLANO_REFATORACAO_E_PENDENCIAS.md`
 
 ## Objetivo
 
@@ -43,7 +35,6 @@ O objetivo deste conjunto de documentos e permitir que outra pessoa consiga:
 - operar deploy e manutencao sem depender de conhecimento tacito
 - diagnosticar os problemas mais comuns
 - consultar a API e o banco com contexto funcional
-- acompanhar pendencias tecnicas e executar refatoracoes com ordem segura
 
 ## Cobertura funcional explicita
 
@@ -71,19 +62,7 @@ Esta revisao da documentacao passa a registrar explicitamente:
 - anexos no chat interno, com download controlado por participante da conversa
 - importacao de XML da NF-e direto em abastecimentos, com preenchimento automatico de nota, emitente, litros e valor
 - o monitor de cameras com grid lateral de ate 16 cameras, player ampliado no desktop e cadastro de novas cameras centralizado em `Config -> Cameras`
-- o monitor industrial integrado em `Monitor -> Automacao`, com codigo externo montado pelo Compose e dados SQLite persistidos em `app_data`
-- a remocao do Git de bancos e segmentos HLS gerados pelo monitor de cameras, mantendo esses dados apenas no volume `cameras_data`
-- a regra de seguranca que impede novo versionamento de chaves privadas e certificados com chave
 - o cadastro e os relatorios de lavagens, alem do PDF consolidado de frota por tipo de relatorio
 - o portal `/docs/index.html`, com redirecionamento preservando host e porta customizada no Nginx
 - o script `deploy/sync-production-to-homolog.sh`, seus cuidados operacionais e os artefatos gerados em `sync-backups/`
 - os snapshots operacionais versionados em `sync-import/`, usados como referencia/importacao manual e nao como volume automatico do deploy
-- o menu `Cargas` agora separado entre `Cadastro` e `Escala`, com visao operacional das equipes por status `chegada`, `descarregado` e `liberado`
-- o cadastro de `motoristas` evoluido para cadastro de colaboradores, com papeis de motorista, entregador e ajudante mantidos na mesma API para compatibilidade
-- a validacao de fretes para impedir equipe invalida ou colaborador duplicado na escala operacional antes do carregamento
-- a retencao dos fretes finalizados no historico, com ocultacao do kanban no frontend apos 24 horas em vez de exclusao automatica no backend
-- a importacao de cargas agrupando linhas por veiculo e consolidando o nome do frete com todas as cidades do mesmo veiculo no formato `cidades - veiculo`
-- o utilitario `tools/convert_cargas_txt_to_xlsx.py` para converter TXT fixo de cargas em XLSX reaproveitavel na operacao
-- os cabecalhos `no-store/no-cache` tambem aplicados a `/`, `RioBranco.html`, `script.js` e `style.css` para reduzir problema de frontend desatualizado apos deploy
-- a padronizacao do diretorio de backup para `backupsSql/`, evitando espaco no caminho em `.env`, Compose e runbooks
-- o plano de refatoracao e pendencias em `PLANO_REFATORACAO_E_PENDENCIAS.md`, cobrindo duplicatas de frontend, modularizacao do backend, atualizacao de dependencias e criterios de conclusao

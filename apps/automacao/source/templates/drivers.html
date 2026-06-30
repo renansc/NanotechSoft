@@ -1,0 +1,165 @@
+{% extends 'base.html' %}
+
+{% block content %}
+
+<h1>Sensores / Drivers</h1>
+
+<div class="card">
+
+<form
+    method="post"
+    action="/sensores/drivers/novo"
+    class="form-grid">
+
+<label>
+Nome
+<input
+    type="text"
+    name="nome"
+    placeholder="Driver Kollmorgen"
+    required>
+</label>
+
+<label>
+Modelo
+<input
+    type="text"
+    name="modelo"
+    value="AKD/AKD2G"
+    required>
+</label>
+
+<label>
+IP
+<input
+    type="text"
+    name="ip"
+    placeholder="192.168.0.10"
+    required>
+</label>
+
+<label>
+Porta
+<input
+    type="number"
+    name="porta"
+    value="502"
+    min="1"
+    max="65535"
+    required>
+</label>
+
+<label>
+Unit ID
+<input
+    type="number"
+    name="unit_id"
+    value="1"
+    min="1"
+    max="247"
+    required>
+</label>
+
+<label>
+Motor
+<select name="motor_id">
+<option value="">Sem associação</option>
+{% for motor in motores %}
+<option value="{{ motor.id }}">{{ motor.nome }}</option>
+{% endfor %}
+</select>
+</label>
+
+<label>
+Intervalo
+<input
+    type="number"
+    name="intervalo_segundos"
+    value="5"
+    min="1"
+    required>
+</label>
+
+<label>
+Timeout
+<input
+    type="number"
+    name="timeout_segundos"
+    value="3"
+    min="1"
+    step="0.1"
+    required>
+</label>
+
+<label>
+Ativo
+<select name="ativo">
+<option value="1">Sim</option>
+<option value="">Não</option>
+</select>
+</label>
+
+<button type="submit">
+Adicionar Driver
+</button>
+
+</form>
+
+</div>
+
+<div class="card">
+
+<table>
+
+<tr>
+<th>Nome</th>
+<th>Modelo</th>
+<th>IP</th>
+<th>Protocolo</th>
+<th>Motor</th>
+<th>Status</th>
+<th>Último contato</th>
+<th>Ações</th>
+</tr>
+
+{% for driver in drivers %}
+
+<tr>
+<td>{{ driver.nome }}</td>
+<td>{{ driver.fabricante }} {{ driver.modelo }}</td>
+<td>{{ driver.ip }}:{{ driver.porta }}</td>
+<td>Modbus TCP</td>
+<td>{{ driver.motor or '-' }}</td>
+<td>
+<span class="status status-{{ driver.ultimo_status }}">
+{{ driver.ultimo_status }}
+</span>
+</td>
+<td>{{ driver.ultimo_contato or '-' }}</td>
+<td>
+<div class="actions">
+<a href="/sensores/drivers/{{ driver.id }}">Abrir</a>
+
+<form
+    class="inline-form"
+    method="post"
+    action="/sensores/drivers/{{ driver.id }}/ler-agora">
+<button type="submit">Ler agora</button>
+</form>
+
+<a
+    class="danger"
+    href="/sensores/drivers/{{ driver.id }}/excluir">
+Excluir
+</a>
+</div>
+</td>
+</tr>
+
+{% endfor %}
+
+</table>
+
+</div>
+
+{% endblock %}

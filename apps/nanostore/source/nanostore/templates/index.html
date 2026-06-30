@@ -1,0 +1,2011 @@
+<!doctype html>
+<html lang="pt-br">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ title }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <span class="brand-mark">N</span>
+          <div>
+            <strong>NanoStore</strong>
+            <p>ERP de farmacia</p>
+          </div>
+        </div>
+
+        <nav class="menu-tree" aria-label="Menu principal">
+          <section class="menu-group">
+            <h3>Principal</h3>
+            <button type="button" class="menu-link active" data-target="inicio">Inicio</button>
+            <button type="button" class="menu-link" data-target="workflow">Workflow</button>
+          </section>
+
+          <section class="menu-group">
+            <h3>Cadastros</h3>
+            <button type="button" class="menu-link" data-target="cadastros">Cadastros gerais</button>
+          </section>
+
+          <section class="menu-group">
+            <h3>Lancamentos</h3>
+            <button type="button" class="menu-link" data-target="lancamentos">Movimento diario</button>
+          </section>
+
+          <section class="menu-group">
+            <h3>Relatorios</h3>
+            <button type="button" class="menu-link" data-target="relatorios">Relatorios gerais</button>
+          </section>
+
+          <section class="menu-group">
+            <h3>Configuracao</h3>
+            <button type="button" class="menu-link" data-target="configuracao">Parametros e integracoes</button>
+          </section>
+        </nav>
+
+        <section class="sidebar-card">
+          <h3>Operacao</h3>
+          <ul>
+            <li>Somente o modulo selecionado fica visivel</li>
+            <li>Workflow integrado ao WhatsApp</li>
+            <li>Financeiro com pagos e nao pagos</li>
+          </ul>
+        </section>
+      </aside>
+
+      <main class="page">
+        <section class="view is-active" id="inicio" data-view>
+          <section class="hero">
+            <div>
+              <p class="eyebrow">Painel principal</p>
+              <h1>Visao executiva da operacao</h1>
+              <p class="lead">Indicadores gerais da farmacia, com compras, vendas, financeiro, estoque e caixa em uma leitura unica.</p>
+            </div>
+          </section>
+
+          <section class="stats-grid">
+            <article class="card stat"><strong>{{ summary.products_count }}</strong><span>produtos</span></article>
+            <article class="card stat"><strong>{{ summary.active_lots_count }}</strong><span>lotes ativos</span></article>
+            <article class="card stat"><strong>{{ summary.expiring_lots_count }}</strong><span>vencendo em 60 dias</span></article>
+            <article class="card stat"><strong>{{ summary.low_stock_count }}</strong><span>abaixo do minimo</span></article>
+            <article class="card stat"><strong>{{ summary.no_stock_count }}</strong><span>sem estoque</span></article>
+            <article class="card stat"><strong>{{ summary.sales_today_count }}</strong><span>vendas hoje</span></article>
+            <article class="card stat"><strong>R$ {{ '%.2f'|format(summary.revenue_today) }}</strong><span>faturamento hoje</span></article>
+            <article class="card stat"><strong>{{ summary.purchases_count }}</strong><span>compras</span></article>
+            <article class="card stat"><strong>{{ summary.financial_open_count }}</strong><span>titulos em aberto</span></article>
+            <article class="card stat"><strong>{{ summary.overdue_financial_count }}</strong><span>vencidos</span></article>
+            <article class="card stat"><strong>R$ {{ '%.2f'|format(summary.receivable_open) }}</strong><span>a receber</span></article>
+            <article class="card stat"><strong>R$ {{ '%.2f'|format(summary.payable_open) }}</strong><span>a pagar</span></article>
+            <article class="card stat"><strong>{{ summary.cash_status }}</strong><span>caixa</span></article>
+          </section>
+        </section>
+
+        <section class="view" id="workflow" data-view hidden>
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Workflow</p>
+              <h2>Kanban e chat interno</h2>
+            </div>
+            <p class="section-copy">Cards de atendimento e vendas WhatsApp, com movimentacao por etapa e conversa interna da equipe.</p>
+          </div>
+
+          <div class="subnav">
+            <button type="button" class="subnav-link active" data-subview-target="workflow-kanban">Kanban</button>
+            <button type="button" class="subnav-link" data-subview-target="workflow-chat">Tratativas</button>
+          </div>
+
+          <section class="subview is-active" id="workflow-kanban" data-subview>
+            <section class="kanban-board">
+              {% for stage in summary.workflow_stages %}
+              <article class="kanban-column">
+                <header class="kanban-head">
+                  <div class="kanban-title">
+                    <span class="swatch-large" style="background: {{ stage.color }}"></span>
+                    <strong>{{ stage.name }}</strong>
+                  </div>
+                  <span class="kanban-count">{{ stage.tickets|length }}</span>
+                </header>
+                <div class="kanban-list">
+                  {% for ticket in stage.tickets %}
+                  <section class="ticket-card">
+                    <div class="ticket-card-head">
+                      <strong>{{ ticket.title }}</strong>
+                      <span class="mini-badge">{{ ticket.priority }}</span>
+                    </div>
+                    <p class="ticket-copy">{{ ticket.customer_name or 'Sem cliente' }}</p>
+                    <p class="ticket-copy muted-line">{{ ticket.source_channel }}{% if ticket.sale_code %} • {{ ticket.sale_code }}{% endif %}</p>
+                    <form data-api="/api/workflow/tickets/{{ ticket.id }}" data-method="PATCH">
+                      <label class="field-inline">
+                        <span>Etapa</span>
+                        <select name="stage_id">
+                          {% for option in summary.workflow_stages %}
+                          <option value="{{ option.id }}" {% if option.id == ticket.stage_id %}selected{% endif %}>{{ option.name }}</option>
+                          {% endfor %}
+                        </select>
+                      </label>
+                      <label class="field-inline"><span>Responsavel</span><input name="assigned_to" value="{{ ticket.assigned_to }}" placeholder="Responsavel"></label>
+                      <button type="submit">Atualizar card</button>
+                    </form>
+                  </section>
+                  {% else %}
+                  <div class="ticket-card empty-card">
+                    <p class="ticket-copy">Nenhum card nesta etapa.</p>
+                  </div>
+                  {% endfor %}
+                </div>
+              </article>
+              {% endfor %}
+            </section>
+          </section>
+
+          <section class="subview" id="workflow-chat" data-subview hidden>
+            <section class="grid">
+              <article class="card card-guide">
+                <h3>Regras do fluxo</h3>
+                <ul class="module-list">
+                  <li>Venda no canal WhatsApp cria card automaticamente</li>
+                  <li>Card pode ficar vinculado a uma venda real</li>
+                  <li>Chat interno registra alinhamento da equipe</li>
+                </ul>
+              </article>
+            </section>
+
+            <section class="kanban-board">
+              {% for stage in summary.workflow_stages %}
+                {% for ticket in stage.tickets %}
+                <article class="kanban-column">
+                  <header class="kanban-head">
+                    <div class="kanban-title">
+                      <span class="swatch-large" style="background: {{ stage.color }}"></span>
+                      <strong>{{ ticket.title }}</strong>
+                    </div>
+                    <span class="kanban-count">{{ ticket.stage_name }}</span>
+                  </header>
+                  <div class="chat-box">
+                    <div class="chat-log">
+                      {% for message in ticket.messages %}
+                      <div class="chat-entry">
+                        <strong>{{ message.author_name }}</strong>
+                        <span>{{ message.message }}</span>
+                      </div>
+                      {% else %}
+                      <div class="chat-entry">
+                        <strong>Sistema</strong>
+                        <span>Sem mensagens internas ainda.</span>
+                      </div>
+                      {% endfor %}
+                    </div>
+                    <form data-api="/api/workflow/tickets/{{ ticket.id }}/messages">
+                      <label class="field-inline"><span>Autor</span><input name="author_name" placeholder="Autor" value="Equipe"></label>
+                      <label class="field-inline field-block"><span>Mensagem</span><textarea name="message" placeholder="Mensagem interna" required></textarea></label>
+                      <button type="submit">Enviar no chat</button>
+                    </form>
+                  </div>
+                </article>
+                {% endfor %}
+              {% endfor %}
+            </section>
+          </section>
+        </section>
+
+        <section class="view" id="cadastros" data-view hidden>
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Cadastros</p>
+              <h2>Dados mestres</h2>
+            </div>
+            <p class="section-copy">Tudo que pertence a cadastros fica agrupado aqui.</p>
+          </div>
+
+          <div class="subnav">
+            <button type="button" class="subnav-link active" data-subview-target="cadastros-categorias">Categorias</button>
+            <button type="button" class="subnav-link" data-subview-target="cadastros-fornecedores">Fornecedores</button>
+            <button type="button" class="subnav-link" data-subview-target="cadastros-produtos">Produtos</button>
+            <button type="button" class="subnav-link" data-subview-target="cadastros-kanban">Colunas do kanban</button>
+          </div>
+
+          <section class="subview is-active" id="cadastros-categorias" data-subview>
+            <section class="grid single-grid">
+              <article class="card">
+                <h3>Categoria</h3>
+                <form data-api="/api/categories">
+                  <label class="field-inline"><span>Nome</span><input name="name" placeholder="Nome da categoria" required></label>
+                  <label class="field-inline field-block"><span>Descricao</span><textarea name="description" placeholder="Descricao"></textarea></label>
+                  <div class="row">
+                    <label class="field-inline"><span>Margem minima</span><input name="minimum_profit_margin" type="number" step="0.01" min="0" placeholder="0.00"></label>
+                    <label class="field-inline"><span>Margem sugerida</span><input name="suggested_profit_margin" type="number" step="0.01" min="0" placeholder="0.00"></label>
+                  </div>
+                  <button type="submit">Salvar categoria</button>
+                </form>
+              </article>
+            </section>
+          </section>
+
+          <section class="subview" id="cadastros-fornecedores" data-subview hidden>
+            <section class="grid single-grid">
+              <article class="card">
+                <h3>Fornecedor</h3>
+                <form data-api="/api/suppliers">
+                  <label class="field-inline"><span>Nome</span><input name="name" placeholder="Nome do fornecedor" required></label>
+                  <label class="field-inline"><span>Documento</span><input name="document" placeholder="Documento"></label>
+                  <label class="field-inline"><span>Telefone</span><input name="phone" placeholder="Telefone"></label>
+                  <label class="field-inline"><span>E-mail</span><input name="email" placeholder="E-mail"></label>
+                  <button type="submit">Salvar fornecedor</button>
+                </form>
+              </article>
+            </section>
+          </section>
+
+          <section class="subview" id="cadastros-produtos" data-subview hidden>
+            <section class="grid single-grid">
+              <article class="card">
+                <h3>Produto</h3>
+                <form data-api="/api/products">
+                  <label class="field-inline"><span>SKU</span><input name="sku" placeholder="SKU" required></label>
+                  <label class="field-inline"><span>Nome</span><input name="name" placeholder="Nome do produto" required></label>
+                  <label class="field-inline"><span>Codigo de barras</span><input name="barcode" placeholder="Codigo de barras"></label>
+                  <label class="field-inline"><span>Marca</span><input name="brand" placeholder="Marca"></label>
+                  <label class="field-inline"><span>Principio ativo</span><input name="active_ingredient" placeholder="Principio ativo"></label>
+                  <div class="row">
+                    <label class="field-inline"><span>Preco custo</span><input name="cost_price" placeholder="0.00" value="0"></label>
+                    <label class="field-inline"><span>Preco venda</span><input name="sale_price" placeholder="0.00" value="0"></label>
+                  </div>
+                  <div class="row">
+                    <label class="field-inline"><span>Estoque minimo</span><input name="minimum_stock" placeholder="0.000" value="0"></label>
+                    <label class="field-inline"><span>Unidade</span><input name="unit" placeholder="Unidade" value="un"></label>
+                  </div>
+                  <label class="field-inline">
+                    <span>Categoria</span>
+                    <select name="category_id">
+                      <option value="">Categoria</option>
+                      {% for category in categories %}
+                      <option value="{{ category.id }}">{{ category.name }}</option>
+                      {% endfor %}
+                    </select>
+                  </label>
+                  <label class="field-inline">
+                    <span>Fornecedor</span>
+                    <select name="supplier_id">
+                      <option value="">Fornecedor</option>
+                      {% for supplier in suppliers %}
+                      <option value="{{ supplier.id }}">{{ supplier.name }}</option>
+                      {% endfor %}
+                    </select>
+                  </label>
+                  <label><input type="checkbox" name="requires_prescription"> Exige receita</label>
+                  <label><input type="checkbox" name="is_controlled"> Controlado</label>
+                  <button type="submit">Salvar produto</button>
+                </form>
+              </article>
+            </section>
+          </section>
+
+          <section class="subview" id="cadastros-kanban" data-subview hidden>
+            <section class="grid">
+              <article class="card">
+                <h3>Nova coluna</h3>
+                <form data-api="/api/workflow/stages">
+                  <label class="field-inline"><span>Nome</span><input name="name" placeholder="Nome da coluna" required></label>
+                  <div class="row">
+                    <label class="field-inline"><span>Cor</span><input name="color" type="color" value="#2d8a4d"></label>
+                    <label class="field-inline"><span>Ordem</span><input name="order_index" type="number" placeholder="Ordem" value="1"></label>
+                  </div>
+                  <label><input type="checkbox" name="is_default"> Coluna padrao</label>
+                  <label><input type="checkbox" name="is_closed"> Coluna finalizada</label>
+                  <button type="submit">Criar coluna</button>
+                </form>
+              </article>
+
+              <article class="card">
+                <h3>Editar colunas existentes</h3>
+                <div class="stage-admin-list">
+                  {% for stage in summary.workflow_stages %}
+                  <form class="stage-admin-card" data-api="/api/workflow/stages/{{ stage.id }}" data-method="PATCH">
+                    <div class="ticket-card-head">
+                      <strong>{{ stage.name }}</strong>
+                      <span class="mini-badge">{{ stage.tickets|length }} cards</span>
+                    </div>
+                    <label class="field-inline"><span>Nome</span><input name="name" value="{{ stage.name }}" placeholder="Nome"></label>
+                    <div class="row">
+                      <label class="field-inline"><span>Cor</span><input name="color" type="color" value="{{ stage.color }}"></label>
+                      <label class="field-inline"><span>Ordem</span><input name="order_index" type="number" value="{{ stage.order_index }}"></label>
+                    </div>
+                    <label><input type="checkbox" name="is_default" {% if stage.is_default %}checked{% endif %}> Padrao</label>
+                    <label><input type="checkbox" name="is_closed" {% if stage.is_closed %}checked{% endif %}> Finalizada</label>
+                    <button type="submit">Salvar coluna</button>
+                  </form>
+                  {% else %}
+                  <div class="stage-admin-card">
+                    <p class="ticket-copy">Nenhuma coluna cadastrada.</p>
+                  </div>
+                  {% endfor %}
+                </div>
+              </article>
+            </section>
+          </section>
+        </section>
+
+        <section class="view" id="lancamentos" data-view hidden>
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Lancamentos</p>
+              <h2>Operacao diaria</h2>
+            </div>
+            <p class="section-copy">Entradas, compras, vendas, financeiro e caixa no mesmo modulo.</p>
+          </div>
+
+          <div class="subnav">
+            <button type="button" class="subnav-link active" data-subview-target="lancamentos-lotes">Lotes</button>
+            <button type="button" class="subnav-link" data-subview-target="lancamentos-estoque">Estoque</button>
+            <button type="button" class="subnav-link" data-subview-target="lancamentos-compras">Compras</button>
+            <button type="button" class="subnav-link" data-subview-target="lancamentos-vendas">Vendas</button>
+            <button type="button" class="subnav-link" data-subview-target="lancamentos-cards">Cards</button>
+            <button type="button" class="subnav-link" data-subview-target="lancamentos-financeiro">Financeiro</button>
+            <button type="button" class="subnav-link" data-subview-target="lancamentos-caixa">Caixa</button>
+          </div>
+
+          <section class="subview is-active" id="lancamentos-lotes" data-subview>
+            <section class="grid single-grid">
+              <article class="card">
+                <h3>Lote</h3>
+                <form data-api="/api/lots">
+                  <label class="field-inline">
+                    <span>Produto</span>
+                    <select name="product_id" required>
+                      <option value="">Produto</option>
+                      {% for product in summary.products %}
+                      <option value="{{ product.id }}">{{ product.name }} ({{ product.sku }})</option>
+                      {% endfor %}
+                    </select>
+                  </label>
+                  <label class="field-inline"><span>Lote</span><input name="lot_code" placeholder="Codigo do lote" required></label>
+                  <div class="row">
+                    <label class="field-inline"><span>Validade</span><input type="date" name="expiration_date" required></label>
+                    <label class="field-inline"><span>Recebimento</span><input type="date" name="received_at" required></label>
+                  </div>
+                  <div class="row">
+                    <label class="field-inline"><span>Qtd recebida</span><input name="quantity_received" placeholder="0.000" required></label>
+                    <label class="field-inline"><span>Qtd disponivel</span><input name="quantity_available" placeholder="0.000"></label>
+                  </div>
+                  <div class="row">
+                    <label class="field-inline"><span>Preco compra</span><input name="purchase_price" placeholder="0.00" value="0"></label>
+                    <label class="field-inline"><span>Localizacao</span><input name="location" placeholder="Localizacao"></label>
+                  </div>
+                  <button type="submit">Salvar lote</button>
+                </form>
+              </article>
+            </section>
+          </section>
+
+          <section class="subview" id="lancamentos-estoque" data-subview hidden>
+            <section class="grid">
+              <article class="card">
+                <h3>Ajuste de estoque</h3>
+                <form data-api="/api/stock/adjustments">
+                  <label class="field-inline">
+                    <span>Lote</span>
+                    <select name="lot_id" required>
+                      <option value="">Lote</option>
+                      {% for lot in summary.all_lots %}
+                      <option value="{{ lot.id }}">{{ lot.product_name }} • {{ lot.lot_code }}</option>
+                      {% endfor %}
+                    </select>
+                  </label>
+                  <label class="field-inline">
+                    <span>Tipo</span>
+                    <select name="adjustment_type">
+                      <option value="set">Definir saldo</option>
+                      <option value="increase">Aumentar</option>
+                      <option value="decrease">Diminuir</option>
+                    </select>
+                  </label>
+                  <label class="field-inline"><span>Quantidade</span><input name="quantity" placeholder="0.000" required></label>
+                  <label class="field-inline"><span>Referencia</span><input name="reference_code" placeholder="Referencia"></label>
+                  <label class="field-inline field-block"><span>Motivo</span><textarea name="notes" placeholder="Motivo do ajuste"></textarea></label>
+                  <button type="submit">Aplicar ajuste</button>
+                </form>
+              </article>
+
+              <article class="card">
+                <h3>Contagem de estoque</h3>
+                <form data-api="/api/stock/counts" id="count-form">
+                  <label class="field-inline"><span>Data da contagem</span><input type="date" name="count_date" required></label>
+                  <label class="field-inline field-block"><span>Observacoes</span><textarea name="notes" placeholder="Observacoes da contagem"></textarea></label>
+                  <div class="product-picker">
+                    <div class="row row-auto-fit">
+                      <label class="field-inline">
+                        <span>Produto</span>
+                        <select id="count-product-select" data-source="/api/products">
+                          <option value="">Produto</option>
+                        </select>
+                      </label>
+                      <button type="button" class="secondary-btn scan-trigger" id="scan-count-product-btn">Bip por webcam</button>
+                    </div>
+                    <p class="helper scanner-support-note" hidden>Scanner por webcam indisponivel neste navegador. Use HTTPS confiavel ou digite o item manualmente.</p>
+                    <div class="row">
+                      <label class="field-inline">
+                        <span>Lote</span>
+                        <select id="count-lot-select">
+                          <option value="">Lote</option>
+                        </select>
+                      </label>
+                      <label class="field-inline"><span>Qtd contada</span><input id="count-quantity" type="number" step="0.001" min="0" placeholder="0.000"></label>
+                    </div>
+                    <button type="button" id="add-count-item-btn">Adicionar item da contagem</button>
+                  </div>
+                  <div class="sale-items-panel">
+                    <h4>Itens da contagem</h4>
+                    <div id="count-items-list" class="item-stack empty-list"></div>
+                  </div>
+                  <input type="hidden" name="items_json" id="count-items-json" required>
+                  <button type="submit">Registrar contagem</button>
+                </form>
+              </article>
+
+              <article class="card card-guide">
+                <h3>Funcoes de estoque</h3>
+                <ul class="module-list">
+                  <li>Saldo por lote</li>
+                  <li>Ajuste manual positivo e negativo</li>
+                  <li>Contagem com diferenca</li>
+                  <li>Historico de movimentacoes</li>
+                </ul>
+              </article>
+            </section>
+          </section>
+
+          <section class="subview" id="lancamentos-compras" data-subview hidden>
+            <section class="grid single-grid">
+              <article class="card">
+                <h3>Compra</h3>
+                <form data-api="/api/purchases" id="purchase-form">
+                  <label class="field-inline">
+                    <span>Fornecedor</span>
+                    <select name="supplier_id" required>
+                      <option value="">Selecionar fornecedor</option>
+                      {% for supplier in suppliers %}
+                      <option value="{{ supplier.id }}">{{ supplier.name }}</option>
+                      {% endfor %}
+                    </select>
+                  </label>
+                  <div class="row">
+                    <label class="field-inline"><span>Data da compra</span><input type="date" name="order_date" required></label>
+                    <label class="field-inline"><span>Previsao</span><input type="date" name="expected_date"></label>
+                  </div>
+                  <label class="field-inline">
+                    <span>Status</span>
+                    <select name="status">
+                      <option value="received">Recebida</option>
+                      <option value="open">Aberta</option>
+                      <option value="completed">Concluida</option>
+                    </select>
+                  </label>
+                  <label class="field-inline">
+                    <span>Tipo</span>
+                    <select name="purchase_type" id="purchase-type">
+                      <option value="restock">Reposicao de estoque</option>
+                      <option value="free">Compra livre</option>
+                    </select>
+                  </label>
+                  <label class="field-inline field-block">
+                    <span>Observacoes</span>
+                    <textarea name="notes" placeholder="Observacoes da compra"></textarea>
+                  </label>
+                  <div class="product-picker">
+                    <div class="row">
+                      <label class="field-inline">
+                        <span>Tipo do item</span>
+                        <select id="purchase-item-type">
+                          <option value="restock">Item de reposicao</option>
+                          <option value="free">Item livre</option>
+                        </select>
+                      </label>
+                      <label class="field-inline">
+                        <span>Produto</span>
+                        <select id="purchase-product-select" data-source="/api/products">
+                          <option value="">Produto do estoque</option>
+                        </select>
+                      </label>
+                    </div>
+                    <div class="row">
+                      <label class="field-inline"><span>Item livre</span><input id="purchase-free-item-name" placeholder="Nome do item livre"></label>
+                      <label class="field-inline"><span>SKU novo</span><input id="purchase-product-sku" placeholder="SKU novo produto"></label>
+                    </div>
+                    <div class="row">
+                      <label class="field-inline"><span>Nome novo</span><input id="purchase-product-name" placeholder="Nome novo produto"></label>
+                      <label class="field-inline">
+                        <span>Categoria</span>
+                        <select id="purchase-category-select" data-source="/api/categories">
+                          <option value="">Categoria do novo produto</option>
+                        </select>
+                      </label>
+                    </div>
+                    <div class="row">
+                      <label class="field-inline"><span>Quantidade</span><input id="purchase-quantity" type="number" step="0.001" min="0.001" placeholder="0.000"></label>
+                      <label class="field-inline"><span>Valor compra</span><input id="purchase-unit-cost" type="number" step="0.01" min="0" placeholder="0.00"></label>
+                    </div>
+                    <div class="row">
+                      <label class="field-inline"><span>Valor venda</span><input id="purchase-sale-price" type="number" step="0.01" min="0" placeholder="0.00"></label>
+                      <label class="field-inline"><span>Localizacao</span><input id="purchase-location" placeholder="Localizacao"></label>
+                    </div>
+                    <div class="row">
+                      <label class="field-inline"><span>Lote</span><input id="purchase-lot-code" placeholder="Codigo do lote"></label>
+                      <label class="field-inline"><span>Validade</span><input id="purchase-expiration-date" type="date"></label>
+                    </div>
+                    <button type="button" id="add-purchase-item-btn">Adicionar item da compra</button>
+                  </div>
+                  <div class="sale-items-panel">
+                    <h4>Itens da compra</h4>
+                    <p class="helper">Se voce preencher um item e clicar em registrar, o sistema tenta incluir esse item automaticamente.</p>
+                    <div id="purchase-items-list" class="item-stack empty-list"></div>
+                  </div>
+                  <input type="hidden" name="items_json" id="purchase-items-json" required>
+                  <button type="submit">Registrar compra</button>
+                </form>
+              </article>
+            </section>
+          </section>
+
+          <section class="subview" id="lancamentos-vendas" data-subview hidden>
+            <section class="grid single-grid">
+              <article class="card">
+                <h3>Venda</h3>
+                <form data-api="/api/sales" id="sale-form">
+                  <label class="field-inline"><span>Cliente</span><input name="customer_name" placeholder="Nome do cliente" required></label>
+                  <label class="field-inline"><span>Telefone</span><input name="customer_phone" placeholder="Telefone"></label>
+                  <label class="field-inline">
+                    <span>Canal</span>
+                    <select name="source_channel">
+                      <option value="balcao">Balcao</option>
+                      <option value="whatsapp">WhatsApp</option>
+                      <option value="woocommerce">WooCommerce</option>
+                      <option value="wordpress">WordPress</option>
+                      <option value="mercado_livre">Mercado Livre</option>
+                      <option value="delivery">Delivery</option>
+                    </select>
+                  </label>
+                  <label class="field-inline"><span>Pedido externo</span><input name="external_order_id" placeholder="Codigo do pedido"></label>
+                  <label class="field-inline field-block"><span>Observacoes</span><textarea name="notes" placeholder="Observacoes"></textarea></label>
+                  <div class="product-picker">
+                    <div class="row">
+                      <label class="field-inline">
+                        <span>Produto</span>
+                        <select id="sale-product-select" data-source="/api/products">
+                          <option value="">Produto</option>
+                          {% for product in summary.products %}
+                          <option
+                            value="{{ product.id }}"
+                            data-sku="{{ product.sku }}"
+                            data-name="{{ product.name }}"
+                            data-price="{{ product.sale_price }}"
+                            data-stock="{{ product.stock }}"
+                          >
+                            {{ product.name }} ({{ product.sku }}) • estoque {{ '%.3f'|format(product.stock) }} • R$ {{ '%.2f'|format(product.sale_price) }}
+                          </option>
+                          {% endfor %}
+                        </select>
+                      </label>
+                      <label class="field-inline"><span>Quantidade</span><input id="sale-product-quantity" type="number" step="0.001" min="0.001" placeholder="0.000"></label>
+                    </div>
+                    <div class="row">
+                      <label class="field-inline"><span>Valor unitario</span><input id="sale-product-price" type="number" step="0.01" min="0" placeholder="0.00"></label>
+                      <label class="field-inline"><span>Desconto</span><input id="sale-product-discount" type="number" step="0.01" min="0" placeholder="0.00"></label>
+                    </div>
+                    <button type="button" class="secondary-btn scan-trigger" id="scan-sale-product-btn">Bip por webcam</button>
+                    <p class="helper scanner-support-note" hidden>Scanner por webcam indisponivel neste navegador. Use HTTPS confiavel ou selecione o produto manualmente.</p>
+                    <button type="button" id="add-sale-item-btn">Adicionar produto</button>
+                  </div>
+                  <div class="sale-items-panel">
+                    <h4>Produtos da venda</h4>
+                    <p class="helper">Se voce preencher um produto e clicar em registrar, o sistema tenta incluir esse produto automaticamente.</p>
+                    <div id="sale-items-list" class="item-stack empty-list"></div>
+                  </div>
+                  <div class="sale-items-panel">
+                    <h4>Lista de produtos</h4>
+                    <div class="table-wrap">
+                      <table>
+                        <thead>
+                          <tr>
+                            <th>SKU</th>
+                            <th>Produto</th>
+                            <th>Qtd</th>
+                            <th>Valor</th>
+                          </tr>
+                        </thead>
+                        <tbody id="sale-products-catalog">
+                          {% for product in summary.products %}
+                          <tr>
+                            <td>{{ product.sku }}</td>
+                            <td>{{ product.name }}</td>
+                            <td>{{ '%.3f'|format(product.stock) }}</td>
+                            <td>R$ {{ '%.2f'|format(product.sale_price) }}</td>
+                          </tr>
+                          {% else %}
+                          <tr>
+                            <td colspan="4">Nenhum produto cadastrado.</td>
+                          </tr>
+                          {% endfor %}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                  <input type="hidden" name="items_json" id="sale-items-json" required>
+                  <button type="submit">Registrar venda</button>
+                </form>
+              </article>
+            </section>
+          </section>
+
+          <section class="subview" id="lancamentos-cards" data-subview hidden>
+            <section class="grid single-grid">
+              <article class="card">
+                <h3>Novo card</h3>
+                <form data-api="/api/workflow/tickets">
+                  <label class="field-inline"><span>Titulo</span><input name="title" placeholder="Titulo do card" required></label>
+                  <label class="field-inline"><span>Cliente</span><input name="customer_name" placeholder="Cliente"></label>
+                  <label class="field-inline"><span>Telefone</span><input name="customer_phone" placeholder="Telefone"></label>
+                  <label class="field-inline">
+                    <span>Canal</span>
+                    <select name="source_channel">
+                      <option value="manual">Manual</option>
+                      <option value="whatsapp">WhatsApp</option>
+                      <option value="delivery">Delivery</option>
+                      <option value="mercado_livre">Mercado Livre</option>
+                    </select>
+                  </label>
+                  <label class="field-inline"><span>Responsavel</span><input name="assigned_to" placeholder="Responsavel / setor"></label>
+                  <label class="field-inline">
+                    <span>Prioridade</span>
+                    <select name="priority">
+                      <option value="normal">Normal</option>
+                      <option value="high">Alta</option>
+                      <option value="urgent">Urgente</option>
+                    </select>
+                  </label>
+                  <label class="field-inline field-block"><span>Descricao</span><textarea name="description" placeholder="Descricao inicial"></textarea></label>
+                  <button type="submit">Criar card</button>
+                </form>
+              </article>
+            </section>
+          </section>
+
+          <section class="subview" id="lancamentos-financeiro" data-subview hidden>
+            <section class="grid single-grid">
+              <article class="card">
+                <h3>Lancamento financeiro</h3>
+                <form data-api="/api/financial/entries">
+                  <label class="field-inline">
+                    <span>Tipo</span>
+                    <select name="entry_type">
+                      <option value="receivable">A receber</option>
+                      <option value="payable">A pagar</option>
+                    </select>
+                  </label>
+                  <label class="field-inline"><span>Categoria</span><input name="category" placeholder="Categoria"></label>
+                  <label class="field-inline"><span>Descricao</span><input name="description" placeholder="Descricao" required></label>
+                  <label class="field-inline"><span>Favorecido</span><input name="counterparty" placeholder="Cliente / fornecedor / favorecido"></label>
+                  <div class="row">
+                    <label class="field-inline"><span>Valor</span><input name="amount" placeholder="0.00" required></label>
+                    <label class="field-inline"><span>Vencimento</span><input type="date" name="due_date" required></label>
+                  </div>
+                  <label class="field-inline"><span>Referencia</span><input name="source_ref" placeholder="Referencia"></label>
+                  <label class="field-inline">
+                    <span>Status</span>
+                    <select name="status">
+                      <option value="open">Em aberto</option>
+                      <option value="partial">Parcial</option>
+                      <option value="paid">Pago</option>
+                    </select>
+                  </label>
+                  <label class="field-inline field-block"><span>Observacoes</span><textarea name="notes" placeholder="Observacoes"></textarea></label>
+                  <button type="submit">Salvar financeiro</button>
+                </form>
+              </article>
+            </section>
+          </section>
+
+          <section class="subview" id="lancamentos-caixa" data-subview hidden>
+            <section class="grid">
+              <article class="card">
+                <h3>Caixa</h3>
+                <div class="status-stack">
+                  <div class="status-line"><strong>Status:</strong> {{ summary.cash_status }}</div>
+                  <div class="status-line"><strong>Abertura:</strong> R$ {{ '%.2f'|format(summary.cash_opening_amount) }}</div>
+                  <div class="status-line"><strong>Esperado:</strong> R$ {{ '%.2f'|format(summary.cash_expected_amount) }}</div>
+                </div>
+                <form data-api="/api/cash/open">
+                  <label class="field-inline"><span>Valor de abertura</span><input name="opening_amount" placeholder="0.00" required></label>
+                  <label class="field-inline field-block"><span>Observacoes</span><textarea name="notes" placeholder="Observacoes da abertura"></textarea></label>
+                  <button type="submit">Abrir caixa</button>
+                </form>
+                <form data-api="/api/cash/close">
+                  <label class="field-inline"><span>Valor de fechamento</span><input name="closing_amount" placeholder="0.00" required></label>
+                  <label class="field-inline field-block"><span>Observacoes</span><textarea name="notes" placeholder="Observacoes do fechamento"></textarea></label>
+                  <button type="submit">Fechar caixa</button>
+                </form>
+              </article>
+            </section>
+          </section>
+        </section>
+
+        <section class="view" id="relatorios" data-view hidden>
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Relatorios</p>
+              <h2>Consultas e filtros</h2>
+            </div>
+            <p class="section-copy">Tudo de relatorio fica centralizado aqui, com filtros basicos para operacao e financeiro.</p>
+          </div>
+
+          <section class="report-toolbar">
+            <button type="button" class="filter-chip active" data-report-filter="all" data-filter-group="payments">Pagamentos: todos</button>
+            <button type="button" class="filter-chip" data-report-filter="pix" data-filter-group="payments">Pix</button>
+            <button type="button" class="filter-chip" data-report-filter="cash" data-filter-group="payments">Dinheiro</button>
+            <button type="button" class="filter-chip" data-report-filter="card" data-filter-group="payments">Cartao</button>
+            <button type="button" class="filter-chip active" data-report-filter="all" data-filter-group="financial">Financeiro: todos</button>
+            <button type="button" class="filter-chip" data-report-filter="paid" data-filter-group="financial">Pagos</button>
+            <button type="button" class="filter-chip" data-report-filter="open" data-filter-group="financial">Nao pagos</button>
+          </section>
+
+          <section class="grid grid-wide">
+            <article class="card">
+              <h3>Estoque critico</h3>
+              <div class="table-wrap">
+                <table>
+                  <thead><tr><th>SKU</th><th>Produto</th><th>Saldo</th><th>Minimo</th></tr></thead>
+                  <tbody>
+                    {% for product in summary.low_stock_products %}
+                    <tr>
+                      <td>{{ product.sku }}</td>
+                      <td>{{ product.name }}</td>
+                      <td>{{ '%.3f'|format(product.stock) }}</td>
+                      <td>{{ '%.3f'|format(product.minimum_stock) }}</td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="4">Nenhum item com estoque critico.</td></tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            </article>
+
+            <article class="card">
+              <h3>Movimentacoes de estoque</h3>
+              <div class="table-wrap">
+                <table>
+                  <thead><tr><th>Tipo</th><th>Produto</th><th>Lote</th><th>Qtd</th><th>Saldo</th><th>Referencia</th></tr></thead>
+                  <tbody>
+                    {% for movement in summary.recent_stock_movements %}
+                    <tr>
+                      <td>{{ movement.movement_type }}</td>
+                      <td>{{ movement.product_name }}</td>
+                      <td>{{ movement.lot_code or '-' }}</td>
+                      <td>{{ '%.3f'|format(movement.quantity) }}</td>
+                      <td>{{ '%.3f'|format(movement.balance_after) }}</td>
+                      <td>{{ movement.reference_code or '-' }}</td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="6">Nenhuma movimentacao registrada.</td></tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            </article>
+
+            <article class="card">
+              <h3>Contagens</h3>
+              <div class="table-wrap">
+                <table>
+                  <thead><tr><th>Codigo</th><th>Data</th><th>Status</th><th>Itens</th></tr></thead>
+                  <tbody>
+                    {% for count in summary.inventory_counts %}
+                    <tr>
+                      <td>{{ count.code }}</td>
+                      <td>{{ count.count_date }}</td>
+                      <td>{{ count.status }}</td>
+                      <td>{{ count.items|length }}</td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="4">Nenhuma contagem registrada.</td></tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            </article>
+
+            <article class="card">
+              <h3>Resumo por forma de pagamento</h3>
+              <div class="payment-summary-grid">
+                {% for method, total in summary.payment_method_totals.items() %}
+                <div class="payment-summary-item">
+                  <strong>{{ method }}</strong>
+                  <span>R$ {{ '%.2f'|format(total) }}</span>
+                </div>
+                {% else %}
+                <div class="payment-summary-item">
+                  <strong>Sem dados</strong>
+                  <span>Nenhum pagamento registrado.</span>
+                </div>
+                {% endfor %}
+              </div>
+            </article>
+
+            <article class="card">
+              <h3>Pagamentos</h3>
+              <div class="table-wrap">
+                <table>
+                  <thead><tr><th>Venda</th><th>Metodo</th><th>Status</th><th>Valor</th><th>Referencia</th></tr></thead>
+                  <tbody>
+                    {% for payment in summary.recent_payments %}
+                    <tr data-payment-method="{{ payment.method }}">
+                      <td>{{ payment.sale_code or '-' }}</td>
+                      <td>{{ payment.method }}</td>
+                      <td>{{ payment.status }}</td>
+                      <td>R$ {{ '%.2f'|format(payment.amount) }}</td>
+                      <td>{{ payment.transaction_reference or '-' }}</td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="5">Nenhum pagamento registrado.</td></tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            </article>
+
+            <article class="card">
+              <h3>Financeiro</h3>
+              <div class="table-wrap">
+                <table>
+                  <thead><tr><th>Tipo</th><th>Descricao</th><th>Favorecido</th><th>Status</th><th>Vencimento</th><th>Valor</th></tr></thead>
+                  <tbody>
+                    {% for entry in summary.financial_entries %}
+                    <tr data-financial-status="{{ entry.status }}">
+                      <td>{{ entry.entry_type }}</td>
+                      <td>{{ entry.description }}</td>
+                      <td>{{ entry.counterparty or '-' }}</td>
+                      <td>{{ entry.status }}</td>
+                      <td>{{ entry.due_date }}</td>
+                      <td>R$ {{ '%.2f'|format(entry.amount) }}</td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="6">Nenhum lancamento financeiro registrado.</td></tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            </article>
+
+            <article class="card">
+              <h3>Produtos</h3>
+              <div class="table-wrap">
+                <table>
+                  <thead><tr><th>SKU</th><th>Produto</th><th>Categoria</th><th>Estoque</th><th>Min.</th><th>Venda</th></tr></thead>
+                  <tbody>
+                    {% for product in summary.products %}
+                    <tr>
+                      <td>{{ product.sku }}</td>
+                      <td>{{ product.name }}</td>
+                      <td>{{ product.category_name or '-' }}</td>
+                      <td>{{ '%.3f'|format(product.stock) }}</td>
+                      <td>{{ '%.3f'|format(product.minimum_stock) }}</td>
+                      <td>R$ {{ '%.2f'|format(product.sale_price) }}</td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="6">Nenhum produto cadastrado.</td></tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            </article>
+
+            <article class="card">
+              <h3>Lotes vencendo</h3>
+              <div class="table-wrap">
+                <table>
+                  <thead><tr><th>Produto</th><th>Lote</th><th>Validade</th><th>Saldo</th><th>Local</th></tr></thead>
+                  <tbody>
+                    {% for lot in summary.expiring_lots %}
+                    <tr>
+                      <td>{{ lot.product_name }}</td>
+                      <td>{{ lot.lot_code }}</td>
+                      <td>{{ lot.expiration_date }}</td>
+                      <td>{{ '%.3f'|format(lot.quantity_available) }}</td>
+                      <td>{{ lot.location or '-' }}</td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="5">Nenhum lote vencendo em 60 dias.</td></tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            </article>
+
+            <article class="card">
+              <h3>Compras recentes</h3>
+              <div class="table-wrap">
+                <table>
+                  <thead><tr><th>Codigo</th><th>Fornecedor</th><th>Status</th><th>Data</th><th>Total</th></tr></thead>
+                  <tbody>
+                    {% for purchase in summary.recent_purchases %}
+                    <tr>
+                      <td>{{ purchase.code }}</td>
+                      <td>{{ purchase.supplier_name }}</td>
+                      <td>{{ purchase.status }}</td>
+                      <td>{{ purchase.order_date }}</td>
+                      <td>R$ {{ '%.2f'|format(purchase.total_amount) }}</td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="5">Nenhuma compra registrada.</td></tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            </article>
+          </section>
+        </section>
+
+        <section class="view" id="configuracao" data-view hidden>
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Configuracao</p>
+              <h2>Parametros e integracoes</h2>
+            </div>
+            <p class="section-copy">Tudo de configuracao fica agrupado aqui, separado dos demais modulos.</p>
+          </div>
+
+          <section class="grid">
+            <article class="card card-https-tools" data-cert-hosts='{{ https_runtime.cert_hosts|tojson }}' data-http-port="{{ https_runtime.http_port }}" data-https-port="{{ https_runtime.https_port }}" data-https-enabled="{{ '1' if https_runtime.enabled else '0' }}">
+              <h3>HTTPS e camera</h3>
+              <div class="status-stack">
+                <div class="status-line"><strong>HTTP atual:</strong> <span id="http-current-url">http://127.0.0.1:8080</span></div>
+                <div class="status-line"><strong>HTTPS atual:</strong> <span id="https-current-url">https://127.0.0.1:8443</span></div>
+                <div class="status-line"><strong>CA Android:</strong> <span id="ca-current-url">http://127.0.0.1:8080/api/ca/cert.crt</span></div>
+                <div class="status-line"><strong>Host atual:</strong> <span id="https-host-status">Aguardando validacao...</span></div>
+                <div class="status-line"><strong>Suporte no aparelho:</strong> <span id="https-device-status">Aguardando validacao...</span></div>
+              </div>
+              <div id="https-warning-box" class="https-warning" hidden></div>
+              <div class="https-tools-grid">
+                <button type="button" class="secondary-btn" id="copy-http-url-btn">Copiar HTTP</button>
+                <button type="button" class="secondary-btn" id="copy-https-url-btn">Copiar HTTPS</button>
+                <button type="button" class="secondary-btn" id="copy-ca-url-btn">Copiar CA</button>
+                <button type="button" class="secondary-btn" id="open-https-url-btn">Abrir HTTPS</button>
+                <button type="button" class="secondary-btn" id="open-ca-url-btn">Baixar CA Android</button>
+                <button type="button" class="secondary-btn" id="open-app-cert-url-btn">Baixar cert. app</button>
+              </div>
+              <div class="helper https-guide">
+                <strong>Como liberar a camera no celular</strong>
+                <span>1. Abra o link da CA no celular e instale o certificado.</span>
+                <span>2. Depois abra o HTTPS deste sistema.</span>
+                <span>3. Se o IP da maquina mudar, atualize `CERT_APP_HOSTS` no `.env` e refaca o deploy.</span>
+              </div>
+              <div id="https-tools-feedback" class="helper"></div>
+            </article>
+
+            <article class="card">
+              <h3>Integracoes</h3>
+              <form id="settings-form">
+                <label class="field-inline"><span>Cartao</span><input name="PHARMACY_CARD_PROVIDER" value="{{ settings_map.get('PHARMACY_CARD_PROVIDER', '') }}" placeholder="Provedor maquina/cartao"></label>
+                <label class="field-inline"><span>Pix</span><input name="PHARMACY_PIX_PROVIDER" value="{{ settings_map.get('PHARMACY_PIX_PROVIDER', '') }}" placeholder="Provedor Pix"></label>
+                <label class="field-inline"><span>WhatsApp</span><input name="PHARMACY_WHATSAPP_NUMBER" value="{{ settings_map.get('PHARMACY_WHATSAPP_NUMBER', '') }}" placeholder="Numero WhatsApp"></label>
+                <label class="field-inline"><span>WooCommerce URL</span><input name="PHARMACY_WOOCOMMERCE_URL" value="{{ settings_map.get('PHARMACY_WOOCOMMERCE_URL', '') }}" placeholder="URL WooCommerce"></label>
+                <label class="field-inline"><span>WooCommerce chave</span><input name="PHARMACY_WOOCOMMERCE_KEY" value="{{ settings_map.get('PHARMACY_WOOCOMMERCE_KEY', '') }}" placeholder="Chave WooCommerce"></label>
+                <label class="field-inline"><span>Mercado Livre App ID</span><input name="PHARMACY_MERCADO_LIVRE_APP_ID" value="{{ settings_map.get('PHARMACY_MERCADO_LIVRE_APP_ID', '') }}" placeholder="App ID Mercado Livre"></label>
+                <label class="field-inline"><span>Mercado Livre Seller ID</span><input name="PHARMACY_MERCADO_LIVRE_SELLER_ID" value="{{ settings_map.get('PHARMACY_MERCADO_LIVRE_SELLER_ID', '') }}" placeholder="Seller ID Mercado Livre"></label>
+                <button type="submit">Salvar configuracoes</button>
+              </form>
+            </article>
+
+            <article class="card">
+              <h3>Margem por categoria</h3>
+              <div class="stage-admin-list">
+                {% for category in categories %}
+                <form class="stage-admin-card" data-api="/api/categories/{{ category.id }}" data-method="PATCH">
+                  <div class="ticket-card-head">
+                    <strong>{{ category.name }}</strong>
+                    <span class="mini-badge">Parametros</span>
+                  </div>
+                  <label class="field-inline"><span>Descricao</span><input name="description" value="{{ category.description }}" placeholder="Descricao"></label>
+                  <div class="row">
+                    <label class="field-inline"><span>Margem minima</span><input name="minimum_profit_margin" type="number" step="0.01" min="0" value="{{ category.minimum_profit_margin or 0 }}" placeholder="0.00"></label>
+                    <label class="field-inline"><span>Margem sugerida</span><input name="suggested_profit_margin" type="number" step="0.01" min="0" value="{{ category.suggested_profit_margin or 0 }}" placeholder="0.00"></label>
+                  </div>
+                  <button type="submit">Salvar margens</button>
+                </form>
+                {% else %}
+                <div class="stage-admin-card">
+                  <p class="ticket-copy">Nenhuma categoria cadastrada.</p>
+                </div>
+                {% endfor %}
+              </div>
+            </article>
+
+            <article class="card card-guide">
+              <h3>Escopo desta area</h3>
+              <ul class="module-list">
+                <li>Provedores Pix, cartao e canais digitais</li>
+                <li>Parametros da empresa e operacao</li>
+                <li>Credenciais e integracoes externas</li>
+                <li>Margens minimas e sugeridas por categoria</li>
+              </ul>
+            </article>
+          </section>
+        </section>
+      </main>
+    </div>
+
+    <button type="button" id="open-item-consult-btn" class="floating-action">Consultar item</button>
+
+    <div id="scanner-modal" class="modal-shell" hidden>
+      <div class="modal-card">
+        <div class="modal-head">
+          <strong id="scanner-modal-title">Leitura de codigo</strong>
+          <button type="button" class="secondary-btn" id="close-scanner-modal-btn">Fechar</button>
+        </div>
+        <p class="helper">Aponte a webcam para o codigo de barras ou digite o codigo manualmente.</p>
+        <video id="scanner-video" class="scanner-video" autoplay playsinline muted></video>
+        <div class="row">
+          <label class="field-inline"><span>Codigo</span><input id="scanner-manual-code" placeholder="Codigo de barras, SKU ou nome"></label>
+          <button type="button" id="scanner-manual-submit-btn">Buscar</button>
+        </div>
+        <div id="scanner-status" class="helper"></div>
+      </div>
+    </div>
+
+    <div id="consult-modal" class="modal-shell" hidden>
+      <div class="modal-card">
+        <div class="modal-head">
+          <strong>Consulta rapida de item</strong>
+          <button type="button" class="secondary-btn" id="close-consult-modal-btn">Fechar</button>
+        </div>
+        <div class="row">
+          <label class="field-inline"><span>Buscar item</span><input id="consult-item-code" placeholder="Codigo de barras, SKU ou nome"></label>
+          <button type="button" id="consult-item-btn">Consultar</button>
+        </div>
+        <button type="button" class="secondary-btn scan-trigger" id="consult-scan-btn">Bip por webcam</button>
+        <p class="helper scanner-support-note" hidden>Scanner por webcam indisponivel neste navegador. Use HTTPS confiavel ou digite o codigo do item.</p>
+        <div id="consult-result" class="sale-items-panel" hidden></div>
+      </div>
+    </div>
+
+    <script>
+      function formToObject(form) {
+        const payload = {};
+        new FormData(form).forEach((value, key) => {
+          const field = form.querySelector(`[name="${key}"]`);
+          payload[key] = field && field.type === "checkbox" ? field.checked : value;
+        });
+        form.querySelectorAll('input[type="checkbox"]').forEach((field) => {
+          if (!(field.name in payload)) payload[field.name] = field.checked;
+        });
+        return payload;
+      }
+
+      function currentNetworkUrls() {
+        const protocol = window.location.protocol === "https:" ? "https:" : "http:";
+        const hostname = window.location.hostname || "127.0.0.1";
+        const httpsCard = document.querySelector(".card-https-tools");
+        const isHttps = protocol === "https:";
+        const httpPort = httpsCard ? (httpsCard.dataset.httpPort || "8080") : "8080";
+        const httpsPort = httpsCard ? (httpsCard.dataset.httpsPort || "8443") : "8443";
+        const httpBase = `http://${hostname}:${httpPort}`;
+        const httpsBase = `https://${hostname}:${httpsPort}`;
+        return {
+          protocol,
+          hostname,
+          isHttps,
+          httpBase,
+          httpsBase,
+          caUrl: `${httpBase}/api/ca/cert.crt`,
+          appCertUrl: `${httpBase}/api/app/cert.crt`,
+        };
+      }
+
+      async function copyTextValue(value) {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(value);
+          return true;
+        }
+        const temp = document.createElement("input");
+        temp.value = value;
+        document.body.appendChild(temp);
+        temp.select();
+        document.execCommand("copy");
+        temp.remove();
+        return true;
+      }
+
+      function setHttpsToolsFeedback(message, isError) {
+        const feedback = document.getElementById("https-tools-feedback");
+        if (!feedback) return;
+        feedback.textContent = message || "";
+        feedback.style.color = isError ? "#a33b2c" : "";
+      }
+
+      function hydrateHttpsTools() {
+        const httpsCard = document.querySelector(".card-https-tools");
+        const httpCurrentUrl = document.getElementById("http-current-url");
+        const httpsCurrentUrl = document.getElementById("https-current-url");
+        const caCurrentUrl = document.getElementById("ca-current-url");
+        const httpsHostStatus = document.getElementById("https-host-status");
+        const httpsDeviceStatus = document.getElementById("https-device-status");
+        const httpsWarningBox = document.getElementById("https-warning-box");
+        const copyHttpUrlBtn = document.getElementById("copy-http-url-btn");
+        const copyHttpsUrlBtn = document.getElementById("copy-https-url-btn");
+        const copyCaUrlBtn = document.getElementById("copy-ca-url-btn");
+        const openHttpsUrlBtn = document.getElementById("open-https-url-btn");
+        const openCaUrlBtn = document.getElementById("open-ca-url-btn");
+        const openAppCertUrlBtn = document.getElementById("open-app-cert-url-btn");
+        const urls = currentNetworkUrls();
+        let certHosts = [];
+        try {
+          certHosts = httpsCard ? JSON.parse(httpsCard.dataset.certHosts || "[]") : [];
+        } catch (error) {
+          certHosts = [];
+        }
+        const hostname = urls.hostname;
+        const isLocalHost = hostname === "localhost" || hostname === "127.0.0.1";
+        const hostCovered = isLocalHost || certHosts.indexOf(hostname) >= 0;
+        const mobileUA = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || "");
+        const cameraApi = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+        const barcodeApi = "BarcodeDetector" in window;
+
+        if (httpCurrentUrl) httpCurrentUrl.textContent = urls.httpBase;
+        if (httpsCurrentUrl) httpsCurrentUrl.textContent = urls.httpsBase;
+        if (caCurrentUrl) caCurrentUrl.textContent = urls.caUrl;
+        if (httpsHostStatus) {
+          httpsHostStatus.textContent = hostCovered
+            ? `OK para ${hostname}`
+            : `Host ${hostname} nao esta no certificado atual`;
+        }
+        if (httpsDeviceStatus) {
+          httpsDeviceStatus.textContent = mobileUA
+            ? `${cameraApi ? "Camera disponivel" : "Camera nao disponivel"}${barcodeApi ? " • leitura nativa disponivel" : " • leitura nativa limitada"}`
+            : `${cameraApi ? "Camera disponivel" : "Camera nao disponivel"}${barcodeApi ? " • leitura nativa disponivel" : " • leitura nativa limitada"}`;
+        }
+        if (httpsWarningBox) {
+          let warning = "";
+          if (!hostCovered) {
+            warning = `O host atual ${hostname} nao esta previsto em CERT_APP_HOSTS. Atualize o .env, defina CERT_APP_HOSTS=${hostname}, marque CERT_FORCE_REISSUE=1 e suba o Docker novamente.`;
+          } else if (!window.isSecureContext) {
+            warning = "Esta tela ainda nao esta em contexto seguro. Para camera no celular, abra a URL HTTPS depois de instalar a CA.";
+          } else if (!cameraApi) {
+            warning = "Este navegador nao expôs a API de camera. Verifique permissao da camera e teste no Chrome ou Safari atualizados.";
+          } else if (!barcodeApi) {
+            warning = "A camera pode funcionar, mas a leitura automatica depende do suporte nativo do navegador. Se necessario, use consulta manual do item.";
+          }
+          httpsWarningBox.hidden = !warning;
+          httpsWarningBox.textContent = warning;
+        }
+
+        if (copyHttpUrlBtn) {
+          copyHttpUrlBtn.addEventListener("click", async function () {
+            try {
+              await copyTextValue(urls.httpBase);
+              setHttpsToolsFeedback("Link HTTP copiado.");
+            } catch (error) {
+              setHttpsToolsFeedback("Nao foi possivel copiar o link HTTP.", true);
+            }
+          });
+        }
+
+        if (copyHttpsUrlBtn) {
+          copyHttpsUrlBtn.addEventListener("click", async function () {
+            try {
+              await copyTextValue(urls.httpsBase);
+              setHttpsToolsFeedback("Link HTTPS copiado.");
+            } catch (error) {
+              setHttpsToolsFeedback("Nao foi possivel copiar o link HTTPS.", true);
+            }
+          });
+        }
+
+        if (copyCaUrlBtn) {
+          copyCaUrlBtn.addEventListener("click", async function () {
+            try {
+              await copyTextValue(urls.caUrl);
+              setHttpsToolsFeedback("Link da CA copiado.");
+            } catch (error) {
+              setHttpsToolsFeedback("Nao foi possivel copiar o link da CA.", true);
+            }
+          });
+        }
+
+        if (openHttpsUrlBtn) {
+          openHttpsUrlBtn.addEventListener("click", function () {
+            window.open(urls.httpsBase, "_blank");
+          });
+        }
+
+        if (openCaUrlBtn) {
+          openCaUrlBtn.addEventListener("click", function () {
+            window.open(urls.caUrl, "_blank");
+          });
+        }
+
+        if (openAppCertUrlBtn) {
+          openAppCertUrlBtn.addEventListener("click", function () {
+            window.open(urls.appCertUrl, "_blank");
+          });
+        }
+      }
+
+      function activateView(targetId) {
+        document.querySelectorAll("[data-view]").forEach((section) => {
+          const active = section.id === targetId;
+          section.hidden = !active;
+          section.classList.toggle("is-active", active);
+        });
+        document.querySelectorAll(".menu-link").forEach((button) => {
+          button.classList.toggle("active", button.dataset.target === targetId);
+        });
+        try {
+          localStorage.setItem("nanostore.activeView", targetId);
+        } catch {}
+      }
+
+      async function postJson(url, payload, method = "POST") {
+        const response = await fetch(url, {
+          method,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || data.ok === false) throw new Error(data.error || "Falha na requisicao.");
+        return data;
+      }
+
+      document.querySelectorAll(".menu-link").forEach((button) => {
+        button.addEventListener("click", () => activateView(button.dataset.target));
+      });
+
+      function activateSubview(container, targetId) {
+        container.querySelectorAll("[data-subview]").forEach((section) => {
+          const active = section.id === targetId;
+          section.hidden = !active;
+          section.classList.toggle("is-active", active);
+        });
+        container.querySelectorAll(".subnav-link").forEach((button) => {
+          button.classList.toggle("active", button.dataset.subviewTarget === targetId);
+        });
+      }
+
+      document.querySelectorAll(".view").forEach((view) => {
+        const firstButton = view.querySelector(".subnav-link");
+        if (firstButton) {
+          activateSubview(view, firstButton.dataset.subviewTarget);
+          view.querySelectorAll(".subnav-link").forEach((button) => {
+            button.addEventListener("click", () => activateSubview(view, button.dataset.subviewTarget));
+          });
+        }
+      });
+
+      try {
+        activateView(localStorage.getItem("nanostore.activeView") || "inicio");
+        } catch {
+          activateView("inicio");
+        }
+
+      const saleItems = [];
+      const saleProductSelect = document.getElementById("sale-product-select");
+      const saleProductQuantity = document.getElementById("sale-product-quantity");
+      const saleProductPrice = document.getElementById("sale-product-price");
+      const saleProductDiscount = document.getElementById("sale-product-discount");
+      const saleItemsList = document.getElementById("sale-items-list");
+      const saleItemsJson = document.getElementById("sale-items-json");
+      const addSaleItemBtn = document.getElementById("add-sale-item-btn");
+      const saleProductsCatalog = document.getElementById("sale-products-catalog");
+      const purchaseItemType = document.getElementById("purchase-item-type");
+      const purchaseType = document.getElementById("purchase-type");
+      const purchaseProductSelect = document.getElementById("purchase-product-select");
+      const purchaseCategorySelect = document.getElementById("purchase-category-select");
+      const purchaseFreeItemName = document.getElementById("purchase-free-item-name");
+      const purchaseProductSku = document.getElementById("purchase-product-sku");
+      const purchaseProductName = document.getElementById("purchase-product-name");
+      const purchaseQuantity = document.getElementById("purchase-quantity");
+      const purchaseUnitCost = document.getElementById("purchase-unit-cost");
+      const purchaseSalePrice = document.getElementById("purchase-sale-price");
+      const purchaseLocation = document.getElementById("purchase-location");
+      const purchaseLotCode = document.getElementById("purchase-lot-code");
+      const purchaseExpirationDate = document.getElementById("purchase-expiration-date");
+      const purchaseItemsList = document.getElementById("purchase-items-list");
+      const purchaseItemsJson = document.getElementById("purchase-items-json");
+      const addPurchaseItemBtn = document.getElementById("add-purchase-item-btn");
+      const purchaseItems = [];
+      const countProductSelect = document.getElementById("count-product-select");
+      const countLotSelect = document.getElementById("count-lot-select");
+      const countQuantity = document.getElementById("count-quantity");
+      const countItemsList = document.getElementById("count-items-list");
+      const countItemsJson = document.getElementById("count-items-json");
+      const addCountItemBtn = document.getElementById("add-count-item-btn");
+      const countItems = [];
+      const scanSaleProductBtn = document.getElementById("scan-sale-product-btn");
+      const scanCountProductBtn = document.getElementById("scan-count-product-btn");
+      const scannerModal = document.getElementById("scanner-modal");
+      const closeScannerModalBtn = document.getElementById("close-scanner-modal-btn");
+      const scannerVideo = document.getElementById("scanner-video");
+      const scannerManualCode = document.getElementById("scanner-manual-code");
+      const scannerManualSubmitBtn = document.getElementById("scanner-manual-submit-btn");
+      const scannerStatus = document.getElementById("scanner-status");
+      const scannerModalTitle = document.getElementById("scanner-modal-title");
+      const openItemConsultBtn = document.getElementById("open-item-consult-btn");
+      const consultModal = document.getElementById("consult-modal");
+      const closeConsultModalBtn = document.getElementById("close-consult-modal-btn");
+      const consultItemCode = document.getElementById("consult-item-code");
+      const consultItemBtn = document.getElementById("consult-item-btn");
+      const consultScanBtn = document.getElementById("consult-scan-btn");
+      const consultResult = document.getElementById("consult-result");
+      const scanTriggers = document.querySelectorAll(".scan-trigger");
+      let scannerStream = null;
+      let scannerTimer = null;
+      let currentScanTarget = "consult";
+      let scannerSupported = false;
+
+      function updateScannerAvailability() {
+        scannerSupported = !!(window.isSecureContext && navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+        scanTriggers.forEach(function (button) {
+          button.hidden = !scannerSupported;
+        });
+        document.querySelectorAll(".scanner-support-note").forEach(function (note) {
+          note.hidden = scannerSupported;
+        });
+        const httpsDeviceStatus = document.getElementById("https-device-status");
+        if (httpsDeviceStatus) {
+          httpsDeviceStatus.textContent = scannerSupported
+            ? (("BarcodeDetector" in window) ? "Camera e leitura nativa prontas" : "Camera pronta, leitura nativa limitada")
+            : (window.isSecureContext ? "Sem suporte suficiente de camera neste navegador" : "HTTPS necessario para camera");
+        }
+      }
+
+      function renderSaleProductsCatalog(products) {
+        if (!saleProductsCatalog) return;
+        if (!products.length) {
+          saleProductsCatalog.innerHTML = '<tr><td colspan="4">Nenhum produto cadastrado.</td></tr>';
+          return;
+        }
+        saleProductsCatalog.innerHTML = products.map((product) => `
+          <tr>
+            <td>${product.sku}</td>
+            <td>${product.name}</td>
+            <td>${Number(product.stock || 0).toFixed(3)}</td>
+            <td>R$ ${Number(product.sale_price || 0).toFixed(2)}</td>
+          </tr>
+        `).join("");
+      }
+
+      async function hydrateSaleProducts() {
+        if (!saleProductSelect || !saleProductSelect.dataset.source) return;
+        const response = await fetch(saleProductSelect.dataset.source);
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || data.ok === false) {
+          throw new Error(data.error || "Nao foi possivel carregar os produtos.");
+        }
+        const products = Array.isArray(data.items) ? data.items : [];
+        saleProductSelect.innerHTML = `
+          <option value="">Produto</option>
+          ${products.map((product) => `
+            <option
+              value="${product.id}"
+              data-sku="${product.sku}"
+              data-name="${product.name}"
+              data-price="${Number(product.sale_price || 0)}"
+              data-stock="${Number(product.stock || 0)}"
+            >
+              ${product.name} (${product.sku}) • estoque ${Number(product.stock || 0).toFixed(3)} • R$ ${Number(product.sale_price || 0).toFixed(2)}
+            </option>
+          `).join("")}
+        `;
+        renderSaleProductsCatalog(products);
+      }
+
+      async function hydrateSelect(select, url, emptyLabel, renderer) {
+        if (!select || !url) return [];
+        const response = await fetch(url);
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || data.ok === false) {
+          throw new Error(data.error || "Nao foi possivel carregar dados.");
+        }
+        const items = Array.isArray(data.items) ? data.items : [];
+        select.innerHTML = `<option value="">${emptyLabel}</option>${items.map(renderer).join("")}`;
+        return items;
+      }
+
+      async function lookupProductByCode(code) {
+        const response = await fetch(`/api/products/lookup?code=${encodeURIComponent(code)}`);
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || data.ok === false) {
+          throw new Error(data.error || "Item nao encontrado.");
+        }
+        return data;
+      }
+
+      function populateCountLots(lots) {
+        if (!countLotSelect) return;
+        countLotSelect.innerHTML = `
+          <option value="">Lote</option>
+          ${lots.map((lot) => `
+            <option value="${lot.id}">
+              ${lot.lot_code} • saldo ${Number(lot.quantity_available || 0).toFixed(3)} • validade ${lot.expiration_date}
+            </option>
+          `).join("")}
+        `;
+        if (lots.length === 1) {
+          countLotSelect.value = String(lots[0].id);
+        }
+      }
+
+      function renderConsultResult(data) {
+        if (!consultResult) return;
+        const product = data.product;
+        const lots = Array.isArray(data.lots) ? data.lots : [];
+        consultResult.hidden = false;
+        consultResult.innerHTML = `
+          <h4>${product.name}</h4>
+          <div class="status-stack">
+            <div class="status-line"><strong>SKU:</strong> ${product.sku || "-"}</div>
+            <div class="status-line"><strong>Codigo de barras:</strong> ${product.barcode || "-"}</div>
+            <div class="status-line"><strong>Estoque:</strong> ${Number(product.stock || 0).toFixed(3)}</div>
+            <div class="status-line"><strong>Preco venda:</strong> R$ ${Number(product.sale_price || 0).toFixed(2)}</div>
+            <div class="status-line"><strong>Preco custo:</strong> R$ ${Number(product.cost_price || 0).toFixed(2)}</div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Lote</th><th>Saldo</th><th>Validade</th><th>Local</th></tr></thead>
+              <tbody>
+                ${lots.length ? lots.map((lot) => `
+                  <tr>
+                    <td>${lot.lot_code}</td>
+                    <td>${Number(lot.quantity_available || 0).toFixed(3)}</td>
+                    <td>${lot.expiration_date}</td>
+                    <td>${lot.location || "-"}</td>
+                  </tr>
+                `).join("") : '<tr><td colspan="4">Nenhum lote com saldo encontrado.</td></tr>'}
+              </tbody>
+            </table>
+          </div>
+        `;
+      }
+
+      async function applyLookupResult(target, code) {
+        const data = await lookupProductByCode(code);
+        const product = data.product;
+        if (target === "sale") {
+          if (saleProductSelect) {
+            saleProductSelect.value = String(product.id);
+            saleProductSelect.dispatchEvent(new Event("change"));
+          }
+          if (saleProductQuantity && !saleProductQuantity.value) {
+            saleProductQuantity.value = "1";
+          }
+        } else if (target === "count") {
+          if (countProductSelect) {
+            countProductSelect.value = String(product.id);
+          }
+          populateCountLots(data.lots || []);
+          if (countQuantity && !countQuantity.value) {
+            countQuantity.value = "1";
+          }
+        } else {
+          renderConsultResult(data);
+        }
+      }
+
+      async function startScanner(target) {
+        currentScanTarget = target;
+        if (scannerModalTitle) {
+          scannerModalTitle.textContent =
+            target === "sale" ? "Bip de item para venda" :
+            target === "count" ? "Bip de item para contagem" :
+            "Consulta rapida de item";
+        }
+        scannerModal.hidden = false;
+        scannerStatus.textContent = "Iniciando webcam...";
+        if (!scannerSupported) {
+          scannerStatus.textContent = window.isSecureContext
+            ? "Seu navegador nao oferece suporte suficiente para webcam nesta tela."
+            : "A webcam exige HTTPS ou localhost seguro neste navegador.";
+          return;
+        }
+        try {
+          scannerStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+          scannerVideo.srcObject = scannerStream;
+          scannerStatus.textContent = "Webcam ativa. Aponte para o codigo.";
+          if ("BarcodeDetector" in window) {
+            const detector = new BarcodeDetector({ formats: ["ean_13", "ean_8", "code_128", "qr_code", "upc_a", "upc_e"] });
+            scannerTimer = setInterval(async () => {
+              try {
+                const barcodes = await detector.detect(scannerVideo);
+                if (barcodes.length) {
+                  const value = barcodes[0].rawValue;
+                  stopScanner();
+                  await applyLookupResult(currentScanTarget, value);
+                }
+              } catch {}
+            }, 600);
+          } else {
+            scannerStatus.textContent = "Digite o codigo manualmente. Seu navegador nao suporta leitura automatica nativa.";
+          }
+        } catch (error) {
+          scannerStatus.textContent = "Nao foi possivel acessar a webcam.";
+        }
+      }
+
+      function stopScanner() {
+        if (scannerTimer) {
+          clearInterval(scannerTimer);
+          scannerTimer = null;
+        }
+        if (scannerStream) {
+          scannerStream.getTracks().forEach((track) => track.stop());
+          scannerStream = null;
+        }
+        if (scannerVideo) {
+          scannerVideo.srcObject = null;
+        }
+        if (scannerModal) {
+          scannerModal.hidden = true;
+        }
+      }
+
+      function refreshPurchaseTypeVisibility() {
+        const activeType = (purchaseItemType && purchaseItemType.value) || (purchaseType && purchaseType.value) || "restock";
+        const isFree = activeType === "free";
+        if (purchaseProductSelect) purchaseProductSelect.disabled = isFree;
+        if (purchaseCategorySelect) purchaseCategorySelect.disabled = isFree;
+        if (purchaseProductSku) purchaseProductSku.disabled = isFree;
+        if (purchaseProductName) purchaseProductName.disabled = isFree;
+        if (purchaseFreeItemName) purchaseFreeItemName.disabled = !isFree;
+      }
+
+      function refreshPurchaseItems() {
+        if (!purchaseItemsList || !purchaseItemsJson) return;
+        purchaseItemsJson.value = JSON.stringify(purchaseItems);
+        purchaseItemsList.innerHTML = "";
+        purchaseItemsList.classList.toggle("empty-list", purchaseItems.length === 0);
+        if (!purchaseItems.length) {
+          purchaseItemsList.innerHTML = '<div class="item-row"><strong>Nenhum item adicionado.</strong><span>Monte a compra pela tela.</span></div>';
+          return;
+        }
+        purchaseItems.forEach((item, index) => {
+          const row = document.createElement("div");
+          row.className = "item-row";
+          row.innerHTML = `
+            <div>
+              <strong>${item.item_type === "free" ? item.free_item_name : (item.name || item.new_product_name || item.sku)}</strong>
+              <span>${item.item_type === "free" ? "Livre" : "Reposicao"} • Qtd ${item.quantity} • Compra R$ ${Number(item.unit_cost || 0).toFixed(2)} • Venda R$ ${Number(item.sale_price || 0).toFixed(2)}</span>
+            </div>
+            <button type="button" data-remove-purchase-item="${index}">Remover</button>
+          `;
+          purchaseItemsList.appendChild(row);
+        });
+        purchaseItemsList.querySelectorAll("[data-remove-purchase-item]").forEach((button) => {
+          button.addEventListener("click", () => {
+            purchaseItems.splice(Number(button.dataset.removePurchaseItem), 1);
+            refreshPurchaseItems();
+          });
+        });
+      }
+
+      function refreshCountItems() {
+        if (!countItemsList || !countItemsJson) return;
+        countItemsJson.value = JSON.stringify(countItems);
+        countItemsList.innerHTML = "";
+        countItemsList.classList.toggle("empty-list", countItems.length === 0);
+        if (!countItems.length) {
+          countItemsList.innerHTML = '<div class="item-row"><strong>Nenhum item adicionado.</strong><span>Selecione produto, lote e quantidade contada.</span></div>';
+          return;
+        }
+        countItems.forEach((item, index) => {
+          const row = document.createElement("div");
+          row.className = "item-row";
+          row.innerHTML = `
+            <div>
+              <strong>${item.product_name}</strong>
+              <span>Lote ${item.lot_code} • Contado ${item.counted_quantity}</span>
+            </div>
+            <button type="button" data-remove-count-item="${index}">Remover</button>
+          `;
+          countItemsList.appendChild(row);
+        });
+        countItemsList.querySelectorAll("[data-remove-count-item]").forEach((button) => {
+          button.addEventListener("click", () => {
+            countItems.splice(Number(button.dataset.removeCountItem), 1);
+            refreshCountItems();
+          });
+        });
+      }
+
+      function addCurrentSaleDraft() {
+        const option = saleProductSelect && saleProductSelect.selectedOptions ? saleProductSelect.selectedOptions[0] : null;
+        if (!option || !option.value) return false;
+        const quantity = Number((saleProductQuantity && saleProductQuantity.value) || 0);
+        const unitPrice = Number((saleProductPrice && saleProductPrice.value) || 0);
+        const discountAmount = Number((saleProductDiscount && saleProductDiscount.value) || 0);
+        if (quantity <= 0) return false;
+        saleItems.push({
+          product_id: Number(option.value),
+          sku: option.dataset.sku,
+          name: option.dataset.name,
+          quantity: String(quantity),
+          unit_price: String(unitPrice),
+          discount_amount: String(discountAmount),
+        });
+        saleProductSelect.value = "";
+        saleProductQuantity.value = "";
+        saleProductPrice.value = "";
+        saleProductDiscount.value = "";
+        refreshSaleItems();
+        return true;
+      }
+
+      function addCurrentPurchaseDraft() {
+        const itemType = (purchaseItemType && purchaseItemType.value) || (purchaseType && purchaseType.value) || "restock";
+        const quantity = Number((purchaseQuantity && purchaseQuantity.value) || 0);
+        const unitCost = Number((purchaseUnitCost && purchaseUnitCost.value) || 0);
+        const salePrice = Number((purchaseSalePrice && purchaseSalePrice.value) || 0);
+        if (quantity <= 0) return false;
+
+        if (itemType === "restock") {
+          const option = purchaseProductSelect && purchaseProductSelect.selectedOptions ? purchaseProductSelect.selectedOptions[0] : null;
+          if (option && option.value) {
+            purchaseItems.push({
+              item_type: "restock",
+              product_id: Number(option.value),
+              sku: option.dataset.sku,
+              name: option.dataset.name,
+              quantity: String(quantity),
+              unit_cost: String(unitCost),
+              sale_price: String(salePrice),
+              lot_code: (purchaseLotCode && purchaseLotCode.value) || "",
+              expiration_date: (purchaseExpirationDate && purchaseExpirationDate.value) || "",
+              location: (purchaseLocation && purchaseLocation.value) || "",
+            });
+          } else {
+            if (!(purchaseProductSku && purchaseProductSku.value) || !(purchaseProductName && purchaseProductName.value)) return false;
+            purchaseItems.push({
+              item_type: "restock",
+              new_product_sku: purchaseProductSku.value,
+              new_product_name: purchaseProductName.value,
+              category_id: (purchaseCategorySelect && purchaseCategorySelect.value) || "",
+              quantity: String(quantity),
+              unit_cost: String(unitCost),
+              sale_price: String(salePrice),
+              lot_code: (purchaseLotCode && purchaseLotCode.value) || "",
+              expiration_date: (purchaseExpirationDate && purchaseExpirationDate.value) || "",
+              location: (purchaseLocation && purchaseLocation.value) || "",
+            });
+          }
+        } else {
+          if (!(purchaseFreeItemName && purchaseFreeItemName.value)) return false;
+          purchaseItems.push({
+            item_type: "free",
+            free_item_name: purchaseFreeItemName.value,
+            quantity: String(quantity),
+            unit_cost: String(unitCost),
+            sale_price: String(salePrice),
+            lot_code: (purchaseLotCode && purchaseLotCode.value) || "",
+            expiration_date: (purchaseExpirationDate && purchaseExpirationDate.value) || "",
+            location: (purchaseLocation && purchaseLocation.value) || "",
+          });
+        }
+
+        [purchaseFreeItemName, purchaseProductSku, purchaseProductName, purchaseQuantity, purchaseUnitCost, purchaseSalePrice, purchaseLocation, purchaseLotCode, purchaseExpirationDate].forEach((field) => {
+          if (field) field.value = "";
+        });
+        if (purchaseProductSelect) purchaseProductSelect.value = "";
+        if (purchaseCategorySelect) purchaseCategorySelect.value = "";
+        refreshPurchaseItems();
+        return true;
+      }
+
+      function refreshSaleItems() {
+        if (!saleItemsList || !saleItemsJson) return;
+        saleItemsJson.value = JSON.stringify(saleItems);
+        saleItemsList.innerHTML = "";
+        saleItemsList.classList.toggle("empty-list", saleItems.length === 0);
+        if (!saleItems.length) {
+          saleItemsList.innerHTML = '<div class="item-row"><strong>Nenhum produto adicionado.</strong><span>Selecione um produto para montar a venda.</span></div>';
+          return;
+        }
+        saleItems.forEach((item, index) => {
+          const row = document.createElement("div");
+          row.className = "item-row";
+          row.innerHTML = `
+            <div>
+              <strong>${item.name} (${item.sku})</strong>
+              <span>Qtd ${item.quantity} • Unit R$ ${Number(item.unit_price).toFixed(2)} • Desc R$ ${Number(item.discount_amount || 0).toFixed(2)}</span>
+            </div>
+            <button type="button" data-remove-sale-item="${index}">Remover</button>
+          `;
+          saleItemsList.appendChild(row);
+        });
+        saleItemsList.querySelectorAll("[data-remove-sale-item]").forEach((button) => {
+          button.addEventListener("click", () => {
+            saleItems.splice(Number(button.dataset.removeSaleItem), 1);
+            refreshSaleItems();
+          });
+        });
+      }
+
+      if (saleProductSelect) {
+        saleProductSelect.addEventListener("change", function () {
+          const option = saleProductSelect.selectedOptions[0];
+          if (!option || !option.value) return;
+          saleProductPrice.value = option.dataset.price || "";
+        });
+      }
+
+      if (addSaleItemBtn) {
+        addSaleItemBtn.addEventListener("click", function () {
+          const selected = saleProductSelect && saleProductSelect.selectedOptions ? saleProductSelect.selectedOptions[0] : null;
+          if (!selected || !selected.value) {
+            alert("Selecione um produto.");
+            return;
+          }
+          if (!(Number(saleProductQuantity.value || 0) > 0)) {
+            alert("Informe uma quantidade valida.");
+            return;
+          }
+          addCurrentSaleDraft();
+        });
+      }
+
+      refreshSaleItems();
+      hydrateSaleProducts().catch((error) => console.error(error));
+
+      if (purchaseType) {
+        purchaseType.addEventListener("change", function () {
+          if (purchaseItemType) {
+            purchaseItemType.value = purchaseType.value;
+          }
+          refreshPurchaseTypeVisibility();
+        });
+      }
+
+      if (purchaseItemType) {
+        purchaseItemType.addEventListener("change", refreshPurchaseTypeVisibility);
+      }
+
+      if (purchaseProductSelect) {
+        purchaseProductSelect.addEventListener("change", function () {
+          const option = purchaseProductSelect.selectedOptions[0];
+          if (!option || !option.value) return;
+          purchaseUnitCost.value = option.dataset.cost || "";
+          purchaseSalePrice.value = option.dataset.price || "";
+        });
+      }
+
+      if (countProductSelect) {
+        countProductSelect.addEventListener("change", async function () {
+          const option = countProductSelect.selectedOptions[0];
+          if (!option || !option.value) {
+            populateCountLots([]);
+            return;
+          }
+          try {
+            const data = await lookupProductByCode(option.dataset.sku || option.textContent);
+            populateCountLots(data.lots || []);
+          } catch (error) {
+            console.error(error);
+            populateCountLots([]);
+          }
+        });
+      }
+
+      if (addPurchaseItemBtn) {
+        addPurchaseItemBtn.addEventListener("click", function () {
+          const itemType = (purchaseItemType && purchaseItemType.value) || (purchaseType && purchaseType.value) || "restock";
+          if (!(Number((purchaseQuantity && purchaseQuantity.value) || 0) > 0)) {
+            alert("Informe uma quantidade valida para a compra.");
+            return;
+          }
+          const selected = purchaseProductSelect && purchaseProductSelect.selectedOptions ? purchaseProductSelect.selectedOptions[0] : null;
+          if (itemType === "restock") {
+            if ((!selected || !selected.value) && (!(purchaseProductSku && purchaseProductSku.value) || !(purchaseProductName && purchaseProductName.value))) {
+              alert("Selecione um produto do banco ou informe SKU e nome para cadastrar.");
+              return;
+            }
+          } else {
+            if (!(purchaseFreeItemName && purchaseFreeItemName.value)) {
+              alert("Informe o nome do item livre.");
+              return;
+            }
+          }
+          addCurrentPurchaseDraft();
+        });
+      }
+
+      if (addCountItemBtn) {
+        addCountItemBtn.addEventListener("click", function () {
+          const productOption = countProductSelect && countProductSelect.selectedOptions ? countProductSelect.selectedOptions[0] : null;
+          const lotOption = countLotSelect && countLotSelect.selectedOptions ? countLotSelect.selectedOptions[0] : null;
+          const quantity = Number((countQuantity && countQuantity.value) || 0);
+          if (!productOption || !productOption.value) {
+            alert("Selecione um produto para a contagem.");
+            return;
+          }
+          if (!lotOption || !lotOption.value) {
+            alert("Selecione um lote para a contagem.");
+            return;
+          }
+          if (quantity < 0) {
+            alert("Informe uma quantidade contada valida.");
+            return;
+          }
+          countItems.push({
+            lot_id: Number(lotOption.value),
+            counted_quantity: String(quantity),
+            product_name: productOption.textContent.split("•")[0].trim(),
+            lot_code: lotOption.textContent.split("•")[0].trim(),
+          });
+          if (countLotSelect) countLotSelect.value = "";
+          if (countQuantity) countQuantity.value = "";
+          refreshCountItems();
+        });
+      }
+
+      hydrateSelect(
+        purchaseProductSelect,
+        purchaseProductSelect ? purchaseProductSelect.dataset.source : null,
+        "Produto do estoque",
+        (product) => `
+          <option value="${product.id}" data-sku="${product.sku}" data-name="${product.name}" data-cost="${Number(product.cost_price || 0)}" data-price="${Number(product.sale_price || 0)}">
+            ${product.name} (${product.sku}) • custo R$ ${Number(product.cost_price || 0).toFixed(2)} • venda R$ ${Number(product.sale_price || 0).toFixed(2)}
+          </option>
+        `,
+      ).catch((error) => console.error(error));
+
+      hydrateSelect(
+        purchaseCategorySelect,
+        purchaseCategorySelect ? purchaseCategorySelect.dataset.source : null,
+        "Categoria do novo produto",
+        (category) => `<option value="${category.id}">${category.name}</option>`,
+      ).catch((error) => console.error(error));
+
+      hydrateSelect(
+        countProductSelect,
+        countProductSelect ? countProductSelect.dataset.source : null,
+        "Produto",
+        (product) => `<option value="${product.id}" data-sku="${product.sku}">${product.name} (${product.sku})</option>`,
+      ).catch((error) => console.error(error));
+
+      hydrateHttpsTools();
+      updateScannerAvailability();
+      refreshPurchaseTypeVisibility();
+      refreshPurchaseItems();
+      refreshCountItems();
+
+      if (scanSaleProductBtn) {
+        scanSaleProductBtn.addEventListener("click", function () { startScanner("sale"); });
+      }
+      if (scanCountProductBtn) {
+        scanCountProductBtn.addEventListener("click", function () { startScanner("count"); });
+      }
+      if (openItemConsultBtn) {
+        openItemConsultBtn.addEventListener("click", function () {
+          consultModal.hidden = false;
+          consultResult.hidden = true;
+        });
+      }
+      if (closeConsultModalBtn) {
+        closeConsultModalBtn.addEventListener("click", function () {
+          consultModal.hidden = true;
+        });
+      }
+      if (consultModal) {
+        consultModal.addEventListener("click", function (event) {
+          if (event.target === consultModal) {
+            consultModal.hidden = true;
+          }
+        });
+      }
+      if (consultItemBtn) {
+        consultItemBtn.addEventListener("click", async function () {
+          if (!(consultItemCode && consultItemCode.value)) return;
+          try {
+            const data = await lookupProductByCode(consultItemCode.value);
+            renderConsultResult(data);
+          } catch (error) {
+            alert(error.message);
+          }
+        });
+      }
+      if (consultScanBtn) {
+        consultScanBtn.addEventListener("click", function () { startScanner("consult"); });
+      }
+      if (closeScannerModalBtn) {
+        closeScannerModalBtn.addEventListener("click", stopScanner);
+      }
+      if (scannerModal) {
+        scannerModal.addEventListener("click", function (event) {
+          if (event.target === scannerModal) {
+            stopScanner();
+          }
+        });
+      }
+      if (scannerManualSubmitBtn) {
+        scannerManualSubmitBtn.addEventListener("click", async function () {
+          if (!(scannerManualCode && scannerManualCode.value)) return;
+          try {
+            stopScanner();
+            await applyLookupResult(currentScanTarget, scannerManualCode.value);
+            if (currentScanTarget === "consult") {
+              consultModal.hidden = false;
+            }
+          } catch (error) {
+            alert(error.message);
+          }
+        });
+      }
+
+      document.querySelectorAll("form[data-api]").forEach((form) => {
+        form.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          if (form.id === "sale-form" && saleItems.length === 0) {
+            addCurrentSaleDraft();
+          }
+          if (form.id === "purchase-form" && purchaseItems.length === 0) {
+            addCurrentPurchaseDraft();
+          }
+          if (form.id === "count-form" && countItems.length === 0 && countProductSelect && countProductSelect.value && countLotSelect && countLotSelect.value) {
+            if (addCountItemBtn) addCountItemBtn.click();
+          }
+          const payload = formToObject(form);
+          if (payload.items_json) {
+            payload.items = JSON.parse(payload.items_json);
+            delete payload.items_json;
+          }
+          try {
+            await postJson(form.dataset.api, payload, form.dataset.method || "POST");
+            window.location.reload();
+          } catch (error) {
+            alert(error.message);
+          }
+        });
+      });
+
+      document.getElementById("settings-form").addEventListener("submit", async (event) => {
+        event.preventDefault();
+        try {
+          await postJson("/api/settings", { settings: formToObject(event.currentTarget) });
+          window.location.reload();
+        } catch (error) {
+          alert(error.message);
+        }
+      });
+
+      document.querySelectorAll("[data-report-filter]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const group = button.dataset.filterGroup;
+          const filter = button.dataset.reportFilter;
+          document.querySelectorAll(`[data-filter-group="${group}"]`).forEach((chip) => chip.classList.remove("active"));
+          button.classList.add("active");
+
+          if (group === "payments") {
+            document.querySelectorAll("[data-payment-method]").forEach((row) => {
+              const method = row.dataset.paymentMethod || "";
+              const matchesCard = ["credit_card", "debit_card", "card_machine"].includes(method);
+              const show =
+                filter === "all" ||
+                method === filter ||
+                (filter === "card" && matchesCard);
+              row.hidden = !show;
+            });
+          }
+
+          if (group === "financial") {
+            document.querySelectorAll("[data-financial-status]").forEach((row) => {
+              const status = row.dataset.financialStatus || "";
+              const show =
+                filter === "all" ||
+                (filter === "paid" && status === "paid") ||
+                (filter === "open" && status !== "paid");
+              row.hidden = !show;
+            });
+          }
+        });
+      });
+    </script>
+  </body>
+</html>

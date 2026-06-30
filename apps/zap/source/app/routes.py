@@ -1,0 +1,1466 @@
+import mimetypes
+from pathlib import Path
+from urllib.parse import urlparse
+
+from datetime import datetime, timedelta, timezone
+
+from flask import Blueprint, abort, current_app, flash, jsonify, redirect, render_template, request, send_from_directory, url_for
+from flask_login import current_user, login_required, login_user, logout_user
+from werkzeug.security import check_password_hash, generate_password_hash
+from werkzeug.utils import secure_filename
+
+from .database_backup import build_backup_database_url, copy_database_contents
+from .extensions import db
+from .models import Conversation, Department, Label, Message, QuickReply, ReminderLog, Setting, Ticket, User, WorkflowState
+from .services import (
+    iso_now,
+    make_google_auth_url,
+    mark_whatsapp_message_read,
+    preview_sheet_rows,
+    normalize_whatsapp_phone_number,
+    send_whatsapp_contact,
+    send_whatsapp_interactive,
+    send_whatsapp_location,
+    send_whatsapp_media,
+    send_whatsapp_template,
+    send_whatsapp_text,
+    download_whatsapp_media,
+    sync_tickets_to_sheet,
+    whatsapp_phone_variants,
+)
+
+
+bp = Blueprint("main", __name__)
+
+
+def _login_payload():
+    return {
+        "id": current_user.id,
+        "name": current_user.name,
+        "email": current_user.email,
+        "role": current_user.role,
+        "department_id": current_user.department_id,
+        "department_name": current_user.department.name if current_user.department else "",
+    }
+
+
+def _settings_map():
+    return {row.key: row.value for row in Setting.query.all()}
+
+
+def _upsert_setting(key, value):
+    row = Setting.query.filter_by(key=key).first() or Setting(key=key, value="")
+    row.value = "" if value is None else str(value).strip()
+    db.session.add(row)
+    return row
+
+
+def _runtime_setting(key, default="", settings_map=None):
+    settings_map = settings_map or _settings_map()
+    raw_value = settings_map.get(key, "")
+    value = str(raw_value).strip() if raw_value is not None else ""
+    if value:
+        return value
+    if default is None:
+        return ""
+    return str(default).strip()
+
+
+def _whatsapp_runtime_settings(settings_map=None):
+    settings_map = settings_map or _settings_map()
+    return {
+        "token": _runtime_setting("WHATSAPP_TOKEN", current_app.config.get("WHATSAPP_TOKEN", ""), settings_map),
+        "phone_number_id": _runtime_setting(
+            "WHATSAPP_PHONE_NUMBER_ID",
+            current_app.config.get("WHATSAPP_PHONE_NUMBER_ID", ""),
+            settings_map,
+        ),
+        "verify_token": _runtime_setting("WHATSAPP_VERIFY_TOKEN", current_app.config.get("WHATSAPP_VERIFY_TOKEN", ""), settings_map),
+        "api_version": _runtime_setting("WHATSAPP_API_VERSION", current_app.config.get("WHATSAPP_API_VERSION", "v20.0"), settings_map),
+    }
+
+
+def _public_base_url(settings_map=None):
+    base_url = _runtime_setting("PUBLIC_BASE_URL", current_app.config.get("PUBLIC_BASE_URL", ""), settings_map).rstrip("/")
+    return base_url
+
+
+def _whatsapp_webhook_url():
+    return url_for("main.whatsapp_webhook", _external=True)
+
+
+def _normalized_phone(value):
+    return normalize_whatsapp_phone_number(value)
+
+
+def _utc_iso(dt):
+    if not dt:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    else:
+        dt = dt.astimezone(timezone.utc)
+    return dt.isoformat().replace("+00:00", "Z")
+
+
+def _playable_media_type(filename: str = "", mime_type: str = ""):
+    mime_type = (mime_type or "").lower()
+    filename = (filename or "").lower()
+    if mime_type.startswith("image/") or filename.endswith((".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg")):
+        return "image"
+    if mime_type.startswith("video/") or filename.endswith((".mp4", ".webm", ".mov", ".mkv")):
+        return "video"
+    if mime_type.startswith("audio/") or filename.endswith((".mp3", ".wav", ".ogg", ".m4a", ".aac")):
+        return "audio"
+    return "document"
+
+
+def _uploaded_file_path_from_url(media_url: str):
+    if not media_url:
+        return None
+    parsed = urlparse(media_url)
+    path = parsed.path if parsed.scheme else media_url
+    if not path.startswith("/uploads/"):
+        return None
+    filename = Path(path).name
+    return Path(current_app.instance_path) / "uploads" / filename
+
+
+def _save_whatsapp_media(message_id: str, download_result: dict):
+    upload_dir = Path(current_app.instance_path) / "uploads"
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    filename = download_result.get("filename") or f"whatsapp_{message_id}"
+    safe_name = secure_filename(filename) or f"whatsapp_{message_id}"
+    mime_type = (download_result.get("mime_type") or "").lower()
+    if not Path(safe_name).suffix:
+        extension = mimetypes.guess_extension(mime_type) or ""
+        if mime_type == "image/jpeg":
+            extension = ".jpg"
+        elif mime_type == "image/webp":
+            extension = ".webp"
+        elif mime_type == "audio/ogg":
+            extension = ".ogg"
+        elif mime_type == "application/pdf":
+            extension = ".pdf"
+        elif mime_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+            extension = ".docx"
+        elif mime_type == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
+            extension = ".xlsx"
+        elif mime_type == "application/vnd.openxmlformats-officedocument.presentationml.presentation":
+            extension = ".pptx"
+        if extension:
+            safe_name = f"{safe_name}{extension}"
+    final_name = f"{message_id}_{safe_name}"
+    file_path = upload_dir / final_name
+    content = download_result.get("content") or b""
+    file_path.write_bytes(content)
+    return url_for("main.uploaded_file", filename=final_name)
+
+
+def _public_uploaded_file_url(filename: str):
+    filename = secure_filename(filename or "")
+    if not filename:
+        return ""
+    path = url_for("main.public_uploaded_file", filename=filename)
+    base_url = _public_base_url()
+    if base_url:
+        return f"{base_url}{path}"
+    return url_for("main.public_uploaded_file", filename=filename, _external=True)
+
+
+def _sender_label():
+    user_name = (current_user.name or "usuario").strip()
+    parts = [f"[{user_name}]"]
+    department_name = (current_user.department.name if current_user.department else "").strip()
+    if department_name:
+        parts.append(f"[{department_name.lower()}]")
+    return " ".join(parts)
+
+
+def _sender_department_name():
+    return (current_user.department.name if current_user.department else "").strip()
+
+
+def _outgoing_message_body(value):
+    body = (value or "").strip()
+    if not body:
+        return ""
+    return f"{_sender_label()} {body}"
+
+
+def _outgoing_message_content(text: str, media_url: str = ""):
+    text = (text or "").strip()
+    media_url = (media_url or "").strip()
+    if text:
+        return _outgoing_message_body(text)
+    if media_url:
+        return f"{_sender_label()} [anexo]"
+    return ""
+
+
+def _phone_variants(value):
+    return whatsapp_phone_variants(value)
+
+
+def _recipient_phone_candidates(value):
+    candidates = []
+    seen = set()
+    for candidate in sorted(_phone_variants(value), key=lambda phone: (-len(phone), phone)):
+        if candidate and candidate not in seen:
+            seen.add(candidate)
+            candidates.append(candidate)
+    normalized = _normalized_phone(value)
+    if normalized and normalized not in seen:
+        candidates.insert(0, normalized)
+    return candidates
+
+
+def _send_whatsapp_with_phone_variants(send_callable, phone_value, *args, **kwargs):
+    candidates = _recipient_phone_candidates(phone_value)
+    if not candidates:
+        return {"ok": False, "error": "Telefone de destino obrigatorio.", "data": {}}
+
+    last_result = {"ok": False, "error": "Falha no envio do WhatsApp.", "data": {}}
+    for candidate in candidates:
+        result = send_callable(candidate, *args, **kwargs)
+        current_app.logger.info(
+            "whatsapp_send_attempt phone=%s ok=%s status_code=%s error=%s response=%s",
+            candidate,
+            result.get("ok"),
+            result.get("status_code"),
+            result.get("error", ""),
+            result.get("data", {}),
+        )
+        if result.get("ok"):
+            result.setdefault("recipient", candidate)
+            return result
+        last_result = result
+    last_result["attempted"] = candidates
+    return last_result
+
+
+def _find_ticket_by_phone(value):
+    variants = list(_phone_variants(value))
+    if not variants:
+        return None
+    conversation = Conversation.query.filter(Conversation.wa_chat_id.in_(variants)).order_by(Conversation.updated_at.desc(), Conversation.id.desc()).first()
+    if conversation:
+        return conversation.ticket
+    return Ticket.query.filter(Ticket.client_phone.in_(variants)).order_by(Ticket.updated_at.desc(), Ticket.id.desc()).first()
+
+
+def _ticket_unread_count(ticket):
+    conversation = ticket.conversation
+    if not conversation:
+        return 0
+    stored = int(conversation.unread_incoming_count or 0)
+    query_count = conversation.messages.filter(Message.direction == "incoming", Message.read_at.is_(None)).count()
+    return max(stored, query_count)
+
+
+def _mark_ticket_conversation_read(ticket):
+    conversation = ticket.conversation
+    if not conversation:
+        return 0
+    unread_messages = conversation.messages.filter(Message.direction == "incoming", Message.read_at.is_(None)).order_by(Message.created_at.asc()).all()
+    if not unread_messages:
+        return 0
+    whatsapp = _whatsapp_runtime_settings()
+    token = whatsapp["token"]
+    version = whatsapp["api_version"]
+    phone_number_id = whatsapp["phone_number_id"]
+    marked = 0
+    now = datetime.utcnow()
+    for message in unread_messages:
+        if token and phone_number_id and message.external_id:
+            result = mark_whatsapp_message_read(token, version, phone_number_id, message.external_id)
+            if not result.get("ok"):
+                current_app.logger.warning(
+                    "Failed to mark WhatsApp message as read for ticket=%s message=%s error=%s",
+                    ticket.id,
+                    message.external_id,
+                    result.get("error", "unknown"),
+                )
+        message.read_at = now
+        marked += 1
+    conversation.unread_incoming_count = 0
+    db.session.flush()
+    return marked
+
+
+def _setting_bool(settings_map, key, default=False):
+    raw = str(settings_map.get(key, "")).strip().lower()
+    if not raw:
+        return default
+    return raw in {"1", "true", "yes", "on", "sim"}
+
+
+def _parse_datetime_local(value):
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def _parse_label_ids(payload):
+    raw = payload.get("label_ids", [])
+    if isinstance(raw, str):
+        raw = [raw]
+    return [int(label_id) for label_id in raw if str(label_id).strip().isdigit()]
+
+
+def _default_state():
+    return WorkflowState.query.filter_by(is_default=True).first() or WorkflowState.query.order_by(WorkflowState.order_index.asc(), WorkflowState.id.asc()).first()
+
+
+def _default_department():
+    return Department.query.filter_by(is_default=True, is_active=True).first() or Department.query.filter_by(is_active=True).order_by(Department.id.asc()).first() or Department.query.order_by(Department.id.asc()).first()
+
+
+def _resolve_department(value):
+    raw = ("" if value is None else str(value)).strip()
+    if not raw:
+        return None
+    if raw.isdigit():
+        department = db.session.get(Department, int(raw))
+        if department and department.is_active:
+            return department
+        return None
+    normalized = raw.lower()
+    department = Department.query.filter(db.func.lower(Department.name) == normalized).first()
+    if department and department.is_active:
+        return department
+    return None
+
+
+def _ticket_department_id(payload):
+    raw = payload.get("department_id")
+    department = _resolve_department(raw)
+    if department:
+        return department.id
+    if getattr(current_user, "department_id", None):
+        return current_user.department_id
+    department = _default_department()
+    return department.id if department else None
+
+
+def _visible_ticket(ticket, cutoff):
+    if not ticket.status or not ticket.status.is_closed:
+        return True
+    closed_moment = ticket.closed_at or ticket.updated_at or ticket.created_at
+    return closed_moment >= cutoff
+
+
+def _integration_status(settings_map=None):
+    settings_map = settings_map or _settings_map()
+    database_uri = current_app.config.get("SQLALCHEMY_DATABASE_URI", "")
+    backend = (database_uri.split(":", 1)[0] if ":" in database_uri else database_uri).split("+", 1)[0]
+    database_is_sqlite = backend.startswith("sqlite")
+    whatsapp = _whatsapp_runtime_settings(settings_map)
+    backup_database_url = build_backup_database_url(settings_map, fallback_url=current_app.config.get("BACKUP_DATABASE_URL", ""))
+    whatsapp_ready = bool(whatsapp["token"] and whatsapp["phone_number_id"])
+    google_ready = bool(settings_map.get("GOOGLE_SERVICE_ACCOUNT_JSON") and settings_map.get("GOOGLE_SHEETS_SPREADSHEET_ID"))
+    reminders_ready = _setting_bool(settings_map, "REMINDER_SEND_WHATSAPP", True) and bool(settings_map.get("REMINDER_MINUTES"))
+    departments = Department.query.filter_by(is_active=True).count()
+    users = User.query.count()
+    return [
+        {
+            "name": "Banco de dados",
+            "status": "ok" if backend else "warn",
+            "detail": "SQLite local - dados podem sumir no redeploy" if database_is_sqlite else (backend or "Nao configurado"),
+        },
+        {
+            "name": "WhatsApp Cloud API",
+            "status": "ok" if whatsapp_ready else "warn",
+            "detail": "Credenciais definidas" if whatsapp_ready else "Faltam token ou phone number id",
+        },
+        {
+            "name": "Webhook WhatsApp",
+            "status": "ok" if whatsapp["verify_token"] else "warn",
+            "detail": "Verify token definido" if whatsapp["verify_token"] else "Defina WHATSAPP_VERIFY_TOKEN",
+        },
+        {
+            "name": "Backup AlwaysData",
+            "status": "ok" if backup_database_url else "warn",
+            "detail": "Backup manual configurado" if backup_database_url else "Defina BACKUP_DATABASE_URL",
+        },
+        {
+            "name": "Google Sheets",
+            "status": "ok" if google_ready else "warn",
+            "detail": "Planilha conectada" if google_ready else "Faltam credenciais ou spreadsheet id",
+        },
+        {
+            "name": "Lembretes",
+            "status": "ok" if reminders_ready else "warn",
+            "detail": f"{settings_map.get('REMINDER_MINUTES', '120')} minutos" if reminders_ready else "Configurar intervalo de lembrete",
+        },
+        {
+            "name": "Multiusuario",
+            "status": "ok" if users > 1 and departments > 0 else "warn",
+            "detail": f"{users} usuarios e {departments} departamentos",
+        },
+    ]
+
+
+def _ensure_default_admin():
+    if User.query.first():
+        return
+    admin = User(
+        name=current_app.config["BOOTSTRAP_ADMIN_NAME"],
+        email=current_app.config["BOOTSTRAP_ADMIN_EMAIL"],
+        password_hash=generate_password_hash(current_app.config["BOOTSTRAP_ADMIN_PASSWORD"]),
+        role="admin",
+    )
+    db.session.add(admin)
+    db.session.commit()
+
+
+def _require_admin():
+    if current_user.role != "admin":
+        abort(403, "Permissao negada.")
+
+
+def _sync_agenda_sheet_best_effort():
+    settings_map = _settings_map()
+    if not _setting_bool(settings_map, "GOOGLE_SHEETS_SYNC_ENABLED", True):
+        return {"ok": False, "skipped": True, "reason": "sync_disabled"}
+    spreadsheet_id = settings_map.get("GOOGLE_SHEETS_SPREADSHEET_ID", "")
+    if not spreadsheet_id:
+        return {"ok": False, "skipped": True, "reason": "spreadsheet_missing"}
+    try:
+        return sync_tickets_to_sheet(
+            settings_map.get("GOOGLE_SERVICE_ACCOUNT_JSON", ""),
+            spreadsheet_id,
+            settings_map.get("GOOGLE_SHEETS_TAB_NAME", "Agenda"),
+            Ticket.query.order_by(Ticket.due_at.asc().nullslast(), Ticket.created_at.desc()).all(),
+        )
+    except Exception as exc:
+        current_app.logger.warning("Agenda sync failed: %s", exc)
+        return {"ok": False, "error": str(exc)}
+
+
+@bp.route("/")
+@login_required
+def index():
+    states = WorkflowState.query.order_by(WorkflowState.order_index.asc(), WorkflowState.id.asc()).all()
+    labels = Label.query.order_by(Label.name.asc()).all()
+    quick_replies = QuickReply.query.order_by(QuickReply.title.asc()).all()
+    departments = Department.query.filter_by(is_active=True).order_by(Department.name.asc()).all()
+    return render_template(
+        "dashboard.html",
+        title="Dashboard Kanban Nanotech",
+        states=states,
+        labels=labels,
+        departments=departments,
+        quick_replies=quick_replies,
+        user_payload=_login_payload(),
+    )
+
+
+@bp.route("/login", methods=["GET", "POST"])
+def login():
+    _ensure_default_admin()
+    if request.method == "POST":
+        email = request.form.get("email", "").strip().lower()
+        password = request.form.get("password", "")
+        user = User.query.filter(db.func.lower(User.email) == email).first()
+        if not user or not check_password_hash(user.password_hash, password):
+            flash("Credenciais invalidas.", "error")
+            return render_template("login.html")
+        login_user(user)
+        return redirect(url_for("main.index"))
+    return render_template("login.html")
+
+
+@bp.route("/logout")
+@login_required
+def logout():
+    logout_user()
+    return redirect(url_for("main.login"))
+
+
+@bp.route("/settings")
+@login_required
+def settings():
+    settings_map = _settings_map()
+    states = WorkflowState.query.order_by(WorkflowState.order_index.asc(), WorkflowState.id.asc()).all()
+    labels = Label.query.order_by(Label.name.asc()).all()
+    quick_replies = QuickReply.query.order_by(QuickReply.title.asc()).all()
+    settings_rows = Setting.query.order_by(Setting.key.asc()).all()
+    departments = Department.query.order_by(Department.name.asc()).all()
+    backup_database_url = build_backup_database_url(settings_map, fallback_url=current_app.config.get("BACKUP_DATABASE_URL", ""))
+    users = [
+        {
+            "id": user.id,
+            "name": user.name,
+            "email": user.email,
+            "role": user.role,
+            "department_id": user.department_id,
+            "department_name": user.department.name if user.department else "",
+        }
+        for user in User.query.order_by(User.name.asc()).all()
+    ]
+    return render_template(
+        "settings.html",
+        states=states,
+        labels=labels,
+        quick_replies=quick_replies,
+        settings_rows=settings_rows,
+        settings_map=settings_map,
+        backup_database_url=backup_database_url,
+        users=users,
+        departments=departments,
+        integration_status=_integration_status(settings_map),
+        public_base_url=_public_base_url(settings_map),
+        whatsapp_webhook_url=_whatsapp_webhook_url(),
+        is_admin=current_user.role == "admin",
+        user_payload=_login_payload(),
+    )
+
+
+@bp.route("/calendar")
+@bp.route("/agenda")
+@login_required
+def calendar():
+    settings_map = _settings_map()
+    google_client_id = _runtime_setting("GOOGLE_CLIENT_ID", current_app.config.get("GOOGLE_CLIENT_ID", ""), settings_map)
+    google_redirect_uri = _runtime_setting("GOOGLE_REDIRECT_URI", current_app.config.get("GOOGLE_REDIRECT_URI", ""), settings_map)
+    auth_url = (
+        make_google_auth_url(
+            google_client_id,
+            google_redirect_uri,
+            ["https://www.googleapis.com/auth/calendar"],
+            state=str(current_user.id),
+        )
+        if google_client_id and google_redirect_uri
+        else None
+    )
+    preview = {"ok": False, "rows": [], "error": None}
+    if settings_map.get("GOOGLE_SHEETS_SPREADSHEET_ID"):
+        preview = preview_sheet_rows(
+            settings_map.get("GOOGLE_SERVICE_ACCOUNT_JSON", ""),
+            settings_map.get("GOOGLE_SHEETS_SPREADSHEET_ID", ""),
+            settings_map.get("GOOGLE_SHEETS_TAB_NAME", "Agenda"),
+        )
+    return render_template(
+        "calendar.html",
+        auth_url=auth_url,
+        settings_map=settings_map,
+        preview=preview,
+        user_payload=_login_payload(),
+    )
+
+
+@bp.route("/docs")
+@login_required
+def docs():
+    return render_template("docs.html", user_payload=_login_payload())
+
+
+@bp.route("/api/dashboard")
+@login_required
+def api_dashboard():
+    states = WorkflowState.query.order_by(WorkflowState.order_index.asc(), WorkflowState.id.asc()).all()
+    labels = Label.query.order_by(Label.name.asc()).all()
+    departments = Department.query.filter_by(is_active=True).order_by(Department.name.asc()).all()
+    tickets = Ticket.query.order_by(Ticket.created_at.desc()).all()
+    archive_cutoff = datetime.utcnow() - timedelta(days=current_app.config.get("TICKET_ARCHIVE_DAYS", 2))
+    tickets = [ticket for ticket in tickets if _visible_ticket(ticket, archive_cutoff)]
+    return jsonify(
+        {
+            "states": [
+                {"id": state.id, "name": state.name, "color": state.color, "is_closed": state.is_closed, "is_default": state.is_default}
+                for state in states
+            ],
+            "labels": [{"id": label.id, "name": label.name, "color": label.color} for label in labels],
+            "departments": [
+                {"id": department.id, "name": department.name, "color": department.color, "is_default": department.is_default}
+                for department in departments
+            ],
+            "tickets": [
+                {
+                    "id": ticket.id,
+                    "title": ticket.title,
+                    "client_name": ticket.client_name,
+                    "client_phone": ticket.client_phone,
+                    "unread_count": _ticket_unread_count(ticket),
+                    "company": ticket.company,
+                    "service": ticket.service,
+                    "description": ticket.description,
+                    "due_at": ticket.due_at.isoformat() if ticket.due_at else "",
+                    "closed_at": _utc_iso(ticket.closed_at),
+                    "status_id": ticket.status_id,
+                    "status_name": ticket.status.name if ticket.status else "",
+                    "status_color": ticket.status.color if ticket.status else "#4f46e5",
+                    "department_id": ticket.department_id,
+                    "department_name": ticket.department.name if ticket.department else "",
+                    "labels": [{"id": label.id, "name": label.name, "color": label.color} for label in ticket.labels],
+                    "assigned_to": ticket.assigned_to.name if ticket.assigned_to else "",
+                    "created_at": _utc_iso(ticket.created_at),
+                }
+                for ticket in tickets
+            ],
+            "user": _login_payload(),
+            "archive_days": current_app.config.get("TICKET_ARCHIVE_DAYS", 2),
+        }
+    )
+
+
+@bp.route("/api/integrations/status")
+@login_required
+def api_integration_status():
+    return jsonify({"ok": True, "items": _integration_status()})
+
+
+@bp.route("/api/tickets", methods=["POST"])
+@login_required
+def api_create_ticket():
+    payload = request.get_json(force=True)
+    state = _default_state()
+    if not state:
+        abort(400, "Nenhum estado disponivel.")
+    client_name = (payload.get("client_name") or "").strip()
+    client_phone = _normalized_phone(payload.get("client_phone") or "")
+    if not client_name or not client_phone:
+        abort(400, "Cliente e telefone sao obrigatorios.")
+    existing_ticket = _find_ticket_by_phone(client_phone)
+    if existing_ticket:
+        if not existing_ticket.conversation:
+            conversation = Conversation(
+                ticket_id=existing_ticket.id,
+                wa_chat_id=_normalized_phone(payload.get("wa_chat_id") or client_phone),
+                contact_name=client_name or existing_ticket.client_name,
+                last_message_at=datetime.utcnow(),
+            )
+            db.session.add(conversation)
+        db.session.commit()
+        _sync_agenda_sheet_best_effort()
+        return jsonify({"ok": True, "ticket_id": existing_ticket.id, "merged": True})
+    ticket = Ticket(
+        title=(payload.get("title") or "Novo atendimento").strip(),
+        client_name=client_name,
+        client_phone=client_phone,
+        company=(payload.get("company") or "").strip(),
+        service=(payload.get("service") or "").strip(),
+        description=(payload.get("description") or "").strip(),
+        status_id=state.id,
+        assigned_to_id=current_user.id,
+        department_id=_ticket_department_id(payload),
+        due_at=_parse_datetime_local(payload.get("due_at")),
+        closed_at=None,
+    )
+    db.session.add(ticket)
+    db.session.flush()
+    conversation = Conversation(
+        ticket_id=ticket.id,
+        wa_chat_id=_normalized_phone(payload.get("wa_chat_id") or client_phone),
+        contact_name=client_name,
+        last_message_at=datetime.utcnow(),
+    )
+    db.session.add(conversation)
+    label_ids = _parse_label_ids(payload)
+    if label_ids:
+        ticket.labels = [db.session.get(Label, label_id) for label_id in label_ids if db.session.get(Label, label_id)]
+    db.session.commit()
+    _sync_agenda_sheet_best_effort()
+    return jsonify({"ok": True, "ticket_id": ticket.id})
+
+
+@bp.route("/api/tickets/<int:ticket_id>", methods=["PATCH"])
+@login_required
+def api_update_ticket(ticket_id):
+    ticket = db.session.get(Ticket, ticket_id) or abort(404)
+    payload = request.get_json(force=True)
+    for field in ["title", "client_name", "client_phone", "company", "service", "description"]:
+        if field in payload:
+            value = (payload.get(field) or "").strip()
+            if field == "client_phone":
+                value = _normalized_phone(value)
+            setattr(ticket, field, value)
+    if "due_at" in payload:
+        ticket.due_at = _parse_datetime_local(payload.get("due_at"))
+    if "status_id" in payload:
+        state = db.session.get(WorkflowState, payload["status_id"])
+        if state:
+            ticket.status_id = state.id
+            ticket.closed_at = datetime.utcnow() if state.is_closed else None
+    if "assigned_to_id" in payload:
+        ticket.assigned_to_id = payload["assigned_to_id"] or None
+    if "department_id" in payload:
+        ticket.department_id = _ticket_department_id(payload) if payload.get("department_id") else None
+    if "label_ids" in payload:
+        label_ids = _parse_label_ids(payload)
+        ticket.labels = [db.session.get(Label, label_id) for label_id in label_ids if db.session.get(Label, label_id)]
+    db.session.commit()
+    _sync_agenda_sheet_best_effort()
+    return jsonify({"ok": True})
+
+
+@bp.route("/api/tickets/<int:ticket_id>", methods=["DELETE"])
+@login_required
+def api_delete_ticket(ticket_id):
+    ticket = db.session.get(Ticket, ticket_id) or abort(404)
+    conversation = ticket.conversation
+    if conversation:
+        Message.query.filter_by(conversation_id=conversation.id).delete(synchronize_session=False)
+        db.session.delete(conversation)
+    ReminderLog.query.filter_by(ticket_id=ticket.id).delete(synchronize_session=False)
+    ticket.labels = []
+    db.session.delete(ticket)
+    db.session.commit()
+    return jsonify({"ok": True})
+
+
+@bp.route("/api/tickets/<int:ticket_id>", methods=["GET"])
+@login_required
+def api_get_ticket(ticket_id):
+    ticket = db.session.get(Ticket, ticket_id) or abort(404)
+    conversation = ticket.conversation
+    return jsonify(
+        {
+            "ok": True,
+            "ticket": {
+                "id": ticket.id,
+                "title": ticket.title,
+                "client_name": ticket.client_name,
+                "client_phone": ticket.client_phone,
+                "unread_count": _ticket_unread_count(ticket),
+                "company": ticket.company,
+                "service": ticket.service,
+                "description": ticket.description,
+                "due_at": ticket.due_at.isoformat() if ticket.due_at else "",
+                "closed_at": _utc_iso(ticket.closed_at),
+                "status_id": ticket.status_id,
+                "assigned_to_id": ticket.assigned_to_id,
+                "department_id": ticket.department_id,
+                "labels": [{"id": label.id, "name": label.name, "color": label.color} for label in ticket.labels],
+            },
+            "department": {
+                "id": ticket.department.id if ticket.department else None,
+                "name": ticket.department.name if ticket.department else "",
+                "color": ticket.department.color if ticket.department else "#38bdf8",
+            },
+            "conversation": {
+                "id": conversation.id if conversation else None,
+                "contact_name": conversation.contact_name if conversation else "",
+                "last_message_at": _utc_iso(conversation.last_message_at) if conversation else None,
+                "messages": [
+                {
+                    "id": message.id,
+                    "direction": message.direction,
+                    "sender_name": message.sender_name,
+                    "sender_department": message.sender_department,
+                    "content": message.content,
+                    "media_url": message.media_url,
+                    "created_at": _utc_iso(message.created_at),
+                }
+                    for message in (conversation.messages.order_by(Message.created_at.asc()).all() if conversation else [])
+                ],
+            },
+            "departments": [
+                {"id": department.id, "name": department.name, "color": department.color, "is_default": department.is_default}
+                for department in Department.query.filter_by(is_active=True).order_by(Department.name.asc()).all()
+            ],
+        }
+    )
+
+
+@bp.route("/api/tickets/<int:ticket_id>/read", methods=["POST"])
+@login_required
+def api_ticket_read(ticket_id):
+    ticket = db.session.get(Ticket, ticket_id) or abort(404)
+    marked = _mark_ticket_conversation_read(ticket)
+    db.session.commit()
+    return jsonify({"ok": True, "marked": marked, "unread_count": _ticket_unread_count(ticket)})
+
+
+@bp.route("/api/tickets/<int:ticket_id>/labels", methods=["POST"])
+@login_required
+def api_ticket_labels(ticket_id):
+    ticket = db.session.get(Ticket, ticket_id) or abort(404)
+    payload = request.get_json(force=True)
+    label_ids = _parse_label_ids(payload)
+    ticket.labels = [db.session.get(Label, label_id) for label_id in label_ids if db.session.get(Label, label_id)]
+    db.session.commit()
+    return jsonify({"ok": True})
+
+
+@bp.route("/api/messages", methods=["POST"])
+@login_required
+def api_add_message():
+    payload = request.get_json(force=True)
+    conversation = db.session.get(Conversation, payload.get("conversation_id")) or abort(404)
+    direction = (payload.get("direction", "outgoing") or "outgoing").strip().lower()
+    content = (payload.get("content", "") or "").strip()
+    media_url = (payload.get("media_url", "") or "").strip()
+    if direction == "outgoing":
+        content = _outgoing_message_content(content, media_url)
+    message = Message(
+        conversation_id=conversation.id,
+        direction=direction,
+        sender_name=(payload.get("sender_name") or current_user.name or "usuario").strip() if direction != "outgoing" else (current_user.name or "usuario").strip(),
+        sender_department=(payload.get("sender_department") or "").strip() if direction != "outgoing" else _sender_department_name(),
+        content=content,
+        media_url=media_url,
+    )
+    if not message.content and not message.media_url:
+        abort(400, "Mensagem vazia.")
+    db.session.add(message)
+    conversation.last_message_at = datetime.utcnow()
+    db.session.commit()
+    return jsonify({"ok": True, "message_id": message.id})
+
+
+@bp.route("/api/tickets/<int:ticket_id>/messages", methods=["POST"])
+@login_required
+def api_ticket_message(ticket_id):
+    ticket = db.session.get(Ticket, ticket_id) or abort(404)
+    conversation = ticket.conversation
+    if not conversation:
+        conversation = Conversation(ticket_id=ticket.id, wa_chat_id=ticket.client_phone or "", contact_name=ticket.client_name, last_message_at=datetime.utcnow())
+        db.session.add(conversation)
+        db.session.flush()
+    payload = request.get_json(force=True)
+    text = (payload.get("content") or "").strip()
+    media_url = (payload.get("media_url") or "").strip()
+    if not text and not media_url:
+        abort(400, "Mensagem vazia.")
+    outgoing_body = _outgoing_message_content(text, media_url)
+    attachment_filename = ""
+    public_media_url = ""
+    if media_url:
+        attachment_filename = Path(urlparse(media_url).path).name or Path(media_url).name
+        public_media_url = _public_uploaded_file_url(attachment_filename) or media_url
+    attachment_path = _uploaded_file_path_from_url(media_url) if media_url else None
+    if attachment_path and attachment_path.exists() and not public_media_url:
+        public_media_url = _public_uploaded_file_url(attachment_path.name)
+
+    message = Message(
+        conversation_id=conversation.id,
+        direction="outgoing",
+        sender_name=(current_user.name or "usuario").strip(),
+        sender_department=_sender_department_name(),
+        content=outgoing_body,
+        media_url=public_media_url or media_url,
+    )
+    db.session.add(message)
+    conversation.last_message_at = datetime.utcnow()
+
+    send_result = {"ok": True, "skipped": True}
+    if ticket.client_phone:
+        body = outgoing_body
+        if public_media_url:
+            body = f"{body}\n{public_media_url}" if body else public_media_url
+        whatsapp = _whatsapp_runtime_settings()
+        send_result = _send_whatsapp_with_phone_variants(
+            lambda to: send_whatsapp_text(
+                whatsapp["token"],
+                whatsapp["api_version"],
+                whatsapp["phone_number_id"],
+                to=to,
+                body=body,
+            ),
+            ticket.client_phone,
+        )
+    elif text or media_url:
+        send_result = {"ok": False, "error": "Telefone do cliente nao cadastrado.", "data": {}}
+    if send_result.get("ok"):
+        messages = send_result.get("data", {}).get("messages", [])
+        if isinstance(messages, list) and messages:
+            message.external_id = messages[0].get("id")
+    db.session.commit()
+    current_app.logger.info(
+        "whatsapp_send ticket_id=%s phone=%s ok=%s status_code=%s error=%s response=%s",
+            ticket.id,
+            ticket.client_phone,
+            send_result.get("ok"),
+            send_result.get("status_code"),
+            send_result.get("error", ""),
+            send_result.get("data", {}),
+        )
+    if not send_result.get("ok"):
+        return jsonify({"ok": False, "error": send_result.get("error", "Falha no envio do WhatsApp."), "message_id": message.id, "whatsapp": send_result}), 502
+    return jsonify({"ok": True, "message_id": message.id, "whatsapp": send_result})
+
+
+@bp.route("/api/uploads", methods=["POST"])
+@login_required
+def api_upload():
+    file = request.files.get("file") or abort(400, "Arquivo nao enviado.")
+    filename = secure_filename(file.filename or "arquivo")
+    if not filename:
+        abort(400, "Nome de arquivo invalido.")
+    upload_dir = Path(current_app.instance_path) / "uploads"
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    file.save(str(upload_dir / filename))
+    public_url = _public_uploaded_file_url(filename)
+    return jsonify({"ok": True, "url": public_url or url_for("main.uploaded_file", filename=filename), "private_url": url_for("main.uploaded_file", filename=filename)})
+
+
+@bp.route("/uploads/<path:filename>")
+@login_required
+def uploaded_file(filename):
+    upload_dir = Path(current_app.instance_path) / "uploads"
+    return send_from_directory(upload_dir, filename)
+
+
+@bp.route("/public/uploads/<path:filename>")
+def public_uploaded_file(filename):
+    upload_dir = Path(current_app.instance_path) / "uploads"
+    return send_from_directory(upload_dir, filename)
+
+
+@bp.route("/api/messages/poll")
+@login_required
+def api_poll_messages():
+    since = request.args.get("since")
+    query = Message.query.order_by(Message.created_at.desc()).limit(20)
+    if since:
+        try:
+            since_dt = datetime.fromisoformat(since.replace("Z", "+00:00"))
+            if since_dt.tzinfo is not None:
+                since_dt = since_dt.astimezone(timezone.utc).replace(tzinfo=None)
+            query = Message.query.filter(Message.created_at > since_dt).order_by(Message.created_at.asc())
+        except ValueError:
+            pass
+    messages = query.all()
+    return jsonify(
+        {
+            "ok": True,
+            "messages": [
+                {
+                    "id": message.id,
+                    "conversation_id": message.conversation_id,
+                    "direction": message.direction,
+                    "sender_name": message.sender_name,
+                    "sender_department": message.sender_department,
+                    "content": message.content,
+                    "media_url": message.media_url,
+                    "created_at": message.created_at.isoformat() + "Z",
+                }
+                for message in messages
+            ],
+            "server_time": iso_now(),
+        }
+    )
+
+
+@bp.route("/api/settings", methods=["POST"])
+@login_required
+def api_save_setting():
+    payload = request.get_json(force=True)
+    key = (payload.get("key") or "").strip()
+    value = (payload.get("value") or "").strip()
+    if not key:
+        abort(400, "Chave obrigatoria.")
+    _upsert_setting(key, value)
+    db.session.commit()
+    return jsonify({"ok": True})
+
+
+@bp.route("/api/settings/bulk", methods=["POST"])
+@login_required
+def api_save_settings_bulk():
+    payload = request.get_json(force=True)
+    items = payload.get("settings", {})
+    if not isinstance(items, dict):
+        abort(400, "Formato invalido.")
+    for key, value in items.items():
+        if isinstance(value, bool):
+            stored_value = "true" if value else "false"
+        else:
+            stored_value = "" if value is None else str(value)
+        _upsert_setting(key, stored_value)
+    db.session.commit()
+    return jsonify({"ok": True, "saved": len(items)})
+
+
+@bp.route("/api/database/backup/push", methods=["POST"])
+@login_required
+def api_database_backup_push():
+    try:
+        _require_admin()
+        payload = request.get_json(force=True, silent=True) or {}
+        backup_settings = payload.get("backup_settings") if isinstance(payload.get("backup_settings"), dict) else {}
+        backup_url = build_backup_database_url(
+            _settings_map(),
+            backup_settings,
+            fallback_url=current_app.config.get("BACKUP_DATABASE_URL", ""),
+        )
+        if not backup_url:
+            abort(400, "Defina BACKUP_DATABASE_URL antes de enviar o backup.")
+        source_url = db.engine.url.render_as_string(hide_password=False)
+        result = copy_database_contents(source_url, backup_url)
+        current_app.logger.info(
+            "database_backup_push ok=%s tables=%s rows=%s error=%s",
+            result.get("ok"),
+            result.get("tables_copied", 0),
+            result.get("rows_copied", 0),
+            result.get("error", ""),
+        )
+        if not result.get("ok"):
+            error_message = result.get("error", "Falha ao enviar backup.")
+            status_code = 400 if "vazio" in error_message.lower() or "inform" in error_message.lower() else 502
+            return jsonify({"ok": False, "error": error_message, "backup": result}), status_code
+        return jsonify({"ok": True, "mode": "push", "backup_url": backup_url, "backup": result})
+    except Exception as exc:
+        current_app.logger.exception("database_backup_push failed")
+        return jsonify({"ok": False, "error": str(exc)}), 500
+
+
+@bp.route("/api/database/backup/pull", methods=["POST"])
+@login_required
+def api_database_backup_pull():
+    try:
+        _require_admin()
+        payload = request.get_json(force=True, silent=True) or {}
+        backup_settings = payload.get("backup_settings") if isinstance(payload.get("backup_settings"), dict) else {}
+        backup_url = build_backup_database_url(
+            _settings_map(),
+            backup_settings,
+            fallback_url=current_app.config.get("BACKUP_DATABASE_URL", ""),
+        )
+        if not backup_url:
+            abort(400, "Defina BACKUP_DATABASE_URL antes de puxar o backup.")
+        source_url = backup_url
+        target_url = db.engine.url.render_as_string(hide_password=False)
+        result = copy_database_contents(source_url, target_url)
+        current_app.logger.info(
+            "database_backup_pull ok=%s tables=%s rows=%s error=%s",
+            result.get("ok"),
+            result.get("tables_copied", 0),
+            result.get("rows_copied", 0),
+            result.get("error", ""),
+        )
+        if not result.get("ok"):
+            error_message = result.get("error", "Falha ao puxar backup.")
+            status_code = 400 if "vazio" in error_message.lower() or "inform" in error_message.lower() else 502
+            return jsonify({"ok": False, "error": error_message, "backup": result}), status_code
+        return jsonify({"ok": True, "mode": "pull", "backup_url": backup_url, "backup": result})
+    except Exception as exc:
+        current_app.logger.exception("database_backup_pull failed")
+        return jsonify({"ok": False, "error": str(exc)}), 500
+
+
+@bp.route("/api/users", methods=["POST"])
+@login_required
+def api_create_user():
+    _require_admin()
+    payload = request.get_json(force=True)
+    name = (payload.get("name") or "").strip()
+    email = (payload.get("email") or "").strip().lower()
+    password = (payload.get("password") or "").strip()
+    role = (payload.get("role") or "operator").strip() or "operator"
+    department_id = _ticket_department_id(payload) if payload.get("department_id") else None
+    if not name or not email or not password:
+        abort(400, "Nome, e-mail e senha sao obrigatorios.")
+    if User.query.filter(db.func.lower(User.email) == email).first():
+        abort(400, "Ja existe um usuario com esse e-mail.")
+    user = User(
+        name=name,
+        email=email,
+        password_hash=generate_password_hash(password),
+        role=role,
+        department_id=department_id,
+    )
+    db.session.add(user)
+    db.session.commit()
+    return jsonify({"ok": True, "id": user.id})
+
+
+@bp.route("/api/users/<int:user_id>", methods=["PATCH"])
+@login_required
+def api_update_user(user_id):
+    _require_admin()
+    payload = request.get_json(force=True)
+    user = db.session.get(User, user_id) or abort(404)
+    name = (payload.get("name") or user.name).strip()
+    email = (payload.get("email") or user.email).strip().lower()
+    role = (payload.get("role") or user.role).strip() or user.role
+    password = (payload.get("password") or "").strip()
+    if not name or not email:
+        abort(400, "Nome e e-mail sao obrigatorios.")
+    existing = User.query.filter(db.func.lower(User.email) == email, User.id != user.id).first()
+    if existing:
+        abort(400, "Ja existe outro usuario com esse e-mail.")
+    user.name = name
+    user.email = email
+    user.role = role
+    if "department_id" in payload:
+        user.department_id = _ticket_department_id(payload) if payload.get("department_id") else None
+    if password:
+        user.password_hash = generate_password_hash(password)
+    db.session.commit()
+    return jsonify({"ok": True})
+
+
+@bp.route("/api/config/states", methods=["POST"])
+@login_required
+def api_save_state():
+    payload = request.get_json(force=True)
+    state = WorkflowState(
+        name=(payload.get("name") or "").strip(),
+        order_index=int(payload.get("order_index") or 0),
+        color=(payload.get("color") or "#4f46e5").strip(),
+        is_closed=bool(payload.get("is_closed")),
+        is_default=bool(payload.get("is_default")),
+    )
+    if not state.name:
+        abort(400, "Nome obrigatorio.")
+    if state.is_default:
+        for row in WorkflowState.query.all():
+            row.is_default = False
+    db.session.add(state)
+    db.session.commit()
+    return jsonify({"ok": True, "id": state.id})
+
+
+@bp.route("/api/config/departments", methods=["POST"])
+@login_required
+def api_save_department():
+    payload = request.get_json(force=True)
+    department = Department(
+        name=(payload.get("name") or "").strip(),
+        color=(payload.get("color") or "#38bdf8").strip(),
+        is_default=bool(payload.get("is_default")),
+    )
+    if not department.name:
+        abort(400, "Nome obrigatorio.")
+    if department.is_default:
+        for row in Department.query.all():
+            row.is_default = False
+    db.session.add(department)
+    db.session.commit()
+    return jsonify({"ok": True, "id": department.id})
+
+
+@bp.route("/api/config/labels", methods=["POST"])
+@login_required
+def api_save_label():
+    payload = request.get_json(force=True)
+    label = Label(name=(payload.get("name") or "").strip(), color=(payload.get("color") or "#64748b").strip())
+    if not label.name:
+        abort(400, "Nome obrigatorio.")
+    db.session.add(label)
+    db.session.commit()
+    return jsonify({"ok": True, "id": label.id})
+
+
+@bp.route("/api/config/quick-replies", methods=["POST"])
+@login_required
+def api_save_quick_reply():
+    payload = request.get_json(force=True)
+    reply = QuickReply(
+        title=(payload.get("title") or "").strip(),
+        shortcut=(payload.get("shortcut") or "").strip(),
+        body=(payload.get("body") or "").strip(),
+    )
+    if not reply.title or not reply.shortcut:
+        abort(400, "Titulo e atalho sao obrigatorios.")
+    db.session.add(reply)
+    db.session.commit()
+    return jsonify({"ok": True, "id": reply.id})
+
+
+@bp.route("/api/agenda/sync", methods=["POST"])
+@login_required
+def api_agenda_sync():
+    settings_map = _settings_map()
+    if not _setting_bool(settings_map, "GOOGLE_SHEETS_SYNC_ENABLED", True):
+        abort(400, "Sincronizacao da agenda desativada.")
+    result = sync_tickets_to_sheet(
+        settings_map.get("GOOGLE_SERVICE_ACCOUNT_JSON", ""),
+        settings_map.get("GOOGLE_SHEETS_SPREADSHEET_ID", ""),
+        settings_map.get("GOOGLE_SHEETS_TAB_NAME", "Agenda"),
+        Ticket.query.order_by(Ticket.due_at.asc().nullslast(), Ticket.created_at.desc()).all(),
+    )
+    status_code = 200 if result.get("ok") else 400
+    return jsonify(result), status_code
+
+
+@bp.route("/api/agenda/preview")
+@login_required
+def api_agenda_preview():
+    settings_map = _settings_map()
+    result = preview_sheet_rows(
+        settings_map.get("GOOGLE_SERVICE_ACCOUNT_JSON", ""),
+        settings_map.get("GOOGLE_SHEETS_SPREADSHEET_ID", ""),
+        settings_map.get("GOOGLE_SHEETS_TAB_NAME", "Agenda"),
+    )
+    return jsonify(result), 200 if result.get("ok") else 400
+
+
+@bp.route("/api/reminders/run", methods=["POST"])
+@login_required
+def api_run_reminders():
+    settings_map = _settings_map()
+    reminder_minutes = int(settings_map.get("REMINDER_MINUTES", "120") or 120)
+    send_via_whatsapp = _setting_bool(settings_map, "REMINDER_SEND_WHATSAPP", True)
+    whatsapp = _whatsapp_runtime_settings(settings_map)
+    now = datetime.utcnow()
+    reminders_sent = 0
+    tickets = Ticket.query.filter(Ticket.due_at.isnot(None)).all()
+    for ticket in tickets:
+        if ticket.status and ticket.status.is_closed:
+            continue
+        target = ticket.due_at - timedelta(minutes=reminder_minutes)
+        if abs((target - now).total_seconds()) > 60:
+            continue
+        already_sent = ReminderLog.query.filter_by(ticket_id=ticket.id, reminder_type="appointment").first()
+        if already_sent:
+            continue
+        message = f"Oi, {ticket.client_name}! Lembrando do seu atendimento em {ticket.due_at.strftime('%d/%m/%Y %H:%M')}."
+        reminder_status = "sent"
+        if send_via_whatsapp and ticket.client_phone:
+            reminder_result = _send_whatsapp_with_phone_variants(
+                lambda to: send_whatsapp_text(
+                    whatsapp["token"],
+                    whatsapp["api_version"],
+                    whatsapp["phone_number_id"],
+                    to=to,
+                    body=message,
+                ),
+                ticket.client_phone,
+            )
+            if not reminder_result.get("ok"):
+                reminder_status = "failed"
+                current_app.logger.warning("Reminder WhatsApp send failed for ticket %s: %s", ticket.id, reminder_result.get("error", "unknown"))
+        db.session.add(
+            ReminderLog(
+                ticket_id=ticket.id,
+                reminder_type="appointment",
+                scheduled_for=target,
+                sent_at=now,
+                channel="whatsapp" if send_via_whatsapp else "internal",
+                status=reminder_status,
+            )
+        )
+        if reminder_status == "sent":
+            reminders_sent += 1
+    db.session.commit()
+    return jsonify({"ok": True, "reminders_sent": reminders_sent, "reminder_minutes": reminder_minutes})
+
+
+@bp.route("/api/whatsapp/send", methods=["POST"])
+@login_required
+def api_whatsapp_send():
+    payload = request.get_json(force=True)
+    to = _normalized_phone(payload.get("to") or "")
+    message_type = (payload.get("type") or "text").strip().lower()
+    whatsapp = _whatsapp_runtime_settings()
+    token = whatsapp["token"]
+    version = whatsapp["api_version"]
+    phone_number_id = whatsapp["phone_number_id"]
+
+    if message_type != "read" and not to:
+        abort(400, "Telefone de destino obrigatorio.")
+
+    if message_type == "media":
+        result = _send_whatsapp_with_phone_variants(
+            lambda recipient: send_whatsapp_media(
+                token,
+                version,
+                phone_number_id,
+                to=recipient,
+                media_type=(payload.get("media_type") or "image").strip(),
+                link=(payload.get("link") or "").strip(),
+                caption=(payload.get("caption") or "").strip(),
+            ),
+            to,
+        )
+    elif message_type == "template":
+        result = _send_whatsapp_with_phone_variants(
+            lambda recipient: send_whatsapp_template(
+                token,
+                version,
+                phone_number_id,
+                to=recipient,
+                template_name=(payload.get("template_name") or "").strip(),
+                language_code=(payload.get("language_code") or "pt_BR").strip(),
+                components=payload.get("components") or None,
+            ),
+            to,
+        )
+    elif message_type == "interactive":
+        result = _send_whatsapp_with_phone_variants(
+            lambda recipient: send_whatsapp_interactive(
+                token,
+                version,
+                phone_number_id,
+                to=recipient,
+                interactive=payload.get("interactive") or {},
+            ),
+            to,
+        )
+    elif message_type == "location":
+        result = _send_whatsapp_with_phone_variants(
+            lambda recipient: send_whatsapp_location(
+                token,
+                version,
+                phone_number_id,
+                to=recipient,
+                latitude=float(payload.get("latitude")),
+                longitude=float(payload.get("longitude")),
+                name=(payload.get("name") or "").strip(),
+                address=(payload.get("address") or "").strip(),
+            ),
+            to,
+        )
+    elif message_type == "contact":
+        result = _send_whatsapp_with_phone_variants(
+            lambda recipient: send_whatsapp_contact(
+                token,
+                version,
+                phone_number_id,
+                to=recipient,
+                contact=payload.get("contact") or {},
+            ),
+            to,
+        )
+    elif message_type == "read":
+        result = mark_whatsapp_message_read(
+            token,
+            version,
+            phone_number_id,
+            message_id=(payload.get("message_id") or "").strip(),
+        )
+    else:
+        result = _send_whatsapp_with_phone_variants(
+            lambda recipient: send_whatsapp_text(
+                token,
+                version,
+                phone_number_id,
+                to=recipient,
+                body=(payload.get("body") or "").strip(),
+            ),
+            to,
+        )
+    current_app.logger.info(
+        "whatsapp_api_send to=%s type=%s ok=%s status_code=%s error=%s response=%s",
+        to,
+        message_type,
+        result.get("ok"),
+        result.get("status_code"),
+        result.get("error", ""),
+        result.get("data", {}),
+    )
+    if not result.get("ok"):
+        return jsonify({"ok": False, "error": result.get("error", "Falha no envio do WhatsApp."), "whatsapp": result}), 502
+    return jsonify(result)
+
+
+@bp.route("/integrations/google/callback")
+@login_required
+def google_callback():
+    return render_template(
+        "integration_callback.html",
+        title="Google Calendar",
+        message="Callback recebido. Troque o code por tokens no backend.",
+        user_payload=_login_payload(),
+    )
+
+
+@bp.route("/webhooks/whatsapp", methods=["GET", "POST"])
+def whatsapp_webhook():
+    if request.method == "GET":
+        if request.args.get("hub.verify_token") == _whatsapp_runtime_settings()["verify_token"]:
+            return request.args.get("hub.challenge", ""), 200
+        return "Unauthorized", 403
+
+    payload = request.get_json(force=True, silent=True) or {}
+    default_state = _default_state()
+    default_department = _default_department()
+    for entry in payload.get("entry", []):
+        for change in entry.get("changes", []):
+            value = change.get("value", {})
+            for message_data in value.get("messages", []):
+                wa_chat_id = message_data.get("from", "")
+                wa_chat_id = _normalized_phone(wa_chat_id)
+                message_type = (message_data.get("type") or "text").lower()
+                text = message_data.get("text", {}).get("body", "")
+                contact_name = "WhatsApp"
+                if value.get("contacts"):
+                    contact_name = value["contacts"][0].get("profile", {}).get("name", "WhatsApp")
+                ticket = _find_ticket_by_phone(wa_chat_id)
+                if not ticket:
+                    ticket = Ticket(
+                        title="Contato WhatsApp",
+                        client_name=contact_name,
+                        client_phone=wa_chat_id,
+                        company="",
+                        service="",
+                        description="Recebido por webhook do WhatsApp",
+                        status_id=default_state.id if default_state else WorkflowState.query.first().id,
+                        assigned_to_id=None,
+                        department_id=default_department.id if default_department else None,
+                        closed_at=None,
+                    )
+                    db.session.add(ticket)
+                    db.session.flush()
+                conversation = ticket.conversation
+                if not conversation:
+                    conversation = Conversation(ticket_id=ticket.id, wa_chat_id=wa_chat_id, contact_name=contact_name, last_message_at=datetime.utcnow())
+                    db.session.add(conversation)
+                    db.session.flush()
+                elif wa_chat_id and conversation.wa_chat_id != wa_chat_id:
+                    conversation.wa_chat_id = wa_chat_id
+                if conversation.ticket and conversation.ticket.client_name in {"", "WhatsApp"}:
+                    conversation.ticket.client_name = contact_name
+                media_url = ""
+                message_content = text
+                if message_type in {"image", "video", "audio", "document"}:
+                    media_payload = message_data.get(message_type, {}) or {}
+                    media_id = media_payload.get("id", "")
+                    caption = (media_payload.get("caption") or "").strip()
+                    filename = (media_payload.get("filename") or "").strip()
+                    message_content = caption or (filename if message_type == "document" else f"[{message_type}]")
+                    if media_id:
+                        whatsapp = _whatsapp_runtime_settings()
+                        media_result = download_whatsapp_media(
+                            whatsapp["token"],
+                            whatsapp["api_version"],
+                            media_id,
+                        )
+                        if media_result.get("ok"):
+                            media_url = _save_whatsapp_media(message_data.get("id", media_id), media_result)
+                            if not filename:
+                                filename = media_result.get("filename", "")
+                        else:
+                            current_app.logger.warning(
+                                "Failed to download WhatsApp media message_id=%s media_id=%s error=%s",
+                                message_data.get("id", ""),
+                                media_id,
+                                media_result.get("error", "unknown"),
+                            )
+                message = Message(
+                    conversation_id=conversation.id,
+                    direction="incoming",
+                    sender_name=contact_name,
+                    sender_department="",
+                    content=message_content or "[midia]",
+                    media_url=media_url,
+                    external_id=message_data.get("id", ""),
+                )
+                db.session.add(message)
+                conversation.last_message_at = datetime.utcnow()
+                conversation.contact_name = contact_name
+                conversation.unread_incoming_count = (conversation.unread_incoming_count or 0) + 1
+            for status in value.get("statuses", []):
+                message_id = status.get("id")
+                if not message_id:
+                    continue
+                message = Message.query.filter_by(external_id=message_id).first()
+                if not message:
+                    continue
+                status_name = status.get("status", "")
+                timestamp = datetime.utcnow()
+                if status_name:
+                    message.status = status_name
+                if status_name == "delivered":
+                    message.delivered_at = timestamp
+                elif status_name == "read":
+                    message.read_at = timestamp
+    db.session.commit()
+    return jsonify({"ok": True})

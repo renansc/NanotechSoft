@@ -1,0 +1,12 @@
+{
+  "terminal.integrated.defaultProfile.linux": "bash (login)",
+  "terminal.integrated.profiles.linux": {
+    "bash (login)": {
+      "path": "/bin/bash",
+      "args": ["-l"]
+    }
+  },
+  "terminal.integrated.env.linux": {
+    "PATH": "${workspaceFolder}/bin:${env:PATH}:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/snap/bin"
+  }
+}

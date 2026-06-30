@@ -25,11 +25,6 @@
       title: "API e Dados",
       description: "Referencia de API, payloads e modelo de dados.",
     },
-    {
-      file: "AI_CONTEXT.md",
-      title: "AI Context",
-      description: "Resumo rapido para agentes, comandos uteis e mapa do projeto.",
-    },
   ];
 
   const byFile = Object.fromEntries(DOCS.map((doc) => [doc.file, doc]));

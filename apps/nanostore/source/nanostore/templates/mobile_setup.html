@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="pt-br">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Preparar Celular - NanoStore</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f4f7f1;
+        --paper: #ffffff;
+        --ink: #112015;
+        --muted: #5e6d62;
+        --line: #d9e2d6;
+        --primary: #2d8a4d;
+        --primary-dark: #1f6a3a;
+        --warn-bg: #fff6e8;
+        --warn-line: #e7c79d;
+        --warn-ink: #8a5422;
+        font-family: "Segoe UI", system-ui, sans-serif;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: linear-gradient(180deg, #f8fbf6, var(--bg));
+        color: var(--ink);
+      }
+      .wrap {
+        width: min(720px, 100%);
+        margin: 0 auto;
+        padding: 20px 16px 40px;
+        display: grid;
+        gap: 14px;
+      }
+      .card {
+        background: var(--paper);
+        border: 1px solid var(--line);
+        border-radius: 22px;
+        padding: 18px;
+        box-shadow: 0 14px 40px rgba(17, 32, 21, 0.06);
+      }
+      h1, h2, p { margin: 0; }
+      .eyebrow {
+        text-transform: uppercase;
+        letter-spacing: 0.14em;
+        color: var(--primary);
+        font-size: 0.76rem;
+        margin-bottom: 8px;
+      }
+      .lead {
+        color: var(--muted);
+        line-height: 1.6;
+        margin-top: 10px;
+      }
+      .stack {
+        display: grid;
+        gap: 10px;
+      }
+      .url-box, .step, .warn {
+        border-radius: 16px;
+        padding: 12px 14px;
+      }
+      .url-box, .step {
+        background: #f8fbf6;
+        border: 1px solid var(--line);
+      }
+      .warn {
+        background: var(--warn-bg);
+        border: 1px solid var(--warn-line);
+        color: var(--warn-ink);
+        line-height: 1.55;
+      }
+      .label {
+        display: block;
+        color: var(--muted);
+        font-size: 0.82rem;
+        margin-bottom: 6px;
+      }
+      .mono {
+        display: block;
+        word-break: break-all;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 0.92rem;
+      }
+      .actions {
+        display: grid;
+        gap: 10px;
+      }
+      a.button, button {
+        appearance: none;
+        border: 0;
+        text-decoration: none;
+        text-align: center;
+        background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+        color: #fff;
+        padding: 14px 16px;
+        border-radius: 16px;
+        font-weight: 700;
+      }
+      a.button.secondary, button.secondary {
+        background: #eaf4ec;
+        color: var(--primary-dark);
+        border: 1px solid #b7d2be;
+      }
+      ol {
+        margin: 0;
+        padding-left: 18px;
+        line-height: 1.8;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="wrap">
+      <section class="card">
+        <p class="eyebrow">NanoStore Mobile</p>
+        <h1>Preparar acesso no celular</h1>
+        <p class="lead">Use esta tela primeiro no telefone. Ela foi feita para ser leve e abrir mesmo quando a tela principal ainda estiver com bloqueio de certificado ou compatibilidade.</p>
+      </section>
+
+      <section class="card stack">
+        <h2>Enderecos</h2>
+        <div class="url-box">
+          <span class="label">HTTP de apoio</span>
+          <span class="mono">{{ http_base }}/mobile-setup</span>
+        </div>
+        <div class="url-box">
+          <span class="label">Baixar CA Android</span>
+          <span class="mono">{{ ca_url }}</span>
+        </div>
+        <div class="url-box">
+          <span class="label">Abrir sistema em HTTPS</span>
+          <span class="mono">{{ https_base }}</span>
+        </div>
+        <div class="actions">
+          <a class="button secondary" href="{{ ca_url }}">1. Baixar CA Android</a>
+          <a class="button" href="{{ https_base }}">2. Abrir NanoStore em HTTPS</a>
+        </div>
+      </section>
+
+      <section class="card stack">
+        <h2>Passo a passo</h2>
+        <div class="step">
+          <ol>
+            <li>Abra o botao `Baixar CA Android`.</li>
+            <li>Instale ou confie o certificado no aparelho.</li>
+            <li>Volte aqui e toque em `Abrir NanoStore em HTTPS`.</li>
+            <li>Se a camera continuar bloqueada, feche e reabra o navegador.</li>
+          </ol>
+        </div>
+      </section>
+
+      <section class="card stack">
+        <h2>Diagnostico rapido</h2>
+        <div class="url-box">
+          <span class="label">Host atual</span>
+          <span class="mono">{{ host }}</span>
+        </div>
+        <div class="url-box">
+          <span class="label">Hosts previstos no certificado</span>
+          <span class="mono">{{ cert_hosts|join(', ') }}</span>
+        </div>
+        {% if not host_covered %}
+        <div class="warn">
+          O IP/host usado agora nao esta previsto no certificado. Ajuste `CERT_APP_HOSTS={{ host }}` no `.env`, coloque `CERT_FORCE_REISSUE=1` e suba o Docker novamente.
+        </div>
+        {% endif %}
+        <div class="warn">
+          Se esta pagina abrir no celular mas o sistema nao abrir em HTTPS, o problema quase sempre e o certificado ainda nao confiado no aparelho.
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

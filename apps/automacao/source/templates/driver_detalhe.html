@@ -1,0 +1,517 @@
+{% extends 'base.html' %}
+
+{% block content %}
+
+<h1>{{ driver.nome }}</h1>
+
+<div class="card">
+
+<form
+    action="/sensores/drivers/{{ driver.id }}/salvar"
+    method="post"
+    class="form-grid">
+
+<label>
+Nome
+<input
+    type="text"
+    name="nome"
+    value="{{ driver.nome }}"
+    required>
+</label>
+
+<label>
+Modelo
+<input
+    type="text"
+    name="modelo"
+    value="{{ driver.modelo }}"
+    required>
+</label>
+
+<label>
+IP
+<input
+    type="text"
+    name="ip"
+    value="{{ driver.ip }}"
+    required>
+</label>
+
+<label>
+Porta
+<input
+    type="number"
+    name="porta"
+    value="{{ driver.porta }}"
+    min="1"
+    max="65535"
+    required>
+</label>
+
+<label>
+Unit ID
+<input
+    type="number"
+    name="unit_id"
+    value="{{ driver.unit_id }}"
+    min="1"
+    max="247"
+    required>
+</label>
+
+<label>
+Motor
+<select name="motor_id">
+<option value="">Sem associação</option>
+{% for motor in motores %}
+<option
+    value="{{ motor.id }}"
+    {% if motor.id == driver.motor_id %}
+    selected
+    {% endif %}>
+{{ motor.nome }}
+</option>
+{% endfor %}
+</select>
+</label>
+
+<label>
+Intervalo
+<input
+    type="number"
+    name="intervalo_segundos"
+    value="{{ driver.intervalo_segundos }}"
+    min="1"
+    required>
+</label>
+
+<label>
+Timeout
+<input
+    type="number"
+    name="timeout_segundos"
+    value="{{ driver.timeout_segundos }}"
+    min="1"
+    step="0.1"
+    required>
+</label>
+
+<label>
+Ativo
+<select name="ativo">
+<option
+    value="1"
+    {% if driver.ativo %}
+    selected
+    {% endif %}>
+Sim
+</option>
+<option
+    value=""
+    {% if not driver.ativo %}
+    selected
+    {% endif %}>
+Não
+</option>
+</select>
+</label>
+
+<button type="submit">Salvar</button>
+
+</form>
+
+<form
+    method="post"
+    action="/sensores/drivers/{{ driver.id }}/ler-agora">
+<button type="submit">Ler agora</button>
+</form>
+
+<p>
+Status:
+<span
+    id="driver-status"
+    class="status status-{{ driver.ultimo_status }}">
+{{ driver.ultimo_status }}
+</span>
+</p>
+
+<p
+    id="driver-erro"
+    class="danger"
+    {% if not driver.ultimo_erro %}
+    hidden
+    {% endif %}>
+{{ driver.ultimo_erro or '' }}
+</p>
+
+</div>
+
+<div
+    class="card"
+    id="driver-leitura-card"
+    data-driver-id="{{ driver.id }}">
+
+<h2>Última leitura</h2>
+
+<p>
+Atualizado em:
+<span id="driver-leitura-timestamp">
+{{ ultima.timestamp if ultima else '-' }}
+</span>
+</p>
+
+<p
+    id="driver-leitura-vazia"
+    {% if ultima %}
+    hidden
+    {% endif %}>
+Nenhuma leitura registrada.
+</p>
+
+<table
+    id="driver-leitura-tabela"
+    {% if not ultima %}
+    hidden
+    {% endif %}>
+<tr>
+<th>Tag</th>
+<th>Valor</th>
+<th>Unidade</th>
+<th>Endereço</th>
+<th>Tipo</th>
+</tr>
+
+<tbody id="driver-leitura-dados">
+
+{% if ultima %}
+{% for nome, item in ultima.dados.items() %}
+
+<tr>
+<td>{{ nome }}</td>
+<td>
+{% if item.erro %}
+<span class="danger">{{ item.erro }}</span>
+{% else %}
+{{ item.valor }}
+{% if item.bits %}
+<div class="tag-bits">
+{% for bit, ativo in item.bits.items() %}
+{{ bit }}={{ '1' if ativo else '0' }}
+{% endfor %}
+</div>
+{% endif %}
+{% endif %}
+</td>
+<td>{{ item.unidade or '-' }}</td>
+<td>{{ item.endereco }}</td>
+<td>{{ item.tipo }}</td>
+</tr>
+
+{% endfor %}
+{% endif %}
+
+</tbody>
+
+</table>
+
+</div>
+
+<div class="card">
+
+<h2>Tags Modbus</h2>
+
+<form
+    method="post"
+    action="/sensores/drivers/{{ driver.id }}/tags/novo"
+    class="form-grid">
+
+<label>
+Nome
+<input
+    type="text"
+    name="nome"
+    placeholder="VL.FB"
+    required>
+</label>
+
+<label>
+Endereço
+<input
+    type="number"
+    name="endereco"
+    min="0"
+    max="65535"
+    required>
+</label>
+
+<label>
+Registradores
+<select name="registradores">
+<option value="2">2</option>
+<option value="1">1</option>
+<option value="4">4</option>
+</select>
+</label>
+
+<label>
+Tipo
+<select name="tipo">
+{% for tipo in tipos_tag %}
+<option value="{{ tipo }}">{{ tipo }}</option>
+{% endfor %}
+</select>
+</label>
+
+<label>
+Escala
+<input
+    type="number"
+    name="escala"
+    value="1"
+    step="0.000001"
+    required>
+</label>
+
+<label>
+Unidade
+<input
+    type="text"
+    name="unidade"
+    placeholder="rpm">
+</label>
+
+<label>
+Ativo
+<select name="ativo">
+<option value="1">Sim</option>
+<option value="">Não</option>
+</select>
+</label>
+
+<button type="submit">Adicionar Tag</button>
+
+</form>
+
+<table>
+<tr>
+<th>Nome</th>
+<th>Endereço</th>
+<th>Registradores</th>
+<th>Tipo</th>
+<th>Escala</th>
+<th>Unidade</th>
+<th>Ativo</th>
+<th>Ações</th>
+</tr>
+
+{% for tag in tags %}
+
+<tr>
+<td>{{ tag.nome }}</td>
+<td>{{ tag.endereco }}</td>
+<td>{{ tag.registradores }}</td>
+<td>{{ tag.tipo }}</td>
+<td>{{ tag.escala }}</td>
+<td>{{ tag.unidade or '-' }}</td>
+<td>{{ 'Sim' if tag.ativo else 'Não' }}</td>
+<td>
+<a
+    class="danger"
+    href="/sensores/drivers/tags/{{ tag.id }}/excluir">
+Excluir
+</a>
+</td>
+</tr>
+
+{% endfor %}
+
+</table>
+
+</div>
+
+<div class="card">
+
+<h2>Histórico do Driver</h2>
+
+<table>
+<tr>
+<th>Data</th>
+<th>Status</th>
+<th>Erro</th>
+</tr>
+
+{% for leitura in leituras %}
+
+<tr>
+<td>{{ leitura.timestamp }}</td>
+<td>{{ leitura.status }}</td>
+<td>{{ leitura.erro or '-' }}</td>
+</tr>
+
+{% endfor %}
+
+</table>
+
+</div>
+
+<script>
+
+async function atualizarLeituraDriver(){
+    const card =
+        document.getElementById("driver-leitura-card");
+    const driverId =
+        card.dataset.driverId;
+
+    try{
+        const resposta =
+            await fetch("/api/sensores/drivers/" + driverId + "/ultima");
+        const leitura =
+            await resposta.json();
+
+        if(!leitura || !leitura.id)
+            return;
+
+        renderizarLeituraDriver(leitura);
+    }
+    catch(error){
+        const erro =
+            document.getElementById("driver-erro");
+        erro.hidden = false;
+        erro.innerText = "Falha ao atualizar leitura em tempo real";
+    }
+}
+
+function renderizarLeituraDriver(leitura){
+    const status =
+        document.getElementById("driver-status");
+    status.className =
+        "status status-" + (leitura.status || "novo");
+    status.innerText =
+        leitura.status || "novo";
+
+    const erro =
+        document.getElementById("driver-erro");
+    erro.hidden =
+        !leitura.erro;
+    erro.innerText =
+        leitura.erro || "";
+
+    document.getElementById(
+        "driver-leitura-timestamp"
+    ).innerText = leitura.timestamp || "-";
+
+    document.getElementById(
+        "driver-leitura-vazia"
+    ).hidden = true;
+
+    document.getElementById(
+        "driver-leitura-tabela"
+    ).hidden = false;
+
+    const corpo =
+        document.getElementById("driver-leitura-dados");
+    corpo.innerHTML = "";
+
+    const tags =
+        Object.entries(leitura.dados || {});
+
+    if(tags.length === 0){
+        const linha = document.createElement("tr");
+        const celula = document.createElement("td");
+        celula.colSpan = 5;
+        celula.innerText = "Nenhuma tag retornada.";
+        linha.appendChild(celula);
+        corpo.appendChild(linha);
+        return;
+    }
+
+    for(const [nome, item] of tags){
+        corpo.appendChild(
+            criarLinhaLeituraDriver(nome, item)
+        );
+    }
+}
+
+function criarLinhaLeituraDriver(nome, item){
+    const linha =
+        document.createElement("tr");
+
+    adicionarCelulaDriver(linha, nome);
+
+    const valor =
+        document.createElement("td");
+
+    if(item.erro){
+        const erro =
+            criarElementoDriver(
+                "span",
+                "danger",
+                item.erro
+            );
+        valor.appendChild(erro);
+    }
+    else{
+        const texto =
+            item.valor !== undefined && item.valor !== null
+                ? item.valor
+                : "-";
+
+        valor.appendChild(
+            document.createTextNode(texto)
+        );
+
+        if(item.bits){
+            const bits = Object.entries(item.bits)
+                .map(([bit, ativo]) => bit + "=" + (ativo ? "1" : "0"))
+                .join(" ");
+
+            valor.appendChild(
+                criarElementoDriver(
+                    "div",
+                    "tag-bits",
+                    bits
+                )
+            );
+        }
+    }
+
+    linha.appendChild(valor);
+    adicionarCelulaDriver(linha, item.unidade || "-");
+    adicionarCelulaDriver(linha, item.endereco ?? "-");
+    adicionarCelulaDriver(linha, item.tipo || "-");
+
+    return linha;
+}
+
+function adicionarCelulaDriver(linha, texto){
+    const celula =
+        document.createElement("td");
+    celula.innerText =
+        texto ?? "-";
+    linha.appendChild(celula);
+}
+
+function criarElementoDriver(tag, classe, texto){
+    const elemento =
+        document.createElement(tag);
+
+    if(classe)
+        elemento.className = classe;
+
+    if(texto !== undefined)
+        elemento.innerText = texto;
+
+    return elemento;
+}
+
+setInterval(
+    atualizarLeituraDriver,
+    3000
+);
+
+atualizarLeituraDriver();
+
+</script>
+
+{% endblock %}

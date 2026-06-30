@@ -5,8 +5,9 @@ LOG_PREFIX="nanotechsoft-up"
 # shellcheck source=deploy/lib/common.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/common.sh"
 
-ensure_command docker
 cd_project
+require_compose
+validate_app_sources
 
 log "subindo mysql e app..."
 if [[ "${NO_CACHE:-0}" == "1" ]]; then

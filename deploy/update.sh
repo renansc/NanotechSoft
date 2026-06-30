@@ -5,8 +5,9 @@ LOG_PREFIX="nanotechsoft-update"
 # shellcheck source=deploy/lib/common.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/common.sh"
 
-ensure_command docker
 cd_project
+require_compose
+validate_app_sources
 
 if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   BRANCH="${1:-$(git rev-parse --abbrev-ref HEAD)}"

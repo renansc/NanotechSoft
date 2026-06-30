@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Webcam Local</title>
+  <style>
+    html,body{margin:0;height:100%;background:#000}
+    video{width:100%;height:100%;object-fit:contain;background:#000}
+    .msg{
+      position:fixed;left:8px;right:8px;bottom:8px;padding:8px 10px;
+      border-radius:8px;background:rgba(0,0,0,.55);color:#fff;font:12px Arial,sans-serif
+    }
+  </style>
+</head>
+<body>
+  <video id="v" autoplay muted playsinline></video>
+  <div id="msg" class="msg">Solicitando acesso a webcam...</div>
+  <script>
+    const v = document.getElementById("v");
+    const msg = document.getElementById("msg");
+    (async () => {
+      try {
+        const st = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
+        v.srcObject = st;
+        msg.textContent = "Webcam ativa em localhost";
+      } catch (e) {
+        msg.textContent = "Falha webcam. Abra esta pagina em localhost no mesmo dispositivo.";
+      }
+    })();
+  </script>
+</body>
+</html>

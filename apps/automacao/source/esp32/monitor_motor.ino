@@ -1,0 +1,1 @@
+// Endpoint: POST /api/leitura

@@ -1,0 +1,15 @@
+services:
+  cameras:
+    build:
+      context: .
+    image: cameras-app:latest
+    container_name: cameras
+    ports:
+      - "8889:8889"
+    environment:
+      PORT: "8889"
+      APP_HOST: "0.0.0.0"
+      DATA_DIR: /data
+    volumes:
+      - ./data:/data
+    restart: unless-stopped

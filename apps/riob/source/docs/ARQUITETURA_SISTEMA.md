@@ -10,7 +10,7 @@ O projeto `RioBranco` e uma aplicacao web monolitica voltada para operacao inter
 - modulo de comissao
 - chat interno entre usuarios
 - telefonia SIP/WebRTC no navegador integrada ao FreePBX
-- monitoramento acoplado de ESXi/vCenter, cameras e automacao industrial
+- monitoramento acoplado de ESXi/vCenter e cameras
 - backup SQL e bootstrap automatico de certificados
 - portal HTML de documentacao servido pelo proprio backend em `/docs`
 
@@ -68,15 +68,11 @@ RioBranco/
 |- esxi/
 |- cameras/
 |- certs/
-|- backupsSql/
+|- backups sql/
 |- sync-import/
 |- FotosDevolucoes/
 |- RequisicoesAbastecimento/
 ```
-
-O monitor industrial fica dentro desta plataforma, por padrao em
-`apps/automacao/source`, montado somente para leitura no container em
-`/opt/automacao-monitor`.
 
 ## 4. Arquitetura em alto nivel
 
@@ -85,10 +81,9 @@ flowchart LR
     U[Usuarios Web e Mobile] --> N[Nginx proxy]
     N --> A[Flask app server.py]
     A --> DB[(MariaDB)]
-    A --> FS[Volumes locais<br/>backupsSql<br/>FotosDevolucoes<br/>RequisicoesAbastecimento<br/>certs]
+    A --> FS[Volumes locais<br/>backups sql<br/>FotosDevolucoes<br/>RequisicoesAbastecimento<br/>certs]
     A --> E[Monitor ESXi embutido]
     A --> C[Monitor de cameras embutido]
-    A --> M[Monitor de automacao embutido]
     A --> PBX[FreePBX / Asterisk]
     PBX --> TRUNK[Tronco SIP / operadora]
     N --> CERT[cert-bootstrap]
@@ -133,26 +128,7 @@ Regras importantes:
 - so um ambiente deve operar com `RB_CERT_BOOTSTRAP=1` quando varios ambientes apontam para o mesmo FreePBX
 - as demais VMs devem usar `RB_CERT_BOOTSTRAP=0` para nao sobrescrever o WSS da producao
 
-### 5.4 `ollama` e `ollama-model-init`
-
-Responsabilidade:
-
-- executar o servidor Ollama dentro do compose
-- persistir os modelos em `ollama_data`
-- baixar e validar `qwen2.5:3b` antes da aplicacao e do WebUI
-- remover `qwen2.5:7b` depois que o novo modelo estiver validado
-
-### 5.5 `open-webui`
-
-Responsabilidade:
-
-- publicar a interface conversacional da IA
-- acessar o Ollama pela rede interna em `http://ollama:11434`
-- usar `RB_AGENT_OLLAMA_MODEL` como modelo padrao
-- usar uma imagem derivada com NumPy compativel com CPUs anteriores a x86-64-v2
-- persistir usuarios, conversas e configuracoes em `open_webui_data`
-
-### 5.6 `app`
+### 5.4 `app`
 
 Responsabilidade:
 
@@ -165,7 +141,7 @@ Caracteristicas:
 - carrega `.env` automaticamente
 - grava arquivos operacionais em volumes
 
-### 5.7 `proxy`
+### 5.5 `proxy`
 
 Responsabilidade:
 
@@ -181,14 +157,10 @@ flowchart TD
     B --> C[db-restore verifica se ha backup e se banco esta vazio]
     C --> D[cert-bootstrap gera CA e certificados]
     D --> E[cert-bootstrap instala WSS no FreePBX]
-    E --> F[Ollama sobe]
-    F --> G[ollama-model-init garante Qwen]
-    G --> H[Open WebUI sobe]
-    G --> I[app sobe]
-    I --> J[ensure_schema cria e ajusta schema]
-    J --> K[proxy sobe]
-    H --> L[usuarios acessam a IA]
-    K --> M[usuarios acessam o sistema]
+    E --> F[app sobe]
+    F --> G[ensure_schema cria e ajusta schema]
+    G --> H[proxy sobe]
+    H --> I[usuarios acessam o sistema]
 ```
 
 ## 7. Modelo de aplicacao
@@ -305,7 +277,6 @@ Implementacao relevante:
 - o frontend renderiza os cards dentro das colunas do kanban
 - o drag and drop desktop e touch ficam em `script.js`
 - a persistencia do novo status passa por `atualizarFreteCompleto(...)`
-- fretes em `retornando` seguem gravados no banco e no historico; apos cerca de 24 horas o frontend deixa de exibi-los no kanban operacional
 
 #### 8.1.2 Arquivo `dashboards.html`
 
@@ -346,11 +317,7 @@ Comportamento:
 
 - CRUD dos cadastros base
 - gerenciamento do status do frete
-- associacao entre frete, veiculo, motorista, entregador e carga
-- menu `Cargas` dividido entre `Cadastro` e `Escala`
-- escala operacional focada nos status `chegada`, `descarregado` e `liberado`, com resumo de pendencias de equipe
-- cadastro de `motoristas` evoluido para colaboradores com papeis de motorista, entregador e ajudante
-- validacao de duplicidade para impedir colaborador em dois veiculos ao mesmo tempo na escala operacional
+- associacao entre frete, veiculo, motorista e carga
 
 Rotas:
 
@@ -365,7 +332,6 @@ Observacao importante:
 
 - existem rotas genericas `GET/POST/PUT/DELETE /api/<tabela>` para parte do CRUD simples
 - algumas entidades possuem rotas especializadas com validacoes proprias
-- a API preserva os nomes tecnicos `/api/motoristas` e tabela `motoristas`, mesmo com a interface tratando essas pessoas como colaboradores
 
 ### 8.3 Devolucoes
 
@@ -417,15 +383,12 @@ Regras relevantes:
 - abastecimento nasce com status `liberado`
 - conclusao muda para `abastecido`
 - historico de km/l e calculado com base em abastecimentos concluidos
-- cada veiculo possui `combustivel_padrao`, limitado a Diesel S10 ou Diesel 500
-- Arla e permitido somente em veiculos cadastrados como Diesel S10
 
 Rotas principais:
 
 - `/api/abastecimentos`
 - `/api/abastecimentos/liberar`
 - `/api/abastecimentos/<id>/abastecer`
-- `/api/abastecimentos/<id>` para edicao
 - `/api/abastecimentos/<id>/importar_nfe`
 - `/api/abastecimentos/<id>/pdf`
 - `/api/manutencoes`
@@ -623,25 +586,11 @@ Objetivo:
 Modelo tecnico:
 
 - app Flask proprio em `cameras/server.py`
-- usa SQLite e diretorios HLS no volume `cameras_data`
-- o repositorio mantem apenas o codigo e o cadastro inicial necessario; banco e segmentos gerados nao sao versionados
+- usa SQLite local em `cameras/cameras.db`
+- pode persistir cadastro de cameras e segmentos HLS
 - acessado via proxy em `/monitor/cameras/`
 
-### 8.11 Monitor de automacao
-
-Objetivo:
-
-- acompanhar motores, leituras industriais e alarmes de sensores
-
-Modelo tecnico:
-
-- app Flask externo montado em `/opt/automacao-monitor`
-- iniciado sob demanda em porta local
-- banco SQLite persistido em `/data/app/automacao/homologacao.db`
-- acessado via proxy em `/monitor/automacao/`
-- usa `X-Forwarded-Prefix` para gerar URLs sob o prefixo do sistema principal
-
-### 8.12 Portal de documentacao e artefatos operacionais
+### 8.11 Portal de documentacao e artefatos operacionais
 
 Objetivo:
 
@@ -700,7 +649,6 @@ Tabelas nucleares:
 Relacionamentos mais importantes:
 
 - `fretes` referencia `motoristas`, `veiculos` e `cargas`
-- `fretes` referencia `motoristas` duas vezes, em `motorista_id` e `entregador_id`, alem de `veiculos` e `cargas`
 - `devolucoes` referencia `fretes`, `veiculos` e `conferentes`
 - `chat_mensagens` referencia `usuarios` em remetente e destinatario
 - `estoque_conferencias` agrega itens em `estoque_conferencia_itens`
@@ -714,11 +662,9 @@ Persistencia fora do banco:
 
 - `FotosDevolucoes/`: imagens de devolucoes
 - `RequisicoesAbastecimento/`: PDFs de abastecimento
-- `backupsSql/`: dumps SQL usados no backup e no restore automatico
+- `backups sql/`: dumps SQL usados no backup e no restore automatico
 - `certs/`: CA e certificados emitidos
-- `cameras/`: codigo-fonte do app de cameras
-- `cameras_data`: banco SQLite e segmentos HLS gerados em runtime
-- `/data/app/automacao/`: SQLite persistente do monitor de automacao
+- `cameras/`: app de cameras, banco SQLite e segmentos HLS
 - `docs/`: fontes Markdown e viewers HTML da documentacao
 - `sync-import/`: snapshots importados manualmente de producao para consulta ou reaproveitamento controlado
 
@@ -746,7 +692,7 @@ Observacoes importantes:
 flowchart TD
     A[usuario clica em gerar backup] --> B[GET /api/backup]
     B --> C[backend executa dump MariaDB]
-    C --> D[arquivo timestamped em backupsSql]
+    C --> D[arquivo timestamped em backups sql]
     D --> E[arquivo e baixado pelo navegador]
 
     F[novo deploy] --> G[db-restore sobe]
@@ -757,7 +703,7 @@ flowchart TD
 
 Pontos importantes:
 
-- o backup salvo em `backupsSql/` e o mesmo elegivel para restore automatico
+- o backup salvo em `backups sql/` e o mesmo elegivel para restore automatico
 - o restore automatico nao substitui um banco ja em uso, salvo com `RB_DB_RESTORE_FORCE=1`
 
 ## 12. API por dominios
@@ -801,7 +747,6 @@ Pontos importantes:
 
 - `/monitor/esxi/*`
 - `/monitor/cameras/*`
-- `/monitor/automacao/*`
 
 ### Documentacao HTML
 
@@ -966,7 +911,7 @@ O sistema RioBranco e uma plataforma operacional interna monolitica, com foco em
 - frontend sem build e backend unico
 - banco MariaDB central com schema evolutivo automatico
 - modulo de estoque/NF-e integrado ao mesmo monolito operacional
-- monitores ESXi, cameras e automacao embutidos via proxy
+- monitor ESXi e monitor de cameras embutidos via proxy
 - comunicacao interna unindo chat e SIP/WebRTC
 - bootstrap automatico de certificados com CA interna
 - backup e restore automatico orientado a arquivos SQL

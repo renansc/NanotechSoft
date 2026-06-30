@@ -1,12 +1,14 @@
-import os, json, re, sqlite3, subprocess, signal, glob, threading, time
+import os, json, re, sqlite3, subprocess, glob, threading, time, shutil
 from flask import Flask, request, jsonify, send_from_directory
 
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
-DATA_DIR = os.path.abspath(os.environ.get("CAMERAS_DATA_DIR") or BASE_DIR)
-DATA_FILE = os.path.join(DATA_DIR, "cams.json")
-DB_FILE = os.path.join(DATA_DIR, "cameras.db")
-CAMS_DIR  = os.path.join(DATA_DIR, "cams")
-os.makedirs(DATA_DIR, exist_ok=True)
+STATE_DIR = os.path.abspath(os.environ.get("DATA_DIR", BASE_DIR))
+DATA_FILE = os.path.join(STATE_DIR, "cams.json")
+DB_FILE = os.path.join(STATE_DIR, "cameras.db")
+CAMS_DIR  = os.path.join(STATE_DIR, "cams")
+LEGACY_DATA_FILE = os.path.join(BASE_DIR, "cams.json")
+LEGACY_DB_FILE = os.path.join(BASE_DIR, "cameras.db")
+os.makedirs(STATE_DIR, exist_ok=True)
 os.makedirs(CAMS_DIR, exist_ok=True)
 
 app = Flask(__name__, static_folder=BASE_DIR, static_url_path="")
@@ -19,6 +21,20 @@ HLS_DELETE_THRESHOLD = "1"
 HLS_KEEP_MAX_FILES = 6
 JANITOR_INTERVAL_SEC = 20
 
+def migrate_legacy_state():
+    """Copy old files from the repository root into the configured state dir."""
+    for src, dst in (
+        (LEGACY_DATA_FILE, DATA_FILE),
+        (LEGACY_DB_FILE, DB_FILE),
+    ):
+        if os.path.abspath(src) == os.path.abspath(dst):
+            continue
+        if os.path.exists(src) and not os.path.exists(dst):
+            try:
+                shutil.copy2(src, dst)
+            except Exception:
+                pass
+
 def ffmpeg_disponivel() -> bool:
     try:
         r = subprocess.run(["ffmpeg", "-version"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -30,6 +46,12 @@ def _db_conn():
     conn = sqlite3.connect(DB_FILE)
     conn.row_factory = sqlite3.Row
     return conn
+
+def _write_json_snapshot(data):
+    tmp_file = DATA_FILE + ".tmp"
+    with open(tmp_file, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    os.replace(tmp_file, DATA_FILE)
 
 def init_db():
     with _db_conn() as conn:
@@ -68,6 +90,25 @@ def init_db():
             except Exception:
                 pass
 
+        if not os.path.exists(DATA_FILE):
+            try:
+                rows = conn.execute(
+                    "SELECT id, name, mode, hls, rtsp, transport FROM cameras ORDER BY created_at, id"
+                ).fetchall()
+                cams = []
+                for r in rows:
+                    cams.append({
+                        "id": r["id"],
+                        "name": r["name"],
+                        "mode": r["mode"],
+                        "hls": r["hls"],
+                        "rtsp": r["rtsp"],
+                        "transport": r["transport"],
+                    })
+                _write_json_snapshot({"cams": cams})
+            except Exception:
+                pass
+
 def load_data():
     with _db_conn() as conn:
         rows = conn.execute(
@@ -103,6 +144,10 @@ def save_data(data):
                 ),
             )
         conn.commit()
+    try:
+        _write_json_snapshot({"cams": cams})
+    except Exception:
+        pass
 
 def safe_slug(name: str) -> str:
     name = name.strip().lower()
@@ -183,13 +228,13 @@ def ffmpeg_start(cam_id: str, rtsp_url: str, transport: str = "udp"):
         m3u8_path
     ]
 
-    # encerra instância anterior (se existir)
+    # encerra instancia anterior (se existir)
     if cam_id in PROCS and PROCS[cam_id].poll() is None:
         try:
             PROCS[cam_id].terminate()
         except Exception:
             pass
-    # Garante que não exista ffmpeg antigo escrevendo no mesmo live.m3u8.
+    # Garante que nao exista ffmpeg antigo escrevendo no mesmo live.m3u8.
     try:
         subprocess.run(["pkill", "-f", m3u8_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception:
@@ -218,6 +263,7 @@ def start_saved_rtsp_streams():
         except Exception:
             pass
 
+migrate_legacy_state()
 init_db()
 
 @app.get("/")
@@ -243,7 +289,7 @@ def api_add():
     data = load_data()
 
     cam_id = safe_slug(name)
-    # garante id único
+    # garante id unico
     existing_ids = {c["id"] for c in data["cams"]}
     base = cam_id
     i = 2
@@ -256,7 +302,7 @@ def api_add():
     if mode == "hls":
         cam["hls"] = value
     elif mode == "rtsp":
-        # ONVIF não é stream; se vier onvif:// ou http(s)://.../onvif, avisa
+        # ONVIF nao é stream; se vier onvif:// ou http(s)://.../onvif, avisa
         if value.lower().startswith("rtsp://"):
             cam["rtsp"] = value
             cam["transport"] = transport if transport in ("udp", "tcp") else "udp"
@@ -281,7 +327,7 @@ def api_add():
         else:
             return jsonify({
                 "ok": False,
-                "error": "ONVIF não é vídeo direto. Cole a URL RTSP (rtsp://...). Se você só tem ONVIF, precisa descobrir o RTSP via ONVIF."
+                "error": "ONVIF nao é vídeo direto. Cole a URL RTSP (rtsp://...). Se você só tem ONVIF, precisa descobrir o RTSP via ONVIF."
             }), 400
     else:
         return jsonify({"ok": False, "error": "mode inválido (use rtsp ou hls)"}), 400
@@ -433,7 +479,7 @@ if __name__ == "__main__":
     # Acesse via: http://127.0.0.1:8080
     # ou de outro device: http://IP_DO_ANDROID:8080 (webcam pode exigir https)
     app.run(
-        host=os.environ.get("APP_HOST", "127.0.0.1"),
+        host=os.environ.get("APP_HOST", "0.0.0.0"),
         port=int(os.environ.get("PORT", "8889")),
         debug=False,
     )

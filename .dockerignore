@@ -8,8 +8,20 @@ deploy/tmp/
 *.db
 *.sqlite
 *.sqlite3
+*.gdb
+*.GDB
+*.sql
+*.gz
+*.tar.gz
+*.pfx
+*.p12
+*.pem
+*.key
+*.crt
 *.tmp
 *.m3u8
+*:Zone.Identifier
+*Zone.Identifier*
 
 apps/**/__pycache__/
 apps/**/.venv/
@@ -20,7 +32,12 @@ apps/**/certs/
 apps/**/logs/
 
 apps/riob-cameras/data/
+apps/riob-cameras/source/data/
 apps/riob-cameras/source/cams/
+apps/riob/source/backups sql/
+apps/riob/source/config
 apps/riob/source/cameras/cams/
+apps/riob/source/sync-backups/
+apps/riob/source/sync-import/
 apps/riob-email/source/anexos/
 apps/riob-xml/source/uploads_xml_homologacao/

@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+
+<head>
+
+<meta charset="UTF-8">
+
+<title>Monitoramento Automação RioBranco</title>
+
+<style>
+
+body{
+    margin:0;
+    font-family:Arial;
+    background:#f4f4f4;
+}
+
+.sidebar{
+    width:220px;
+    height:100vh;
+    background:#003366;
+    color:white;
+    position:fixed;
+}
+
+.sidebar h2{
+    text-align:center;
+    padding:20px;
+}
+
+.sidebar a{
+    display:block;
+    color:white;
+    text-decoration:none;
+    padding:15px;
+}
+
+.sidebar .menu-section{
+    color:#b9d7f5;
+    font-size:12px;
+    font-weight:bold;
+    padding:18px 15px 6px;
+    text-transform:uppercase;
+}
+
+.sidebar a.submenu{
+    padding-left:30px;
+}
+
+.sidebar a:hover{
+    background:#004c99;
+}
+
+.content{
+    margin-left:220px;
+    padding:20px;
+}
+
+.card{
+    background:white;
+    border-radius:8px;
+    padding:20px;
+    margin-bottom:15px;
+    box-shadow:0 0 5px #ccc;
+}
+
+table{
+    width:100%;
+    border-collapse:collapse;
+}
+
+th,td{
+    border:1px solid #ddd;
+    padding:10px;
+}
+
+th{
+    background:#003366;
+    color:white;
+}
+
+input,
+select,
+button{
+    padding:9px;
+    margin:4px 0;
+}
+
+button{
+    background:#003366;
+    border:0;
+    color:white;
+    cursor:pointer;
+}
+
+button:hover{
+    background:#004c99;
+}
+
+.danger{
+    color:#a60000;
+}
+
+.form-grid{
+    display:grid;
+    grid-template-columns:repeat(auto-fit,minmax(190px,1fr));
+    gap:12px;
+    align-items:end;
+}
+
+.form-grid label{
+    display:flex;
+    flex-direction:column;
+    font-weight:bold;
+}
+
+.actions{
+    display:flex;
+    gap:8px;
+    flex-wrap:wrap;
+}
+
+.inline-form{
+    display:inline;
+}
+
+.status{
+    border-radius:4px;
+    color:white;
+    display:inline-block;
+    font-size:12px;
+    font-weight:bold;
+    padding:5px 8px;
+}
+
+.status-online{
+    background:#1c7c3c;
+}
+
+.status-parcial,
+.status-sem_tags,
+.status-novo{
+    background:#a66a00;
+}
+
+.status-erro,
+.status-inativo{
+    background:#a60000;
+}
+
+.tag-bits{
+    color:#555;
+    font-size:12px;
+}
+
+.drivers-monitor{
+    display:grid;
+    gap:12px;
+    grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr));
+}
+
+.driver-live-card{
+    border:1px solid #ddd;
+    border-radius:8px;
+    overflow:auto;
+    padding:12px;
+}
+
+.driver-live-header{
+    align-items:center;
+    display:flex;
+    gap:10px;
+    justify-content:space-between;
+}
+
+.driver-live-header h3{
+    margin:0;
+}
+
+.gauge-grid{
+    display:grid;
+    gap:14px;
+    grid-template-columns:repeat(auto-fit,minmax(min(100%,190px),1fr));
+}
+
+.driver-gauge-grid{
+    margin-bottom:14px;
+}
+
+.gauge-card{
+    background:#f8fafc;
+    border:1px solid #d8e0ea;
+    border-radius:8px;
+    min-height:210px;
+    padding:12px;
+    text-align:center;
+}
+
+.gauge-title{
+    font-weight:bold;
+    margin-bottom:8px;
+}
+
+.gauge-dial{
+    --angle:0deg;
+    --needle:-180deg;
+    --gauge-color:#1c7c3c;
+    aspect-ratio:2 / 1;
+    background:
+        conic-gradient(
+            from 270deg at 50% 100%,
+            var(--gauge-color) 0 var(--angle),
+            #dfe6ee var(--angle) 180deg,
+            transparent 180deg
+        );
+    border-radius:180px 180px 0 0;
+    margin:0 auto;
+    max-width:190px;
+    overflow:hidden;
+    position:relative;
+    width:100%;
+}
+
+.gauge-dial::after{
+    background:#f8fafc;
+    border-radius:130px 130px 0 0;
+    bottom:0;
+    content:"";
+    height:70%;
+    left:15%;
+    position:absolute;
+    right:15%;
+}
+
+.gauge-needle{
+    background:#1f2933;
+    border-radius:4px;
+    bottom:0;
+    height:4px;
+    left:50%;
+    position:absolute;
+    transform:rotate(var(--needle));
+    transform-origin:left center;
+    width:44%;
+    z-index:2;
+}
+
+.gauge-center{
+    background:#1f2933;
+    border:3px solid white;
+    border-radius:50%;
+    bottom:-7px;
+    height:18px;
+    left:50%;
+    position:absolute;
+    transform:translateX(-50%);
+    width:18px;
+    z-index:3;
+}
+
+.gauge-value{
+    font-size:26px;
+    font-weight:bold;
+    margin-top:8px;
+}
+
+.gauge-unit,
+.gauge-scale,
+.gauge-limit{
+    color:#555;
+    font-size:12px;
+}
+
+.gauge-scale{
+    display:flex;
+    justify-content:space-between;
+    margin:6px auto 0;
+    max-width:190px;
+}
+
+.gauge-limit{
+    margin-top:4px;
+}
+
+.gauge-ok .gauge-dial{
+    --gauge-color:#1c7c3c;
+}
+
+.gauge-warning .gauge-dial{
+    --gauge-color:#a66a00;
+}
+
+.gauge-danger .gauge-dial{
+    --gauge-color:#a60000;
+}
+
+.gauge-muted .gauge-dial{
+    --gauge-color:#7b8794;
+}
+
+</style>
+
+</head>
+
+<body>
+
+<div class="sidebar">
+
+<h2>RioBranco</h2>
+
+<a href="/">Dashboard</a>
+
+<a href="/motores">Motores</a>
+
+<div class="menu-section">Sensores</div>
+
+<a class="submenu" href="/sensores/drivers">Drivers</a>
+
+<a href="/historico">Histórico</a>
+
+<a href="/alarmes">Alarmes</a>
+
+<a href="/tempo-real">Tempo Real</a>
+
+<a href="/setores">Setores</a>
+
+</div>
+
+<div class="content">
+
+{% block content %}
+{% endblock %}
+
+</div>
+
+</body>
+
+</html>

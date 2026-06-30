@@ -1,0 +1,43 @@
+{% extends 'base.html' %}
+
+{% block content %}
+
+<h1>Histórico</h1>
+
+<div class="card">
+
+<table>
+
+<tr>
+<th>Data</th>
+<th>Motor</th>
+<th>RPM</th>
+<th>Temperatura</th>
+<th>Vibração</th>
+</tr>
+
+{% for item in dados %}
+
+<tr>
+
+<td>{{ item.timestamp }}</td>
+
+<td>{{ item.motor_id }}</td>
+
+<td>{{ item.rpm }}</td>
+
+<td>{{ item.temperatura }}</td>
+
+<td>{{ item.vibracao }}</td>
+
+<td>{{ item.motor }}</td>
+
+</tr>
+
+{% endfor %}
+
+</table>
+
+</div>
+
+{% endblock %}

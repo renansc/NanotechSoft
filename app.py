@@ -171,6 +171,7 @@ LOCAL_RIOB_ALIASES = {
 }
 _local_riob_lock = threading.Lock()
 _local_riob_procs = {}
+_app_startup_errors = {}
 MENU_SECTIONS = (
     "dashboards",
     "cadastros",
@@ -197,7 +198,7 @@ app.secret_key = os.environ.get("FLASK_SECRET") or "notechsoft-dev-secret"
 
 DB_CONFIG = {
     "host": os.environ.get("NS_DB_HOST", "127.0.0.1"),
-    "port": int(os.environ.get("NS_DB_PORT", "3306")),
+    "port": int(os.environ.get("NS_DB_PORT", "3307")),
     "user": os.environ.get("NS_DB_USER", "root"),
     "password": os.environ.get("NS_DB_PASSWORD", ""),
     "database": os.environ.get("NS_DB_NAME", "notechsoft"),
@@ -358,13 +359,16 @@ def get_user_by_id(user_id):
 
 
 def get_config():
-    conn = get_conn()
-    cur = conn.cursor(dictionary=True)
-    cur.execute("SELECT tema FROM portal_config WHERE id=1")
-    row = cur.fetchone() or {"tema": "rio_branco"}
-    cur.close()
-    conn.close()
-    return {"tema": row.get("tema") or "rio_branco"}
+    try:
+        conn = get_conn()
+        cur = conn.cursor(dictionary=True)
+        cur.execute("SELECT tema FROM portal_config WHERE id=1")
+        row = cur.fetchone() or {"tema": "rio_branco"}
+        cur.close()
+        conn.close()
+        return {"tema": row.get("tema") or "rio_branco"}
+    except mysql.connector.Error:
+        return {"tema": "rio_branco"}
 
 
 def get_user_permissions(usuario):
@@ -626,19 +630,22 @@ def filesystem_apps():
 
 
 def database_apps():
-    conn = get_conn()
-    cur = conn.cursor(dictionary=True)
-    cur.execute(
-        """
-        SELECT app_key, nome, descricao, url, icone, ativo, ordem, origem
-        FROM installed_apps
-        ORDER BY ordem, nome
-        """
-    )
-    rows = cur.fetchall()
-    cur.close()
-    conn.close()
-    return [normalize_app(row, row.get("origem") or "database") for row in rows]
+    try:
+        conn = get_conn()
+        cur = conn.cursor(dictionary=True)
+        cur.execute(
+            """
+            SELECT app_key, nome, descricao, url, icone, ativo, ordem, origem
+            FROM installed_apps
+            ORDER BY ordem, nome
+            """
+        )
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+        return [normalize_app(row, row.get("origem") or "database") for row in rows]
+    except mysql.connector.Error:
+        return []
 
 
 def list_apps():
@@ -946,22 +953,29 @@ def rewrite_local_riob_text(content, app_key):
 def ensure_local_riob_app(app_key):
     cfg = LOCAL_RIOB_APPS.get(app_key)
     if not cfg:
+        log_app_startup_error(app_key, "configuracao local do app nao encontrada")
         return False
     port = int(cfg["port"])
     if tcp_open("127.0.0.1", port):
+        _app_startup_errors.pop(app_key, None)
         return True
 
     with _local_riob_lock:
         if tcp_open("127.0.0.1", port):
+            _app_startup_errors.pop(app_key, None)
             return True
         proc = _local_riob_procs.get(app_key)
         if proc is not None and proc.poll() is None:
             time.sleep(0.5)
-            return tcp_open("127.0.0.1", port)
+            ok = tcp_open("127.0.0.1", port)
+            if ok:
+                _app_startup_errors.pop(app_key, None)
+            return ok
 
         cwd = Path(cfg["cwd"])
         script = cwd / str(cfg["script"])
         if not script.exists():
+            log_app_startup_error(app_key, f"codigo nao encontrado em {script}")
             return False
 
         python_bin = BASE_DIR / ".venv" / "bin" / "python"
@@ -974,21 +988,27 @@ def ensure_local_riob_app(app_key):
         env.update({key: str(value) for key, value in (cfg.get("env") or {}).items()})
         env.setdefault("PYTHONUNBUFFERED", "1")
 
-        log_path = BASE_DIR / f"{app_key}.log"
-        log_file = log_path.open("ab")
-        _local_riob_procs[app_key] = subprocess.Popen(
-            [str(python_bin), str(script.name)],
-            cwd=str(cwd),
-            env=env,
-            stdout=log_file,
-            stderr=subprocess.STDOUT,
-        )
+        try:
+            log_path = BASE_DIR / f"{app_key}.log"
+            log_file = log_path.open("ab")
+            _local_riob_procs[app_key] = subprocess.Popen(
+                [str(python_bin), str(script.name)],
+                cwd=str(cwd),
+                env=env,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+            )
+        except Exception as exc:
+            log_app_startup_error(app_key, exc)
+            return False
         startup_wait = float(cfg.get("startup_wait") or 15)
         attempts = max(1, int(startup_wait / 0.25))
         for _ in range(attempts):
             if tcp_open("127.0.0.1", port):
+                _app_startup_errors.pop(app_key, None)
                 return True
             time.sleep(0.25)
+        log_app_startup_error(app_key, f"processo iniciou, mas a porta 127.0.0.1:{port} nao respondeu")
     return False
 
 
@@ -1002,7 +1022,7 @@ def local_riob_proxy_response(app_key, subpath=""):
         return render_template(
             "app_placeholder.html",
             app_key=app_key,
-            mensagem=f"Nao foi possivel iniciar o modulo local {app_key}. Confira {app_key}.log.",
+            mensagem=app_startup_message(app_key, f"Nao foi possivel iniciar o modulo local {app_key}."),
             **portal_context(usuario),
         ), 502
 
@@ -1018,6 +1038,10 @@ def local_riob_proxy_response(app_key, subpath=""):
         if key.lower() in {"host", "connection", "content-length", "accept-encoding"}:
             continue
         headers[key] = value
+    headers["X-Usuario-Id"] = str(usuario["id"])
+    headers["X-Usuario-Nome"] = usuario.get("nome") or usuario.get("login") or ""
+    headers["X-Usuario-Login"] = usuario["login"]
+    headers["X-Forwarded-Prefix"] = f"/apps/{app_key}"
     data = request.get_data() if request.method in {"POST", "PUT", "PATCH"} else None
     req = urllib.request.Request(upstream_url, data=data, headers=headers, method=request.method)
 
@@ -1091,6 +1115,7 @@ def riob_proxy_response(app_key="riob", subpath=""):
             continue
         headers[key] = value
     headers["X-Usuario-Id"] = str(usuario["id"])
+    headers["X-Usuario-Nome"] = usuario.get("nome") or usuario.get("login") or ""
     headers["X-Usuario-Login"] = usuario["login"]
     headers["X-Forwarded-Prefix"] = "/apps/riob"
 
@@ -1205,25 +1230,76 @@ def tcp_open(host, port, timeout=0.5):
         return False
 
 
+def python_bin_for(*candidates):
+    for candidate in candidates:
+        path = Path(candidate)
+        if path.exists():
+            return path
+    base_venv_python = BASE_DIR / ".venv" / "bin" / "python"
+    if base_venv_python.exists():
+        return base_venv_python
+    return Path(sys.executable)
+
+
+def log_app_startup_error(app_key, exc):
+    _app_startup_errors[app_key] = str(exc)
+    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    message = f"\n[{timestamp}] Falha ao iniciar {app_key}: {exc}\n"
+    try:
+        with (BASE_DIR / f"{app_key}.log").open("ab") as log_file:
+            log_file.write(message.encode("utf-8", errors="replace"))
+    except Exception:
+        pass
+
+
+def mysql_database_url(database):
+    user = urllib.parse.quote_plus(DB_CONFIG["user"])
+    password = urllib.parse.quote_plus(DB_CONFIG["password"])
+    host = DB_CONFIG["host"]
+    port = DB_CONFIG["port"]
+    return f"mysql+pymysql://{user}:{password}@{host}:{port}/{database}?charset=utf8mb4"
+
+
+def configured_database_url(env, key):
+    value = str(env.get(key) or "").strip()
+    if value.lower() in {"", "false", "none", "null"}:
+        return ""
+    return value
+
+
+def app_startup_message(app_key, fallback):
+    detail = _app_startup_errors.get(app_key)
+    log_name = f"{app_key}.log"
+    if detail:
+        return f"{fallback} Detalhe: {detail}. Log: {log_name}."
+    if (BASE_DIR / log_name).exists():
+        return f"{fallback} Log: {log_name}."
+    return fallback
+
+
 def ensure_automacao_app():
     """Sobe o app legado de automacao em loopback quando o usuario abre uma tela dele."""
     global _automacao_proc
     if tcp_open("127.0.0.1", AUTOMACAO_PORT):
+        _app_startup_errors.pop("automacao", None)
         return True
 
     with _automacao_lock:
         if tcp_open("127.0.0.1", AUTOMACAO_PORT):
+            _app_startup_errors.pop("automacao", None)
             return True
         if _automacao_proc is not None and _automacao_proc.poll() is None:
             time.sleep(0.5)
-            return tcp_open("127.0.0.1", AUTOMACAO_PORT)
+            ok = tcp_open("127.0.0.1", AUTOMACAO_PORT)
+            if ok:
+                _app_startup_errors.pop("automacao", None)
+            return ok
 
         if not (AUTOMACAO_DIR / "app.py").exists():
+            log_app_startup_error("automacao", f"codigo nao encontrado em {AUTOMACAO_DIR / 'app.py'}")
             return False
 
-        python_bin = AUTOMACAO_DIR / ".venv" / "bin" / "python"
-        if not python_bin.exists():
-            python_bin = BASE_DIR / ".venv" / "bin" / "python"
+        python_bin = python_bin_for(AUTOMACAO_DIR / ".venv" / "bin" / "python")
 
         env = os.environ.copy()
         env.pop("WERKZEUG_SERVER_FD", None)
@@ -1235,18 +1311,24 @@ def ensure_automacao_app():
             "DATABASE_PATH": str(AUTOMACAO_DIR / "homologacao.db"),
             "DRIVER_MONITOR_ENABLED": env.get("DRIVER_MONITOR_ENABLED", "1"),
         })
-        log_file = (BASE_DIR / "automacao.log").open("ab")
-        _automacao_proc = subprocess.Popen(
-            [str(python_bin), "app.py"],
-            cwd=str(AUTOMACAO_DIR),
-            env=env,
-            stdout=log_file,
-            stderr=subprocess.STDOUT,
-        )
+        try:
+            log_file = (BASE_DIR / "automacao.log").open("ab")
+            _automacao_proc = subprocess.Popen(
+                [str(python_bin), "app.py"],
+                cwd=str(AUTOMACAO_DIR),
+                env=env,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+            )
+        except Exception as exc:
+            log_app_startup_error("automacao", exc)
+            return False
         for _ in range(30):
             if tcp_open("127.0.0.1", AUTOMACAO_PORT):
+                _app_startup_errors.pop("automacao", None)
                 return True
             time.sleep(0.2)
+        log_app_startup_error("automacao", f"processo iniciou, mas a porta 127.0.0.1:{AUTOMACAO_PORT} nao respondeu")
     return False
 
 
@@ -1400,7 +1482,7 @@ def automacao_proxy_response(subpath="", integrated=True):
         return render_template(
             "app_placeholder.html",
             app_key="automacao",
-            erro="Automacao nao iniciou. Veja automacao.log.",
+            erro=app_startup_message("automacao", "Automacao nao iniciou."),
             **portal_context(),
         ), 502
 
@@ -1522,27 +1604,43 @@ def ensure_nanoponto_app():
     """Sobe o NanoPonto legado em loopback quando uma tela dele e aberta."""
     global _nanoponto_proc
     if tcp_open("127.0.0.1", NANOPONTO_PORT):
+        _app_startup_errors.pop("nanoponto", None)
         return True
 
     with _nanoponto_lock:
         if tcp_open("127.0.0.1", NANOPONTO_PORT):
+            _app_startup_errors.pop("nanoponto", None)
             return True
         if _nanoponto_proc is not None and _nanoponto_proc.poll() is None:
             time.sleep(0.5)
-            return tcp_open("127.0.0.1", NANOPONTO_PORT)
+            ok = tcp_open("127.0.0.1", NANOPONTO_PORT)
+            if ok:
+                _app_startup_errors.pop("nanoponto", None)
+            return ok
 
         if not (NANOPONTO_DIR / "app.py").exists():
+            log_app_startup_error("nanoponto", f"codigo nao encontrado em {NANOPONTO_DIR / 'app.py'}")
             return False
 
-        ensure_nanoponto_database()
-        python_bin = BASE_DIR / ".venv" / "bin" / "python"
+        python_bin = python_bin_for(NANOPONTO_DIR / ".venv" / "bin" / "python")
+        atestado_upload_dir = NANOPONTO_DIR / "data" / "atestados"
+        atestado_upload_dir.mkdir(parents=True, exist_ok=True)
         env = os.environ.copy()
         env.pop("WERKZEUG_SERVER_FD", None)
         env.pop("WERKZEUG_RUN_MAIN", None)
+        database_url = configured_database_url(env, "NANOPONTO_DATABASE_URL")
+        if not database_url:
+            try:
+                ensure_nanoponto_database()
+            except Exception as exc:
+                log_app_startup_error("nanoponto", exc)
+                return False
+            database_url = mysql_database_url("nanoponto")
         env.update({
             "FLASK_APP": "app.py",
             "FLASK_RUN_HOST": "127.0.0.1",
             "FLASK_RUN_PORT": str(NANOPONTO_PORT),
+            "NANOPONTO_DATABASE_URL": database_url,
             "NANOPONTO_MYSQL_HOST": DB_CONFIG["host"],
             "NANOPONTO_MYSQL_PORT": str(DB_CONFIG["port"]),
             "NANOPONTO_MYSQL_USER": DB_CONFIG["user"],
@@ -1551,20 +1649,26 @@ def ensure_nanoponto_app():
             "APP_NAME": "NanoPonto",
             "SECRET_KEY": env.get("NANOPONTO_SECRET_KEY", "nanoponto-dev-key"),
             "ALLOW_SYSTEM_TIME_FALLBACK": env.get("ALLOW_SYSTEM_TIME_FALLBACK", "1"),
-            "ATESTADO_UPLOAD_DIR": str(NANOPONTO_DIR / "data" / "atestados"),
+            "ATESTADO_UPLOAD_DIR": str(atestado_upload_dir),
         })
-        log_file = (BASE_DIR / "nanoponto.log").open("ab")
-        _nanoponto_proc = subprocess.Popen(
-            [str(python_bin), "-m", "flask", "run", "--host", "127.0.0.1", "--port", str(NANOPONTO_PORT)],
-            cwd=str(NANOPONTO_DIR),
-            env=env,
-            stdout=log_file,
-            stderr=subprocess.STDOUT,
-        )
+        try:
+            log_file = (BASE_DIR / "nanoponto.log").open("ab")
+            _nanoponto_proc = subprocess.Popen(
+                [str(python_bin), "-m", "flask", "run", "--host", "127.0.0.1", "--port", str(NANOPONTO_PORT)],
+                cwd=str(NANOPONTO_DIR),
+                env=env,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+            )
+        except Exception as exc:
+            log_app_startup_error("nanoponto", exc)
+            return False
         for _ in range(40):
             if tcp_open("127.0.0.1", NANOPONTO_PORT):
+                _app_startup_errors.pop("nanoponto", None)
                 return True
             time.sleep(0.25)
+        log_app_startup_error("nanoponto", f"processo iniciou, mas a porta 127.0.0.1:{NANOPONTO_PORT} nao respondeu")
     return False
 
 
@@ -1813,7 +1917,7 @@ def nanoponto_proxy_response(subpath="", integrated=True):
         return render_template(
             "app_placeholder.html",
             app_key="nanoponto",
-            erro="NanoPonto nao iniciou. Veja nanoponto.log.",
+            erro=app_startup_message("nanoponto", "NanoPonto nao iniciou."),
             **portal_context(),
         ), 502
 
@@ -1946,25 +2050,26 @@ def ensure_zap_database():
 
 
 def zap_database_url():
-    user = urllib.parse.quote_plus(DB_CONFIG["user"])
-    password = urllib.parse.quote_plus(DB_CONFIG["password"])
-    host = DB_CONFIG["host"]
-    port = DB_CONFIG["port"]
-    return f"mysql+pymysql://{user}:{password}@{host}:{port}/zap_workflow?charset=utf8mb4"
+    return mysql_database_url("zap_workflow")
 
 
 def ensure_zap_app():
     """Sobe o Zap Workflow em loopback quando uma tela dele e aberta."""
     global _zap_proc
     if tcp_open("127.0.0.1", ZAP_PORT):
+        _app_startup_errors.pop("zap", None)
         return True
 
     with _zap_lock:
         if tcp_open("127.0.0.1", ZAP_PORT):
+            _app_startup_errors.pop("zap", None)
             return True
         if _zap_proc is not None and _zap_proc.poll() is None:
             time.sleep(0.5)
-            return tcp_open("127.0.0.1", ZAP_PORT)
+            ok = tcp_open("127.0.0.1", ZAP_PORT)
+            if ok:
+                _app_startup_errors.pop("zap", None)
+            return ok
 
         if (ZAP_DIR / "zap" / "wsgi.py").exists():
             flask_app = "zap.wsgi:app"
@@ -1973,41 +2078,57 @@ def ensure_zap_app():
             flask_app = "wsgi:app"
             zap_cwd = ZAP_DIR
         else:
+            log_app_startup_error("zap", f"codigo nao encontrado em {ZAP_DIR / 'wsgi.py'}")
             return False
 
-        ensure_zap_database()
-        python_bin = BASE_DIR / ".venv" / "bin" / "python"
+        python_bin = python_bin_for(ZAP_DIR / ".venv" / "bin" / "python")
+        upload_folder = ZAP_DIR / "instance" / "uploads"
+        upload_folder.mkdir(parents=True, exist_ok=True)
         env = os.environ.copy()
         env.pop("WERKZEUG_SERVER_FD", None)
         env.pop("WERKZEUG_RUN_MAIN", None)
+        database_url = configured_database_url(env, "ZAP_DATABASE_URL")
+        if not database_url:
+            try:
+                ensure_zap_database()
+            except Exception as exc:
+                log_app_startup_error("zap", exc)
+                return False
+            database_url = zap_database_url()
         env.update({
             "FLASK_APP": flask_app,
             "SECRET_KEY": env.get("ZAP_SECRET_KEY", "zap-dev-key"),
             "SESSION_COOKIE_NAME": "zap_session",
-            "ZAP_DATABASE_URL": zap_database_url(),
-            "DATABASE_URL": zap_database_url(),
+            "ZAP_DATABASE_URL": database_url,
+            "DATABASE_URL": database_url,
             "BOOTSTRAP_ADMIN_NAME": env.get("ZAP_ADMIN_NAME", "Administrador"),
             "BOOTSTRAP_ADMIN_EMAIL": env.get("ZAP_ADMIN_EMAIL", "admin@empresa.com"),
             "BOOTSTRAP_ADMIN_PASSWORD": env.get("ZAP_ADMIN_PASSWORD", "admin"),
-            "UPLOAD_FOLDER": str(ZAP_DIR / "instance" / "uploads"),
+            "UPLOAD_FOLDER": str(upload_folder),
             "PUBLIC_BASE_URL": env.get("ZAP_PUBLIC_BASE_URL", ""),
             "GOOGLE_REDIRECT_URI": env.get(
                 "ZAP_GOOGLE_REDIRECT_URI",
                 f"http://127.0.0.1:{ZAP_PORT}/integrations/google/callback",
             ),
         })
-        log_file = (BASE_DIR / "zap.log").open("ab")
-        _zap_proc = subprocess.Popen(
-            [str(python_bin), "-m", "flask", "run", "--host", "127.0.0.1", "--port", str(ZAP_PORT)],
-            cwd=str(zap_cwd),
-            env=env,
-            stdout=log_file,
-            stderr=subprocess.STDOUT,
-        )
+        try:
+            log_file = (BASE_DIR / "zap.log").open("ab")
+            _zap_proc = subprocess.Popen(
+                [str(python_bin), "-m", "flask", "run", "--host", "127.0.0.1", "--port", str(ZAP_PORT)],
+                cwd=str(zap_cwd),
+                env=env,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+            )
+        except Exception as exc:
+            log_app_startup_error("zap", exc)
+            return False
         for _ in range(120):
             if tcp_open("127.0.0.1", ZAP_PORT):
+                _app_startup_errors.pop("zap", None)
                 return True
             time.sleep(0.25)
+        log_app_startup_error("zap", f"processo iniciou, mas a porta 127.0.0.1:{ZAP_PORT} nao respondeu")
     return False
 
 
@@ -2246,11 +2367,11 @@ def create_zap_session_cookie(usuario):
 def zap_proxy_response(subpath="", integrated=True, require_portal_login=True):
     if not ensure_zap_app():
         if not require_portal_login:
-            return Response("Zap nao iniciou.", status=502, content_type="text/plain; charset=utf-8")
+            return Response(app_startup_message("zap", "Zap nao iniciou."), status=502, content_type="text/plain; charset=utf-8")
         return render_template(
             "app_placeholder.html",
             app_key="zap",
-            erro="Zap nao iniciou. Veja zap.log.",
+            erro=app_startup_message("zap", "Zap nao iniciou."),
             **portal_context(),
         ), 502
 
@@ -2392,56 +2513,72 @@ def ensure_nanostore_database():
 
 
 def nanostore_database_url():
-    user = urllib.parse.quote_plus(DB_CONFIG["user"])
-    password = urllib.parse.quote_plus(DB_CONFIG["password"])
-    host = DB_CONFIG["host"]
-    port = DB_CONFIG["port"]
-    return f"mysql+pymysql://{user}:{password}@{host}:{port}/nanostore?charset=utf8mb4"
+    return mysql_database_url("nanostore")
 
 
 def ensure_nanostore_app():
     """Sobe o NanoStore em loopback quando uma tela dele e aberta."""
     global _nanostore_proc
     if tcp_open("127.0.0.1", NANOSTORE_PORT):
+        _app_startup_errors.pop("nanostore", None)
         return True
 
     with _nanostore_lock:
         if tcp_open("127.0.0.1", NANOSTORE_PORT):
+            _app_startup_errors.pop("nanostore", None)
             return True
         if _nanostore_proc is not None and _nanostore_proc.poll() is None:
             time.sleep(0.5)
-            return tcp_open("127.0.0.1", NANOSTORE_PORT)
+            ok = tcp_open("127.0.0.1", NANOSTORE_PORT)
+            if ok:
+                _app_startup_errors.pop("nanostore", None)
+            return ok
 
         if not (NANOSTORE_DIR / "wsgi.py").exists():
+            log_app_startup_error("nanostore", f"codigo nao encontrado em {NANOSTORE_DIR / 'wsgi.py'}")
             return False
 
-        ensure_nanostore_database()
-        python_bin = BASE_DIR / ".venv" / "bin" / "python"
+        python_bin = python_bin_for(NANOSTORE_DIR / ".venv" / "bin" / "python")
         env = os.environ.copy()
         env.pop("WERKZEUG_SERVER_FD", None)
         env.pop("WERKZEUG_RUN_MAIN", None)
+        database_url = configured_database_url(env, "NANOSTORE_DATABASE_URL")
+        if not database_url:
+            try:
+                ensure_nanostore_database()
+            except Exception as exc:
+                log_app_startup_error("nanostore", exc)
+                return False
+            database_url = nanostore_database_url()
         env.update({
             "FLASK_APP": "wsgi:app",
             "SECRET_KEY": env.get("NANOSTORE_SECRET_KEY", "nanostore-dev-key"),
-            "DATABASE_URL": nanostore_database_url(),
+            "NANOSTORE_DATABASE_URL": database_url,
+            "DATABASE_URL": database_url,
             "HOST": "127.0.0.1",
             "PORT": str(NANOSTORE_PORT),
             "FLASK_DEBUG": "false",
             "APP_CERT_DIR": str(NANOSTORE_DIR / "certs"),
             "PUBLIC_BASE_URL": env.get("NANOSTORE_PUBLIC_BASE_URL", ""),
         })
-        log_file = (BASE_DIR / "nanostore.log").open("ab")
-        _nanostore_proc = subprocess.Popen(
-            [str(python_bin), "-m", "flask", "run", "--host", "127.0.0.1", "--port", str(NANOSTORE_PORT)],
-            cwd=str(NANOSTORE_DIR),
-            env=env,
-            stdout=log_file,
-            stderr=subprocess.STDOUT,
-        )
+        try:
+            log_file = (BASE_DIR / "nanostore.log").open("ab")
+            _nanostore_proc = subprocess.Popen(
+                [str(python_bin), "-m", "flask", "run", "--host", "127.0.0.1", "--port", str(NANOSTORE_PORT)],
+                cwd=str(NANOSTORE_DIR),
+                env=env,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+            )
+        except Exception as exc:
+            log_app_startup_error("nanostore", exc)
+            return False
         for _ in range(240):
             if tcp_open("127.0.0.1", NANOSTORE_PORT):
+                _app_startup_errors.pop("nanostore", None)
                 return True
             time.sleep(0.25)
+        log_app_startup_error("nanostore", f"processo iniciou, mas a porta 127.0.0.1:{NANOSTORE_PORT} nao respondeu")
     return False
 
 
@@ -2527,7 +2664,7 @@ def nanostore_proxy_response(subpath="", integrated=True):
         return render_template(
             "app_placeholder.html",
             app_key="nanostore",
-            erro="NanoStore nao iniciou. Veja nanostore.log.",
+            erro=app_startup_message("nanostore", "NanoStore nao iniciou."),
             **portal_context(),
         ), 502
 

@@ -1,0 +1,587 @@
+{% extends 'base.html' %}
+
+{% block content %}
+
+<h1>Tempo Real</h1>
+
+<div class="card">
+
+<h2>Motor</h2>
+
+<h2 id="motor">
+Aguardando...
+</h2>
+
+<div
+    id="motor-gauges"
+    class="gauge-grid">
+</div>
+
+</div>
+
+<div class="card">
+
+<h2>Drives</h2>
+
+<p>
+Última atualização:
+<span id="drivers-atualizado">Aguardando...</span>
+</p>
+
+<p
+    id="drivers-empty"
+    {% if drivers %}
+    hidden
+    {% endif %}>
+Nenhum drive cadastrado.
+</p>
+
+<div
+    id="drivers-monitor"
+    class="drivers-monitor">
+</div>
+
+</div>
+
+<script>
+
+async function atualizar(){
+    try{
+        const resposta =
+            await fetch("/api/tempo-real");
+
+        const dados =
+            await resposta.json();
+
+        atualizarMotor(dados.motor);
+        atualizarDrivers(dados.drivers || []);
+    }
+    catch(error){
+        document.getElementById(
+            "drivers-atualizado"
+        ).innerText = "Falha ao atualizar";
+    }
+}
+
+function atualizarMotor(dados){
+    const container =
+        document.getElementById("motor-gauges");
+
+    container.innerHTML = "";
+
+    if(!dados || !dados.motor){
+        document.getElementById(
+            "motor"
+        ).innerText = "Aguardando...";
+        return;
+    }
+
+    document.getElementById(
+        "motor"
+    ).innerText = dados.motor;
+
+    const gauges = [
+        {
+            titulo: "RPM",
+            valor: dados.rpm,
+            unidade: "rpm",
+            limite: dados.rpm_alerta,
+            maximo: calcularMaximo(dados.rpm, dados.rpm_alerta, 3000)
+        },
+        {
+            titulo: "Temperatura",
+            valor: dados.temperatura,
+            unidade: "°C",
+            limite: dados.temperatura_alerta,
+            maximo: calcularMaximo(dados.temperatura, dados.temperatura_alerta, 100)
+        },
+        {
+            titulo: "Vibração",
+            valor: dados.vibracao,
+            unidade: "mm/s",
+            limite: dados.vibracao_alerta,
+            maximo: calcularMaximo(dados.vibracao, dados.vibracao_alerta, 1)
+        }
+    ];
+
+    for(const gauge of gauges){
+        container.appendChild(
+            criarVelocimetro(
+                gauge.titulo,
+                gauge.valor,
+                gauge.unidade,
+                gauge.maximo,
+                gauge.limite
+            )
+        );
+    }
+}
+
+function atualizarDrivers(drivers){
+    const container =
+        document.getElementById("drivers-monitor");
+    const empty =
+        document.getElementById("drivers-empty");
+
+    container.innerHTML = "";
+    empty.hidden = drivers.length > 0;
+
+    for(const driver of drivers){
+        container.appendChild(
+            criarCardDriver(driver)
+        );
+    }
+
+    document.getElementById(
+        "drivers-atualizado"
+    ).innerText = new Date().toLocaleTimeString("pt-BR");
+}
+
+function criarCardDriver(driver){
+    const card = criarElemento(
+        "div",
+        "driver-live-card"
+    );
+
+    const header = criarElemento(
+        "div",
+        "driver-live-header"
+    );
+
+    const titulo = criarElemento("h3");
+    titulo.innerText = driver.nome;
+
+    const status = criarElemento(
+        "span",
+        "status status-" + (driver.ultimo_status || "novo"),
+        driver.ultimo_status || "novo"
+    );
+
+    header.appendChild(titulo);
+    header.appendChild(status);
+    card.appendChild(header);
+
+    card.appendChild(
+        criarElemento(
+            "p",
+            "",
+            (driver.fabricante || "") + " " +
+            (driver.modelo || "") + " - " +
+            driver.ip + ":" + driver.porta
+        )
+    );
+
+    card.appendChild(
+        criarElemento(
+            "p",
+            "",
+            "Motor: " + (driver.motor || "-")
+        )
+    );
+
+    if(driver.ultimo_erro){
+        card.appendChild(
+            criarElemento(
+                "p",
+                "danger",
+                driver.ultimo_erro
+            )
+        );
+    }
+
+    if(!driver.ultima){
+        card.appendChild(
+            criarElemento(
+                "p",
+                "",
+                "Aguardando leitura..."
+            )
+        );
+        return card;
+    }
+
+    card.appendChild(
+        criarElemento(
+            "p",
+            "",
+            "Leitura: " + driver.ultima.timestamp
+        )
+    );
+
+    const tags =
+        Object.entries(driver.ultima.dados || {});
+
+    const indicadores =
+        tags.filter(([nome, item]) => tagComVelocimetro(nome, item));
+
+    if(indicadores.length > 0){
+        card.appendChild(
+            criarElemento(
+                "h4",
+                "",
+                "Indicadores"
+            )
+        );
+
+        const gaugeGrid =
+            criarElemento(
+                "div",
+                "gauge-grid driver-gauge-grid"
+            );
+
+        for(const [nome, item] of indicadores){
+            gaugeGrid.appendChild(
+                criarVelocimetro(
+                    nome,
+                    item.valor,
+                    item.unidade || "",
+                    calcularMaximoTag(nome, item),
+                    null
+                )
+            );
+        }
+
+        card.appendChild(gaugeGrid);
+    }
+
+    const tabela = document.createElement("table");
+
+    const cabecalho = document.createElement("tr");
+    for(const texto of ["Tag", "Valor", "Unidade", "Endereço", "Tipo"]){
+        const th = document.createElement("th");
+        th.innerText = texto;
+        cabecalho.appendChild(th);
+    }
+    tabela.appendChild(cabecalho);
+
+    if(tags.length === 0){
+        const linhaVazia = document.createElement("tr");
+        const celulaVazia = document.createElement("td");
+        celulaVazia.colSpan = 5;
+        celulaVazia.innerText = "Nenhuma tag retornada.";
+        linhaVazia.appendChild(celulaVazia);
+        tabela.appendChild(linhaVazia);
+    }
+
+    for(const [nome, item] of tags){
+        tabela.appendChild(
+            criarLinhaTag(nome, item)
+        );
+    }
+
+    card.appendChild(tabela);
+
+    return card;
+}
+
+function criarVelocimetro(titulo, valor, unidade, maximo, limite){
+    const numeroValor =
+        normalizarNumero(valor);
+    const numeroMaximo =
+        Math.max(
+            normalizarNumero(maximo) || 1,
+            1
+        );
+
+    const percentual =
+        numeroValor === null
+            ? 0
+            : Math.max(
+                0,
+                Math.min(
+                    100,
+                    Math.max(0, numeroValor) * 100 / numeroMaximo
+                )
+            );
+
+    const card =
+        criarElemento(
+            "div",
+            "gauge-card " + classeVelocimetro(numeroValor, limite, percentual)
+        );
+
+    const tituloEl =
+        criarElemento(
+            "div",
+            "gauge-title",
+            titulo
+        );
+
+    const dial =
+        criarElemento(
+            "div",
+            "gauge-dial"
+        );
+
+    dial.style.setProperty(
+        "--angle",
+        (percentual * 1.8) + "deg"
+    );
+    dial.style.setProperty(
+        "--needle",
+        (-180 + percentual * 180) + "deg"
+    );
+
+    const needle =
+        criarElemento(
+            "div",
+            "gauge-needle"
+        );
+    const center =
+        criarElemento(
+            "div",
+            "gauge-center"
+        );
+
+    dial.appendChild(needle);
+    dial.appendChild(center);
+
+    const valorEl =
+        criarElemento(
+            "div",
+            "gauge-value",
+            formatarValor(numeroValor)
+        );
+
+    const unidadeEl =
+        criarElemento(
+            "div",
+            "gauge-unit",
+            unidade || "-"
+        );
+
+    const escala =
+        criarElemento(
+            "div",
+            "gauge-scale"
+        );
+
+    escala.appendChild(
+        criarElemento("span", "", "0")
+    );
+    escala.appendChild(
+        criarElemento("span", "", formatarValor(numeroMaximo))
+    );
+
+    card.appendChild(tituloEl);
+    card.appendChild(dial);
+    card.appendChild(valorEl);
+    card.appendChild(unidadeEl);
+    card.appendChild(escala);
+
+    const numeroLimite =
+        normalizarNumero(limite);
+
+    if(numeroLimite !== null){
+        card.appendChild(
+            criarElemento(
+                "div",
+                "gauge-limit",
+                "Limite: " + formatarValor(numeroLimite)
+            )
+        );
+    }
+
+    return card;
+}
+
+function criarLinhaTag(nome, item){
+    const linha = document.createElement("tr");
+
+    adicionarCelula(linha, nome);
+
+    const celulaValor = document.createElement("td");
+
+    if(item.erro){
+        const erro = criarElemento(
+            "span",
+            "danger",
+            item.erro
+        );
+        celulaValor.appendChild(erro);
+    }
+    else{
+        const valor =
+            item.valor !== undefined && item.valor !== null
+                ? item.valor
+                : "-";
+
+        celulaValor.appendChild(
+            document.createTextNode(valor)
+        );
+
+        if(item.bits){
+            const bits = Object.entries(item.bits)
+                .map(([bit, ativo]) => bit + "=" + (ativo ? "1" : "0"))
+                .join(" ");
+
+            celulaValor.appendChild(
+                criarElemento(
+                    "div",
+                    "tag-bits",
+                    bits
+                )
+            );
+        }
+    }
+
+    linha.appendChild(celulaValor);
+    adicionarCelula(linha, item.unidade || "-");
+    adicionarCelula(linha, item.endereco ?? "-");
+    adicionarCelula(linha, item.tipo || "-");
+
+    return linha;
+}
+
+function tagComVelocimetro(nome, item){
+    if(!item || item.erro || item.bits)
+        return false;
+
+    return normalizarNumero(item.valor) !== null;
+}
+
+function calcularMaximo(valor, limite, fallback){
+    const candidatos = [
+        fallback
+    ];
+
+    const numeroValor =
+        normalizarNumero(valor);
+    const numeroLimite =
+        normalizarNumero(limite);
+
+    if(numeroValor !== null)
+        candidatos.push(Math.abs(numeroValor) * 1.2);
+
+    if(numeroLimite !== null)
+        candidatos.push(Math.abs(numeroLimite) * 1.2);
+
+    return Math.max(...candidatos, 1);
+}
+
+function calcularMaximoTag(nome, item){
+    const valor =
+        Math.abs(normalizarNumero(item.valor) || 0);
+    const nomeUpper =
+        String(nome || "").toUpperCase();
+    const unidade =
+        String(item.unidade || "").toLowerCase();
+
+    if(unidade.includes("rpm") || nomeUpper.includes("VL.FB"))
+        return calcularMaximo(valor, null, 3000);
+
+    if(unidade.includes("°c") || unidade.includes("c") || nomeUpper.includes("TEMP"))
+        return calcularMaximo(valor, null, 100);
+
+    if(unidade.includes("v") || nomeUpper.includes("VBUS") || nomeUpper.includes("BUS"))
+        return calcularMaximo(valor, null, 800);
+
+    if(unidade.includes("a") || nomeUpper.includes("CURRENT") || nomeUpper.includes("CORRENTE"))
+        return calcularMaximo(valor, null, 100);
+
+    if(valor <= 1)
+        return 1;
+
+    if(valor <= 10)
+        return 10;
+
+    if(valor <= 100)
+        return 100;
+
+    if(valor <= 1000)
+        return 1000;
+
+    return Math.ceil(valor * 1.2 / 100) * 100;
+}
+
+function classeVelocimetro(valor, limite, percentual){
+    const numeroLimite =
+        normalizarNumero(limite);
+
+    if(valor === null)
+        return "gauge-muted";
+
+    if(numeroLimite !== null){
+        if(valor >= numeroLimite)
+            return "gauge-danger";
+
+        if(valor >= numeroLimite * 0.85)
+            return "gauge-warning";
+
+        return "gauge-ok";
+    }
+
+    if(percentual >= 90)
+        return "gauge-danger";
+
+    if(percentual >= 75)
+        return "gauge-warning";
+
+    return "gauge-ok";
+}
+
+function formatarValor(valor){
+    const numeroValor =
+        normalizarNumero(valor);
+
+    if(numeroValor === null)
+        return "-";
+
+    const absoluto =
+        Math.abs(numeroValor);
+
+    let casas = 2;
+
+    if(absoluto >= 100)
+        casas = 0;
+    else if(absoluto >= 10)
+        casas = 1;
+
+    return numeroValor.toLocaleString(
+        "pt-BR",
+        {
+            maximumFractionDigits: casas
+        }
+    );
+}
+
+function normalizarNumero(valor){
+    if(valor === null || valor === undefined || valor === "")
+        return null;
+
+    const numeroValor =
+        Number(valor);
+
+    return Number.isFinite(numeroValor)
+        ? numeroValor
+        : null;
+}
+
+function adicionarCelula(linha, texto){
+    const celula = document.createElement("td");
+    celula.innerText = texto ?? "-";
+    linha.appendChild(celula);
+}
+
+function criarElemento(tag, classe, texto){
+    const elemento = document.createElement(tag);
+
+    if(classe)
+        elemento.className = classe;
+
+    if(texto !== undefined)
+        elemento.innerText = texto;
+
+    return elemento;
+}
+
+setInterval(
+    atualizar,
+    3000
+);
+
+atualizar();
+
+</script>
+
+{% endblock %}

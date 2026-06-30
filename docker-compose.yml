@@ -18,6 +18,7 @@ services:
       start_period: 30s
 
   app:
+    container_name: nanotechsoft-app
     build:
       context: .
       dockerfile: Dockerfile

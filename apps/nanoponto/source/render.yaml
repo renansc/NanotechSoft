@@ -1,0 +1,61 @@
+services:
+  - type: web
+    name: NanoPonto
+    env: python
+    rootDir: NanoPonto
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn -c gunicorn.conf.py app:app
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.11
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DEFAULT_TIMEZONE
+        value: America/Sao_Paulo
+      - key: ALLOW_SYSTEM_TIME_FALLBACK
+        value: "1"
+      - key: DATABASE_URL
+        sync: false
+      - key: MYSQL_HOST
+        sync: false
+      - key: MYSQL_PORT
+        value: "3306"
+      - key: MYSQL_DATABASE
+        sync: false
+      - key: MYSQL_USER
+        sync: false
+      - key: MYSQL_PASSWORD
+        sync: false
+      - key: MYSQL_ROOT_PASSWORD
+        sync: false
+      - key: SMTP_HOST
+        value: smtp.gmail.com
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: SMTP_FROM
+        sync: false
+      - key: DEFAULT_EMPLOYER_NAME
+        value: Empresa Exemplo
+      - key: DEFAULT_EMPLOYER_DOCUMENT
+        value: "00000000000000"
+      - key: DEFAULT_EMPLOYEE_NAME
+        value: Funcionario Exemplo
+      - key: DEFAULT_EMPLOYEE_CPF
+        value: "00000000000"
+      - key: DEFAULT_EMPLOYEE_CODE
+        value: E001
+      - key: DEFAULT_EMPLOYEE_BADGE_ID
+        value: ""
+      - key: WEB_CONCURRENCY
+        value: "2"
+      - key: GUNICORN_THREADS
+        value: "4"
+      - key: GUNICORN_TIMEOUT
+        value: "120"
+      - key: GUNICORN_GRACEFUL_TIMEOUT
+        value: "30"

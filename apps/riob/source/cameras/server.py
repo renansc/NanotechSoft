@@ -2,11 +2,9 @@ import os, json, re, sqlite3, subprocess, signal, glob, threading, time
 from flask import Flask, request, jsonify, send_from_directory
 
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
-DATA_DIR = os.path.abspath(os.environ.get("CAMERAS_DATA_DIR") or BASE_DIR)
-DATA_FILE = os.path.join(DATA_DIR, "cams.json")
-DB_FILE = os.path.join(DATA_DIR, "cameras.db")
-CAMS_DIR  = os.path.join(DATA_DIR, "cams")
-os.makedirs(DATA_DIR, exist_ok=True)
+DATA_FILE = os.path.join(BASE_DIR, "cams.json")
+DB_FILE = os.path.join(BASE_DIR, "cameras.db")
+CAMS_DIR  = os.path.join(BASE_DIR, "cams")
 os.makedirs(CAMS_DIR, exist_ok=True)
 
 app = Flask(__name__, static_folder=BASE_DIR, static_url_path="")
