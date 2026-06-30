@@ -2,25 +2,35 @@
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BRANCH="${1:-main}"
-
 cd "$REPO_DIR"
 
-if [ ! -f .env ] && [ -f .env.example ]; then
-  cp .env.example .env
-  echo ".env criado a partir de .env.example. Revise as senhas antes de usar em producao."
-fi
+RIOB_DEPLOY_LOG_PREFIX="riob-update"
 
-echo "[1/4] Buscando atualizacoes do GitHub..."
-git fetch origin
+BRANCH="${1:-$(git rev-parse --abbrev-ref HEAD)}"
 
-echo "[2/4] Aplicando branch ${BRANCH}..."
+echo "[riob-update] atualizando codigo da branch ${BRANCH}..."
 git pull --ff-only origin "$BRANCH"
 
-echo "[3/4] Recriando containers com a versao nova..."
-docker compose up -d --build
+# shellcheck source=deploy/lib/ollama.sh
+source "$REPO_DIR/deploy/lib/ollama.sh"
+# shellcheck source=deploy/lib/network.sh
+source "$REPO_DIR/deploy/lib/network.sh"
 
-echo "[4/4] Limpeza opcional de imagens antigas..."
-docker image prune -f >/dev/null 2>&1 || true
+configure_public_access_env
+ensure_public_certificate
 
-echo "Atualizacao concluida."
+ensure_ollama_model
+ensure_open_webui
+
+echo "[riob-update] aplicando deploy sem restaurar ou substituir o banco..."
+if [[ "${NO_CACHE:-0}" == "1" ]]; then
+  docker compose build --no-cache app proxy
+  docker compose up -d --no-deps app proxy
+else
+  docker compose up -d --build --no-deps app proxy
+fi
+
+./deploy/db/migrate-xml-fretes.sh
+
+docker compose ps ollama open-webui app proxy
+validate_public_access

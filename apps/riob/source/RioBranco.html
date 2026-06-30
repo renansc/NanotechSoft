@@ -8,7 +8,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Sistema Rio Branco</title>
   <link rel="icon" href="data:,">
-  <link rel="stylesheet" href="/style.css?v=f95fcdb">
+  <link rel="stylesheet" href="/style.css?v=20260615-estoque-lotes">
   <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;600&display=swap" rel="stylesheet">
   <script>
     (function () {
@@ -17,8 +17,8 @@
         return !!(t && t.id && LOGIN_IDS[t.id]);
       }
 
-      // Captura ANTES do script principal para impedir bloqueios globais de teclado/click.
-      ["keydown", "keypress", "keyup", "beforeinput", "input", "mousedown", "mouseup", "click", "touchstart"].forEach(function (evt) {
+      // Captura ANTES do script principal para impedir bloqueios globais de clique/toque.
+      ["mousedown", "mouseup", "click", "touchstart"].forEach(function (evt) {
         document.addEventListener(evt, function (e) {
           if (!isLoginTarget(e.target)) return;
           e.stopImmediatePropagation();
@@ -29,10 +29,16 @@
 </head>
 
 <body>
+  <script>
+    if (new URLSearchParams(window.location.search).get("tv") === "1") {
+      document.body.classList.add("tv-mode");
+    }
+  </script>
   <!-- =====================================================
        OVERLAY (MENU MOBILE)
   ====================================================== -->
   <div class="menu-overlay"></div>
+  <div class="nanotech-badge">Nanotech dev</div>
 
   <!-- =====================================================
        TOPO / HEADER
@@ -47,33 +53,32 @@
        MENU PRINCIPAL
   ====================================================== -->
   <nav class="menu">
-    <div class="menu-item has-submenu active" data-tab="dashboard" onclick="toggleDashboardSubmenu(event)">
+    <div class="menu-item has-submenu" data-tab="dashboard" onclick="toggleDashboardSubmenu(event)">
       Dashboard <span class="submenu-caret">▾</span>
       <div class="submenu" id="submenuDashboard">
         <div class="submenu-item active" onclick="openDashboardView(event,'resumo')">Resumo</div>
         <div class="submenu-item" onclick="openDashboardView(event,'frota')">Frota / Manutenção</div>
         <div class="submenu-item" onclick="openDashboardView(event,'estoque')">Estoque</div>
+        <div class="submenu-item" onclick="openDashboardView(event,'bonificacoes')">Bonificações</div>
+        <div class="submenu-item" onclick="openDashboardView(event,'variacao_preco')">Variação de Preço</div>
+        <div class="submenu-item" onclick="openDashboardView(event,'grupos_embalagem')">Grupos Embalagem</div>
       </div>
     </div>
-    <div class="menu-item" onclick="showTab('fretes',this)">Fretes</div>
-    <div class="menu-item" onclick="showTab('cargas',this)">Cargas</div>
+    <div class="menu-item active" onclick="showTab('fretes',this)">Workflow</div>
     <div class="menu-item" onclick="showTab('estoque',this); carregarEstoque().catch(()=>{});">Estoque</div>
     <div class="menu-item has-submenu" data-tab="cadastros" onclick="toggleCadastrosSubmenu(event)">
       Cadastros <span class="submenu-caret">&#9662;</span>
       <div class="submenu" id="submenuCadastros">
-        <div class="submenu-item active" onclick="openCadastrosView(event,'motoristas')">Motoristas</div>
-        <div class="submenu-item" onclick="openCadastrosView(event,'conferentes')">Conferentes</div>
+        <div class="submenu-item active" onclick="openCadastrosView(event,'colaboradores')">Colaboradores</div>
         <div class="submenu-item" onclick="openCadastrosView(event,'veiculos')">Veiculos</div>
-        <div class="submenu-item" onclick="openCadastrosView(event,'usuarios')">Usuarios</div>
         <div class="submenu-item" onclick="openCadastrosView(event,'comissao')">Comissao</div>
       </div>
     </div>
     <div class="menu-item" onclick="showTab('devolucoes',this)">Devoluções</div>
-    <div class="menu-item has-submenu" data-tab="gestaofrota" onclick="toggleGestaoFrotaSubmenu(event)">Gestao Frota <span class="submenu-caret">&#9662;</span><div class="submenu" id="submenuGestaoFrota"><div class="submenu-item active" onclick="openGestaoFrotaView(event,'registrar')">Registrar</div><div class="submenu-item" onclick="openGestaoFrotaView(event,'lista')">Lista</div><div class="submenu-item" onclick="openGestaoFrotaView(event,'relatorios')">Relatorios</div></div></div>
-    <div class="menu-item has-submenu" data-tab="comissao" onclick="toggleComissaoSubmenu(event)">Comissao <span class="submenu-caret">&#9662;</span><div class="submenu" id="submenuComissao"><div class="submenu-item active" onclick="openComissaoView(event,'lancamento')">Lancamento</div><div class="submenu-item" onclick="openComissaoView(event,'relatorios')">Relatorios</div></div></div>
-    <div class="menu-item has-submenu" data-tab="vendas" onclick="toggleVendasSubmenu(event)">Vendas <span class="submenu-caret">&#9662;</span><div class="submenu" id="submenuVendas"><div class="submenu-item active" onclick="openVendasView(event,'relatorio')">Relatorio</div></div></div>
-    <div class="menu-item has-submenu" data-tab="monitor" onclick="toggleMonitorSubmenu(event)">Monitor <span class="submenu-caret">&#9662;</span><div class="submenu" id="submenuMonitor"><div class="submenu-item active" onclick="openMonitorView(event,'esxi')">ESXi</div><div class="submenu-item" onclick="openMonitorView(event,'cameras')">Cameras</div></div></div>
-    <div class="menu-item" onclick="showTab('comunicacao',this)">Comunicacao</div>
+    <div class="menu-item has-submenu" data-tab="gestaofrota" onclick="toggleGestaoFrotaSubmenu(event)">Gestao Frota <span class="submenu-caret">&#9662;</span><div class="submenu" id="submenuGestaoFrota"><div class="submenu-item active" onclick="openGestaoFrotaView(event,'registrar')">Registrar</div><div class="submenu-item" onclick="openGestaoFrotaView(event,'lista')">Lista</div><div class="submenu-item" onclick="openGestaoFrotaView(event,'relatorios')">Relatorios</div><div class="submenu-item" onclick="openGestaoFrotaCargas(event)">Cadastro Cargas</div><div class="submenu-item" onclick="openGestaoFrotaEscala(event)">Escala</div></div></div>
+    <div class="menu-item has-submenu" data-tab="vendas" onclick="toggleVendasSubmenu(event)">Vendas <span class="submenu-caret">&#9662;</span><div class="submenu" id="submenuVendas"><div class="submenu-item active" data-vendas-view="relatorio" onclick="openVendasView(event,'relatorio')">Relatorio</div><div class="submenu-item" data-vendas-view="pontosvenda" onclick="openVendasView(event,'pontosvenda')">Pontos de Venda</div><div class="submenu-item" onclick="openVendasComissao(event)">Comissao</div></div></div>
+    <div class="menu-item has-submenu" data-tab="monitor" onclick="toggleMonitorSubmenu(event)">Monitor <span class="submenu-caret">&#9662;</span><div class="submenu" id="submenuMonitor"><div class="submenu-item active" data-monitor-view="esxi" onclick="openMonitorView(event,'esxi')">ESXi</div><div class="submenu-item" data-monitor-view="cameras" onclick="openMonitorView(event,'cameras')">Cameras</div><div class="submenu-item" data-monitor-view="automacao" onclick="openMonitorView(event,'automacao')">Automacao</div><div class="submenu-item" data-monitor-view="importar_xml" onclick="openMonitorView(event,'importar_xml')">Importar XML</div><div class="submenu-item" data-monitor-view="gestor_emails" onclick="openMonitorView(event,'gestor_emails')">Gestor de E-mails</div><div class="submenu-item" data-monitor-view="comunicacao" onclick="openMonitorComunicacao(event)">Comunicacao</div></div></div>
+    <div class="menu-item" onclick="showTab('agentia',this); iniciarAgentIa()">Agent IA</div>
     <div class="menu-item has-submenu" data-tab="config" onclick="toggleConfigSubmenu(event)">Config <span class="submenu-caret">&#9662;</span><div class="submenu" id="submenuConfig"><div class="submenu-item active" onclick="openConfigView(event,'status')">Status</div><div class="submenu-item" onclick="openConfigView(event,'logs')">Logs</div><div class="submenu-item" onclick="openConfigView(event,'cameras')">Cameras</div><div class="submenu-item" onclick="openConfigView(event,'sip')">SIP</div><div class="submenu-item" onclick="openConfigView(event,'nfe')">NF-e</div><div class="submenu-item" onclick="openConfigView(event,'vendas')">Vendas</div><div class="submenu-item" onclick="openDocsPortal(event)">Docs</div></div></div>
     <div id="menuLogoutBtn" class="menu-item menu-item-logout" onclick="forcarLogoutSistema()">Sair</div>
   </nav>
@@ -81,7 +86,7 @@
   <!-- =====================================================
        (MENU) DASHBOARD
   ====================================================== -->
-  <section id="dashboard" class="section activeSection">
+  <section id="dashboard" class="section">
     <div id="dashViewResumo" class="dash-view">
       <div class="dashgrid">
         <div class="dashBox">Chegou C/ Vasilhames<span id="d1"></span></div>
@@ -105,7 +110,7 @@
               <th>Caminhao</th>
               <th>Motorista atual</th>
               <th>Frete atual</th>
-              <th>Status do Caminhão</th> 
+              <th>Status do Caminhão</th>
               <th>Última média KM/L</th>
               <th>Falta p/ Manutenção</th>
               <th>Falta p/ Óleo</th>
@@ -119,31 +124,227 @@
 
     <div id="dashViewEstoque" class="dash-view hidden">
       <h2>Dashboard Estoque</h2>
-      <div class="tableWrap">
-        <table class="dash-table">
-          <thead>
-            <tr>
-              <th>Produto</th>
-              <th>Código de Barras</th>
-              <th>Qtd Atual</th>
-              <th>Último Valor</th>
-              <th>Última Movimentação</th>
-            </tr>
-          </thead>
-          <tbody id="dashEstoqueBody"></tbody>
-        </table>
+      <div id="dashEstoqueResumo" class="hint">Carregando previsao e saldo do estoque por produto...</div>
+      <div class="dash-estoque-panels">
+        <div class="boxFrota">
+          <h3>Previsao de Estoque</h3>
+          <div class="tableWrap">
+            <table class="dash-table">
+              <thead>
+                <tr>
+                  <th>Produto</th>
+                  <th>Codigo</th>
+                  <th>Qtd Atual</th>
+                  <th>Vendas Dia</th>
+                  <th>Saidas Dia</th>
+                  <th>Comprometido</th>
+                  <th>Previsto do Dia</th>
+                </tr>
+              </thead>
+              <tbody id="dashEstoquePrevisaoBody"></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="boxFrota">
+          <h3>Saldo de Estoque</h3>
+          <div class="tableWrap">
+            <table class="dash-table">
+              <thead>
+                <tr>
+                  <th>Produto</th>
+                  <th>Codigo</th>
+                  <th>Qtd Atual</th>
+                  <th>Qtd Comprometida</th>
+                  <th>Saldo Remanescente</th>
+                  <th>Ultimo Valor</th>
+                  <th>Ultima Movimentacao</th>
+                </tr>
+              </thead>
+              <tbody id="dashEstoqueSaldoBody"></tbody>
+            </table>
+          </div>
+        </div>
       </div>
-      <small class="hint">Saldo atual calculado pela soma das entradas e saídas cadastradas no estoque.</small>
+      <small class="hint">A previsao mostra vendas e saidas processadas no dia; o saldo mostra o estoque atual, o comprometido e o remanescente por produto.</small>
+    </div>
+
+    <div id="dashViewVendas" class="dash-view hidden">
+      <div class="boxFrota vendas-dashboard-shell">
+        <div class="vendas-box-head">
+          <h2 id="dashVendasTitulo">Dashboard - Bonificações</h2>
+          <div class="vendas-toolbar">
+            <button type="button" onclick="recarregarDashboardVendaAtual(true)">Atualizar Dashboard</button>
+          </div>
+        </div>
+        <div id="dashVendasArquivoInfo" class="hint">Carregando dashboard de vendas a partir do mesmo cache dos relatórios.</div>
+      </div>
+
+      <div id="dashVendasPanelBonificacoes" class="dash-view hidden">
+        <div class="boxFrota">
+          <h3>Resumo de Bonificações</h3>
+          <div id="dashVendasBonifCards" class="vendas-resumo-cards vendas-resumo-cards--wide"></div>
+        </div>
+        <div class="boxFrota">
+          <h3>Resumo por Grupo</h3>
+          <div id="dashVendasBonifGrupos" class="vendas-grupo-resumo"></div>
+        </div>
+        <div class="boxFrota">
+          <h3>Top Vendedores do Mês</h3>
+          <div style="overflow:auto; max-height:360px;">
+            <table>
+              <thead>
+                <tr>
+                  <th>Cod</th>
+                  <th>Vendedor</th>
+                  <th>Itens</th>
+                  <th>PDV</th>
+                  <th>Notas</th>
+                  <th>Bonif.</th>
+                  <th>Líquido</th>
+                  <th>% Bonif.</th>
+                </tr>
+              </thead>
+              <tbody id="dashVendasBonifBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div id="dashVendasPanelVariacao" class="dash-view hidden">
+        <div class="boxFrota">
+          <h3>Resumo da Variação de Preço</h3>
+          <div id="dashVendasVarCards" class="vendas-resumo-cards vendas-resumo-cards--wide"></div>
+        </div>
+        <div class="boxFrota">
+          <h3>Resumo por Grupo</h3>
+          <div id="dashVendasVarGrupos" class="vendas-grupo-resumo"></div>
+        </div>
+        <div class="boxFrota">
+          <h3>Variações por Vendedor e Grupo</h3>
+          <div style="overflow:auto; max-height:360px;">
+            <table>
+              <thead>
+                <tr>
+                  <th>Cod</th>
+                  <th>Vendedor</th>
+                  <th>Grupo</th>
+                  <th>Produtos</th>
+                  <th>Preço un.</th>
+                  <th>Min un.</th>
+                  <th>Max un.</th>
+                  <th>Dif.</th>
+                  <th>Dif.%</th>
+                  <th>Cidades</th>
+                  <th>PDVs</th>
+                  <th>Itens</th>
+                </tr>
+              </thead>
+              <tbody id="dashVendasVarBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div id="dashVendasPanelMix" class="dash-view hidden">
+        <div class="boxFrota">
+          <h3>Resumo de Grupos Embalagem</h3>
+          <div id="dashVendasMixCards" class="vendas-resumo-cards vendas-resumo-cards--wide"></div>
+        </div>
+        <div class="boxFrota">
+          <h3>PDVs por Faixa</h3>
+          <div style="overflow:auto; max-height:280px;">
+            <table>
+              <thead>
+                <tr>
+                  <th>Faixa</th>
+                  <th>PDVs</th>
+                  <th>% do total</th>
+                </tr>
+              </thead>
+              <tbody id="dashVendasMixFaixasBody"></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="boxFrota">
+          <h3>PDVs com Mais Grupos</h3>
+          <div style="overflow:auto; max-height:360px;">
+            <table>
+              <thead>
+                <tr>
+                  <th>PDV</th>
+                  <th>Cidade</th>
+                  <th>Vendedor</th>
+                  <th>Grupos</th>
+                  <th>Faixa</th>
+                  <th>Tipos usados</th>
+                </tr>
+              </thead>
+              <tbody id="dashVendasMixBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
     </div>
 </section>
 
   <!-- =====================================================
+       (MENU) AGENT IA
+  ====================================================== -->
+  <section id="agentia" class="section">
+    <div class="agentia-shell">
+      <aside class="agentia-sidebar">
+        <div class="agentia-title">
+          <h2>Agent IA</h2>
+          <p>Converse com o assistente para consultar cards e executar rotinas do sistema.</p>
+        </div>
+        <button type="button" class="agentia-menu-btn active" data-agentia-option="kanban" onclick="agentIaMenu('kanban')">Kanban / Cargas</button>
+        <button type="button" class="agentia-menu-btn" data-agentia-option="devolucoes" onclick="agentIaMenu('devolucoes')">Devoluções</button>
+        <button type="button" class="agentia-menu-btn" data-agentia-option="status" onclick="agentIaMenu('status')">Status</button>
+        <button type="button" class="agentia-menu-btn" data-agentia-option="backup" onclick="agentIaMenu('backup')">Backup</button>
+        <button type="button" class="agentia-menu-btn" data-agentia-option="brief" onclick="agentIaMenu('brief')">Brief</button>
+        <button type="button" class="agentia-menu-btn" data-agentia-option="validate" onclick="agentIaMenu('validate')">Validação</button>
+        <button type="button" class="agentia-menu-btn" data-agentia-option="git" onclick="agentIaMenu('git')">Git</button>
+        <button type="button" class="agentia-menu-btn" data-agentia-option="deploy" onclick="agentIaMenu('deploy')">Deploy</button>
+        <div class="agentia-hint">
+          Exemplos:
+          <br>listar cargas
+          <br>mostrar caminhao 13
+          <br>mover status para carregado caminhao 13
+        </div>
+      </aside>
+
+      <div class="agentia-main">
+        <div class="agentia-workspace">
+          <div class="agentia-workspace-head">
+            <div>
+              <h3 id="agentIaWorkspaceTitle">Kanban / Cargas</h3>
+              <span id="agentIaWorkspaceMeta">Nenhum card carregado</span>
+            </div>
+            <button type="button" class="btn-secondary" onclick="agentIaSendAction({name:'refresh_fretes', label:'Atualizar kanban'})">Atualizar</button>
+          </div>
+          <div id="agentIaSelectedCard" class="agentia-selected-card"></div>
+          <div id="agentIaCardGrid" class="agentia-card-grid"></div>
+        </div>
+
+        <div id="agentIaChat" class="agentia-chat"></div>
+
+        <form class="agentia-form" onsubmit="agentIaEnviarPergunta(event)">
+          <textarea id="agentIaInput" placeholder="Pergunte ou peça uma acao..."></textarea>
+          <button id="agentIaSendBtn" type="submit">Enviar</button>
+        </form>
+      </div>
+    </div>
+  </section>
+
+  <!-- =====================================================
        (MENU) FRETES / KANBAN
   ====================================================== -->
-  <section id="fretes" class="section">
+  <section id="fretes" class="section activeSection">
     <!-- Se quiser manter este botão, garanta que toggleNovoFrete() exista no JS -->
     <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px;">
       <button class="btn-primary" onclick="toggleNovoFrete()">+ Novo Frete</button>
+      <button class="btn-secondary" onclick="toggleArquivados()">📁 Arquivados</button>
       <input type="text" id="freteBuscaRapida" placeholder="Buscar por numero do veiculo, motorista ou ajudante" oninput="filtrarFretesKanban(this.value)" style="min-width:320px; flex:1 1 320px;">
     </div>
 
@@ -218,6 +419,19 @@
   </section>
 
   <!-- =====================================================
+       (MENU) FRETES ARQUIVADOS
+  ====================================================== -->
+  <section id="fretesArquivados" class="section hidden">
+    <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px;">
+      <button class="btn-secondary" onclick="toggleArquivados()">← Voltar ao Kanban</button>
+      <input type="text" id="arquivadosBuscaRapida" placeholder="Buscar arquivados..." oninput="filtrarFretesArquivados(this.value)" style="min-width:320px; flex:1 1 320px;">
+    </div>
+    <div id="fretesArquivadosContainer" class="fretes-arquivados-container">
+      <!-- Cards arquivados serão renderizados aqui -->
+    </div>
+  </section>
+
+  <!-- =====================================================
        (MENU) ESTOQUE
   ====================================================== -->
   <section id="estoque" class="section">
@@ -225,25 +439,88 @@
 
     <div class="section-subnav estoque-subnav">
       <button type="button" id="estoqueViewBtnLancar" class="section-subnav-btn active" onclick="setEstoqueView('lancar')">Lançar Estoque</button>
-      <button type="button" id="estoqueViewBtnConferir" class="section-subnav-btn" onclick="setEstoqueView('conferir')">Confere Estoque</button>
+      <button type="button" id="estoqueViewBtnConferir" class="section-subnav-btn" onclick="setEstoqueView('posicao')">Posicao Atual</button>
       <button type="button" id="estoqueViewBtnCadastrar" class="section-subnav-btn" onclick="setEstoqueView('cadastrar')">Cadastrar</button>
+      <button type="button" id="estoqueViewBtnRastreio" class="section-subnav-btn" onclick="setEstoqueView('rastreio')">Rastreio lotes</button>
     </div>
 
     <div id="estoqueViewLancar">
+    <div class="boxFrota">
+      <div class="estoque-import-header">
+        <div>
+          <h3>Importacoes XML aguardando confirmacao</h3>
+          <div id="estoqueXmlPendentesResumo" class="hint">Carregando entradas e saidas reconhecidas pelo Importar XML...</div>
+        </div>
+        <div class="estoque-inline-actions">
+          <select id="estoqueXmlPendentesTipo" onchange="renderImportacoesXmlEstoque()">
+            <option value="">Entradas e saidas</option>
+            <option value="entrada">Somente entradas</option>
+            <option value="saida">Somente saidas</option>
+          </select>
+          <button type="button" id="estoqueXmlImportarLoteBtn" onclick="importarSelecionadasXmlEstoque()" disabled>Importar selecionadas (0)</button>
+          <button type="button" onclick="carregarImportacoesXmlEstoque()">Atualizar</button>
+        </div>
+      </div>
+      <div id="estoqueXmlLoteProgresso" class="estoque-lote-progresso hidden" role="status" aria-live="polite">
+        <div id="estoqueXmlLoteProgressoTexto" class="estoque-lote-progresso-texto">Preparando importacao em lotes...</div>
+        <div class="estoque-lote-progresso-barra" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+          <span id="estoqueXmlLoteProgressoFill"></span>
+        </div>
+      </div>
+      <div style="overflow:auto; max-height:340px;">
+        <table>
+          <thead>
+            <tr>
+              <th class="estoque-xml-selecao-col">
+                <input type="checkbox" id="estoqueXmlSelecionarTodas" aria-label="Selecionar todas as notas visiveis" onchange="selecionarTodasImportacoesXmlEstoque(this.checked)">
+              </th>
+              <th>Emissao</th>
+              <th>Nota</th>
+              <th>Tipo</th>
+              <th>Origem / Destino</th>
+              <th>Itens</th>
+              <th>Duplicatas ignoradas</th>
+              <th>Acao</th>
+            </tr>
+          </thead>
+          <tbody id="estoqueXmlPendentesBody">
+            <tr><td colspan="8">Carregando importacoes XML...</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <small class="hint">Selecione quantas notas precisar. O sistema divide automaticamente a importacao em lotes de ate 500 NF-e. O saldo de cada nota e contabilizado apenas na confirmacao, sem duplicar itens ja lancados.</small>
+    </div>
+
     <div class="frotaGrid">
       <div class="boxFrota">
         <h3>Lançar Item</h3>
+        <div class="estoque-filtros">
+          <select id="estoqueFiltroCategoriaLancar" onchange="aplicarFiltrosEstoque()">
+            <option value="">Todas as categorias de fornecedor</option>
+          </select>
+          <select id="estoqueFiltroFornecedorLancar" multiple size="4" onchange="aplicarFiltrosEstoque()"></select>
+          <input type="search" id="estoqueFiltroProdutoLancar" placeholder="Filtrar produtos para lançamento" oninput="aplicarFiltrosEstoque()">
+          <button type="button" onclick="limparFiltrosEstoque()">Limpar filtros</button>
+        </div>
         <div class="estoque-inline-actions">
           <button type="button" id="estoqueAbrirCameraBtn" onclick="abrirCameraEstoque()">Abrir câmera/webcam</button>
           <span id="estoqueCodbarModoHint" class="hint-chip">CODBAR do usuário: Bip/Leitor</span>
         </div>
+        <select id="estoqueProdutoSelect" onchange="selecionarProdutoLancamentoEstoque()">
+          <option value="">Selecione um produto cadastrado</option>
+        </select>
+        <input type="hidden" id="estoqueCodigoProdutoNfe">
         <input type="text" id="estoqueCodigoBarras" class="barcode-input" placeholder="Bipe ou leia o código de barras da nota">
         <input type="text" id="estoqueNumeroNota" placeholder="Número da Nota">
         <input type="text" id="estoqueNomeProduto" placeholder="Nome do Produto">
+        <select id="estoqueTipoMovimento">
+          <option value="entrada">Entrada</option>
+          <option value="saida">Saida</option>
+        </select>
         <input type="number" id="estoqueQuantidade" min="0" step="0.001" placeholder="Quantidade">
         <input type="number" id="estoqueValor" min="0" step="0.01" placeholder="Valor Unitário">
-        <button type="button" onclick="salvarMovimentoEstoque()">Registrar Entrada</button>
-        <small class="hint">Se o usuário estiver em modo câmera, a webcam pode preencher o código automaticamente. No portal público da NF-e a consulta completa não é indicada para automação direta; use o XML oficial da NF-e para importar os itens com cadastro automático.</small>
+        <button type="button" onclick="salvarMovimentoEstoque()">Registrar Movimentacao</button>
+        <small class="hint">Selecione um produto cadastrado para preencher os campos automaticamente. A quantidade segue a embalagem do cadastro e, quando o fator nao estiver explicito, o sistema pede confirmacao antes do lancamento.</small>
       </div>
 
       <div class="boxFrota">
@@ -257,170 +534,165 @@
         <input type="text" id="estoqueChaveAcesso" class="barcode-input" maxlength="44" placeholder="Chave de acesso da NF-e (44 digitos)">
         <input type="file" id="estoqueNfeArquivo" accept=".xml,.pdf,.html,.htm,text/xml,application/xml,application/pdf,text/html">
         <div class="estoque-inline-actions">
-          <button type="button" onclick="importarNfeEstoque()">Ler XML/PDF/HTML de contingencia</button>
+          <button type="button" onclick="importarNfeEstoque()">Importar XML/Arquivo</button>
           <button type="button" onclick="importarHtmlPortalClipboardEstoque()">Importar HTML do portal</button>
           <button type="button" onclick="copiarBookmarkletPortalNfe()">Copiar bookmarklet portal</button>
           <button type="button" onclick="buscarNfeEstoquePorChave()">Buscar NF-e pela chave (DF-e)</button>
         </div>
-        <div id="estoqueNfeImportStatus" class="hint">Fluxo principal: bipa a chave, abra a Receita com a chave pronta para consulta publica ou use o botao DF-e quando quiser tentar o XML oficial. XML/PDF/HTML ficam como contingencia.</div>
+        <div id="estoqueNfeImportStatus" class="hint">Fluxo principal: ler a chave e buscar os dados oficiais na Receita/DF-e ou importar um unico arquivo XML/PDF/HTML para revisar os itens antes do lancamento.</div>
         <div id="estoqueNfeOcrStatus" class="hint">Alternativa manual: fotografe a grade dos itens e use a imagem como referencia visual para digitar codigo, descricao, quantidade e valor com mais rapidez.</div>
         <small class="hint">Se voce enviar um PDF ou HTML da consulta publica e ele tiver a chave, o sistema tenta aproveitar os dados de contingencia. So cai na leitura aproximada quando o DF-e nao estiver disponivel.</small>
       </div>
-
-      <div class="boxFrota">
-        <h3>Saldo Atual por Item</h3>
-        <div style="overflow:auto; max-height:360px;">
-          <table>
-            <thead>
-              <tr>
-                <th>Produto</th>
-                <th>Código</th>
-                <th>Qtd Atual</th>
-                <th>Último Valor</th>
-                <th>Última Mov.</th>
-              </tr>
-            </thead>
-            <tbody id="estoqueSaldoBody"></tbody>
-          </table>
-        </div>
-      </div>
     </div>
 
-    <div class="boxFrota">
-      <h3>Histórico de Lançamentos</h3>
+    <div id="estoqueImportPreviewCard" class="boxFrota hidden">
+      <div class="estoque-import-header">
+        <div>
+          <h3>Confirmacao da Importacao</h3>
+          <small id="estoqueImportPreviewFonte" class="hint">Revise os dados antes de lancar no estoque.</small>
+        </div>
+        <div class="estoque-inline-actions">
+          <button type="button" class="estoque-import-add-btn" onclick="adicionarItemImportacaoEstoque()">Adicionar Item</button>
+          <button type="button" onclick="cancelarImportacaoNfeEstoque()">Cancelar</button>
+        </div>
+      </div>
+      <div id="estoqueImportPreviewStatus" class="hint">Selecione um XML ou PDF para revisar antes de importar.</div>
+      <div id="estoqueXmlFretePanel" class="estoque-xml-frete hidden">
+        <div>
+          <strong>Logistica da nota de saida</strong>
+          <div class="hint">Informe se a entrega usa um frete da empresa ou se o transporte foi realizado pelo cliente.</div>
+        </div>
+        <label class="estoque-xml-retirada">
+          <input id="estoqueXmlDispensaFrete" type="checkbox" onchange="alterarDispensaFreteImportacaoXml()">
+          <span>
+            <strong>Retirada/transporte pelo cliente</strong>
+            <small>Sem rota, veiculo ou frete da empresa.</small>
+          </span>
+        </label>
+        <div id="estoqueXmlFreteVinculo" class="estoque-xml-frete-vinculo">
+          <select id="estoqueXmlFreteSelect" onchange="selecionarFreteImportacaoXml()">
+            <option value="">Selecione o frete/rota</option>
+          </select>
+          <div id="estoqueXmlFreteHint" class="hint">Selecione um frete ativo.</div>
+        </div>
+      </div>
+      <div class="estoque-import-grid">
+        <input type="text" id="estoquePreviewNumeroNota" placeholder="Numero da nota">
+        <input type="text" id="estoquePreviewSerie" placeholder="Serie">
+        <input type="text" id="estoquePreviewChaveAcesso" class="barcode-input" maxlength="44" placeholder="Chave de acesso (44 digitos)" oninput="normalizarChaveNfeCampo(this,false)">
+        <input type="date" id="estoquePreviewDataEmissao" placeholder="Data de emissao">
+        <input type="text" id="estoquePreviewEmitenteNome" placeholder="Emitente">
+        <input type="text" id="estoquePreviewEmitenteCnpj" placeholder="CNPJ do emitente">
+        <input type="text" id="estoquePreviewDestinatarioNome" placeholder="Destinatario">
+        <input type="text" id="estoquePreviewDestinatarioCnpj" placeholder="CNPJ do destinatario">
+      </div>
+      <div id="estoqueManualFotoPanel" class="estoque-manual-photo hidden">
+        <div class="estoque-manual-photo-header">
+          <div>
+            <strong>Foto de apoio dos itens</strong>
+            <div id="estoqueManualFotoNome" class="hint">Nenhuma foto carregada.</div>
+          </div>
+          <div class="estoque-inline-actions">
+            <button type="button" onclick="selecionarFotoManualItensEstoque()">Trocar foto</button>
+            <button type="button" onclick="limparFotoManualItensEstoque()">Remover foto</button>
+          </div>
+        </div>
+        <div class="estoque-manual-photo-body">
+          <img id="estoqueManualFotoImg" alt="Foto da nota para digitacao manual dos itens">
+        </div>
+      </div>
       <div style="overflow:auto; max-height:360px;">
         <table>
           <thead>
             <tr>
-              <th>Data</th>
-              <th>Nota</th>
-              <th>Código</th>
+              <th>Seq</th>
+              <th>Cod. NF-e</th>
+              <th>Cod. Barras</th>
               <th>Produto</th>
-              <th>Tipo</th>
-              <th>Qtd</th>
+              <th>Emb.</th>
+              <th>Qtd emb.</th>
+              <th title="Quantidade de unidades de estoque existente em cada embalagem da NF-e">Fator (unid./emb.)</th>
+              <th>Total un.</th>
               <th>Valor</th>
-              <th>Fluxo</th>
-              <th>Usuário</th>
-              <th>Ações</th>
+              <th>Acoes</th>
             </tr>
           </thead>
-          <tbody id="estoqueMovimentosBody"></tbody>
+          <tbody id="estoqueImportPreviewItemsBody">
+            <tr><td colspan="10">Nenhum item carregado.</td></tr>
+          </tbody>
         </table>
+      </div>
+      <small class="hint">Fator de conversao e quantas unidades de estoque existem em cada embalagem da nota. Exemplo: 1 caixa com 24 unidades usa fator 24. Para materia-prima, informe a quantidade real contida na caixa.</small>
+      <div class="estoque-inline-actions">
+        <button type="button" class="estoque-import-add-btn" onclick="adicionarItemImportacaoEstoque()">Adicionar Item</button>
+        <button type="button" onclick="confirmarImportacaoNfeEstoque()">Lancar NF-e no Estoque</button>
       </div>
     </div>
     </div>
 
     <div id="estoqueViewConferir" class="hidden">
-      <div id="estoqueImportPreviewCard" class="boxFrota hidden">
-        <div class="estoque-import-header">
-          <div>
-            <h3>Confirmacao da Importacao</h3>
-            <small id="estoqueImportPreviewFonte" class="hint">Revise os dados antes de criar a conferencia.</small>
-          </div>
-          <div class="estoque-inline-actions">
-            <button type="button" onclick="adicionarItemImportacaoEstoque()">Adicionar Item</button>
-            <button type="button" onclick="cancelarImportacaoNfeEstoque()">Cancelar</button>
-          </div>
+      <div class="boxFrota">
+        <h3>Posicao Atual por Produto</h3>
+        <div id="estoqueConferenciaResumo" class="estoque-conferencia-resumo">Acompanhe entradas, saidas e saldo atual consolidados por grupo e produto base.</div>
+        <div class="estoque-filtros">
+          <select id="estoqueFiltroCategoriaPosicao" onchange="aplicarFiltrosEstoque()">
+            <option value="">Todas as categorias de fornecedor</option>
+          </select>
+          <select id="estoqueFiltroFornecedorPosicao" multiple size="4" onchange="aplicarFiltrosEstoque()"></select>
+          <select id="estoqueFiltroProdutoPosicao" multiple size="4" onchange="aplicarFiltrosEstoque()"></select>
+          <button type="button" onclick="limparFiltrosEstoque()">Limpar filtros</button>
         </div>
-        <div id="estoqueImportPreviewStatus" class="hint">Selecione um XML ou PDF para revisar antes de importar.</div>
-        <div class="estoque-import-grid">
-          <input type="text" id="estoquePreviewNumeroNota" placeholder="Numero da nota">
-          <input type="text" id="estoquePreviewSerie" placeholder="Serie">
-          <input type="text" id="estoquePreviewChaveAcesso" class="barcode-input" maxlength="44" placeholder="Chave de acesso (44 digitos)" oninput="normalizarChaveNfeCampo(this,false)">
-          <input type="date" id="estoquePreviewDataEmissao" placeholder="Data de emissao">
-          <input type="text" id="estoquePreviewEmitenteNome" placeholder="Emitente">
-          <input type="text" id="estoquePreviewEmitenteCnpj" placeholder="CNPJ do emitente">
-          <input type="text" id="estoquePreviewDestinatarioNome" placeholder="Destinatario">
-          <input type="text" id="estoquePreviewDestinatarioCnpj" placeholder="CNPJ do destinatario">
+        <div style="overflow:auto; max-height:420px;">
+          <table>
+            <thead>
+              <tr>
+                <th>Produto</th>
+                <th>Codigo</th>
+                <th>Fornecedor</th>
+                <th>Categoria</th>
+                <th>Entradas</th>
+                <th>Saidas</th>
+                <th>Saldo Atual</th>
+                <th>Ultimo Valor</th>
+                <th>Ultima Mov.</th>
+              </tr>
+            </thead>
+            <tbody id="estoqueSaldoBody">
+              <tr><td colspan="9">Carregando posicao atual...</td></tr>
+            </tbody>
+          </table>
         </div>
-        <div id="estoqueManualFotoPanel" class="estoque-manual-photo hidden">
-          <div class="estoque-manual-photo-header">
-            <div>
-              <strong>Foto de apoio dos itens</strong>
-              <div id="estoqueManualFotoNome" class="hint">Nenhuma foto carregada.</div>
-            </div>
-            <div class="estoque-inline-actions">
-              <button type="button" onclick="selecionarFotoManualItensEstoque()">Trocar foto</button>
-              <button type="button" onclick="limparFotoManualItensEstoque()">Remover foto</button>
-            </div>
-          </div>
-          <div class="estoque-manual-photo-body">
-            <img id="estoqueManualFotoImg" alt="Foto da nota para digitacao manual dos itens">
-          </div>
+      </div>
+
+      <div class="boxFrota">
+        <h3>Historico de Lancamentos</h3>
+        <div class="estoque-filtros">
+          <select id="estoqueFiltroCategoriaMovimentos" onchange="aplicarFiltrosEstoque()">
+            <option value="">Todas as categorias de fornecedor</option>
+          </select>
+          <select id="estoqueFiltroFornecedorMovimentos" multiple size="4" onchange="aplicarFiltrosEstoque()"></select>
+          <select id="estoqueFiltroProdutoMovimentos" multiple size="4" onchange="aplicarFiltrosEstoque()"></select>
         </div>
         <div style="overflow:auto; max-height:360px;">
           <table>
             <thead>
               <tr>
-                <th>Seq</th>
-                <th>Cod. NF-e</th>
-                <th>Cod. Barras</th>
+                <th>Data</th>
+                <th>Nota</th>
+                <th>Codigo</th>
                 <th>Produto</th>
-                <th>Emb.</th>
-                <th>Qtd emb.</th>
-                <th>Unid/emb.</th>
-                <th>Total un.</th>
+                <th>Fornecedor</th>
+                <th>Categoria</th>
+                <th>Tipo</th>
+                <th>Qtd</th>
                 <th>Valor</th>
+                <th>Fluxo</th>
+                <th>Usuario</th>
                 <th>Acoes</th>
               </tr>
             </thead>
-            <tbody id="estoqueImportPreviewItemsBody">
-              <tr><td colspan="10">Nenhum item carregado.</td></tr>
-            </tbody>
+            <tbody id="estoqueMovimentosBody"></tbody>
           </table>
-        </div>
-        <div class="estoque-inline-actions">
-          <button type="button" onclick="adicionarItemImportacaoEstoque()">Adicionar Item</button>
-          <button type="button" onclick="confirmarImportacaoNfeEstoque()">Confirmar Importacao da NF-e</button>
-        </div>
-      </div>
-
-      <div class="frotaGrid">
-        <div class="boxFrota">
-          <h3>NF-e em Conferência</h3>
-          <div style="overflow:auto; max-height:360px;">
-            <table>
-              <thead>
-                <tr>
-                  <th>Nota</th>
-                  <th>Emitente</th>
-                  <th>Itens</th>
-                  <th>Status</th>
-                  <th>Ações</th>
-                </tr>
-              </thead>
-              <tbody id="estoqueConferenciasBody">
-                <tr><td colspan="5">Sem NF-e para conferir.</td></tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-        <div class="boxFrota">
-          <h3>Conferência do Almoxarifado</h3>
-          <div id="estoqueConferenciaResumo" class="estoque-conferencia-resumo">Selecione uma NF-e para conferir e consolidar.</div>
-          <div class="estoque-transfer-grid">
-            <input type="text" id="estoqueOrigemSetor" value="Fábrica" placeholder="Origem">
-            <input type="text" id="estoqueDestinoSetor" value="Almoxarifado" placeholder="Destino">
-          </div>
-          <div style="overflow:auto; max-height:360px;">
-            <table>
-              <thead>
-                <tr>
-                  <th>Produto</th>
-                  <th>Código</th>
-                  <th>Emb.</th>
-                  <th>Qtd emb.</th>
-                  <th>Total un.</th>
-                  <th>Qtd Conferida</th>
-                  <th>Valor</th>
-                </tr>
-              </thead>
-              <tbody id="estoqueConferenciaItensBody">
-                <tr><td colspan="7">Nenhuma NF-e selecionada.</td></tr>
-              </tbody>
-            </table>
-          </div>
-          <button type="button" onclick="confirmarConferenciaEstoque()">Consolidar Transporte para o Almoxarifado</button>
         </div>
       </div>
     </div>
@@ -433,14 +705,27 @@
             <input type="text" id="estoqueCadastroCodigoBarras" placeholder="Codigo de barras">
             <input type="text" id="estoqueCadastroCodigoNfe" placeholder="Cod. produto NF-e">
             <input type="text" id="estoqueCadastroNomeProduto" placeholder="Nome do produto">
+            <select id="estoqueCadastroGrupo">
+              <option value="">Grupo do estoque</option>
+              <option value="GFA">GFA</option>
+              <option value="PET">PET</option>
+              <option value="AGUA">AGUA</option>
+              <option value="OUTROS">OUTROS</option>
+            </select>
+            <input type="text" id="estoqueCadastroBaseNome" placeholder="Produto base (mesmo item em codigos diferentes)">
             <input type="text" id="estoqueCadastroEmbalagem" placeholder="Embalagem (PCT, CX24, CX48, UN)">
             <input type="number" id="estoqueCadastroFator" min="1" step="1" placeholder="Unid/emb.">
           </div>
+          <div id="estoqueCadastroAjusteBox" class="estoque-import-grid hidden">
+            <input type="number" id="estoqueCadastroAjusteQuantidade" step="0.001" placeholder="Ajuste de estoque (+/-)">
+            <input type="text" id="estoqueCadastroAjusteMotivo" placeholder="Motivo do ajuste">
+          </div>
           <div class="estoque-inline-actions">
             <button type="button" onclick="salvarProdutoEstoqueCadastro()">Salvar Cadastro</button>
+            <button type="button" id="estoqueCadastroAjusteBtn" class="hidden" onclick="aplicarAjusteProdutoEstoqueCadastro()">Aplicar Ajuste</button>
             <button type="button" onclick="limparProdutoEstoqueCadastro()">Limpar</button>
           </div>
-          <div id="estoqueCadastroStatus" class="hint">Cadastre o produto e o fator da embalagem para automatizar a conversao da NF-e.</div>
+          <div id="estoqueCadastroStatus" class="hint">Cadastre o produto e o fator da embalagem para automatizar a conversao da NF-e. Ao editar, voce pode lancar um ajuste para corrigir a quantidade em estoque.</div>
         </div>
         <div class="boxFrota">
           <h3>Produtos Cadastrados</h3>
@@ -448,18 +733,58 @@
             <table>
               <thead>
                 <tr>
+                  <th>Grupo</th>
                   <th>Produto</th>
+                  <th>Base</th>
                   <th>Codigo</th>
+                  <th>Saldo Atual</th>
                   <th>Emb.</th>
                   <th>Unid/emb.</th>
                   <th>Acoes</th>
                 </tr>
               </thead>
               <tbody id="estoqueCadastroProdutosBody">
-                <tr><td colspan="5">Carregando cadastros...</td></tr>
+                <tr><td colspan="8">Carregando cadastros...</td></tr>
               </tbody>
             </table>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="estoqueViewRastreio" class="hidden">
+      <div class="boxFrota">
+        <h3>Rastreio de lotes</h3>
+        <div class="estoque-conferencia-resumo" id="estoqueRastreioResumo">Cruze produtos, notas e fornecedores para rastrear origem e movimentacao dos lotes.</div>
+        <div class="estoque-filtros">
+          <select id="estoqueFiltroCategoriaRastreio" onchange="aplicarFiltrosEstoque()">
+            <option value="">Todas as categorias de fornecedor</option>
+          </select>
+          <select id="estoqueFiltroFornecedorRastreio" multiple size="4" onchange="aplicarFiltrosEstoque()"></select>
+          <select id="estoqueFiltroProdutoRastreio" multiple size="4" onchange="aplicarFiltrosEstoque()"></select>
+          <input type="search" id="estoqueFiltroNotaRastreio" placeholder="Filtrar nota, código ou fornecedor" oninput="aplicarFiltrosEstoque()">
+          <button type="button" onclick="limparFiltrosEstoque()">Limpar filtros</button>
+        </div>
+        <div style="overflow:auto; max-height:520px;">
+          <table>
+            <thead>
+              <tr>
+                <th>Data</th>
+                <th>Nota</th>
+                <th>Produto</th>
+                <th>Codigo</th>
+                <th>Fornecedor</th>
+                <th>Categoria</th>
+                <th>Tipo</th>
+                <th>Qtd</th>
+                <th>Valor</th>
+                <th>Origem</th>
+              </tr>
+            </thead>
+            <tbody id="estoqueRastreioBody">
+              <tr><td colspan="10">Carregando rastreio...</td></tr>
+            </tbody>
+          </table>
         </div>
       </div>
     </div>
@@ -469,16 +794,50 @@
        (MENU) CARGAS
   ====================================================== -->
   <section id="cargas" class="section">
-    <h3>Cadastrar Carga</h3>
+    <div id="cargasViewCadastro" class="cargas-view">
+      <h3>Cadastrar Carga</h3>
 
-    <input type="text" id="nomeCarga" placeholder="Nome da carga">
-    <button onclick="salvarCadastro('cargas','nomeCarga')">Adicionar</button>
+      <input type="text" id="nomeCarga" placeholder="Nome da carga">
+      <button onclick="salvarCadastro('cargas','nomeCarga')">Adicionar</button>
+      <input type="text" id="cargasVeiculoNumero" placeholder="Numero do veiculo (opcional)">
+      <input type="file" id="cargasCsvFile" accept=".csv,text/csv">
+      <button type="button" onclick="importarCargasCsv()">Importar CSV</button>
+      <input type="file" id="cargasPdfFile" accept=".pdf,application/pdf">
+      <button type="button" onclick="importarCargasPdf()">Importar PDF</button>
 
-    <ul id="listaCargas"></ul>
+      <ul id="listaCargas"></ul>
+    </div>
+
+    <div id="cargasViewEscala" class="cargas-view hidden">
+      <div class="escala-toolbar">
+        <div>
+          <h2>Escala de Caminhoes</h2>
+          <p class="escala-subtitle">Visualizacao dos veiculos que estao em chegou c/ vasilhames, descarregado aguardando carga e liberado para carregar.</p>
+        </div>
+        <button type="button" onclick="renderEscala()">Atualizar escala</button>
+      </div>
+
+      <div class="escala-resumo">
+        <div class="escala-resumo-card">
+          <span>Total na escala</span>
+          <strong id="escalaResumoTotal">0</strong>
+        </div>
+        <div class="escala-resumo-card">
+          <span>Com equipe completa</span>
+          <strong id="escalaResumoCompleta">0</strong>
+        </div>
+        <div class="escala-resumo-card escala-resumo-card--alert">
+          <span>Pendentes</span>
+          <strong id="escalaResumoPendentes">0</strong>
+        </div>
+      </div>
+
+      <div id="escalaGrid" class="escala-grid"></div>
+    </div>
   </section>
 
   <!-- =====================================================
-       (MENU) CADASTROS (Motoristas, Veiculos, Conferentes)
+       (MENU) CADASTROS (Colaboradores, Veiculos, Conferentes)
   ====================================================== -->
   <section id="cadastros" class="section">
     <h2>Cadastros</h2>
@@ -487,27 +846,35 @@
       <div class="cadastro-panel-grid">
 
         <div class="boxFrota">
-          <h3>Novo Motorista</h3>
-          <input type="text" id="novoMotoristaNome" placeholder="Nome do motorista">
-          <button type="button" onclick="salvarCadastro('motoristas','novoMotoristaNome')">Adicionar</button>
-        </div>
-        <div class="boxFrota cadastro-list-box">
-          <h3>Motoristas Cadastrados</h3>
-          <ul id="listaMotoristas"></ul>
-        </div>
-      </div>
-    </div>
+          <h3>Novo Colaborador</h3>
+          <input type="text" id="novoColaboradorNome" placeholder="Nome do colaborador">
+          <input type="email" id="novoColaboradorEmail" placeholder="Email do colaborador">
+          <input type="text" id="novoColaboradorCpf" placeholder="CPF do colaborador">
+          <label class="colaborador-check"><input type="checkbox" id="novoColaboradorMotorista"> Motorista</label>
+          <label class="colaborador-check"><input type="checkbox" id="novoColaboradorEntregador"> Entregador</label>
+          <label class="colaborador-check"><input type="checkbox" id="novoColaboradorAjudante"> Ajudante</label>
+          <label class="colaborador-check"><input type="checkbox" id="novoColaboradorConferente"> Conferente</label>
+          <label class="colaborador-check"><input type="checkbox" id="novoColaboradorVendedor"> Vendedor</label>
 
-    <div id="cadastrosViewConferentes" class="cadastro-view hidden">
-      <div class="cadastro-panel-grid">
-        <div class="boxFrota">
-          <h3>Novo Conferente</h3>
-          <input type="text" id="novoConferenteNome" placeholder="Nome do conferente">
-          <button type="button" onclick="salvarCadastro('conferentes','novoConferenteNome')">Adicionar</button>
+          <hr style="margin: 10px 0; border: none; border-top: 1px solid #ddd;">
+          <h4 style="margin: 5px 0;">Dados de acesso</h4>
+          <input type="text" id="novoColaboradorLogin" placeholder="Login do colaborador">
+          <input type="password" id="novoColaboradorSenha" placeholder="Senha do colaborador">
+          <label class="config-check"><input type="checkbox" id="novoColaboradorSipHabilitado"> Permitir chamadas externas</label>
+          <input type="text" id="novoColaboradorSipUsuario" placeholder="Usuario SIP (vazio usa o login)">
+          <input type="password" id="novoColaboradorSipSenha" placeholder="Senha SIP (vazio usa a senha do login)">
+          <input type="text" id="novoColaboradorSipRamal" placeholder="Ramal interno de 4 digitos (vazio gera automatico)">
+          <select id="novoColaboradorCodbarModo">
+            <option value="bip">CODBAR: Bip/Leitor</option>
+            <option value="camera">CODBAR: Camera/Webcam</option>
+          </select>
+          <small class="hint">Deixe a senha em branco apenas quando estiver editando um colaborador existente e quiser manter a senha atual.</small>
+
+          <button type="button" onclick="salvarColaboradorCadastro()">Adicionar</button>
         </div>
         <div class="boxFrota cadastro-list-box">
-          <h3>Conferentes Cadastrados</h3>
-          <ul id="listaConferentes"></ul>
+          <h3>Colaboradores Cadastrados</h3>
+          <ul id="listaMotoristas"></ul>
         </div>
       </div>
     </div>
@@ -520,10 +887,22 @@
         <h3>Veiculos</h3>
         <input type="text" id="novoVeiculoNome" placeholder="Nome do veículo">
         <input id="frota_placa" placeholder="Placa">
-        <input id="frota_modelo" placeholder="Modelo">
+        <input id="frota_modelo" list="modelosVeiculos" placeholder="Modelo" oninput="sincronizarCombustivelModeloVeiculo(this, document.getElementById('frota_combustivel_padrao'))">
+        <datalist id="modelosVeiculos">
+          <option value="Gol"></option>
+          <option value="Polo"></option>
+          <option value="Saveiro"></option>
+        </datalist>
         <input id="frota_km" type="number" placeholder="KM Atual">
         <input id="frota_int_manut" type="number" placeholder="Intervalo Manutenção (KM)">
         <input id="frota_int_oleo" type="number" placeholder="Intervalo Óleo (KM)">
+        <select id="frota_combustivel_padrao">
+          <option value="diesel_500" selected>Combustivel: Diesel 500</option>
+          <option value="diesel_s10">Combustivel: Diesel S10</option>
+          <option value="gasolina">Combustivel: Gasolina</option>
+          <option value="etanol">Combustivel: Etanol</option>
+          <option value="flex">Combustivel: Flex (Gasolina/Etanol)</option>
+        </select>
         <button type="button" onclick="salvarVeiculo()">Adicionar</button>
       </div>
       <div class="boxFrota cadastro-list-box">
@@ -532,33 +911,6 @@
       </div>
     </div>
   </div>
-
-    <div id="cadastrosViewUsuarios" class="cadastro-view hidden">
-      <div class="cadastro-panel-grid">
-
-      <!-- Cadastro de Usuários -->
-      <div class="boxFrota">
-        <h3>Cadastro de Usuários</h3>
-        <input type="text" id="novoUsuarioNome" placeholder="Nome de usuário">
-        <input type="text" id="novoUsuarioLogin" placeholder="Login">
-        <input type="password" id="novoUsuarioSenha" placeholder="Senha">
-        <label class="config-check"><input type="checkbox" id="novoUsuarioSipHabilitado"> Permitir chamadas externas para este usuario</label>
-        <input type="text" id="novoUsuarioSipUsuario" placeholder="Usuario SIP (vazio usa o login)">
-        <input type="password" id="novoUsuarioSipSenha" placeholder="Senha SIP (vazio usa a senha do login)">
-        <input type="text" id="novoUsuarioSipRamal" placeholder="Ramal interno de 4 digitos (vazio gera automatico)">
-        <select id="novoUsuarioCodbarModo">
-          <option value="bip">CODBAR: Bip/Leitor</option>
-          <option value="camera">CODBAR: Camera/Webcam</option>
-        </select>
-        <button type="button" onclick="salvarUsuarioCadastro()">Adicionar</button>
-        <small class="hint">Cada usuario recebe um ramal interno de 4 digitos. Marque a opcao acima apenas para liberar discagem externa. O CODBAR fica registrado por usuario para definir se o estoque trabalha primeiro com bip/leitor ou camera/webcam.</small>
-      </div>
-      <div class="boxFrota cadastro-list-box">
-        <h3>Usuarios Cadastrados</h3>
-        <ul id="listaUsuarios"></ul>
-      </div>
-    </div>
-    </div>
 
     <div id="cadastrosViewComissao" class="cadastro-view hidden">
       <h3>Cadastros de Comissao</h3>
@@ -815,10 +1167,85 @@
       <div id="gestaoRegistroManutencao" class="gestao-registro-card">
         <div class="boxFrota">
           <h3>Registrar Manutencao</h3>
+          <div id="manutXmlPendencias" class="gestao-ocr-preview">
+            <div class="gestao-ocr-preview-summary">
+              <strong>Pre-lancamentos recebidos das NF-e</strong>
+              <span id="manutXmlPendenciasResumo">Carregando pendencias...</span>
+            </div>
+            <div class="manutencao-xml-pendencias-wrap">
+              <table class="gestao-ocr-preview-table">
+                <thead>
+                  <tr>
+                    <th>Nota</th>
+                    <th>Placa XML</th>
+                    <th>Veiculo sugerido</th>
+                    <th>Itens</th>
+                    <th>Motivo</th>
+                    <th>Acao</th>
+                  </tr>
+                </thead>
+                <tbody id="manutXmlPendenciasBody">
+                  <tr><td colspan="6">Carregando...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
           <select id="manut_veiculo"></select>
           <input id="manut_tipo" placeholder="Ex: Freio, Motor, Suspensao">
           <input id="manut_km" type="number" placeholder="KM da Manutencao">
           <input id="manut_valor" type="number" placeholder="Valor R$">
+          <div class="abastecimento-grid manutencao-doc-grid">
+            <input id="manut_nota" placeholder="Numero da nota">
+            <input id="manut_emitente" placeholder="Fornecedor / emitente">
+            <input id="manut_data_documento" type="date" placeholder="Data da nota">
+          </div>
+          <div class="estoque-inline-actions">
+            <button type="button" onclick="selecionarImagemNfeOcr({ tipo: 'manutencao' })">Foto OCR</button>
+            <button type="button" class="btn-secondary" onclick="limparPreviewOcrManutencao()">Limpar leitura</button>
+          </div>
+          <small id="manutOcrStatus" class="hint">Use a camera do celular para fotografar a nota impressa. O sistema tenta extrair fornecedor, numero, valor e itens para conferencia antes do lancamento.</small>
+          <div id="manutOcrPreview" class="gestao-ocr-preview hidden">
+            <div id="manutOcrResumo" class="gestao-ocr-preview-summary"></div>
+            <div id="manutOcrItensWrap" class="hidden">
+              <table class="gestao-ocr-preview-table">
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Codigo</th>
+                    <th>Descricao</th>
+                    <th>Qtd</th>
+                    <th>Valor</th>
+                  </tr>
+                </thead>
+                <tbody id="manutOcrItensBody"></tbody>
+              </table>
+            </div>
+            <div id="manutOcrWarnings" class="gestao-ocr-preview-warnings hidden"></div>
+          </div>
+          <div class="gestao-ocr-preview">
+            <div class="gestao-ocr-preview-summary">Itens da manutencao da nota</div>
+            <div class="estoque-inline-actions">
+              <button type="button" onclick="adicionarItemManutencao()">Adicionar item</button>
+            </div>
+            <div id="manutItensVazio" class="hint">Nenhum item adicionado ainda. Use o OCR ou adicione manualmente.</div>
+            <div id="manutItensEditorWrap" class="hidden">
+              <table class="gestao-ocr-preview-table manutencao-itens-table">
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Descricao</th>
+                    <th>Codigo</th>
+                    <th>Qtd</th>
+                    <th>Unit.</th>
+                    <th>Total</th>
+                    <th>Obs.</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="manutItensEditorBody"></tbody>
+              </table>
+            </div>
+          </div>
           <button onclick="addManutencao()">Salvar Manutencao</button>
 
           <h4 style="margin:10px 0 6px;">Historico de Manutencao</h4>
@@ -831,6 +1258,8 @@
                   <th>Tipo</th>
                   <th>KM</th>
                   <th>Valor</th>
+                  <th>Documento</th>
+                  <th>Itens</th>
                 </tr>
               </thead>
               <tbody id="manutHistoricoBody"></tbody>
@@ -924,12 +1353,15 @@
             <input id="abast_km" type="number" placeholder="KM no pedido">
             <input id="abast_posto" placeholder="Posto">
             <select id="abast_combustivel">
-              <option value="diesel" selected>Diesel</option>
-              <option value="arla">Arla</option>
+              <option value="">Selecione o veiculo</option>
             </select>
           </div>
-          <button onclick="liberarAbastecimento()">Liberar + Gerar Requisicao (PDF)</button>
-          <small class="hint">Diesel fica como padrao. Para importar a NF-e do abastecimento, use a linha pendente abaixo com a chave bipada e escolha entre XML manual ou busca oficial pelo DF-e.</small>
+          <div class="estoque-inline-actions">
+            <button onclick="liberarAbastecimento()">Liberar + Gerar Requisicao (PDF)</button>
+            <button type="button" onclick="sincronizarAbastecimentosXml()">Sincronizar NF-e dos postos</button>
+          </div>
+          <small class="hint">O combustivel e selecionado pelo cadastro do veiculo. Flex permite gasolina ou etanol; Arla fica disponivel somente para caminhoes Diesel S10.</small>
+          <div id="abastXmlSyncStatus" class="hint">As NF-e importadas sao vinculadas automaticamente por chave, placa, KM e dados do abastecimento, sem duplicar lancamentos manuais.</div>
 
           <hr>
           <h4 style="margin:6px 0;">Pendentes (status: liberado)</h4>
@@ -961,12 +1393,15 @@
                   <th>Data</th>
                   <th>Veiculo</th>
                   <th>Combustivel</th>
-                  <th>KM</th>
+                  <th>KM inicial</th>
+                  <th>KM final</th>
+                  <th>KM rodado</th>
                   <th>Posto / Emitente</th>
                   <th>NF-e</th>
-                  <th>Qtd</th>
-                  <th>Valor R$</th>
-                  <th>KM/L</th>
+                  <th>Qtd litros</th>
+                  <th>Valor/L</th>
+                  <th>Valor total</th>
+                  <th>Média KM/L</th>
                   <th>Status</th>
                   <th>Acao</th>
                 </tr>
@@ -1060,6 +1495,20 @@
         </div>
         <div id="frotaRelFreteStatusChecklist" class="relatorio-frete-status-list"></div>
       </div>
+      <div class="boxFrota relatorio-frete-box" style="max-width:560px;">
+        <h4>Filtros de Abastecimentos</h4>
+        <p class="relatorio-frete-hint">Aplicado aos relatorios Abastecimentos, Sem Placa Identificada e Criticas de Abastecimento.</p>
+        <div class="relatorio-frete-grid">
+          <label class="relatorio-frete-field">
+            <span>Data inicial</span>
+            <input type="date" id="frotaRelAbastDataInicio">
+          </label>
+          <label class="relatorio-frete-field">
+            <span>Data final</span>
+            <input type="date" id="frotaRelAbastDataFim">
+          </label>
+        </div>
+      </div>
       <div class="boxFrota" style="max-width:560px;">
         <h4>Lista de Relatorios</h4>
         <ul>
@@ -1082,6 +1531,14 @@
           <li style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
             <span>Abastecimentos</span>
             <button type="button" onclick="gerarRelatorioFrota('abastecimentos')">Gerar</button>
+          </li>
+          <li style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
+            <span>Abastecimentos sem Placa Identificada</span>
+            <button type="button" onclick="gerarRelatorioFrota('abastecimentos_sem_placa')">Gerar</button>
+          </li>
+          <li style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
+            <span>Criticas de Abastecimento</span>
+            <button type="button" onclick="gerarRelatorioFrota('abastecimentos_criticos')">Gerar</button>
           </li>
           <li style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
             <span>Lavagens</span>
@@ -1240,55 +1697,71 @@
   </section>
 
   <section id="vendas" class="section">
-    <h2>Vendas</h2>
+    <div class="vendas-section-head">
+      <h2>Vendas</h2>
+      <div id="vendasRelArquivoInfo" class="hint vendas-arquivo-info">Aguardando leitura e processamento do CSV em Relatorios.</div>
+    </div>
+
+    <div class="vendas-relatorio-tabs">
+      <button type="button" class="active" id="vendasRelTabBonificacoes" onclick="setVendasRelatorioModo('bonificacoes')">Bonificações</button>
+      <button type="button" id="vendasRelTabVariacao" onclick="setVendasRelatorioModo('variacao_preco')">Variação de Preço</button>
+      <button type="button" id="vendasRelTabMix" onclick="setVendasRelatorioModo('grupos_embalagem')">Grupos Embalagem</button>
+    </div>
 
     <div id="vendasViewRelatorio" class="dash-view">
-      <div class="frotaGrid">
-        <div class="boxFrota">
-          <h3>Relatorio CSV</h3>
+      <div class="vendas-bonificacoes-layout">
+        <div class="boxFrota vendas-grupo-box">
+          <h3>Resumo Geral</h3>
+          <div id="vendasRelGrupoResumo" class="vendas-grupo-resumo"></div>
+        </div>
+
+        <div class="boxFrota vendas-filtros-box">
+          <div class="vendas-box-head">
+            <h3>Bonificações</h3>
+            <div class="vendas-toolbar">
+              <button type="button" onclick="carregarRelatorioVendas()">Atualizar Relatorio</button>
+              <button type="button" onclick="limparFiltrosRelatorioVendas()">Limpar Filtros</button>
+            </div>
+          </div>
           <div class="vendas-filtros-grid">
             <label>
-              Data inicial
-              <input type="date" id="vendasRelDataInicio">
+              Mês
+              <select id="vendasRelMes" onchange="agendarCarregarRelatorioVendas()">
+                <option value="">Último mês processado</option>
+              </select>
             </label>
-            <label>
-              Data final
-              <input type="date" id="vendasRelDataFim">
-            </label>
-            <label class="vendas-filtros-grid--full">
+            <label id="vendasRelVendedorWrap" class="vendas-filtros-grid--full">
               Vendedor
-              <select id="vendasRelVendedor">
+              <select id="vendasRelVendedor" onchange="atualizarVisibilidadeFiltrosRelatorioVendas(); agendarCarregarRelatorioVendas()">
                 <option value="">Todos os vendedores</option>
               </select>
             </label>
           </div>
-          <div class="vendas-toolbar">
-            <button type="button" onclick="carregarRelatorioVendas()">Atualizar Relatorio</button>
-            <button type="button" onclick="limparFiltrosRelatorioVendas()">Limpar Filtros</button>
-          </div>
-          <div id="vendasRelArquivoInfo" class="hint">Aguardando leitura do CSV em Relatorios.</div>
         </div>
-        <div class="boxFrota">
-          <h3>Resumo Geral</h3>
-          <div id="vendasRelResumoCards" class="vendas-resumo-cards"></div>
-        </div>
+      </div>
+
+      <div class="boxFrota vendas-resumo-mes-box">
+        <h3>Resumo do Mês</h3>
+        <div id="vendasRelResumoCards" class="vendas-resumo-cards vendas-resumo-cards--wide"></div>
       </div>
 
       <div class="frotaGrid">
         <div class="boxFrota">
           <h3>Total por Vendedor</h3>
+          <div class="hint">Use o filtro de mês para trocar rápido a visão. Ao selecionar um vendedor, a tabela inferior mostra o detalhe individual.</div>
           <div style="overflow:auto; max-height:360px;">
             <table>
               <thead>
                 <tr>
                   <th>Cod</th>
                   <th>Vendedor</th>
-                  <th>Clientes</th>
-                  <th>Notas</th>
                   <th>Itens</th>
+                  <th>PDV</th>
+                  <th>Notas</th>
                   <th>Venda</th>
-                  <th>Devolvido</th>
-                  <th>Liquido</th>
+                  <th>Bonificação</th>
+                  <th>% Bonificação</th>
+                  <th>Média %</th>
                 </tr>
               </thead>
               <tbody id="vendasRelVendedoresBody"></tbody>
@@ -1299,49 +1772,8 @@
 
       <div class="frotaGrid">
         <div class="boxFrota">
-          <h3>Total por Cidade</h3>
-          <div style="overflow:auto; max-height:320px;">
-            <table>
-              <thead>
-                <tr>
-                  <th>Cidade</th>
-                  <th>Clientes</th>
-                  <th>Notas</th>
-                  <th>Itens</th>
-                  <th>Venda</th>
-                  <th>Devolvido</th>
-                  <th>Liquido</th>
-                </tr>
-              </thead>
-              <tbody id="vendasRelCidadesBody"></tbody>
-            </table>
-          </div>
-        </div>
-        <div class="boxFrota">
-          <h3>Total por Produto</h3>
-          <div style="overflow:auto; max-height:320px;">
-            <table>
-              <thead>
-                <tr>
-                  <th>Produto</th>
-                  <th>Clientes</th>
-                  <th>Notas</th>
-                  <th>Itens</th>
-                  <th>Venda</th>
-                  <th>Devolvido</th>
-                  <th>Liquido</th>
-                </tr>
-              </thead>
-              <tbody id="vendasRelProdutosBody"></tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-
-      <div class="frotaGrid">
-        <div class="boxFrota">
-          <h3>Detalhes do Vendedor</h3>
-          <div id="vendasRelDetalhesHint" class="hint">Selecione um vendedor para ver as linhas do relatorio.</div>
+          <h3>Detalhe do Vendedor</h3>
+          <div id="vendasRelDetalhesHint" class="hint">Selecione um mês e filtre por vendedor para ver o detalhe individual.</div>
           <div style="overflow:auto; max-height:360px;">
             <table>
               <thead>
@@ -1351,13 +1783,209 @@
                   <th>Cliente</th>
                   <th>Cidade</th>
                   <th>Produto</th>
-                  <th>Qtd</th>
+                  <th>Tab</th>
                   <th>Venda</th>
                   <th>Devolvido</th>
-                  <th>Liquido</th>
+                  <th>Bonificação</th>
+                  <th>Líquido</th>
                 </tr>
               </thead>
               <tbody id="vendasRelDetalhesBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="vendasViewRelatorioVariacao" class="dash-view hidden">
+      <div class="vendas-variacao-layout">
+        <div class="boxFrota vendas-grupo-box">
+          <h3>Resumo Geral</h3>
+          <div id="vendasVarGrupoResumo" class="vendas-grupo-resumo"></div>
+        </div>
+
+        <div class="boxFrota vendas-filtros-box">
+          <div class="vendas-box-head">
+            <h3>Variação de Preço</h3>
+            <div class="vendas-toolbar">
+              <button type="button" onclick="carregarRelatorioVariacaoPreco()">Atualizar Relatorio</button>
+              <button type="button" onclick="setVendasRelatorioModo('bonificacoes')">Voltar para Bonificações</button>
+            </div>
+          </div>
+          <div class="vendas-filtros-grid">
+            <label>
+              Mês
+              <select id="vendasVarMes" onchange="carregarRelatorioVariacaoPreco()">
+                <option value="">Último mês processado</option>
+              </select>
+            </label>
+            <label class="vendas-filtros-grid--full">
+              Vendedor
+              <select id="vendasVarVendedor" onchange="carregarRelatorioVariacaoPreco()">
+                <option value="">Todos os vendedores</option>
+              </select>
+            </label>
+          </div>
+          <div class="hint">Esta visão usa o próprio mês selecionado acima e não depende da outra aba.</div>
+        </div>
+      </div>
+
+      <div class="boxFrota vendas-resumo-mes-box">
+        <h3>Resumo do Mês</h3>
+        <div id="vendasVarResumoCards" class="vendas-resumo-cards vendas-resumo-cards--wide"></div>
+      </div>
+
+      <div class="frotaGrid">
+        <div class="boxFrota">
+          <h3>Variações por Vendedor e Grupo</h3>
+          <div class="hint">Selecione um vendedor na aba de bonificações para ver as linhas do preço aplicado nesta visão.</div>
+          <div style="overflow:auto; max-height:360px;">
+            <table>
+              <thead>
+                <tr>
+                  <th>Cod</th>
+                  <th>Vendedor</th>
+                  <th>Grupo</th>
+                  <th>Produtos</th>
+                  <th>Preço un.</th>
+                  <th>Min un.</th>
+                  <th>Max un.</th>
+                  <th>Dif.</th>
+                  <th>Dif.%</th>
+                  <th>Cidades</th>
+                  <th>PDVs</th>
+                  <th>Itens</th>
+                </tr>
+              </thead>
+              <tbody id="vendasVarVendedoresBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="frotaGrid">
+        <div class="boxFrota">
+          <h3>Linhas do Vendedor</h3>
+          <div id="vendasVarDetalhesHint" class="hint">Selecione um vendedor na aba de bonificações para carregar os detalhes.</div>
+          <div style="overflow:auto; max-height:360px;">
+            <table>
+              <thead>
+                <tr>
+                  <th>Data</th>
+                  <th>NF</th>
+                  <th>Cliente</th>
+                  <th>Cidade</th>
+                  <th>Grupo</th>
+                  <th>Produto</th>
+                  <th>Preço un.</th>
+                  <th>Qtd</th>
+                  <th>Venda</th>
+                  <th>Tipo</th>
+                </tr>
+              </thead>
+              <tbody id="vendasVarDetalhesBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="vendasViewRelatorioMix" class="dash-view hidden">
+      <div class="vendas-variacao-layout">
+        <div class="boxFrota vendas-grupo-box">
+          <h3>Resumo por Faixa</h3>
+          <div style="overflow:auto; max-height:320px;">
+            <table>
+              <thead>
+                <tr>
+                  <th>Faixa</th>
+                  <th>PDVs</th>
+                  <th>% do total</th>
+                </tr>
+              </thead>
+              <tbody id="vendasMixFaixasBody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="boxFrota vendas-filtros-box">
+          <div class="vendas-box-head">
+            <h3>Grupos Embalagem</h3>
+            <div class="vendas-toolbar">
+              <button type="button" onclick="carregarRelatorioMixEmbalagens()">Atualizar Relatorio</button>
+              <button type="button" onclick="limparFiltrosRelatorioMixEmbalagens()">Limpar Filtros</button>
+            </div>
+          </div>
+          <div class="vendas-filtros-grid">
+            <label>
+              Mês
+              <select id="vendasMixMes" onchange="carregarRelatorioMixEmbalagens()">
+                <option value="">Último mês processado</option>
+              </select>
+            </label>
+            <label>
+              Vendedor
+              <select id="vendasMixVendedor" onchange="carregarRelatorioMixEmbalagens()">
+                <option value="">Todos os vendedores</option>
+              </select>
+            </label>
+            <label class="vendas-filtros-grid--full">
+              PDV
+              <select id="vendasMixCliente" onchange="carregarRelatorioMixEmbalagens()">
+                <option value="">Todos os PDVs</option>
+              </select>
+            </label>
+          </div>
+          <div class="hint">O cálculo considera sempre o mês selecionado e conta quantos grupos diferentes cada PDV comprou no período.</div>
+        </div>
+      </div>
+
+      <div class="boxFrota vendas-resumo-mes-box">
+        <h3>Resumo do Mês</h3>
+        <div id="vendasMixResumoCards" class="vendas-resumo-cards vendas-resumo-cards--wide"></div>
+      </div>
+
+      <div class="frotaGrid">
+        <div class="boxFrota">
+          <h3>PDVs do Filtro</h3>
+          <div class="hint">Clique em um PDV para destacar a combinação de grupos usada naquele mês.</div>
+          <div style="overflow:auto; max-height:360px;">
+            <table>
+              <thead>
+                <tr>
+                  <th>PDV</th>
+                  <th>Cidade</th>
+                  <th>Vendedor</th>
+                  <th>Grupos</th>
+                  <th>Faixa</th>
+                  <th>Itens</th>
+                  <th>Notas</th>
+                  <th>Tipos usados</th>
+                </tr>
+              </thead>
+              <tbody id="vendasMixClientesBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="frotaGrid">
+        <div class="boxFrota">
+          <h3>Detalhe do PDV</h3>
+          <div id="vendasMixDetalheHint" class="hint">Selecione um PDV para ver exatamente quais grupos ele usou no mês.</div>
+          <div style="overflow:auto; max-height:220px;">
+            <table>
+              <thead>
+                <tr>
+                  <th>PDV</th>
+                  <th>Cidade</th>
+                  <th>Vendedor</th>
+                  <th>Qtde grupos</th>
+                  <th>Faixa</th>
+                  <th>Grupos usados</th>
+                </tr>
+              </thead>
+              <tbody id="vendasMixDetalheBody"></tbody>
             </table>
           </div>
         </div>
@@ -1431,6 +2059,7 @@
       </div>
       <div style="margin-top:10px;">
         <button type="button" onclick="gerarBackup()">Gerar Backup SQL</button>
+        <button type="button" onclick="gerarBackupCompleto()">Gerar Backup Completo</button>
       </div>
     </div>
 
@@ -1641,27 +2270,23 @@
             <label for="vendasConfigSourceType">Origem dos dados</label>
             <select id="vendasConfigSourceType">
               <option value="csv_relatorios_dir">CSV em Relatorios</option>
-              <option value="firebird">Base externa Firebird (preparacao)</option>
             </select>
           </div>
           <input type="text" id="vendasConfigCsvDir" placeholder="Diretorio dos CSVs de vendas">
-          <input type="text" id="vendasConfigFirebirdHost" placeholder="Host Firebird (futuro)">
-          <input type="number" id="vendasConfigFirebirdPort" placeholder="Porta Firebird (padrao 3050)">
-          <input type="text" id="vendasConfigFirebirdDatabase" placeholder="Caminho/base Firebird (futuro)">
-          <input type="text" id="vendasConfigFirebirdUser" placeholder="Usuario Firebird (futuro)">
-          <input type="password" id="vendasConfigFirebirdPassword" placeholder="Senha Firebird (futuro)">
-          <textarea id="vendasConfigFirebirdQuery" rows="4" placeholder="Consulta SQL/visao do Firebird (futuro)"></textarea>
           <input type="file" id="vendasConfigArquivoCsv" accept=".csv,text/csv">
           <div class="sip-config-actions">
             <button type="button" onclick="salvarConfigVendas()">Salvar vendas</button>
             <button type="button" onclick="importarRelatorioCsvVendas()">Importar relatorio CSV</button>
-            <button type="button" onclick="importarCacheVendas()">Importar do diretorio</button>
+            <button type="button" onclick="importarCacheVendas()">Importar da pasta</button>
+            <button type="button" onclick="processarRelatoriosVendas()">Processar relatórios</button>
             <button type="button" onclick="carregarConfigVendas()">Atualizar lista</button>
           </div>
           <small id="vendasConfigResumo" class="hint">Carregando configuracao de vendas...</small>
+          <small id="vendasConfigStatus" class="hint vendas-config-status">Nenhuma importacao em andamento.</small>
           <small id="vendasConfigFonte" class="hint">Fonte atual: -</small>
-          <small class="hint">Fluxo atual: importa o CSV para o banco na primeira carga e o relatorio passa a ler somente o import ativo.</small>
-          <small class="hint">Fluxo futuro: a mesma tela podera apontar para uma base Firebird sem trocar o relatorio.</small>
+          <small id="vendasConfigRegras" class="hint">Arquivo de regras: Relatorios/config-rel-vendas.</small>
+          <small id="vendasConfigGrupos" class="hint">Grupos normalizados e descartes de importacao serao exibidos aqui.</small>
+          <small class="hint">Fluxo atual: importa o CSV, processa o cache mensal e a tela passa a ler apenas o mês filtrado.</small>
         </div>
       </div>
       <div class="frotaGrid">
@@ -1686,12 +2311,208 @@
           </div>
         </div>
       </div>
+
+    </div>
+  </section>
+
+  <!-- =====================================================
+       PONTOS DE VENDA
+  ====================================================== -->
+  <section id="pontosvenda" class="section">
+    <h2>Pontos de Venda</h2>
+    <div class="boxFrota" style="margin-bottom:14px;">
+      <div class="sip-config-actions" style="margin-bottom:10px;">
+        <button type="button" onclick="setPontosVendaView('cadastro')">Cadastro</button>
+        <button type="button" onclick="setPontosVendaView('relatorio')">Relatório</button>
+      </div>
+      <small class="hint">Cadastre vendedor, cliente, rota e a frequência de visita. No relatório, a quinzena usa a data base para descobrir quais locais entram na semana selecionada.</small>
+    </div>
+
+    <div id="pontosVendaViewCadastro">
+      <div class="frotaGrid">
+        <div class="boxFrota">
+          <h3>Novo / Editar ponto de venda</h3>
+          <input type="hidden" id="pontosVendaId">
+          <input type="text" id="pontosVendaVendedor" placeholder="Vendedor">
+          <input type="text" id="pontosVendaCliente" placeholder="Cliente">
+          <input type="text" id="pontosVendaRota" placeholder="Rota">
+          <select id="pontosVendaPeriodicidade">
+            <option value="semanal">Visita semanal</option>
+            <option value="quinzenal">Visita quinzenal</option>
+          </select>
+          <select id="pontosVendaDiaSemana">
+            <option value="">Dia da semana</option>
+            <option value="0">Segunda-feira</option>
+            <option value="1">Terca-feira</option>
+            <option value="2">Quarta-feira</option>
+            <option value="3">Quinta-feira</option>
+            <option value="4">Sexta-feira</option>
+            <option value="5">Sabado</option>
+            <option value="6">Domingo</option>
+          </select>
+          <input type="date" id="pontosVendaDataBase">
+          <input type="text" id="pontosVendaObservacao" placeholder="Observação">
+          <label class="config-check"><input type="checkbox" id="pontosVendaAtivo" checked> Ativo</label>
+          <div class="sip-config-actions">
+            <button type="button" onclick="salvarPontoVenda()">Salvar</button>
+            <button type="button" onclick="limparFormularioPontoVenda()">Novo cadastro</button>
+          </div>
+          <small id="pontosVendaFormStatus" class="hint">Preencha os campos e salve. Se houver cadastro parecido, o sistema vai pedir confirmação para evitar duplicidade.</small>
+        </div>
+        <div class="boxFrota">
+          <h3>Importar CSV</h3>
+          <input type="file" id="pontosVendaCsvFile" accept=".csv,text/csv">
+          <div class="sip-config-actions">
+            <button type="button" onclick="importarPontosVendaCsv()">Importar CSV</button>
+            <button type="button" onclick="carregarPontosVenda()">Atualizar lista</button>
+          </div>
+          <small class="hint">Campos sugeridos: vendedor, cliente, rota, visita_periodicidade, dia_semana, data_base, observacao e ativo.</small>
+          <small class="hint">Exemplo de periodicidade: semanal ou quinzenal. Para quinzenal, informe a data base da quinzena.</small>
+        </div>
+      </div>
+
+      <div class="frotaGrid">
+        <div class="boxFrota cadastro-list-box">
+          <h3>Cadastros de pontos de venda</h3>
+          <div style="overflow:auto; max-height:360px;">
+            <table>
+              <thead>
+                <tr>
+                  <th>Vendedor</th>
+                  <th>Cliente</th>
+                  <th>Rota</th>
+                  <th>Frequência</th>
+                  <th>Dia</th>
+                  <th>Base</th>
+                  <th>Ativo</th>
+                  <th>Ações</th>
+                </tr>
+              </thead>
+              <tbody id="pontosVendaBody">
+                <tr><td colspan="8">Carregando cadastros...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="pontosVendaViewRelatorio" class="hidden">
+      <div class="frotaGrid">
+        <div class="boxFrota">
+          <h3>Relatório de visitas da semana</h3>
+          <div class="vendas-filtros-grid">
+            <label>
+              Data de referência
+              <input type="date" id="pontosVendaDataRef">
+            </label>
+            <label id="pontosVendaVendedorWrap" class="vendas-filtros-grid--full">
+              Vendedor
+              <select id="pontosVendaFiltroVendedor" onchange="atualizarVisibilidadeFiltrosPontosVenda(); agendarCarregarPontosVendaRelatorio()"></select>
+            </label>
+            <label id="pontosVendaClienteWrap" class="vendas-filtros-grid--full">
+              Cliente
+              <select id="pontosVendaFiltroCliente" onchange="atualizarVisibilidadeFiltrosPontosVenda(); agendarCarregarPontosVendaRelatorio()"></select>
+            </label>
+            <label class="vendas-filtros-grid--full">
+              Rota
+              <select id="pontosVendaFiltroRota" onchange="agendarCarregarPontosVendaRelatorio()"></select>
+            </label>
+          </div>
+          <div class="vendas-toolbar">
+            <button type="button" onclick="carregarPontosVendaRelatorio()">Atualizar relatório</button>
+            <button type="button" onclick="limparFiltrosPontosVenda()">Limpar filtros</button>
+          </div>
+          <div id="pontosVendaRelatorioInfo" class="hint">Selecione a semana de referência para ver os pontos de venda previstos.</div>
+          <div id="pontosVendaResumoCards" class="vendas-resumo-cards" style="margin-top:12px;"></div>
+        </div>
+      </div>
+      <div class="frotaGrid">
+        <div class="boxFrota">
+          <h3>Agenda da semana</h3>
+          <div style="overflow:auto; max-height:420px;">
+            <table>
+              <thead>
+                <tr>
+                  <th>Data</th>
+                  <th>Dia</th>
+                  <th>Vendedor</th>
+                  <th>Cliente</th>
+                  <th>Rota</th>
+                  <th>Frequência</th>
+                  <th>Base</th>
+                  <th>Ativo</th>
+                  <th>Obs.</th>
+                </tr>
+              </thead>
+              <tbody id="pontosVendaRelatorioBody">
+                <tr><td colspan="9">Carregando relatório...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
     </div>
   </section>
 
   <!-- =====================================================
        MODAL: FOTOS DAS DEVOLUÇÕES
   ====================================================== -->
+  <div id="abastecimentoEditModal" class="foto-modal hidden" onclick="fecharEdicaoAbastecimento(event)">
+    <div class="foto-modal-content abastecimento-edit-modal-content" onclick="event.stopPropagation()">
+      <div class="foto-modal-header">
+        <h3>Editar abastecimento</h3>
+        <button class="btn-secondary" type="button" onclick="fecharEdicaoAbastecimento()">Fechar</button>
+      </div>
+      <div class="abastecimento-edit-body">
+        <input type="hidden" id="abastEditId">
+        <label>
+          <span>Veiculo</span>
+          <select id="abastEditVeiculo"></select>
+        </label>
+        <label>
+          <span>Data do abastecimento</span>
+          <input id="abastEditData" type="datetime-local">
+        </label>
+        <label>
+          <span>KM</span>
+          <input id="abastEditKm" type="number" min="1">
+        </label>
+        <label>
+          <span>Posto</span>
+          <input id="abastEditPosto" type="text">
+        </label>
+        <label>
+          <span>Combustivel</span>
+          <select id="abastEditCombustivel"></select>
+        </label>
+        <label>
+          <span>Numero da NF-e</span>
+          <input id="abastEditNota" type="text">
+        </label>
+        <label class="abastecimento-edit-wide">
+          <span>Chave de acesso da NF-e</span>
+          <input id="abastEditChave" type="text" maxlength="44" inputmode="numeric">
+        </label>
+        <label class="abastecimento-edit-wide">
+          <span>Emitente</span>
+          <input id="abastEditEmitente" type="text">
+        </label>
+        <label>
+          <span>Quantidade</span>
+          <input id="abastEditQuantidade" type="number" min="0.001" step="0.001">
+        </label>
+        <label>
+          <span>Valor total</span>
+          <input id="abastEditValor" type="number" min="0.01" step="0.01">
+        </label>
+        <div class="abastecimento-edit-actions abastecimento-edit-wide">
+          <button class="btn-secondary" type="button" onclick="fecharEdicaoAbastecimento()">Cancelar</button>
+          <button type="button" onclick="salvarEdicaoAbastecimento()">Salvar alteracoes</button>
+        </div>
+      </div>
+    </div>
+  </div>
   <div id="fotoModal" class="foto-modal hidden" onclick="fecharFotosDevolucao(event)">
     <div class="foto-modal-content" onclick="event.stopPropagation()">
       <div class="foto-modal-header">
@@ -1710,6 +2531,29 @@
       <div id="frotaHistoricoBody" class="frota-historico-body"></div>
     </div>
   </div>
+  <div id="cargaDetalheModal" class="foto-modal hidden" onclick="fecharDetalhesCarga(event)">
+    <div class="foto-modal-content frota-historico-modal-content" onclick="event.stopPropagation()">
+      <div class="foto-modal-header">
+        <h3>Detalhes da Carga</h3>
+        <button class="btn-secondary" onclick="fecharDetalhesCarga()">Fechar</button>
+      </div>
+      <div id="cargaDetalheBody" class="frota-historico-body carga-detalhe-body"></div>
+    </div>
+  </div>
+  <div id="freteDetalheModal" class="foto-modal hidden" onclick="fecharDetalhesFrete(event)">
+    <div class="foto-modal-content frota-historico-modal-content" onclick="event.stopPropagation()">
+      <div class="foto-modal-header">
+        <h3>Detalhes do Frete</h3>
+        <button class="btn-secondary" onclick="fecharDetalhesFrete()">Fechar</button>
+      </div>
+      <div class="frete-detail-menu" role="tablist">
+        <button type="button" class="frete-detail-tab active" data-tab="dados">Dados</button>
+        <button type="button" class="frete-detail-tab" data-tab="carga">Ver carga</button>
+        <button type="button" class="frete-detail-tab" data-tab="notas_saida">Notas de saida</button>
+      </div>
+      <div id="freteDetalheBody" class="frota-historico-body frete-detail-body"></div>
+    </div>
+  </div>
   <div id="estoqueCameraModal" class="foto-modal hidden" onclick="fecharCameraEstoque(event)">
     <div class="foto-modal-content estoque-camera-modal-content" onclick="event.stopPropagation()">
       <div class="foto-modal-header">
@@ -1719,6 +2563,9 @@
       <div class="estoque-camera-body">
         <video id="estoqueCameraVideo" autoplay playsinline muted></video>
         <div id="estoqueCameraStatus" class="hint">Aponte a camera para o codigo da nota.</div>
+        <div class="abastecimento-actions" style="justify-content:center;">
+          <button type="button" class="btn-secondary" onclick="usarFotoCameraEstoque()">Usar foto</button>
+        </div>
       </div>
     </div>
   </div>
@@ -1738,6 +2585,7 @@
         </div>
       </div>
       <div class="chat-widget-actions">
+        <button type="button" class="btn-secondary" onclick="abrirAgentIaDoChat()">Agent IA</button>
         <button type="button" class="btn-secondary" onclick="toggleChatPopup(false)">Minimizar</button>
       </div>
     </div>
@@ -1824,10 +2672,12 @@
   <div id="loginModal" class="login-modal">
     <div class="login-card">
       <h3>Entrar no Sistema</h3>
-      <input type="text" id="loginUsuario" placeholder="Login">
-      <input type="password" id="loginSenha" placeholder="Senha">
-      <button type="button" id="loginBtn" onclick="fazerLoginSistema()">Entrar</button>
-      <small id="loginMsg" class="hint"></small>
+      <form id="loginForm" onsubmit="event.preventDefault(); fazerLoginSistema();">
+        <input type="text" id="loginUsuario" placeholder="Login" autocomplete="username" autocapitalize="none" spellcheck="false">
+        <input type="password" id="loginSenha" placeholder="Senha" autocomplete="current-password">
+        <button type="submit" id="loginBtn">Entrar</button>
+        <small id="loginMsg" class="hint"></small>
+      </form>
     </div>
   </div>
 
@@ -1835,7 +2685,7 @@
        SCRIPTS
   ====================================================== -->
   <script src="/vendor/jssip.min.js?v=f95fcdb"></script>
-  <script src="/script.js?v=f95fcdb"></script>
+  <script src="/script.js?v=20260615-estoque-lotes"></script>
   <script>
     (function () {
       function forceLoginUsable() {
@@ -1858,7 +2708,9 @@
         var body = document.body;
         if (body) {
           body.classList.remove("menu-open");
-          body.style.overflow = "auto";
+          body.classList.add("login-active");
+          body.classList.add("modal-open");
+          body.style.overflow = "";
         }
 
         for (var i = 0; i < blockers.length; i++) {
@@ -1871,7 +2723,6 @@
         if (user) {
           user.disabled = false;
           user.readOnly = false;
-          try { user.focus(); } catch (e) {}
         }
         if (pass) {
           pass.disabled = false;
@@ -1889,11 +2740,7 @@
           if (tries >= 20) clearInterval(h);
         }, 250);
       });
-      document.addEventListener("click", function () {
-        setTimeout(forceLoginUsable, 0);
-      });
     })();
   </script>
 </body>
 </html>
-

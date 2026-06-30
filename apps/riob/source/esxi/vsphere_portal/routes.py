@@ -398,6 +398,13 @@ def api_vm_details(moid: str):
     return _json_ok(vm=vm)
 
 
+@bp.delete("/api/vms/<moid>")
+def api_vm_delete(moid: str):
+    service, _ = _get_service()
+    vm = service.delete_virtual_machine(moid)
+    return _json_ok(message=f"VM {vm['name']} excluida com sucesso.", vm=vm)
+
+
 @bp.get("/api/vms/<moid>/remote-access/rdp")
 def api_vm_rdp(moid: str):
     service, _ = _get_service()

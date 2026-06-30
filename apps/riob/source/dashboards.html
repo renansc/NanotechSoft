@@ -8,27 +8,30 @@
     html, body { height: 100%; margin: 0; background: #000; }
     #frame { width: 100vw; height: 100vh; border: 0; display: block; background: #000; }
 
-    #badge{
+    #titleLine{
       position: fixed; left: 12px; top: 10px; z-index: 9999;
-      font: 14px/1.2 system-ui, -apple-system, Segoe UI, Roboto, Arial;
-      color: #fff; background: rgba(0,0,0,.55); padding: 6px 10px; border-radius: 10px;
-      backdrop-filter: blur(6px);
-      user-select: none;
-    }
-    #badgeToggle{
-      position: fixed; right: 12px; top: 10px; z-index: 9999;
       font: 12px/1.2 system-ui, -apple-system, Segoe UI, Roboto, Arial;
-      color: #fff; background: rgba(0,0,0,.55); padding: 6px 10px; border-radius: 10px;
+      color: #fff; background: rgba(0,0,0,.35); padding: 6px 10px; border-radius: 999px;
       backdrop-filter: blur(6px);
       user-select: none;
-      cursor: pointer;
+      letter-spacing: .02em;
+      pointer-events: none;
+    }
+    #badge{
+      position: fixed; right: 12px; top: 10px; z-index: 9999;
+      font: 11px/1.2 system-ui, -apple-system, Segoe UI, Roboto, Arial;
+      color: #fff; background: rgba(0,0,0,.55); padding: 6px 10px; border-radius: 999px;
+      backdrop-filter: blur(6px);
+      user-select: none;
+      letter-spacing: .02em;
+      pointer-events: none;
     }
     .hidden { display:none !important; }
   </style>
 </head>
 <body>
-  <div id="badge">Carregando…</div>
-  <div id="badgeToggle" title="Ocultar/mostrar indicador">i</div>
+  <div id="titleLine"></div>
+  <div id="badge">Nanotech dev</div>
   <iframe id="frame" src="RioBranco.html?no_login=1"></iframe>
 
   <script>
@@ -41,35 +44,33 @@
       ".menu", ".sidebar", ".side-menu",
       ".menu-toggle", ".hamburger",
       "#menu", "#sidebar", "#nav",
-      ".menu-overlay"
+      ".menu-overlay",
+      "#chatFab", "#chatWidget", ".chat-fab", ".chat-widget",
+      ".menu-item[data-tab='comunicacao']", "#comunicacao",
+      ".vendas-relatorio-tabs", ".vendas-toolbar", ".vendas-filtros-box",
+      "#vendasRelArquivoInfo", "#vendasVarArquivoInfo", "#dashVendasArquivoInfo"
     ];
     const EXPAND_CONTENT_SELECTORS = [
       "body", "main", "#app", ".app", ".content", ".page", ".container", ".main-content"
     ];
 
-    // ✅ NO SEU RioBranco.html NÃO EXISTE sec-dashboard/sec-dashboard-frota.
-    // Existe a seção única: <section id="dashboard"> e as duas VIEWS:
-    //   - <div id="dashViewResumo" ...>
-    //   - <div id="dashViewFrota" ...>
-    // E quem alterna é openDashboardView(..., 'resumo'|'frota') no script.js.
+    // No modo TV mostramos os dashboards operacionais e os relatorios de vendas como visoes diretas.
     const DASHBOARDS = [
-      { label: "Dashboard 1 (Resumo)", view: "resumo" },
-      { label: "Dashboard 2 (Frota / Manutenção)", view: "frota" }
+      { label: "Dashboard - Resumo", view: "resumo" },
+      { label: "Dashboard - Frota / Manutenção", view: "frota" },
+      { label: "Dashboard - Estoque", view: "estoque" },
+      { label: "Vendas - Bonificações", view: "bonificacoes" },
+      { label: "Vendas - Variação de Preço", view: "variacao_preco" },
+      { label: "Vendas - Grupos Embalagem", view: "grupos_embalagem" },
     ];
 
     const iframe = document.getElementById("frame");
+    const titleLine = document.getElementById("titleLine");
     const badge  = document.getElementById("badge");
-    const badgeToggle = document.getElementById("badgeToggle");
-
     let idx = 0;
-    let badgeVisible = true;
 
-    badgeToggle.addEventListener("click", () => {
-      badgeVisible = !badgeVisible;
-      badge.classList.toggle("hidden", !badgeVisible);
-    });
-
-    function setBadge(text){ badge.textContent = text; }
+    function setTitle(text){ titleLine.textContent = text || ""; }
+    function setBadge(text){ badge.textContent = "Nanotech dev"; }
 
     function injectCssToHideMenu(){
       const cd = iframe.contentDocument;
@@ -93,26 +94,15 @@
       cd.head.appendChild(style);
     }
 
-    function switchToView(view){
+    function switchToView(item){
+      const view = item?.view || "resumo";
       const cw = iframe.contentWindow;
       const cd = iframe.contentDocument;
       if (!cw || !cd) return false;
 
-      // sempre esconder menu
-      try { injectCssToHideMenu(); } catch(e){}
-
-      // garante que a seção #dashboard esteja ativa (alguma navegação anterior pode ter mudado)
-      try{
-        if (typeof cw.showTab === "function"){
-          const dashMenu = cd.querySelector('.menu-item.has-submenu[data-tab="dashboard"]');
-          cw.showTab("dashboard", dashMenu || null);
-        }
-      }catch(e){}
-
-      // alterna view do dashboard usando a função real do seu app
       try{
         if (typeof cw.openDashboardView === "function"){
-          cw.openDashboardView(null, view); // 'resumo' ou 'frota'
+          cw.openDashboardView(null, view);
           return true;
         }
       }catch(e){}
@@ -129,12 +119,26 @@
       try{
         const vResumo = cd.getElementById("dashViewResumo");
         const vFrota  = cd.getElementById("dashViewFrota");
+        const vEstoque = cd.getElementById("dashViewEstoque");
+        const vVendas = cd.getElementById("dashViewVendas");
         if (vResumo && vFrota){
-          vResumo.classList.toggle("hidden", view === "frota");
+          const isVendas = view === "bonificacoes" || view === "variacao_preco" || view === "mix_embalagens" || view === "grupos_embalagem";
+          vResumo.classList.toggle("hidden", view !== "resumo");
           vFrota.classList.toggle("hidden", view !== "frota");
+          if (vEstoque) vEstoque.classList.toggle("hidden", view !== "estoque");
+          if (vVendas) vVendas.classList.toggle("hidden", !isVendas);
           // dispara render do dash frota (caso o JS não tenha sido chamado)
           if (view === "frota" && typeof cw.renderDashboardFrota === "function"){
             cw.renderDashboardFrota();
+          }
+          if (view === "estoque" && typeof cw.renderDashboardEstoque === "function"){
+            cw.renderDashboardEstoque();
+          }
+          if (isVendas && typeof cw.recarregarDashboardVendaAtual === "function"){
+            if (typeof cw.setDashboardView === "function") {
+              cw.setDashboardView(view);
+            }
+            cw.recarregarDashboardVendaAtual();
           }
           return true;
         }
@@ -146,50 +150,45 @@
     function goTo(i){
       idx = (i + DASHBOARDS.length) % DASHBOARDS.length;
       const d = DASHBOARDS[idx];
-      setBadge(`Exibindo: ${d.label}`);
+      setTitle(d.label);
 
       const cd = iframe.contentDocument;
       if (!iframe.contentWindow || !cd || cd.readyState !== "complete"){
         // carrega “limpo” (evita cache/estado) e depois alterna
-        iframe.src = "RioBranco.html?tv=1&_=" + Date.now();
+        iframe.src = "RioBranco.html?tv=1&no_login=1&_=" + Date.now();
         iframe.onload = () => {
           try { injectCssToHideMenu(); } catch(e){}
-          switchToView(d.view);
+          switchToView(d);
           iframe.onload = null;
         };
         return;
       }
 
-      const ok = switchToView(d.view);
+      const ok = switchToView(d);
       if (!ok){
         // fallback final: recarrega e tenta de novo
-        iframe.src = "RioBranco.html?tv=1&_=" + Date.now();
+        iframe.src = "RioBranco.html?tv=1&no_login=1&_=" + Date.now();
         iframe.onload = () => {
           try { injectCssToHideMenu(); } catch(e){}
-          switchToView(d.view);
+          switchToView(d);
           iframe.onload = null;
         };
       }
     }
 
     // Inicial: carrega e define Resumo
-    iframe.src = "RioBranco.html?tv=1&_=" + Date.now();
+    iframe.src = "RioBranco.html?tv=1&no_login=1&_=" + Date.now();
     iframe.onload = () => {
       try { injectCssToHideMenu(); } catch(e){}
-      setBadge(`Exibindo: ${DASHBOARDS[0].label}`);
-      switchToView(DASHBOARDS[0].view);
+      setTitle(DASHBOARDS[0].label);
+      setBadge("Nanotech dev");
+      switchToView(DASHBOARDS[0]);
       iframe.onload = null;
     };
 
     // Rotação
     setInterval(() => goTo(idx + 1), ROTATE_EVERY_MS);
 
-    // Atalhos
-    window.addEventListener("keydown", (e) => {
-      if (e.key === "ArrowRight") goTo(idx + 1);
-      if (e.key === "ArrowLeft")  goTo(idx - 1);
-      if (e.key.toLowerCase() === "i") badgeToggle.click();
-    });
   </script>
 </body>
 </html>

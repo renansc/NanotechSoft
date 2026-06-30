@@ -10,11 +10,11 @@ BASE_DIR = Path(__file__).resolve().parent
 
 # Arquivo local usado pelo Conky
 # Pode alterar por variavel de ambiente, se precisar:
-# export KANBAN_TASKS_FILE="/caminho/kanban-tasks.json"
-TASKS_FILE = Path(os.environ.get("KANBAN_TASKS_FILE", str(BASE_DIR / "kanban-tasks.json"))).expanduser()
+# export KANBAN_TASKS_FILE="/caminho/para/kanban-tasks.json"
+TASKS_FILE = Path(os.environ.get("KANBAN_TASKS_FILE", str(BASE_DIR / "kanban-tasks.json")))
 
 # Script de sincronizacao. Sera chamado automaticamente apos salvar alteracoes.
-SYNC_SCRIPT = Path(os.environ.get("KANBAN_SYNC_SCRIPT", str(BASE_DIR / "kanban_sync.py"))).expanduser()
+SYNC_SCRIPT = Path(os.environ.get("KANBAN_SYNC_SCRIPT", str(BASE_DIR / "kanban_sync.py")))
 
 STATUSES = ("today", "todo", "waiting")
 LABELS = {

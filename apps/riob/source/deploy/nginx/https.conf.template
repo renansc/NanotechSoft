@@ -1,7 +1,7 @@
 server {
-    listen 80;
-    listen [::]:80;
-    server_name ${RB_SERVER_NAME};
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name ${RB_SERVER_NAME} _;
 
     location ~ ^/api/(ca/cert\.(pem|crt)|app/cert\.(pem|crt)|sip/cert\.(pem|crt)|sip/windows-install\.ps1|sip/linux-install\.sh|sip/apple\.mobileconfig|certs\.(p12|pfx))$ {
         proxy_pass http://app:8080;
@@ -31,9 +31,9 @@ server {
 }
 
 server {
-    listen 443 ssl;
-    listen [::]:443 ssl;
-    server_name ${RB_SERVER_NAME};
+    listen 443 ssl default_server;
+    listen [::]:443 ssl default_server;
+    server_name ${RB_SERVER_NAME} _;
 
     ssl_certificate /etc/nginx/certs/fullchain.pem;
     ssl_certificate_key /etc/nginx/certs/privkey.pem;

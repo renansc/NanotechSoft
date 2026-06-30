@@ -33,13 +33,15 @@ services:
       MARIADB_HOST: db
       MARIADB_PORT: 3306
       MARIADB_DATABASE: ${RB_DB_NAME:-riobranco}
+      MARIADB_USER: ${RB_DB_USER:-riobranco}
+      MARIADB_PASSWORD: ${RB_DB_PASSWORD:-riobranco123}
       MARIADB_ROOT_PASSWORD: ${RB_DB_ROOT_PASSWORD:-root123}
       RB_DB_BACKUP_DIR: /backups
       RB_DB_RESTORE_FORCE: ${RB_DB_RESTORE_FORCE:-0}
     entrypoint: ["/bin/sh", "/restore/restore-latest-backup.sh"]
     volumes:
       - "./deploy/db/restore-latest-backup.sh:/restore/restore-latest-backup.sh:ro"
-      - "${RB_DB_BACKUP_PATH:-./backups sql}:/backups:ro"
+      - "${RB_DB_BACKUP_PATH:-./backupsSql}:/backups:ro"
 
   cert-bootstrap:
     build:
@@ -67,6 +69,82 @@ services:
     volumes:
       - ./certs:/certs
 
+  ollama:
+    image: ${RB_OLLAMA_IMAGE:-ollama/ollama:latest}
+    container_name: riobranco-ollama
+    restart: unless-stopped
+    environment:
+      OLLAMA_HOST: 0.0.0.0:11434
+      OLLAMA_KEEP_ALIVE: ${RB_OLLAMA_KEEP_ALIVE:-5m}
+    ports:
+      - "${RB_OLLAMA_BIND:-127.0.0.1}:${RB_OLLAMA_PORT:-11434}:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+
+  ollama-model-init:
+    image: ${RB_OLLAMA_IMAGE:-ollama/ollama:latest}
+    restart: "no"
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+      RB_AGENT_OLLAMA_MODEL: ${RB_MANAGED_OLLAMA_MODEL:-qwen2.5:3b}
+      RB_OLLAMA_REMOVE_MODELS: ${RB_OLLAMA_REMOVE_MODELS:-qwen2.5:7b}
+      RB_OLLAMA_PULL_WAIT_TRIES: ${RB_OLLAMA_PULL_WAIT_TRIES:-60}
+      RB_OLLAMA_PULL_WAIT_DELAY: ${RB_OLLAMA_PULL_WAIT_DELAY:-2}
+    entrypoint: ["/bin/sh", "/deploy/ollama/pull-model.sh"]
+    volumes:
+      - ./deploy/ollama/pull-model.sh:/deploy/ollama/pull-model.sh:ro
+
+  open-webui:
+    build:
+      context: .
+      dockerfile: deploy/open-webui/Dockerfile
+      network: host
+      args:
+        OPEN_WEBUI_BASE_IMAGE: ${RB_OPEN_WEBUI_IMAGE:-ghcr.io/open-webui/open-webui:v0.9.6}
+        OPEN_WEBUI_NUMPY_VERSION: ${RB_OPEN_WEBUI_NUMPY_VERSION:-2.2.6}
+    image: ${RB_OPEN_WEBUI_COMPAT_IMAGE:-riob-open-webui:v0.9.6-numpy2.2.6}
+    container_name: riobranco-open-webui
+    restart: unless-stopped
+    depends_on:
+      ollama:
+        condition: service_healthy
+      ollama-model-init:
+        condition: service_completed_successfully
+    environment:
+      OLLAMA_BASE_URL: ${RB_OPEN_WEBUI_OLLAMA_URL:-http://ollama:11434}
+      DEFAULT_MODELS: ${RB_MANAGED_OLLAMA_MODEL:-qwen2.5:3b}
+      WEBUI_NAME: ${RB_OPEN_WEBUI_NAME:-RioBranco IA}
+      WEBUI_SECRET_KEY: ${RB_OPEN_WEBUI_SECRET_KEY:?RB_OPEN_WEBUI_SECRET_KEY deve ser definida no .env}
+      ENABLE_SIGNUP: ${RB_OPEN_WEBUI_ENABLE_SIGNUP:-true}
+      OFFLINE_MODE: ${RB_OPEN_WEBUI_OFFLINE_MODE:-true}
+      HF_HUB_OFFLINE: ${RB_OPEN_WEBUI_HF_HUB_OFFLINE:-1}
+      ENABLE_VERSION_UPDATE_CHECK: "false"
+      RAG_EMBEDDING_MODEL_AUTO_UPDATE: "false"
+      RAG_RERANKING_MODEL_AUTO_UPDATE: "false"
+      WHISPER_MODEL_AUTO_UPDATE: "false"
+      SCARF_NO_ANALYTICS: "true"
+      DO_NOT_TRACK: "true"
+      ANONYMIZED_TELEMETRY: "false"
+    ports:
+      - "0.0.0.0:${RB_OPEN_WEBUI_PORT:-3000}:8080"
+    volumes:
+      - open_webui_data:/app/backend/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl --silent --fail --output /tmp/open-webui-health.json http://localhost:8080/health && jq -e '.status == true' /tmp/open-webui-health.json >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 90s
+
   app:
     build:
       context: .
@@ -81,6 +159,12 @@ services:
         condition: service_completed_successfully
       cert-bootstrap:
         condition: service_completed_successfully
+      ollama:
+        condition: service_healthy
+      ollama-model-init:
+        condition: service_completed_successfully
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       APP_HOST: 0.0.0.0
       APP_PORT: 8080
@@ -109,18 +193,70 @@ services:
       RB_HTTPS_PORT: ${RB_HTTPS_PORT:-443}
       RB_SERVER_NAME: ${RB_SERVER_NAME:-_}
       RB_PUBLIC_BASE_URL: ${RB_PUBLIC_BASE_URL:-}
+      RB_PROJECT_NAME: ${RB_PROJECT_NAME:-RioBranco}
+      RB_COMPANY_NAME: ${RB_COMPANY_NAME:-RioBranco}
+      RB_COMPANY_CNPJ: ${RB_COMPANY_CNPJ:-20.984.401/0001-30}
+      RB_INTERNAL_IP: ${RB_INTERNAL_IP:-}
+      RB_AGENT_LLM_PROVIDER: ${RB_AGENT_LLM_PROVIDER:-auto}
+      RB_AGENT_OLLAMA_URL: ${RB_AGENT_OLLAMA_URL:-http://ollama:11434}
+      RB_AGENT_OLLAMA_MODEL: ${RB_MANAGED_OLLAMA_MODEL:-qwen2.5:3b}
+      RB_AGENT_OLLAMA_TIMEOUT: ${RB_AGENT_OLLAMA_TIMEOUT:-90}
+      RB_AGENT_OLLAMA_TEMPERATURE: ${RB_AGENT_OLLAMA_TEMPERATURE:-0.2}
+      RB_AGENT_WEB_ENABLED: ${RB_AGENT_WEB_ENABLED:-1}
+      RB_AGENT_WEB_TIMEOUT: ${RB_AGENT_WEB_TIMEOUT:-12}
+      RB_AGENT_WEB_BUDGET: ${RB_AGENT_WEB_BUDGET:-20}
       RB_DATA_DIR: /data/app
       RB_DB_BACKUP_DIR: /backups
       CAMERAS_DATA_DIR: /data/cameras
+      RB_AUTOMACAO_MONITOR_CONTAINER_PATH: /opt/automacao-monitor
+      RB_IMPORTAR_XML_LEGACY_DIR: /legacy/ImportarXml
+      RB_GESTOR_EMAIL_LEGACY_DIR: /legacy/GestorEmails
+      RB_MIGRATE_LEGACY_SERVICES: ${RB_MIGRATE_LEGACY_SERVICES:-1}
+      RB_ENV: ${RB_ENV:-homologacao}
+      APP_ENV: ${APP_ENV:-homologacao}
+      RB_EMAIL_DELETE_FROM_SERVER: ${RB_EMAIL_DELETE_FROM_SERVER:-0}
+      RB_EMAIL_AUTO_IMPORT: ${RB_EMAIL_AUTO_IMPORT:-1}
+      RB_EMAIL_AUTO_INTERVAL_MINUTES: ${RB_EMAIL_AUTO_INTERVAL_MINUTES:-5}
+      RB_EMAIL_AUTO_MAX_EMAILS: ${RB_EMAIL_AUTO_MAX_EMAILS:-200}
+      RB_EMAIL_BUSINESS_START: ${RB_EMAIL_BUSINESS_START:-08:00}
+      RB_EMAIL_BUSINESS_END: ${RB_EMAIL_BUSINESS_END:-18:00}
+      RB_EMAIL_BUSINESS_DAYS: ${RB_EMAIL_BUSINESS_DAYS:-0,1,2,3,4}
+      RB_EMAIL_TIMEZONE: ${RB_EMAIL_TIMEZONE:-America/Sao_Paulo}
+      RB_EMAIL_XML_MAX_FILE_MB: ${RB_EMAIL_XML_MAX_FILE_MB:-20}
+      RB_EMAIL_XML_ZIP_MAX_ENTRIES: ${RB_EMAIL_XML_ZIP_MAX_ENTRIES:-200}
+      RB_EMAIL_XML_ZIP_MAX_TOTAL_MB: ${RB_EMAIL_XML_ZIP_MAX_TOTAL_MB:-100}
+      RB_EMAIL_XML_TRUSTED_SENDERS: ${RB_EMAIL_XML_TRUSTED_SENDERS:-bebidasriobranco8@gmail.com}
+      RB_EMAIL_XML_TRUSTED_ZIP_MAX_ENTRIES: ${RB_EMAIL_XML_TRUSTED_ZIP_MAX_ENTRIES:-1000}
+      RB_EMAIL_XML_LOCAL_BACKLOG_MAX_ATTACHMENTS: ${RB_EMAIL_XML_LOCAL_BACKLOG_MAX_ATTACHMENTS:-200}
+      RB_EMAIL_BOL_ENABLED: ${RB_EMAIL_BOL_ENABLED:-0}
+      RB_EMAIL_BOL_ACCOUNT_ID: ${RB_EMAIL_BOL_ACCOUNT_ID:-2}
+      RB_EMAIL_BOL_ACCOUNT_NAME: ${RB_EMAIL_BOL_ACCOUNT_NAME:-BOL Compras Materia Prima}
+      RB_EMAIL_BOL_IMAP_HOST: ${RB_EMAIL_BOL_IMAP_HOST:-imap.bol.com.br}
+      RB_EMAIL_BOL_IMAP_PORT: ${RB_EMAIL_BOL_IMAP_PORT:-993}
+      RB_EMAIL_BOL_IMAP_SSL: ${RB_EMAIL_BOL_IMAP_SSL:-1}
+      RB_EMAIL_BOL_MAILBOX: ${RB_EMAIL_BOL_MAILBOX:-INBOX}
+      RB_EMAIL_BOL_SMTP_HOST: ${RB_EMAIL_BOL_SMTP_HOST:-smtp.bol.com.br}
+      RB_EMAIL_BOL_SMTP_PORT: ${RB_EMAIL_BOL_SMTP_PORT:-587}
+      RB_EMAIL_BOL_SMTP_TLS: ${RB_EMAIL_BOL_SMTP_TLS:-1}
+      RB_EMAIL_BOL_USER: ${RB_EMAIL_BOL_USER:-}
+      RB_EMAIL_BOL_PASS: ${RB_EMAIL_BOL_PASS:-}
+      RB_EMAIL_BOL_SINCE_DATE: ${RB_EMAIL_BOL_SINCE_DATE:-2026-01-01}
+      RB_EMAIL_BOL_HISTORY_MAILBOXES: ${RB_EMAIL_BOL_HISTORY_MAILBOXES:-ALL}
+      RB_EMAIL_BOL_FILTER_KEYWORDS: ${RB_EMAIL_BOL_FILTER_KEYWORDS:-compra,compras,cotacao,pedido,materia prima,materia-prima,insumo,fornecedor,nfe,nf-e,xml}
+      RB_EMAIL_BOL_STORAGE_LIMIT_GB: ${RB_EMAIL_BOL_STORAGE_LIMIT_GB:-5}
     expose:
-      - "8080"
+      - "80"
+      - "443"
     volumes:
       - app_data:/data/app
       - cameras_data:/data/cameras
-      - "${RB_DB_BACKUP_PATH:-./backups sql}:/backups"
+      - "${RB_DB_BACKUP_PATH:-./backupsSql}:/backups"
       - ./Relatorios:/app/Relatorios:ro
       - ${RB_VSPHERE_CLIENT_PATH:-./esxi}:/opt/vsphere-flask-client:ro
+      - ${RB_AUTOMACAO_MONITOR_PATH:-../../automacao/source}:/opt/automacao-monitor:ro
       - ./certs:/app/certs:ro
+      - ./ImportarXml:/legacy/ImportarXml:ro
+      - ./GestorEmails:/legacy/GestorEmails:ro
 
   proxy:
     image: nginx:1.27-alpine
@@ -136,8 +272,8 @@ services:
       RB_SERVER_NAME: ${RB_SERVER_NAME:-_}
       RB_HTTPS_PORT: ${RB_HTTPS_PORT:-443}
     ports:
-      - "${RB_HTTP_BIND:-0.0.0.0}:${RB_HTTP_PORT:-80}:80"
-      - "${RB_HTTPS_BIND:-0.0.0.0}:${RB_HTTPS_PORT:-443}:443"
+      - "0.0.0.0:${RB_HTTP_PORT:-80}:80"
+      - "0.0.0.0:${RB_HTTPS_PORT:-443}:443"
     volumes:
       - ./deploy/nginx/http.conf.template:/etc/nginx/riobranco-http.conf.template:ro
       - ./deploy/nginx/https.conf.template:/etc/nginx/riobranco-https.conf.template:ro
@@ -148,3 +284,6 @@ volumes:
   db_data:
   app_data:
   cameras_data:
+  ollama_data:
+  open_webui_data:
+    name: ${RB_OPEN_WEBUI_VOLUME:-riob_open_webui_data}

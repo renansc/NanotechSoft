@@ -16,11 +16,15 @@ Ele complementa:
 flowchart TB
     U[Usuarios] --> N[Nginx]
     N --> APP[Flask app]
+    U --> WEBUI[Open WebUI]
+    WEBUI --> OLLAMA[Ollama / Qwen]
+    APP --> OLLAMA
     APP --> DB[(MariaDB)]
     APP --> FS[Arquivos e volumes]
     APP --> PBX[FreePBX]
     APP --> ESXI[Monitor ESXi]
     APP --> CAM[Monitor Cameras]
+    APP --> AUTO[Monitor Automacao]
     PBX --> TRUNK[Tronco SIP]
 ```
 
@@ -40,11 +44,15 @@ flowchart TD
     I -->|sim| J[Gera CA e certificados]
     I -->|nao| K[Pula bootstrap de certificado]
     J --> L[Instala WSS no FreePBX]
-    L --> M[app sobe]
+    L --> M[Ollama sobe]
     K --> M
-    M --> N[ensure_schema]
-    N --> O[proxy sobe]
-    O --> P[Sistema pronto]
+    M --> N[ollama-model-init garante Qwen]
+    N --> O[Open WebUI sobe]
+    N --> P[app sobe]
+    P --> Q[ensure_schema]
+    Q --> R[proxy sobe]
+    O --> S[Sistema pronto]
+    R --> S
 ```
 
 ## 4. Processo de inicializacao do backend
@@ -186,7 +194,7 @@ flowchart TD
     A[usuario clica em gerar backup] --> B[GET /api/backup]
     B --> C[backend monta comando mariadb-dump]
     C --> D[gera arquivo temporario]
-    D --> E[copia para backups sql]
+    D --> E[copia para backupsSql]
     E --> F[retorna arquivo para download]
     F --> G[remove arquivo temporario]
 ```
@@ -281,7 +289,20 @@ flowchart TD
     H --> I
 ```
 
-## 19. Processo de bootstrap de certificados
+## 19. Processo do monitor de automacao
+
+```mermaid
+flowchart TD
+    A[usuario abre Monitor Automacao] --> B[/monitor/automacao]
+    B --> C[backend garante app.py industrial]
+    C --> D[app usa prefixo encaminhado pelo proxy]
+    D --> E[consulta SQLite em app_data/automacao]
+    F[sensor envia POST api/leitura] --> G[leitura e alarmes sao persistidos]
+    G --> E
+    E --> H[telas de motores, historico, alarmes e tempo real]
+```
+
+## 20. Processo de bootstrap de certificados
 
 ```mermaid
 flowchart TD
@@ -297,7 +318,7 @@ flowchart TD
     J --> K[aguarda TLS do WSS responder]
 ```
 
-## 20. Processo de onboarding de certificados no cliente
+## 21. Processo de onboarding de certificados no cliente
 
 ```mermaid
 flowchart TD
@@ -309,7 +330,7 @@ flowchart TD
     F --> G[HTTPS e WSS passam a ser confiaveis]
 ```
 
-## 21. Processo de diagnostico SIP
+## 22. Processo de diagnostico SIP
 
 ```mermaid
 flowchart TD
@@ -325,7 +346,7 @@ flowchart TD
     I -->|sim| K[inspecionar logs do Asterisk]
 ```
 
-## 22. Processo de remocao de usuario
+## 23. Processo de remocao de usuario
 
 ```mermaid
 flowchart TD
@@ -338,7 +359,7 @@ flowchart TD
     G --> F
 ```
 
-## 23. Processo de leitura recomendado
+## 24. Processo de leitura recomendado
 
 ```mermaid
 flowchart LR
@@ -347,7 +368,7 @@ flowchart LR
     C --> D[API e Dados]
 ```
 
-## 24. Processo de estoque com XML da NF-e
+## 25. Processo de estoque com XML da NF-e
 
 ```mermaid
 flowchart TD
@@ -364,7 +385,7 @@ flowchart TD
     K --> L[saldo e dashboard_estoque sao atualizados]
 ```
 
-## 25. Processo de sincronizacao producao -> homologacao
+## 26. Processo de sincronizacao producao -> homologacao
 
 ```mermaid
 flowchart TD
@@ -383,7 +404,7 @@ flowchart TD
     K --> L[homologacao alinhada com a producao]
 ```
 
-## 26. Processo do portal `/docs`
+## 27. Processo do portal `/docs`
 
 ```mermaid
 flowchart TD
@@ -394,7 +415,7 @@ flowchart TD
     E --> F[viewer HTML carrega o Markdown versionado]
 ```
 
-## 27. Observacoes finais
+## 28. Observacoes finais
 
 Os diagramas deste arquivo mostram o comportamento pretendido do sistema com base no codigo atual. Eles sao especialmente uteis para:
 

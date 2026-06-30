@@ -58,8 +58,8 @@ confirm() {
 
 ensure_app_container() {
   log "garantindo container app para validacao local"
-  if ! "${DOCKER_CMD[@]}" compose up -d --no-deps app; then
-    "${DOCKER_CMD[@]}" compose logs --tail=120 app >&2 || true
+  if ! docker compose up -d --no-deps app; then
+    docker compose logs --tail=120 app >&2 || true
     die "nao foi possivel subir o container app"
   fi
 }
@@ -67,7 +67,7 @@ ensure_app_container() {
 check_app_health() {
   local attempt
   for ((attempt=1; attempt<=45; attempt+=1)); do
-    if "${DOCKER_CMD[@]}" compose exec -T app python - <<'PY' >/tmp/riob-git-safe-status.json 2>/tmp/riob-git-safe-status.err
+    if docker compose exec -T app python - <<'PY' >/tmp/riob-git-safe-status.json 2>/tmp/riob-git-safe-status.err
 import json
 import urllib.request
 
@@ -89,7 +89,7 @@ PY
   if [[ -s /tmp/riob-git-safe-status.err ]]; then
     sed 's/^/[git-safe-push] app: /' /tmp/riob-git-safe-status.err >&2
   fi
-  "${DOCKER_CMD[@]}" compose logs --tail=120 app >&2 || true
+  docker compose logs --tail=120 app >&2 || true
   die "falha ao consultar /api/status dentro do container app"
 }
 
@@ -133,14 +133,6 @@ done
 command -v git >/dev/null 2>&1 || die "git nao encontrado"
 command -v docker >/dev/null 2>&1 || die "docker nao encontrado"
 
-DOCKER_CMD=(docker)
-if ! docker info >/dev/null 2>&1; then
-  if command -v sudo >/dev/null 2>&1; then
-    DOCKER_CMD=(sudo docker)
-    log "usando sudo docker porque o usuario atual ainda nao acessa /var/run/docker.sock"
-  fi
-fi
-
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "nao estou dentro de um repositorio Git"
 
 if [[ -z "$MESSAGE" ]]; then
@@ -152,22 +144,10 @@ if [[ -z "$MESSAGE" ]]; then
 fi
 [[ -n "$MESSAGE" ]] || die "mensagem do commit vazia"
 
-HAS_HEAD=1
-if ! git rev-parse --verify HEAD >/dev/null 2>&1; then
-  HAS_HEAD=0
-fi
-
-BRANCH="$(git branch --show-current)"
-if [[ -z "$BRANCH" ]]; then
-  BRANCH="$(git symbolic-ref --quiet --short HEAD || true)"
-fi
-[[ -n "$BRANCH" ]] || die "nao foi possivel identificar a branch atual"
+BRANCH="$(git rev-parse --abbrev-ref HEAD)"
 [[ "$BRANCH" != "HEAD" ]] || die "checkout esta em detached HEAD"
 
 log "branch atual: $BRANCH"
-if [[ "$HAS_HEAD" == "0" ]]; then
-  log "repositorio sem commits; preparando commit inicial"
-fi
 git status --short --branch
 
 RISKY_PATTERNS=(
@@ -257,11 +237,11 @@ if [[ -x ".venv/bin/python" ]]; then
   python_cmd=".venv/bin/python"
 fi
 "$python_cmd" -m py_compile server.py tools/riob_agent_web.py
-"${DOCKER_CMD[@]}" compose config >/tmp/riob-compose-config.yml
+docker compose config >/tmp/riob-compose-config.yml
 
 if [[ "$SKIP_BUILD" != "1" ]]; then
   log "validando build da imagem app"
-  "${DOCKER_CMD[@]}" compose build app
+  docker compose build app
 fi
 
 if [[ "$SKIP_HEALTH" != "1" || "$SKIP_BACKUP" != "1" ]]; then
@@ -275,7 +255,7 @@ fi
 
 if [[ "$SKIP_BACKUP" != "1" ]]; then
   log "gerando backup SQL antes do push"
-  "${DOCKER_CMD[@]}" compose exec -T app python - <<'PY'
+  docker compose exec -T app python - <<'PY'
 import urllib.request
 with urllib.request.urlopen("http://127.0.0.1:8080/api/backup", timeout=600) as resp:
     name = resp.headers.get("X-Backup-File") or "backup gerado"
@@ -294,10 +274,6 @@ git commit -m "$MESSAGE"
 if [[ "$NO_PUSH" == "1" ]]; then
   log "push pulado por --no-push"
   exit 0
-fi
-
-if ! git remote get-url origin >/dev/null 2>&1; then
-  die "remote origin nao configurado; use: git remote add origin <URL_DO_REPOSITORIO>"
 fi
 
 git push origin "$BRANCH"

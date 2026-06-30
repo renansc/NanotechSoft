@@ -1,5 +1,6 @@
 const state = {
     activePage: "vsphere",
+    activeVsphereView: "infra",
     connection: null,
     inventory: null,
     vms: [],
@@ -43,6 +44,10 @@ function bindElements() {
     elements.loginState = document.getElementById("login-state");
     elements.uiLogoutButton = document.getElementById("ui-logout-button");
     elements.pageSwitchButtons = Array.from(document.querySelectorAll("[data-page-target]"));
+    elements.vsphereNavButtons = Array.from(document.querySelectorAll("[data-vsphere-target]"));
+    elements.vspherePanels = Array.from(document.querySelectorAll("[data-vsphere-panel]"));
+    elements.vsphereCards = Array.from(document.querySelectorAll("[data-vsphere-card]"));
+    elements.vsphereWorkspace = document.querySelector("#page-vsphere .workspace");
     elements.pageVsphere = document.getElementById("page-vsphere");
     elements.pageContainers = document.getElementById("page-containers");
     elements.connectForm = document.getElementById("connect-form");
@@ -144,6 +149,12 @@ function bindEvents() {
             setActivePage(button.dataset.pageTarget || "vsphere");
         });
     });
+    elements.vsphereNavButtons.forEach((button) => {
+        button.addEventListener("click", () => {
+            setActivePage("vsphere");
+            setActiveVsphereView(button.dataset.vsphereTarget || "infra");
+        });
+    });
     elements.connectForm.addEventListener("submit", onConnect);
     elements.disconnectButton.addEventListener("click", onDisconnect);
     elements.refreshButton.addEventListener("click", refreshData);
@@ -192,6 +203,12 @@ function bindEvents() {
                 showToast("Selecione uma VM antes de executar uma acao.", true);
                 return;
             }
+
+            if (button.dataset.action === "delete") {
+                await onDeleteVm();
+                return;
+            }
+
             await postJson(`/api/vms/${state.selectedVmId}/power`, { action: button.dataset.action });
             showToast("Acao enviada para a VM.");
             await refreshData();
@@ -236,28 +253,57 @@ function bindEvents() {
 
     elements.snapshotList.addEventListener("click", async (event) => {
         const actionButton = event.target.closest("button[data-snapshot-action]");
-        if (!actionButton || !state.selectedVmId) {
+        if (!actionButton) {
+            return;
+        }
+        if (!state.selectedVmId) {
+            showToast("Selecione uma VM antes de operar snapshots.", true);
             return;
         }
 
         const snapshotMoid = actionButton.dataset.snapshotMoid;
         const action = actionButton.dataset.snapshotAction;
         if (!snapshotMoid || !action) {
+            showToast("Snapshot invalido. Atualize a VM e tente novamente.", true);
             return;
         }
 
-        if (action === "revert") {
-            await postJson(`/api/vms/${state.selectedVmId}/snapshots/${snapshotMoid}/revert`, {});
-            showToast("Snapshot revertido.");
-        }
+        const originalText = actionButton.textContent;
+        actionButton.disabled = true;
+        actionButton.textContent = action === "delete" ? "Removendo..." : "Revertendo...";
+        showToast(action === "delete" ? "Removendo snapshot..." : "Revertendo snapshot...");
 
-        if (action === "delete") {
-            await fetchJson(`/api/vms/${state.selectedVmId}/snapshots/${snapshotMoid}`, { method: "DELETE" });
-            showToast("Snapshot removido.");
-        }
+        try {
+            if (action === "revert") {
+                await postJson(`/api/vms/${state.selectedVmId}/snapshots/${snapshotMoid}/revert`, {});
+                showToast("Snapshot revertido.");
+            } else if (action === "delete") {
+                await fetchJson(`/api/vms/${state.selectedVmId}/snapshots/${snapshotMoid}`, { method: "DELETE" });
+                showToast("Snapshot removido.");
+            } else {
+                showToast("Acao de snapshot desconhecida.", true);
+                return;
+            }
 
-        await refreshVmDetails(state.selectedVmId);
-        await refreshData({ preserveDetails: true });
+            await refreshVmDetails(state.selectedVmId);
+            await refreshData({ preserveDetails: true });
+        } catch (error) {
+            showToast(error.message || "Falha ao executar a acao do snapshot.", true);
+            if (state.selectedVmId) {
+                try {
+                    await refreshVmDetails(state.selectedVmId);
+                } catch (refreshError) {
+                    console.error("Falha ao atualizar estado da VM apos erro de snapshot.", refreshError);
+                }
+            }
+        } finally {
+            const locked = getActiveVmTasks(state.selectedVmDetails).length > 0;
+            if (!locked) {
+                actionButton.disabled = false;
+                actionButton.textContent = originalText;
+            }
+            updateSnapshotTaskLock(state.selectedVmDetails);
+        }
     });
 
     elements.isoLibraryList.addEventListener("click", async (event) => {
@@ -563,6 +609,10 @@ async function refreshData(options = {}) {
         state.selectedHostId = null;
         state.selectedHostDetails = null;
     }
+    if (state.selectedVmId && !state.vms.some((vm) => vm.moid === state.selectedVmId)) {
+        state.selectedVmId = null;
+        state.selectedVmDetails = null;
+    }
     if (!state.selectedHostId && state.hosts.length) {
         state.selectedHostId = state.hosts[0].moid;
     }
@@ -632,6 +682,8 @@ async function refreshVmDetails(moid) {
     state.selectedVmId = moid;
     renderSelectedVm();
     disableVmActions(false);
+    updateVmActionAvailability(state.selectedVmDetails);
+    updateSnapshotTaskLock(state.selectedVmDetails);
 }
 
 async function refreshHostDetails(moid) {
@@ -699,6 +751,51 @@ function setActivePage(pageName) {
     });
     elements.pageVsphere.classList.toggle("page-shell-hidden", state.activePage !== "vsphere");
     elements.pageContainers.classList.toggle("page-shell-hidden", state.activePage !== "containers");
+    setActiveVsphereView(state.activeVsphereView);
+}
+
+function setActiveVsphereView(viewName) {
+    const allowedViews = ["infra", "vms", "operations", "storage", "host"];
+    state.activeVsphereView = allowedViews.includes(viewName) ? viewName : "infra";
+
+    elements.vsphereNavButtons.forEach((button) => {
+        const isActive = state.activePage === "vsphere" && button.dataset.vsphereTarget === state.activeVsphereView;
+        button.classList.toggle("is-active", isActive);
+    });
+
+    elements.vspherePanels.forEach((panel) => {
+        const views = String(panel.dataset.vspherePanel || "").split(/\s+/);
+        panel.classList.toggle("vsphere-panel-hidden", !views.includes(state.activeVsphereView));
+    });
+
+    elements.vsphereCards.forEach((card) => {
+        const views = String(card.dataset.vsphereCard || "").split(/\s+/);
+        card.classList.toggle("vsphere-panel-hidden", !views.includes(state.activeVsphereView));
+    });
+
+    if (elements.pageVsphere) {
+        elements.pageVsphere.dataset.vsphereView = state.activeVsphereView;
+    }
+    syncVsphereWorkspaceColumns();
+}
+
+function syncVsphereWorkspaceColumns() {
+    if (!elements.vsphereWorkspace) {
+        return;
+    }
+
+    const columns = Array.from(elements.vsphereWorkspace.children);
+    let visibleColumns = 0;
+    columns.forEach((column) => {
+        const hasVisiblePanel = Array.from(column.querySelectorAll("[data-vsphere-panel]")).some((panel) => {
+            return !panel.classList.contains("vsphere-panel-hidden");
+        });
+        column.classList.toggle("workspace-column-hidden", !hasVisiblePanel);
+        if (hasVisiblePanel) {
+            visibleColumns += 1;
+        }
+    });
+    elements.vsphereWorkspace.classList.toggle("workspace-single", visibleColumns <= 1);
 }
 
 function renderDisconnectedState() {
@@ -837,6 +934,8 @@ function renderSelectedVm() {
     renderRemoteAccess(vm);
     renderVmMediaSummary(vm);
     renderSnapshots(vm.snapshots || []);
+    updateVmActionAvailability(vm);
+    updateSnapshotTaskLock(vm);
     renderIsoLibrary();
 }
 
@@ -853,6 +952,7 @@ function renderNoVmSelected() {
     renderVmMediaSummary(null);
     elements.snapshotList.innerHTML = `<p class="empty-card">Selecione uma VM para listar snapshots.</p>`;
     renderIsoLibrary();
+    updateVmActionAvailability(null);
 }
 
 function renderSnapshots(snapshots) {
@@ -876,6 +976,56 @@ function renderSnapshots(snapshots) {
             </div>
         </article>
     `).join("");
+}
+
+function updateVmActionAvailability(vm) {
+    const deleteButton = document.querySelector(".vm-action[data-action='delete']");
+    if (!deleteButton) {
+        return;
+    }
+
+    const hasActiveTasks = getActiveVmTasks(vm).length > 0;
+    const canDelete = Boolean(vm && vm.power_state === "poweredOff" && !hasActiveTasks);
+    deleteButton.disabled = !canDelete;
+    if (canDelete) {
+        deleteButton.title = "Excluir permanentemente esta VM.";
+    } else if (hasActiveTasks) {
+        deleteButton.title = "Aguarde a tarefa atual do ESXi finalizar antes de excluir.";
+    } else {
+        deleteButton.title = "A VM precisa estar em Power Off para ser excluida.";
+    }
+}
+
+function updateSnapshotTaskLock(vm) {
+    elements.snapshotList.querySelectorAll(".snapshot-task-warning").forEach((notice) => {
+        notice.remove();
+    });
+
+    const activeTasks = getActiveVmTasks(vm);
+    const locked = activeTasks.length > 0;
+    setFormDisabled(elements.snapshotForm, locked);
+    elements.snapshotList.querySelectorAll("button[data-snapshot-action]").forEach((button) => {
+        button.disabled = locked;
+    });
+
+    if (!locked) {
+        return;
+    }
+
+    const task = activeTasks[0];
+    const progress = task.progress != null ? ` (${escapeHtml(String(task.progress))}%)` : "";
+    const taskName = escapeHtml(task.name || "Tarefa em andamento");
+    const startedAt = task.started_at ? `Inicio: ${escapeHtml(formatTimestamp(task.started_at))}.` : "";
+    elements.snapshotList.insertAdjacentHTML("afterbegin", `
+        <div class="snapshot-task-warning">
+            <strong>VM ocupada pelo ESXi</strong>
+            <span>${taskName}${progress}. Aguarde finalizar para criar, reverter ou remover snapshots. ${startedAt}</span>
+        </div>
+    `);
+}
+
+function getActiveVmTasks(vm) {
+    return (vm?.active_tasks || []).filter((task) => ["queued", "running"].includes(String(task.state || "")));
 }
 
 function renderVmOverview(vm) {
@@ -1156,16 +1306,20 @@ function renderSelectedHost() {
     ], "Selecione um host para ver rede, licenca e consumo.");
 
     const license = host.license || {};
+    const licenseRecord = license.assigned_license?.license || license.effective_license || {};
+    const licenseSource = license.source === "license_manager"
+        ? "Licenca detectada no ESXi"
+        : "Licenca atribuida ao host";
     elements.hostLicenseSummary.innerHTML = buildInfoCards([
         {
-            title: license.edition || "Licenca do host",
+            title: license.edition || licenseRecord.name || "Licenca do host",
             meta: [
-                license.assigned_license?.license?.name || "Sem licenca atribuida",
+                licenseRecord.name || licenseRecord.edition_key || "Sem licenca detectada",
                 license.expires_on ? `Expira ${formatTimestamp(license.expires_on)}` : "Sem expiracao informada",
                 formatLicenseRemaining(license.remaining_hours),
             ],
-            body: license.assigned_license?.license?.license_key
-                ? `Chave ${maskLicenseKey(license.assigned_license.license.license_key)}`
+            body: licenseRecord.license_key
+                ? `${licenseSource}. Chave ${maskLicenseKey(licenseRecord.license_key)}`
                 : "Ambientes em avaliacao podem expor expiracao pelas features e nao por chave atribuida.",
         },
     ], "Nenhuma informacao de licenca disponivel para este host.");
@@ -1625,9 +1779,53 @@ async function onCreateSnapshot(event) {
         quiesce: formData.get("quiesce") === "on",
     };
 
-    const data = await postJson(`/api/vms/${state.selectedVmId}/snapshots`, payload);
-    showToast(data.message || "Snapshot criado.");
-    elements.snapshotForm.reset();
+    setFormDisabled(elements.snapshotForm, true);
+    showToast("Criando snapshot...");
+    try {
+        const data = await postJson(`/api/vms/${state.selectedVmId}/snapshots`, payload);
+        showToast(data.message || "Snapshot criado.");
+        elements.snapshotForm.reset();
+        await refreshData();
+    } catch (error) {
+        showToast(error.message || "Falha ao criar snapshot.", true);
+        if (state.selectedVmId) {
+            try {
+                await refreshVmDetails(state.selectedVmId);
+            } catch (refreshError) {
+                console.error("Falha ao atualizar estado da VM apos erro ao criar snapshot.", refreshError);
+            }
+        }
+    } finally {
+        if (getActiveVmTasks(state.selectedVmDetails).length) {
+            updateSnapshotTaskLock(state.selectedVmDetails);
+        } else {
+            setFormDisabled(elements.snapshotForm, false);
+        }
+    }
+}
+
+async function onDeleteVm() {
+    const vm = state.selectedVmDetails;
+    if (!vm || !state.selectedVmId) {
+        showToast("Selecione uma VM antes de excluir.", true);
+        return;
+    }
+
+    if (vm.power_state !== "poweredOff") {
+        showToast("A VM precisa estar desligada (Power Off) para ser excluida.", true);
+        return;
+    }
+
+    const confirmed = window.confirm(`Excluir permanentemente a VM "${vm.name || state.selectedVmId}"? Esta acao nao pode ser desfeita.`);
+    if (!confirmed) {
+        return;
+    }
+
+    showToast("Excluindo VM...");
+    const data = await fetchJson(`/api/vms/${state.selectedVmId}`, { method: "DELETE" });
+    showToast(data.message || "VM excluida com sucesso.");
+    state.selectedVmId = null;
+    state.selectedVmDetails = null;
     await refreshData();
 }
 
@@ -2068,13 +2266,20 @@ function setFormDisabled(form, disabled) {
 }
 
 async function fetchJson(url, options = {}) {
-    const response = await fetch(resolveAppUrl(url), {
-        headers: {
-            "Content-Type": "application/json",
-            ...(options.headers || {}),
-        },
-        ...options,
-    });
+    let response;
+    try {
+        response = await fetch(resolveAppUrl(url), {
+            headers: {
+                "Content-Type": "application/json",
+                ...(options.headers || {}),
+            },
+            ...options,
+        });
+    } catch (error) {
+        const message = error.message || "Falha de comunicacao com o servidor.";
+        showToast(message, true);
+        throw new Error(message);
+    }
 
     const data = await response.json().catch(() => ({ ok: false, error: "Resposta invalida do servidor." }));
 
@@ -2095,11 +2300,18 @@ function postJson(url, payload) {
 }
 
 async function submitForm(url, formData, options = {}) {
-    const response = await fetch(resolveAppUrl(url), {
-        method: options.method || "POST",
-        body: formData,
-        ...options,
-    });
+    let response;
+    try {
+        response = await fetch(resolveAppUrl(url), {
+            method: options.method || "POST",
+            body: formData,
+            ...options,
+        });
+    } catch (error) {
+        const message = error.message || "Falha de comunicacao com o servidor.";
+        showToast(message, true);
+        throw new Error(message);
+    }
 
     const data = await response.json().catch(() => ({ ok: false, error: "Resposta invalida do servidor." }));
     if (!response.ok || data.ok === false) {

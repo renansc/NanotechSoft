@@ -4,18 +4,29 @@
 
 let fretes = [];
 let freteKanbanFiltro = "";
+const FRETE_AUTO_ARQUIVO_HORAS = 24;
 const FRETE_AUTO_SAVE_DELAY_MS = 900;
 const ESTOQUE_CAMERA_SCAN_INTERVAL_MS = 450;
 const freteDraftState = new Map();
 
 let cacheCadastros = {
-  motoristas: null,
+  colaboradores: null,
+  motoristas: null,  // compatibilidade com APIs antigas
   veiculos: null,
   cargas: null,
-  conferentes: null,
 };
 
 let cacheUsuarios = null;
+const CHAT_AI_RIO_CONTACT_ID = "__ia_rio__";
+const CHAT_AI_RIO_STORAGE_KEY = "riobranco_chat_ai_rio_state_v1";
+const CHAT_AI_RIO_NAME = "I.A-Rio";
+let pontosVendaState = {
+  view: "cadastro",
+  items: [],
+  report: null,
+  editId: 0,
+  reportTimer: null,
+};
 let chatState = {
   usuarioId: "",
   contatoId: "",
@@ -26,6 +37,9 @@ let chatState = {
   unreadAppliedSeq: 0,
   showExternalDialer: false,
   pendingAttachment: null,
+  pendingSendBubble: null,
+  sendingMessage: false,
+  aiRioMessages: [],
   lastSeenMessageId: 0,
   audioCtx: null,
 };
@@ -58,11 +72,28 @@ let statusState = {
 };
 let nfeConfigState = null;
 let vendasConfigState = null;
+let vendasImportRulesState = null;
 let nfePortalState = { lastKey: "", lastAt: 0, lastMode: "", lastContext: "" };
 let vendasState = {
   view: "relatorio",
   lastPayload: null,
+  mes: "",
+  tipoRelatorio: "bonificacoes",
 };
+let dashboardVendasPainelState = {
+  view: "bonificacoes",
+  payload: null,
+  cacheId: "",
+};
+let vendasConfigMonitorTimer = null;
+let vendasConfigMonitorAtivo = false;
+const abastecimentoDraftState = new Map();
+const abastecimentoFeedbackState = new Map();
+let abastecimentosCache = [];
+let manutencaoOcrDraft = null;
+let manutencaoItensDraft = [];
+let manutencaoXmlPreLancamentoId = 0;
+let manutencaoXmlPendencias = [];
 let estoqueState = {
   view: "lancar",
   conferencias: [],
@@ -72,12 +103,22 @@ let estoqueState = {
   lastPortalPreviewSignature: "",
   cadastroProdutos: [],
   cadastroProdutoEditId: 0,
+  posicaoRows: [],
+  posicaoMeta: {},
+  movimentos: [],
+  importacoesXml: [],
+  importacoesXmlMeta: {},
+  importacoesXmlSelecionadas: [],
+  importacoesXmlLoteExecutando: false,
+  importacoesXmlLoteProgresso: null,
+  fretesImportacaoXml: [],
   manualPhotoUrl: "",
   manualPhotoName: "",
   cameraStream: null,
   cameraTimer: null,
   scanningCamera: false,
   cameraTargetFieldId: "",
+  cameraAfterScanAction: null,
   ocrContext: null,
 };
 let usuarioLogado = null;
@@ -146,20 +187,105 @@ function verificarRetornoPortalNfePendente(){
 
 
 // Fetch para API sem cache (evita dados antigos após excluir/editar)
-async function apiFetch(url, options={}){
-  const h = { ...(options.headers || {}) };
+function _apiRequestHeaders(headers = {}){
+  const h = { ...(headers || {}) };
   if (usuarioLogado?.id) h["X-Usuario-Id"] = String(usuarioLogado.id);
   if (usuarioLogado?.nome) h["X-Usuario-Nome"] = String(usuarioLogado.nome);
   if (usuarioLogado?.login) h["X-Usuario-Login"] = String(usuarioLogado.login);
   if (!h["X-Usuario-Logado"] && (usuarioLogado?.nome || usuarioLogado?.login)) {
     h["X-Usuario-Logado"] = `${usuarioLogado?.nome || ""} (${usuarioLogado?.login || ""})`.trim();
   }
+  return { ...h, "Cache-Control": "no-cache" };
+}
+
+function _apiRequestUrl(url){
+  return url + (url.includes("?") ? "&" : "?") + "_=" + Date.now();
+}
+
+async function apiFetch(url, options={}){
   const opt = {
-    cache: 'no-store',
-    headers: { ...h, 'Cache-Control':'no-cache' },
     ...options,
+    cache: "no-store",
+    headers: _apiRequestHeaders(options.headers || {}),
   };
-  return fetch(url + (url.includes('?') ? '&' : '?') + '_=' + Date.now(), opt);
+  return fetch(_apiRequestUrl(url), opt);
+}
+
+function apiUploadWithProgress(url, { method = "POST", body = null, headers = {}, timeoutMs = 0, signal = null, onProgress = null, onUploadComplete = null } = {}){
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    let settled = false;
+
+    const finishResolve = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    const finishReject = (error) => {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    };
+    const abortError = (message) => {
+      const err = new Error(message || "Request aborted");
+      err.name = "AbortError";
+      return err;
+    };
+
+    xhr.open(method, _apiRequestUrl(url), true);
+    xhr.timeout = timeoutMs > 0 ? timeoutMs : 0;
+
+    const finalHeaders = _apiRequestHeaders(headers);
+    Object.entries(finalHeaders).forEach(([key, value]) => {
+      xhr.setRequestHeader(key, value);
+    });
+
+    xhr.onload = () => {
+      const responseText = xhr.responseText || "";
+      finishResolve({
+        ok: xhr.status >= 200 && xhr.status < 300,
+        status: xhr.status,
+        async json(){
+          try {
+            return JSON.parse(responseText || "{}");
+          } catch {
+            return {};
+          }
+        },
+        async text(){
+          return responseText;
+        },
+      });
+    };
+    xhr.onerror = () => finishReject(new Error("NetworkError"));
+    xhr.onabort = () => finishReject(abortError("Request aborted"));
+    xhr.ontimeout = () => finishReject(abortError("Request timeout"));
+
+    if (xhr.upload && typeof onProgress === "function") {
+      xhr.upload.onprogress = (event) => {
+        onProgress(event);
+      };
+    }
+    if (xhr.upload && typeof onUploadComplete === "function") {
+      xhr.upload.onloadend = () => {
+        onUploadComplete();
+      };
+    }
+
+    if (signal) {
+      if (signal.aborted) {
+        finishReject(abortError("Request aborted"));
+        return;
+      }
+      signal.addEventListener("abort", () => {
+        try {
+          xhr.abort();
+        } catch {}
+      }, { once: true });
+    }
+
+    xhr.send(body);
+  });
 }
 
 //////////////////////////////////////////////////////
@@ -209,10 +335,19 @@ async function editarCadastro(tipo, id, nomeAtual) {
   let novoNome = prompt("Editar nome:", nomeAtual);
   if (!novoNome) return;
 
+  const payload = { nome: novoNome };
+  if (tipo === "cargas") {
+    const cargaAtual = (cacheCadastros.cargas || []).find((item) => Number(item.id) === Number(id)) || {};
+    const veiculoAtual = (cargaAtual.veiculo_numero || "").toString().trim();
+    const novoVeiculo = prompt("Numero do veiculo:", veiculoAtual);
+    if (novoVeiculo == null) return;
+    payload.veiculo_numero = (novoVeiculo || "").trim();
+  }
+
   await fetch(`/api/${tipo}/${id}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ nome: novoNome }),
+    body: JSON.stringify(payload),
   });
 
   await renderCadastros();
@@ -224,20 +359,33 @@ async function salvarCadastro(tipo, inputId) {
   const nome = (inp?.value || "").trim();
   if (!nome) return alert("Informe um nome.");
 
-  const resp = await apiFetch(`/api/${tipo}`, {
+  const payload = { nome };
+  if (tipo === "cargas") {
+    const veiculoNumero = (document.getElementById("cargasVeiculoNumero")?.value || "").trim();
+    if (veiculoNumero) payload.veiculo_numero = veiculoNumero;
+  }
+
+  const endpoint = `/api/${tipo}`;
+  const body = JSON.stringify(payload);
+
+  const resp = await apiFetch(endpoint, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ nome }),
+    body,
   });
 
   if (!resp.ok) {
     const t = await resp.text();
-    console.log("ERRO ao salvar cadastro:", resp.status, t);
+    console.error("ERRO ao salvar cadastro:", resp.status, t);
     alert("Erro ao salvar (veja o console F12).");
     return;
   }
 
   if (inp) inp.value = "";
+  if (tipo === "cargas") {
+    const veiculoInput = document.getElementById("cargasVeiculoNumero");
+    if (veiculoInput) veiculoInput.value = "";
+  }
 
   // Invalida cache (para selects e cards)
   cacheCadastros[tipo] = null;
@@ -245,179 +393,107 @@ async function salvarCadastro(tipo, inputId) {
   await renderCadastros();
   await carregarSelectsNovoFrete();
 
-  // Se este cadastro impacta a devolução (conferentes), atualiza também
   try { await carregarSelectsDevolucao?.(); } catch {}
 }
 
+async function importarCargasCsv() {
+  if (!confirm("Importar o CSV da pasta CARGAS e atualizar os cadastros?")) return;
+
+  const fileInput = document.getElementById("cargasCsvFile");
+  const veiculoInput = document.getElementById("cargasVeiculoNumero");
+  const file = fileInput?.files?.[0] || null;
+  const veiculoNumero = (veiculoInput?.value || "").trim();
+  const options = { method: "POST" };
+  if (file || veiculoNumero) {
+    const formData = new FormData();
+    if (file) formData.append("arquivo", file, file.name || "cargas.csv");
+    if (veiculoNumero) formData.append("veiculo_numero", veiculoNumero);
+    options.body = formData;
+  }
+
+  const resp = await apiFetch("/api/cargas/importar_csv", options);
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok || data?.ok === false) {
+    alert(data?.erro || "Erro ao importar CSV de cargas.");
+    return;
+  }
+
+  const resumo = [
+    `${data.cargas_criadas || 0} criadas`,
+    `${data.cargas_atualizadas || 0} atualizadas`,
+    `${data.fretes_criados || 0} cards de frete`,
+    `${data.fretes_atualizados || 0} cards de frete atualizados`,
+    `${data.cidades_total || 0} cidades`,
+    `${data.linhas_total || 0} linhas`,
+  ].join(" | ");
+  alert(`Importacao concluida: ${resumo}.`);
+
+  cacheCadastros.cargas = null;
+  await renderCadastros();
+  await carregarSelectsNovoFrete();
+  await carregarFretes().catch(() => {});
+  if (fileInput) fileInput.value = "";
+  if (veiculoInput) veiculoInput.value = "";
+}
+
+async function importarCargasPdf() {
+  if (!confirm("Importar o PDF de cargas e atualizar os fretes vinculados?")) return;
+
+  const fileInput = document.getElementById("cargasPdfFile");
+  const veiculoInput = document.getElementById("cargasVeiculoNumero");
+  const file = fileInput?.files?.[0] || null;
+  const veiculoNumero = (veiculoInput?.value || "").trim();
+  const formData = new FormData();
+  if (file) formData.append("arquivo", file, file.name || "cargas.pdf");
+  if (veiculoNumero) formData.append("veiculo_numero", veiculoNumero);
+
+  const resp = await apiFetch("/api/cargas/importar_pdf", {
+    method: "POST",
+    body: formData,
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok || data?.ok === false) {
+    alert(data?.erro || "Erro ao importar PDF de cargas.");
+    return;
+  }
+
+  const resumo = [
+    `${data.paginas_importadas || 0} paginas`,
+    `${data.cargas_criadas || 0} cargas criadas`,
+    `${data.cargas_atualizadas || 0} cargas atualizadas`,
+    `${data.fretes_criados || 0} fretes criados`,
+    `${data.fretes_atualizados || 0} fretes atualizados`,
+    `${data.cargas_baixadas || 0} baixas no estoque`,
+  ].join(" | ");
+  alert(`Importacao concluida: ${resumo}.`);
+
+  cacheCadastros.cargas = null;
+  await renderCadastros();
+  await carregarSelectsNovoFrete();
+  await carregarFretes().catch(() => {});
+  if (window.__dashView === "estoque") await renderDashboardEstoque().catch(() => {});
+  if (fileInput) fileInput.value = "";
+  if (veiculoInput) veiculoInput.value = "";
+}
+
 async function carregarUsuariosCadastro() {
-  const resp = await apiFetch("/api/usuarios");
+  const resp = await apiFetch("/api/colaboradores");
   if (!resp.ok) return [];
-  return await resp.json();
+  const lista = await resp.json();
+  return (Array.isArray(lista) ? lista : [])
+    .filter((item) => Number(item?.usuario_id || 0) > 0)
+    .map((item) => ({
+      id: Number(item.usuario_id),
+      colaborador_id: Number(item.id || 0),
+      nome: item.nome || "",
+      login: item.login || item.usuario_login || "",
+      ativo: true,
+      sip_habilitado: !!Number(item.sip_habilitado || 0),
+      sip_usuario: item.sip_usuario || item.login || item.usuario_login || "",
+      sip_ramal: item.sip_ramal || "",
+      codbar_modo: item.codbar_modo || "bip",
+    }));
 }
-
-function _usuarioSipPayloadFromInputs(prefix = "novoUsuario") {
-  return {
-    sip_habilitado: !!document.getElementById(`${prefix}SipHabilitado`)?.checked,
-    sip_usuario: (document.getElementById(`${prefix}SipUsuario`)?.value || "").trim(),
-    sip_senha: (document.getElementById(`${prefix}SipSenha`)?.value || "").trim(),
-    sip_ramal: (document.getElementById(`${prefix}SipRamal`)?.value || "").trim(),
-    codbar_modo: (document.getElementById(`${prefix}CodbarModo`)?.value || "bip").trim() || "bip",
-  };
-}
-
-async function salvarUsuarioCadastro() {
-  try {
-    const nome = (document.getElementById("novoUsuarioNome")?.value || "").trim();
-    const login = (document.getElementById("novoUsuarioLogin")?.value || "").trim();
-    const senha = (document.getElementById("novoUsuarioSenha")?.value || "").trim();
-    const sip = _usuarioSipPayloadFromInputs("novoUsuario");
-
-    if (!nome || !login || !senha) {
-      alert("Informe nome, login e senha.");
-      return;
-    }
-
-    const resp = await apiFetch("/api/usuarios", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ nome, login, senha, ...sip }),
-    });
-
-    if (!resp.ok) {
-      const j = await resp.json().catch(() => null);
-      alert(j?.erro || "Erro ao cadastrar usuário.");
-      return;
-    }
-
-    const nomeEl = document.getElementById("novoUsuarioNome");
-    const loginEl = document.getElementById("novoUsuarioLogin");
-    const senhaEl = document.getElementById("novoUsuarioSenha");
-    const sipHabEl = document.getElementById("novoUsuarioSipHabilitado");
-    const sipUsuarioEl = document.getElementById("novoUsuarioSipUsuario");
-    const sipSenhaEl = document.getElementById("novoUsuarioSipSenha");
-    const sipRamalEl = document.getElementById("novoUsuarioSipRamal");
-    const codbarEl = document.getElementById("novoUsuarioCodbarModo");
-    if (nomeEl) nomeEl.value = "";
-    if (loginEl) loginEl.value = "";
-    if (senhaEl) senhaEl.value = "";
-    if (sipHabEl) sipHabEl.checked = false;
-    if (sipUsuarioEl) sipUsuarioEl.value = "";
-    if (sipSenhaEl) sipSenhaEl.value = "";
-    if (sipRamalEl) sipRamalEl.value = "";
-    if (codbarEl) codbarEl.value = "bip";
-
-    cacheUsuarios = null;
-    await renderUsuariosCadastro();
-    await carregarUsuariosChat(true);
-
-    // Failsafe: garante que nenhum overlay de UI fique travado.
-    try { toggleMenuMobile(false); } catch {}
-    try {
-      document.querySelectorAll(".foto-modal").forEach((m) => m.classList.add("hidden"));
-    } catch {}
-  } catch (error) {
-    console.error("Erro ao cadastrar usuario:", error);
-    alert(error?.message || "Erro inesperado ao cadastrar usuario.");
-  }
-}
-
-async function editarUsuarioCadastro(id) {
-  try {
-    let user = (cacheUsuarios || []).find((u) => String(u.id) === String(id));
-    if (!user) {
-      const respUser = await apiFetch(`/api/usuarios/${id}`);
-      if (!respUser.ok) {
-        alert("Usuario nao encontrado.");
-        return;
-      }
-      user = await respUser.json().catch(() => null);
-    }
-    if (!user) {
-      alert("Usuario nao encontrado.");
-      return;
-    }
-
-    const novoNome = prompt("Editar nome do usuario:", user.nome || "");
-    if (novoNome === null) return;
-
-    const novoLogin = prompt("Editar login:", user.login || "");
-    if (novoLogin === null) return;
-
-    const novaSenha = prompt("Nova senha (deixe em branco para manter):", "");
-    if (novaSenha === null) return;
-
-    const novoSipHabilitado = prompt("Permitir discagem externa para este usuario? (s/n)", user.sip_habilitado ? "s" : "n");
-    if (novoSipHabilitado === null) return;
-
-    const novoSipUsuario = prompt("Usuario SIP (vazio usa o login):", user.sip_usuario || user.login || "");
-    if (novoSipUsuario === null) return;
-
-    const novoSipRamal = prompt("Ramal interno de 4 digitos (vazio gera automatico):", user.sip_ramal || "");
-    if (novoSipRamal === null) return;
-
-    const novaSipSenha = prompt("Senha SIP (vazio mantém/usa a senha do login):", "");
-    if (novaSipSenha === null) return;
-
-    const novoCodbarModo = prompt("CODBAR deste usuario? (bip/camera)", user.codbar_modo || "bip");
-    if (novoCodbarModo === null) return;
-
-    const payload = {
-      nome: (novoNome || "").trim(),
-      login: (novoLogin || "").trim(),
-      sip_habilitado: ["s", "sim", "y", "yes", "1", "true"].includes(String(novoSipHabilitado || "").trim().toLowerCase()),
-      sip_usuario: (novoSipUsuario || "").trim(),
-      sip_ramal: (novoSipRamal || "").trim(),
-      codbar_modo: String(novoCodbarModo || "bip").trim().toLowerCase() === "camera" ? "camera" : "bip",
-    };
-    if ((novaSenha || "").trim()) payload.senha = novaSenha.trim();
-    if ((novaSipSenha || "").trim()) payload.sip_senha = novaSipSenha.trim();
-
-    const resp = await apiFetch(`/api/usuarios/${id}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-
-    if (!resp.ok) {
-      const j = await resp.json().catch(() => null);
-      alert(j?.erro || "Erro ao atualizar usuario.");
-      return;
-    }
-
-    cacheUsuarios = null;
-    await renderUsuariosCadastro();
-    await carregarUsuariosChat(true);
-    if (String(usuarioLogado?.id || "") === String(id)) {
-      usuarioLogado = { ...(usuarioLogado || {}), ...payload, id: user.id };
-      _salvarSessaoLogin(usuarioLogado);
-      atualizarUsuarioLogadoUI();
-      await initSipClient(true).catch(() => {});
-    }
-  } catch (error) {
-    console.error("Erro ao atualizar usuario:", error);
-    alert(error?.message || "Erro inesperado ao atualizar usuario.");
-  }
-}
-
-async function deletarUsuarioCadastro(id) {
-  if (!confirm("Deseja excluir este usuário?")) return;
-
-  const resp = await apiFetch(`/api/usuarios/${id}`, { method: "DELETE" });
-  if (!resp.ok) {
-    const j = await resp.json().catch(() => null);
-    alert(j?.erro || "Erro ao excluir usuário.");
-    return;
-  }
-
-  cacheUsuarios = null;
-  await renderUsuariosCadastro();
-  await carregarUsuariosChat(true);
-  if (String(usuarioLogado?.id || "") === String(id)) {
-    _logoutSessaoLocal(true, "Usuario removido. Faca login novamente.");
-    return;
-  }
-}
-
 // Cadastro específico de veículos (unificação veiculos + frota)
 async function salvarVeiculo() {
   const nome = (document.getElementById("novoVeiculoNome")?.value || "").trim();
@@ -429,13 +505,14 @@ async function salvarVeiculo() {
   const intervalo_manut_km = int_manut_raw === "" ? null : Number(int_manut_raw);
   const int_oleo_raw = (document.getElementById("frota_int_oleo")?.value || "").trim();
   const intervalo_oleo_km = int_oleo_raw === "" ? null : Number(int_oleo_raw);
+  const combustivel_padrao = document.getElementById("frota_combustivel_padrao")?.value || "diesel_500";
 
   if (!nome) return alert("Informe o nome do veículo.");
 
   await fetch(`/api/veiculos`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ nome, placa, modelo, km_atual, intervalo_manut_km, intervalo_oleo_km }),
+    body: JSON.stringify({ nome, placa, modelo, km_atual, intervalo_manut_km, intervalo_oleo_km, combustivel_padrao }),
   });
 
   if (document.getElementById("novoVeiculoNome")) document.getElementById("novoVeiculoNome").value = "";
@@ -444,6 +521,7 @@ async function salvarVeiculo() {
   if (document.getElementById("frota_km")) document.getElementById("frota_km").value = "";
   if (document.getElementById("frota_int_manut")) document.getElementById("frota_int_manut").value = "";
   if (document.getElementById("frota_int_oleo")) document.getElementById("frota_int_oleo").value = "";
+  if (document.getElementById("frota_combustivel_padrao")) document.getElementById("frota_combustivel_padrao").value = "diesel_500";
 
   await renderCadastros();
   await carregarSelectsNovoFrete();
@@ -486,7 +564,18 @@ async function editarVeiculo(id, nomeAtual, placaAtual, modeloAtual, kmAtual) {
 
 async function carregarCadastro(tipo) {
   let r = await apiFetch(`/api/${tipo}`);
-  return await r.json();
+  const dados = await r.json();
+  if (tipo === "cargas" && Array.isArray(dados)) {
+    return dados.map((item) => {
+      const veiculo = (item.veiculo_numero || "").toString().trim();
+      const nomeBase = (item.nome || item.cidade || "Carga").toString().trim();
+      return {
+        ...item,
+        optionLabel: veiculo ? `${nomeBase} - Veiculo ${veiculo}` : nomeBase,
+      };
+    });
+  }
+  return dados;
 }
 
 async function salvarVeiculoLinha(id) {
@@ -499,18 +588,19 @@ async function salvarVeiculoLinha(id) {
   const intervalo_manut_km = intManutRaw === "" ? null : Number(intManutRaw);
   const intOleoRaw = (document.getElementById(`v_int_oleo_${id}`)?.value || "").trim();
   const intervalo_oleo_km = intOleoRaw === "" ? null : Number(intOleoRaw);
+  const combustivel_padrao = document.getElementById(`v_combustivel_${id}`)?.value || "diesel_500";
 
   if (!nome) return alert("Informe o nome do veículo.");
 
   const resp = await fetch(`/api/veiculos/${id}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ nome, placa, modelo, km_atual, intervalo_manut_km, intervalo_oleo_km }),
+    body: JSON.stringify({ nome, placa, modelo, km_atual, intervalo_manut_km, intervalo_oleo_km, combustivel_padrao }),
   });
 
   if (!resp.ok) {
     const t = await resp.text();
-    console.log("ERRO ao salvar veículo:", resp.status, t);
+    console.error("ERRO ao salvar veículo:", resp.status, t);
     alert("Erro ao salvar veículo (veja o console F12).");
     return;
   }
@@ -540,6 +630,45 @@ function _escHtml(v) {
     .replaceAll("'", "&#39;");
 }
 
+function _asStr(value, fallback = "") {
+  const texto = value == null ? "" : String(value);
+  return texto.trim() ? texto : String(fallback ?? "");
+}
+
+function _asInt(value, fallback = 0) {
+  const numero = Number.parseInt(value, 10);
+  return Number.isFinite(numero) ? numero : Number.parseInt(fallback, 10) || 0;
+}
+
+function _asBool(value, fallback = false) {
+  if (typeof value === "boolean") return value;
+  if (value == null) return !!fallback;
+  const texto = String(value).trim().toLowerCase();
+  if (["1", "true", "sim", "yes", "on"].includes(texto)) return true;
+  if (["0", "false", "nao", "não", "no", "off", ""].includes(texto)) return false;
+  return Boolean(value);
+}
+
+function _as_str(value, fallback = "") {
+  return _asStr(value, fallback);
+}
+
+function _modeloVeiculoEhFlex(modelo) {
+  const tokens = String(modelo || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+  return ["gol", "polo", "saveiro"].some((modeloFlex) => tokens.includes(modeloFlex));
+}
+
+function sincronizarCombustivelModeloVeiculo(modeloInput, combustivelSelect) {
+  if (_modeloVeiculoEhFlex(modeloInput?.value) && combustivelSelect) {
+    combustivelSelect.value = "flex";
+  }
+}
+
 function veiculoRowTemplate(v) {
   const nome = v.nome ?? "";
   const placa = v.placa ?? "";
@@ -551,10 +680,17 @@ function veiculoRowTemplate(v) {
       <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
         <input id="v_nome_${v.id}" value="${_escAttr(nome)}" placeholder="Nome" style="width:170px;">
         <input id="v_placa_${v.id}" value="${_escAttr(placa)}" placeholder="Placa" style="width:110px;">
-        <input id="v_modelo_${v.id}" value="${_escAttr(modelo)}" placeholder="Modelo" style="width:170px;">
+        <input id="v_modelo_${v.id}" list="modelosVeiculos" value="${_escAttr(modelo)}" placeholder="Modelo" style="width:170px;" oninput="sincronizarCombustivelModeloVeiculo(this, document.getElementById('v_combustivel_${v.id}'))">
         <input id="v_km_${v.id}" value="${_escAttr(km)}" placeholder="KM" type="number" style="width:110px;">
         <input id="v_int_manut_${v.id}" value="${_escAttr(v.intervalo_manut_km ?? '')}" placeholder="Int. Manut (KM)" type="number" style="width:140px;">
         <input id="v_int_oleo_${v.id}" value="${_escAttr(v.intervalo_oleo_km ?? '')}" placeholder="Int. Óleo (KM)" type="number" style="width:140px;">
+        <select id="v_combustivel_${v.id}" style="width:160px;">
+          <option value="diesel_500" ${_normalizarCombustivelPadraoVeiculo(v.combustivel_padrao) === "diesel_500" ? "selected" : ""}>Diesel 500</option>
+          <option value="diesel_s10" ${_normalizarCombustivelPadraoVeiculo(v.combustivel_padrao) === "diesel_s10" ? "selected" : ""}>Diesel S10</option>
+          <option value="gasolina" ${_normalizarCombustivelPadraoVeiculo(v.combustivel_padrao) === "gasolina" ? "selected" : ""}>Gasolina</option>
+          <option value="etanol" ${_normalizarCombustivelPadraoVeiculo(v.combustivel_padrao) === "etanol" ? "selected" : ""}>Etanol</option>
+          <option value="flex" ${_normalizarCombustivelPadraoVeiculo(v.combustivel_padrao) === "flex" ? "selected" : ""}>Flex</option>
+        </select>
       </div>
       <div style="display:flex; gap:6px;">
         <button onclick="salvarVeiculoLinha(${v.id})">💾</button>
@@ -568,80 +704,644 @@ function cadastroEmptyItem(msg) {
   return `<li class="cadastro-empty">${_escHtml(msg)}</li>`;
 }
 
-async function renderCadastros() {
-  const tipos = [
-    { tipo: "motoristas", listaId: "listaMotoristas" },
-    { tipo: "veiculos", listaId: "listaVeiculos" },
-    { tipo: "conferentes", listaId: "listaConferentes" },
-    { tipo: "cargas", listaId: "listaCargas" },
-  ];
-  const emptyMap = {
-    motoristas: "Nenhum motorista cadastrado.",
-    veiculos: "Nenhum veiculo cadastrado.",
-    conferentes: "Nenhum conferente cadastrado.",
-    cargas: "Nenhuma carga cadastrada.",
+function _buscarColaboradorCadastro(colaboradorId){
+  if (!colaboradorId) return null;
+  const idStr = String(colaboradorId);
+  return (
+    (cacheCadastros.colaboradores || []).find((item) => String(item.id) === idStr) ||
+    (cacheCadastros.motoristas || []).find((item) => String(item.id) === idStr) ||
+    null
+  );
+}
+
+function _colaboradorTemFuncao(colaborador, funcao){
+  if (!colaborador) return false;
+  const mapa = {
+    motorista: "is_motorista",
+    entregador: "is_entregador",
+    ajudante: "is_ajudante",
+    conferente: "is_conferente",
+    vendedor: "is_vendedor",
   };
+  const campo = mapa[funcao] || "";
+  return campo ? !!Number(colaborador[campo] || 0) : false;
+}
 
-  for (let item of tipos) {
-    let dados = _ordenarListaNatural(await carregarCadastro(item.tipo));
-    let lista = document.getElementById(item.listaId);
-    if (!lista) continue;
+function _listaColaboradoresPorFuncao(funcao){
+  return _ordenarListaNatural((cacheCadastros.colaboradores || []).filter((item) => _colaboradorTemFuncao(item, funcao)));
+}
 
-    if (item.tipo === "veiculos") {
-      lista.innerHTML = dados.length ? dados.map(veiculoRowTemplate).join("") : cadastroEmptyItem(emptyMap[item.tipo]);
-    } else {
-      lista.innerHTML = dados.length ? dados
-        .map(
-          (d) => `
-          <li>
-            <span>${_escHtml(d.nome)}</span>
-            <div>
-              <button onclick="editarCadastro('${item.tipo}', ${d.id}, '${_escJsString(d.nome)}')">✏</button>
-              <button onclick="deletar('${item.tipo}', ${d.id})">❌</button>
-            </div>
-          </li>
-        `
-        )
-        .join("") : cadastroEmptyItem(emptyMap[item.tipo]);
-    }
+function _textoFuncoesColaborador(colaborador){
+  const funcoes = [];
+  if (_colaboradorTemFuncao(colaborador, "motorista")) funcoes.push("Motorista");
+  if (_colaboradorTemFuncao(colaborador, "entregador")) funcoes.push("Entregador");
+  if (_colaboradorTemFuncao(colaborador, "ajudante")) funcoes.push("Ajudante");
+  if (_colaboradorTemFuncao(colaborador, "conferente")) funcoes.push("Conferente");
+  if (_colaboradorTemFuncao(colaborador, "vendedor")) funcoes.push("Vendedor");
+  return funcoes.length ? funcoes.join(" • ") : "Sem funcao";
+}
+
+function _coletarPapeisColaborador(sufixo = ""){
+  const motorista = document.getElementById(`colaboradorMotorista${sufixo}`) || document.getElementById(`novoColaboradorMotorista`);
+  const entregador = document.getElementById(`colaboradorEntregador${sufixo}`) || document.getElementById(`novoColaboradorEntregador`);
+  const ajudante = document.getElementById(`colaboradorAjudante${sufixo}`) || document.getElementById(`novoColaboradorAjudante`);
+  const conferente = document.getElementById(`colaboradorConferente${sufixo}`) || document.getElementById(`novoColaboradorConferente`);
+  const vendedor = document.getElementById(`colaboradorVendedor${sufixo}`) || document.getElementById(`novoColaboradorVendedor`);
+  const email = document.getElementById(`colaboradorEmail${sufixo}`) || document.getElementById(`novoColaboradorEmail`);
+  const cpf = document.getElementById(`colaboradorCpf${sufixo}`) || document.getElementById(`novoColaboradorCpf`);
+  return {
+    is_motorista: !!motorista?.checked,
+    is_entregador: !!entregador?.checked,
+    is_ajudante: !!ajudante?.checked,
+    is_conferente: !!conferente?.checked,
+    is_vendedor: !!vendedor?.checked,
+    email: (email?.value || "").trim(),
+    cpf: (cpf?.value || "").trim(),
+  };
+}
+
+function colaboradorRowTemplate(colaborador) {
+  return `
+    <li class="colaborador-row">
+      <div class="colaborador-row-main">
+        <input id="colaboradorNome_${colaborador.id}" value="${_escAttr(colaborador.nome || "")}" placeholder="Nome do colaborador">
+        <input id="colaboradorEmail_${colaborador.id}" value="${_escAttr(colaborador.email || "")}" placeholder="Email" class="colaborador-email-input">
+        <input id="colaboradorCpf_${colaborador.id}" value="${_escAttr(colaborador.cpf || "")}" placeholder="CPF" class="colaborador-cpf-input">
+        <div class="colaborador-row-checks">
+          <label class="colaborador-check"><input type="checkbox" id="colaboradorMotorista_${colaborador.id}" ${_colaboradorTemFuncao(colaborador, "motorista") ? "checked" : ""}> Motorista</label>
+          <label class="colaborador-check"><input type="checkbox" id="colaboradorEntregador_${colaborador.id}" ${_colaboradorTemFuncao(colaborador, "entregador") ? "checked" : ""}> Entregador</label>
+          <label class="colaborador-check"><input type="checkbox" id="colaboradorAjudante_${colaborador.id}" ${_colaboradorTemFuncao(colaborador, "ajudante") ? "checked" : ""}> Ajudante</label>
+          <label class="colaborador-check"><input type="checkbox" id="colaboradorConferente_${colaborador.id}" ${_colaboradorTemFuncao(colaborador, "conferente") ? "checked" : ""}> Conferente</label>
+          <label class="colaborador-check"><input type="checkbox" id="colaboradorVendedor_${colaborador.id}" ${_colaboradorTemFuncao(colaborador, "vendedor") ? "checked" : ""}> Vendedor</label>
+        </div>
+        <div class="colaborador-row-user">
+          <input id="colaboradorLogin_${colaborador.id}" value="${_escAttr(colaborador.login || "")}" placeholder="Login">
+          <input id="colaboradorSenha_${colaborador.id}" type="password" value="" placeholder="Nova senha">
+          <label class="config-check"><input type="checkbox" id="colaboradorSipHabilitado_${colaborador.id}" ${_asBool(colaborador.sip_habilitado, false) ? "checked" : ""}> SIP externo</label>
+          <input id="colaboradorSipUsuario_${colaborador.id}" value="${_escAttr(colaborador.sip_usuario || "")}" placeholder="Usuario SIP">
+          <input id="colaboradorSipSenha_${colaborador.id}" type="password" value="" placeholder="Nova senha SIP">
+          <input id="colaboradorSipRamal_${colaborador.id}" value="${_escAttr(colaborador.sip_ramal || "")}" placeholder="Ramal">
+          <select id="colaboradorCodbarModo_${colaborador.id}">
+            <option value="bip"${String(colaborador.codbar_modo || "bip") === "bip" ? " selected" : ""}>CODBAR: Bip/Leitor</option>
+            <option value="camera"${String(colaborador.codbar_modo || "bip") === "camera" ? " selected" : ""}>CODBAR: Camera/Webcam</option>
+          </select>
+        </div>
+        <div class="colaborador-funcoes-texto">${_escHtml(_textoFuncoesColaborador(colaborador))}</div>
+      </div>
+      <div class="colaborador-row-actions">
+        <button onclick="salvarColaboradorLinha(${colaborador.id})">💾</button>
+        <button onclick="deletar('colaboradores', ${colaborador.id})">❌</button>
+      </div>
+    </li>
+  `;
+}
+
+async function renderCadastros() {
+  await ensureCadastrosCache();
+
+  const colaboradores = _ordenarListaNatural(cacheCadastros.colaboradores || []);
+  const veiculos = _ordenarListaNatural(cacheCadastros.veiculos || []);
+  const cargas = _ordenarListaNatural(cacheCadastros.cargas || []);
+
+  const listaColaboradores = document.getElementById("listaMotoristas");
+  if (listaColaboradores) {
+    listaColaboradores.innerHTML = colaboradores.length ? colaboradores.map(colaboradorRowTemplate).join("") : cadastroEmptyItem("Nenhum colaborador cadastrado.");
   }
 
-  try { await renderUsuariosCadastro(); } catch (e) { console.warn("usuarios cadastro erro:", e); }
+  const listaVeiculos = document.getElementById("listaVeiculos");
+  if (listaVeiculos) {
+    listaVeiculos.innerHTML = veiculos.length ? veiculos.map(veiculoRowTemplate).join("") : cadastroEmptyItem("Nenhum veiculo cadastrado.");
+  }
+
+  const listaCargas = document.getElementById("listaCargas");
+  if (listaCargas) {
+    listaCargas.innerHTML = cargas.length ? cargas
+      .map((d) => `
+        <li>
+          <div style="display:flex; flex-direction:column; gap:2px;">
+            <span>${_escHtml(d.nome || d.optionLabel || "-")}</span>
+            <small style="opacity:.75;">${_escHtml(d.veiculo_numero ? `Veiculo ${d.veiculo_numero}` : "Sem veiculo")}</small>
+          </div>
+          <div>
+            <button onclick="editarCadastro('cargas', ${d.id}, '${_escJsString(d.nome)}')">✏</button>
+            <button onclick="deletar('cargas', ${d.id})">❌</button>
+          </div>
+        </li>
+      `)
+      .join("") : cadastroEmptyItem("Nenhuma carga cadastrada.");
+  }
+
+  if (window.__cargasView === "escala") {
+    try { await renderEscala(); } catch (e) { console.warn("escala cadastro erro:", e); }
+  }
+}
+
+function _pontosVendaOpcoesDiaSemana(selected = "") {
+  const opcoes = [
+    ["", "Dia da semana"],
+    ["0", "Segunda-feira"],
+    ["1", "Terca-feira"],
+    ["2", "Quarta-feira"],
+    ["3", "Quinta-feira"],
+    ["4", "Sexta-feira"],
+    ["5", "Sabado"],
+    ["6", "Domingo"],
+  ];
+  return opcoes.map(([value, label]) => `<option value="${_escAttr(value)}"${String(selected) === String(value) ? " selected" : ""}>${_escHtml(label)}</option>`).join("");
+}
+
+function _pontosVendaDiaLabel(item) {
+  return ["Segunda-feira", "Terca-feira", "Quarta-feira", "Quinta-feira", "Sexta-feira", "Sabado", "Domingo"][Number(item?.dia_semana ?? -1)] || "-";
+}
+
+function _pontosVendaPeriodoLabel(item) {
+  return String(item?.visita_periodicidade || "").toLowerCase() === "quinzenal" ? "Quinzenal" : "Semanal";
+}
+
+function _dataHojeInputLocal() {
+  const agora = new Date();
+  const local = new Date(agora.getTime() - (agora.getTimezoneOffset() * 60000));
+  return local.toISOString().slice(0, 10);
+}
+
+function _pontosVendaSelecionado(formId, value) {
+  const el = document.getElementById(formId);
+  if (!el) return false;
+  return String(el.value || "") === String(value || "");
+}
+
+function _pontosVendaPreencherFiltros(items = []) {
+  const vendedorSel = document.getElementById("pontosVendaFiltroVendedor");
+  const clienteSel = document.getElementById("pontosVendaFiltroCliente");
+  const rotaSel = document.getElementById("pontosVendaFiltroRota");
+  const selectedVendedor = vendedorSel?.value || "";
+  const selectedCliente = clienteSel?.value || "";
+  const selectedRota = rotaSel?.value || "";
+
+  const vendedores = new Map();
+  const clientes = new Map();
+  const rotas = new Map();
+  (items || []).forEach((item) => {
+    if (item?.vendedor) vendedores.set(item.vendedor, item.vendedor);
+    if (item?.cliente) clientes.set(item.cliente, item.cliente);
+    if (item?.rota) rotas.set(item.rota, item.rota);
+  });
+
+  if (vendedorSel) {
+    vendedorSel.innerHTML = ['<option value="">Todos os vendedores</option>'].concat(
+      Array.from(vendedores.keys()).sort((a, b) => a.localeCompare(b, "pt-BR", { numeric: true, sensitivity: "base" })).map((item) => `<option value="${_escAttr(item)}">${_escHtml(item)}</option>`)
+    ).join("");
+    vendedorSel.value = selectedVendedor;
+  }
+  if (clienteSel) {
+    clienteSel.innerHTML = ['<option value="">Todos os clientes</option>'].concat(
+      Array.from(clientes.keys()).sort((a, b) => a.localeCompare(b, "pt-BR", { numeric: true, sensitivity: "base" })).map((item) => `<option value="${_escAttr(item)}">${_escHtml(item)}</option>`)
+    ).join("");
+    clienteSel.value = selectedCliente;
+  }
+  if (rotaSel) {
+    rotaSel.innerHTML = ['<option value="">Todas as rotas</option>'].concat(
+      Array.from(rotas.keys()).sort((a, b) => a.localeCompare(b, "pt-BR", { numeric: true, sensitivity: "base" })).map((item) => `<option value="${_escAttr(item)}">${_escHtml(item)}</option>`)
+    ).join("");
+    rotaSel.value = selectedRota;
+  }
+}
+
+function atualizarVisibilidadeFiltrosPontosVenda() {
+  const vendedor = document.getElementById("pontosVendaFiltroVendedor")?.value || "";
+  const cliente = document.getElementById("pontosVendaFiltroCliente")?.value || "";
+  const vendedorWrap = document.getElementById("pontosVendaVendedorWrap");
+  const clienteWrap = document.getElementById("pontosVendaClienteWrap");
+  if (vendedorWrap) vendedorWrap.classList.toggle("hidden", !!cliente && !vendedor);
+  if (clienteWrap) clienteWrap.classList.toggle("hidden", !!vendedor && !cliente);
+}
+
+function renderPontosVendaLista(items = []) {
+  const body = document.getElementById("pontosVendaBody");
+  if (!body) return;
+  body.innerHTML = items.length ? items.map((item) => `
+    <tr>
+      <td>${_escHtml(item.vendedor || "-")}</td>
+      <td>${_escHtml(item.cliente || "-")}</td>
+      <td>${_escHtml(item.rota || "-")}</td>
+      <td>${_escHtml(_pontosVendaPeriodoLabel(item))}</td>
+      <td>${_escHtml(item.dia_semana_label || _pontosVendaDiaLabel(item))}</td>
+      <td>${_escHtml(item.data_base || "-")}</td>
+      <td>${_escHtml(item.ativo ? "Sim" : "Nao")}</td>
+      <td>
+        <button type="button" onclick="editarPontoVenda(${item.id})">✏</button>
+        <button type="button" onclick="deletarPontoVenda(${item.id})">❌</button>
+      </td>
+    </tr>
+  `).join("") : '<tr><td colspan="8">Nenhum ponto de venda cadastrado.</td></tr>';
+}
+
+function limparFormularioPontoVenda() {
+  pontosVendaState.editId = 0;
+  const campos = {
+    id: document.getElementById("pontosVendaId"),
+    vendedor: document.getElementById("pontosVendaVendedor"),
+    cliente: document.getElementById("pontosVendaCliente"),
+    rota: document.getElementById("pontosVendaRota"),
+    periodicidade: document.getElementById("pontosVendaPeriodicidade"),
+    dia: document.getElementById("pontosVendaDiaSemana"),
+    base: document.getElementById("pontosVendaDataBase"),
+    obs: document.getElementById("pontosVendaObservacao"),
+    ativo: document.getElementById("pontosVendaAtivo"),
+    status: document.getElementById("pontosVendaFormStatus"),
+  };
+  if (campos.id) campos.id.value = "";
+  if (campos.vendedor) campos.vendedor.value = "";
+  if (campos.cliente) campos.cliente.value = "";
+  if (campos.rota) campos.rota.value = "";
+  if (campos.periodicidade) campos.periodicidade.value = "semanal";
+  if (campos.dia) campos.dia.value = "";
+  if (campos.base) campos.base.value = "";
+  if (campos.obs) campos.obs.value = "";
+  if (campos.ativo) campos.ativo.checked = true;
+  if (campos.status) campos.status.textContent = "Preencha os campos e salve. Se houver cadastro parecido, o sistema vai pedir confirmação para evitar duplicidade.";
+}
+
+function editarPontoVenda(id) {
+  const item = (pontosVendaState.items || []).find((row) => String(row.id) === String(id));
+  if (!item) return;
+  pontosVendaState.editId = Number(item.id) || 0;
+  const campos = {
+    id: document.getElementById("pontosVendaId"),
+    vendedor: document.getElementById("pontosVendaVendedor"),
+    cliente: document.getElementById("pontosVendaCliente"),
+    rota: document.getElementById("pontosVendaRota"),
+    periodicidade: document.getElementById("pontosVendaPeriodicidade"),
+    dia: document.getElementById("pontosVendaDiaSemana"),
+    base: document.getElementById("pontosVendaDataBase"),
+    obs: document.getElementById("pontosVendaObservacao"),
+    ativo: document.getElementById("pontosVendaAtivo"),
+    status: document.getElementById("pontosVendaFormStatus"),
+  };
+  if (campos.id) campos.id.value = String(item.id || "");
+  if (campos.vendedor) campos.vendedor.value = item.vendedor || "";
+  if (campos.cliente) campos.cliente.value = item.cliente || "";
+  if (campos.rota) campos.rota.value = item.rota || "";
+  if (campos.periodicidade) campos.periodicidade.value = item.visita_periodicidade || "semanal";
+  if (campos.dia) campos.dia.value = item.dia_semana != null ? String(item.dia_semana) : "";
+  if (campos.base) campos.base.value = item.data_base || "";
+  if (campos.obs) campos.obs.value = item.observacao || "";
+  if (campos.ativo) campos.ativo.checked = !!item.ativo;
+  if (campos.status) campos.status.textContent = `Editando registro #${item.id}. Salve para atualizar.`;
+}
+
+async function carregarPontosVenda() {
+  const resp = await apiFetch("/api/pontos_venda");
+  const data = await resp.json().catch(() => []);
+  if (!resp.ok) throw new Error((data && data.erro) || "Falha ao carregar pontos de venda.");
+  pontosVendaState.items = Array.isArray(data) ? data : [];
+  _pontosVendaPreencherFiltros(pontosVendaState.items);
+  renderPontosVendaLista(pontosVendaState.items);
+  atualizarVisibilidadeFiltrosPontosVenda();
+  if (pontosVendaState.view === "relatorio") {
+    await carregarPontosVendaRelatorio().catch(() => {});
+  }
+  return pontosVendaState.items;
+}
+
+async function salvarPontoVenda() {
+  const id = Number(document.getElementById("pontosVendaId")?.value || pontosVendaState.editId || 0);
+  const payload = {
+    vendedor: document.getElementById("pontosVendaVendedor")?.value || "",
+    cliente: document.getElementById("pontosVendaCliente")?.value || "",
+    rota: document.getElementById("pontosVendaRota")?.value || "",
+    visita_periodicidade: document.getElementById("pontosVendaPeriodicidade")?.value || "semanal",
+    dia_semana: document.getElementById("pontosVendaDiaSemana")?.value || "",
+    data_base: document.getElementById("pontosVendaDataBase")?.value || "",
+    observacao: document.getElementById("pontosVendaObservacao")?.value || "",
+    ativo: !!document.getElementById("pontosVendaAtivo")?.checked,
+  };
+  const status = document.getElementById("pontosVendaFormStatus");
+  if (status) status.textContent = "Salvando ponto de venda...";
+
+  const method = id > 0 ? "PUT" : "POST";
+  const url = id > 0 ? `/api/pontos_venda/${id}` : "/api/pontos_venda";
+  const resp = await apiFetch(url, {
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    if (resp.status === 409 && data?.registro_existente) {
+      const candidato = data.registro_existente;
+      const msg = `Cadastro semelhante encontrado para ${candidato.vendedor} / ${candidato.cliente} / ${candidato.rota}.\n\nDeseja confirmar que se trata do mesmo cadastro?`;
+      if (!confirm(msg)) {
+        if (status) status.textContent = "Operação cancelada. Ajuste os dados e tente novamente.";
+        return;
+      }
+      const forceResp = await apiFetch(id > 0 ? `/api/pontos_venda/${id}` : "/api/pontos_venda", {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...payload, force: true }),
+      });
+      const forceData = await forceResp.json().catch(() => ({}));
+      if (!forceResp.ok) {
+        if (status) status.textContent = forceData?.erro || "Falha ao salvar ponto de venda.";
+        alert(forceData?.erro || "Falha ao salvar ponto de venda.");
+        return;
+      }
+      if (status) status.textContent = "Ponto de venda salvo com confirmação de cadastro semelhante.";
+    } else {
+      if (status) status.textContent = data?.erro || "Falha ao salvar ponto de venda.";
+      alert(data?.erro || "Falha ao salvar ponto de venda.");
+      return;
+    }
+  } else if (status) {
+    status.textContent = "Ponto de venda salvo com sucesso.";
+  }
+
+  limparFormularioPontoVenda();
+  await carregarPontosVenda().catch(() => {});
+}
+
+async function deletarPontoVenda(id) {
+  if (!confirm("Excluir este ponto de venda?")) return;
+  const resp = await apiFetch(`/api/pontos_venda/${id}`, { method: "DELETE" });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    alert(data?.erro || "Falha ao excluir ponto de venda.");
+    return;
+  }
+  await carregarPontosVenda().catch(() => {});
+}
+
+async function importarPontosVendaCsv(force = false) {
+  const fileInput = document.getElementById("pontosVendaCsvFile");
+  const file = fileInput?.files?.[0] || null;
+  if (!file) return alert("Selecione um CSV antes de importar.");
+  const formData = new FormData();
+  formData.append("arquivo", file, file.name || "pontos_venda.csv");
+  if (force) formData.append("force", "1");
+  const resp = await apiFetch("/api/pontos_venda/importar_csv", {
+    method: "POST",
+    body: formData,
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    if (resp.status === 409 && Array.isArray(data?.duplicados) && data.duplicados.length) {
+      const texto = data.duplicados.slice(0, 5).map((item) => {
+        const ex = item?.existente || {};
+        return `Linha ${item.linha}: ${ex.vendedor || "-"} / ${ex.cliente || "-"} / ${ex.rota || "-"}`;
+      }).join("\n");
+      if (confirm(`Foram encontrados cadastros semelhantes:\n\n${texto}\n\nDeseja importar mesmo assim?`)) {
+        return importarPontosVendaCsv(true);
+      }
+    }
+    alert(data?.erro || "Falha ao importar pontos de venda.");
+    return;
+  }
+  if (Number(data?.ignorados || 0) > 0) {
+    alert(`Importação concluída. Inseridos: ${data?.inseridos || 0}, atualizados: ${data?.atualizados || 0}, ignorados por duplicidade no arquivo: ${data?.ignorados || 0}.`);
+  } else {
+    alert(`Importação concluída. Inseridos: ${data?.inseridos || 0}, atualizados: ${data?.atualizados || 0}.`);
+  }
+  if (fileInput) fileInput.value = "";
+  await carregarPontosVenda().catch(() => {});
+}
+
+function agendarCarregarPontosVendaRelatorio(delayMs = 200) {
+  if (pontosVendaState.reportTimer) clearTimeout(pontosVendaState.reportTimer);
+  pontosVendaState.reportTimer = setTimeout(() => {
+    pontosVendaState.reportTimer = null;
+    carregarPontosVendaRelatorio().catch((err) => console.warn("pontos de venda relatorio erro:", err));
+  }, delayMs);
+}
+
+function limparFiltrosPontosVenda() {
+  const dataRef = document.getElementById("pontosVendaDataRef");
+  const vendedor = document.getElementById("pontosVendaFiltroVendedor");
+  const cliente = document.getElementById("pontosVendaFiltroCliente");
+  const rota = document.getElementById("pontosVendaFiltroRota");
+  if (dataRef) dataRef.value = "";
+  if (vendedor) vendedor.value = "";
+  if (cliente) cliente.value = "";
+  if (rota) rota.value = "";
+  atualizarVisibilidadeFiltrosPontosVenda();
+  agendarCarregarPontosVendaRelatorio();
+}
+
+function _pontosVendaResumoCards(resumo = {}) {
+  return [
+    ["Visitas", _fmtNumVendas(resumo.total)],
+    ["Semanais", _fmtNumVendas(resumo.semanal)],
+    ["Quinzenais", _fmtNumVendas(resumo.quinzenal)],
+    ["Vendedores", _fmtNumVendas(resumo.vendedores)],
+    ["Clientes", _fmtNumVendas(resumo.clientes)],
+    ["Rotas", _fmtNumVendas(resumo.rotas)],
+  ];
+}
+
+function renderRelatorioPontosVenda(payload = {}) {
+  pontosVendaState.report = payload;
+  const resumo = payload?.resumo || {};
+  const filtros = payload?.filtros || {};
+  const itens = Array.isArray(payload?.itens) ? payload.itens : [];
+  const dias = Array.isArray(payload?.dias) ? payload.dias : [];
+  const info = document.getElementById("pontosVendaRelatorioInfo");
+  if (info) {
+    info.textContent = `Semana de ${filtros.semana_inicio || "-"} até ${filtros.semana_fim || "-"}${filtros.vendedor ? ` | Vendedor: ${filtros.vendedor}` : ""}${filtros.cliente ? ` | Cliente: ${filtros.cliente}` : ""}${filtros.rota ? ` | Rota: ${filtros.rota}` : ""}`;
+  }
+  const cards = document.getElementById("pontosVendaResumoCards");
+  if (cards) {
+    cards.innerHTML = _renderCardsVendasResumo(_pontosVendaResumoCards(resumo));
+  }
+  const body = document.getElementById("pontosVendaRelatorioBody");
+  if (body) {
+    body.innerHTML = itens.length ? itens.map((item) => `
+      <tr>
+        <td>${_escHtml(item.visita_em || "-")}</td>
+        <td>${_escHtml(item.dia_semana_label || _pontosVendaDiaLabel(item))}</td>
+        <td>${_escHtml(item.vendedor || "-")}</td>
+        <td>${_escHtml(item.cliente || "-")}</td>
+        <td>${_escHtml(item.rota || "-")}</td>
+        <td>${_escHtml(item.visita_periodicidade_label || _pontosVendaPeriodoLabel(item))}</td>
+        <td>${_escHtml(item.data_base || "-")}</td>
+        <td>${_escHtml(item.ativo ? "Sim" : "Nao")}</td>
+        <td>${_escHtml(item.observacao || "-")}</td>
+      </tr>
+    `).join("") : '<tr><td colspan="9">Nenhum ponto de venda previsto para a semana selecionada.</td></tr>';
+  }
+  const dataRef = document.getElementById("pontosVendaDataRef");
+  if (dataRef && !dataRef.value && filtros?.data_ref) dataRef.value = filtros.data_ref;
+  const vendedorSel = document.getElementById("pontosVendaFiltroVendedor");
+  const clienteSel = document.getElementById("pontosVendaFiltroCliente");
+  const rotaSel = document.getElementById("pontosVendaFiltroRota");
+  if (vendedorSel && !vendedorSel.value && filtros?.vendedor) vendedorSel.value = filtros.vendedor;
+  if (clienteSel && !clienteSel.value && filtros?.cliente) clienteSel.value = filtros.cliente;
+  if (rotaSel && !rotaSel.value && filtros?.rota) rotaSel.value = filtros.rota;
+  _pontosVendaPreencherFiltros((pontosVendaState.items && pontosVendaState.items.length ? pontosVendaState.items : itens) || []);
+  atualizarVisibilidadeFiltrosPontosVenda();
+  return { resumo, itens, dias };
+}
+
+async function carregarPontosVendaRelatorio() {
+  const params = new URLSearchParams();
+  const dataRef = document.getElementById("pontosVendaDataRef")?.value || "";
+  const vendedor = document.getElementById("pontosVendaFiltroVendedor")?.value || "";
+  const cliente = document.getElementById("pontosVendaFiltroCliente")?.value || "";
+  const rota = document.getElementById("pontosVendaFiltroRota")?.value || "";
+  if (dataRef) params.set("data_ref", dataRef);
+  if (vendedor) params.set("vendedor", vendedor);
+  if (cliente) params.set("cliente", cliente);
+  if (rota) params.set("rota", rota);
+  const resp = await apiFetch(`/api/pontos_venda/relatorio?${params.toString()}`);
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw new Error(data?.erro || "Falha ao carregar relatório de pontos de venda.");
+  renderRelatorioPontosVenda(data || {});
+  return data;
 }
 
 function _escJsString(v) {
   return String(v ?? "").replaceAll("\\", "\\\\").replaceAll("'", "\\'");
 }
 
-async function renderUsuariosCadastro() {
-  if (!cacheUsuarios) {
-    cacheUsuarios = await carregarUsuariosCadastro();
+function _coletarDadosUsuarioColaborador(baseId, suffix = "") {
+  const sufixo = String(suffix || "");
+  return {
+    login: (document.getElementById(`${baseId}Login${sufixo}`)?.value || "").trim(),
+    senha: (document.getElementById(`${baseId}Senha${sufixo}`)?.value || "").trim(),
+    sip_habilitado: !!document.getElementById(`${baseId}SipHabilitado${sufixo}`)?.checked,
+    sip_usuario: (document.getElementById(`${baseId}SipUsuario${sufixo}`)?.value || "").trim(),
+    sip_senha: (document.getElementById(`${baseId}SipSenha${sufixo}`)?.value || "").trim(),
+    sip_ramal: (document.getElementById(`${baseId}SipRamal${sufixo}`)?.value || "").trim(),
+    codbar_modo: (document.getElementById(`${baseId}CodbarModo${sufixo}`)?.value || "bip").trim() || "bip",
+  };
+}
+
+function _limparFormularioNovoColaboradorUsuario() {
+  const campos = [
+    "novoColaboradorLogin",
+    "novoColaboradorSenha",
+    "novoColaboradorSipHabilitado",
+    "novoColaboradorSipUsuario",
+    "novoColaboradorSipSenha",
+    "novoColaboradorSipRamal"
+  ];
+
+  campos.forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) {
+      if (id === "novoColaboradorSipHabilitado") {
+        el.checked = false;
+      } else {
+        el.value = "";
+      }
+    }
+  });
+
+  const select = document.getElementById("novoColaboradorCodbarModo");
+  if (select) select.value = "bip";
+}
+
+async function salvarColaboradorCadastro() {
+  const nomeEl = document.getElementById("novoColaboradorNome");
+  const nome = (nomeEl?.value || "").trim();
+  const payload = { nome, ..._coletarPapeisColaborador("") };
+  const dadosUsuario = _coletarDadosUsuarioColaborador("novoColaborador");
+
+  if (!nome) {
+    alert("Informe o nome do colaborador.");
+    return;
+  }
+  if (!payload.is_motorista && !payload.is_entregador && !payload.is_ajudante && !payload.is_conferente && !payload.is_vendedor && !dadosUsuario.login) {
+    alert("Marque ao menos uma funcao ou informe os dados de acesso do colaborador.");
+    return;
+  }
+  payload.login = dadosUsuario.login;
+  if (dadosUsuario.senha) payload.senha = dadosUsuario.senha;
+  payload.sip_habilitado = dadosUsuario.sip_habilitado ? 1 : 0;
+  payload.sip_usuario = dadosUsuario.sip_usuario;
+  payload.sip_senha = dadosUsuario.sip_senha;
+  payload.sip_ramal = dadosUsuario.sip_ramal;
+  payload.codbar_modo = dadosUsuario.codbar_modo;
+
+  const resp = await apiFetch("/api/colaboradores", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok || data?.ok === false) {
+    alert(data?.erro || "Erro ao salvar colaborador.");
+    return;
   }
 
-  const lista = document.getElementById("listaUsuarios");
-  if (!lista) return;
+  if (nomeEl) nomeEl.value = "";
+  const emailEl = document.getElementById("novoColaboradorEmail");
+  const cpfEl = document.getElementById("novoColaboradorCpf");
+  const chkMotorista = document.getElementById("novoColaboradorMotorista");
+  const chkEntregador = document.getElementById("novoColaboradorEntregador");
+  const chkAjudante = document.getElementById("novoColaboradorAjudante");
+  const chkConferente = document.getElementById("novoColaboradorConferente");
+  const chkVendedor = document.getElementById("novoColaboradorVendedor");
+  if (emailEl) emailEl.value = "";
+  if (cpfEl) cpfEl.value = "";
+  if (chkMotorista) chkMotorista.checked = false;
+  if (chkEntregador) chkEntregador.checked = false;
+  if (chkAjudante) chkAjudante.checked = false;
+  if (chkConferente) chkConferente.checked = false;
+  if (chkVendedor) chkVendedor.checked = false;
 
-  const usuarios = cacheUsuarios || [];
-  lista.innerHTML = usuarios.length ? usuarios
-    .map((u) => {
-      const ramal = _escHtml(u.sip_ramal || u.sip_usuario || "pendente");
-      const permissaoExterna = u.sip_habilitado ? "externo liberado" : "interno apenas";
-      const codbar = (u.codbar_modo || "bip") === "camera" ? "camera/webcam" : "bip/leitor";
-      const sipLabel = ` | Ramal: ${ramal} | ${permissaoExterna} | CODBAR: ${_escHtml(codbar)}`;
-      return `
-        <li>
-          <span>${_escHtml(u.nome)} (${_escHtml(u.login)})${sipLabel}</span>
-          <div>
-            <button onclick="editarUsuarioCadastro(${u.id})">✏</button>
-            <button onclick="deletarUsuarioCadastro(${u.id})">❌</button>
-          </div>
-        </li>
-      `;
-    })
-    .join("") : cadastroEmptyItem("Nenhum usuario cadastrado.");
+  _limparFormularioNovoColaboradorUsuario();
+
+  cacheCadastros.colaboradores = null;
+  cacheCadastros.motoristas = null;  // manter compatibilidade
+  cacheUsuarios = null;  // limpar cache de usuários também
+  await renderCadastros();
+  await carregarSelectsNovoFrete();
+  await renderFretes().catch(() => {});
+}
+
+async function salvarColaboradorLinha(id) {
+  const nome = (document.getElementById(`colaboradorNome_${id}`)?.value || "").trim();
+  const payload = { nome, ..._coletarPapeisColaborador(`_${id}`) };
+  const dadosUsuario = _coletarDadosUsuarioColaborador("colaborador", `_${id}`);
+
+  if (!nome) {
+    alert("Informe o nome do colaborador.");
+    return;
+  }
+  if (!payload.is_motorista && !payload.is_entregador && !payload.is_ajudante && !payload.is_conferente && !payload.is_vendedor && !dadosUsuario.login) {
+    alert("Marque ao menos uma funcao ou informe os dados de acesso do colaborador.");
+    return;
+  }
+  payload.login = dadosUsuario.login;
+  if (dadosUsuario.senha) payload.senha = dadosUsuario.senha;
+  payload.sip_habilitado = dadosUsuario.sip_habilitado ? 1 : 0;
+  payload.sip_usuario = dadosUsuario.sip_usuario;
+  payload.sip_senha = dadosUsuario.sip_senha;
+  payload.sip_ramal = dadosUsuario.sip_ramal;
+  payload.codbar_modo = dadosUsuario.codbar_modo;
+
+  const resp = await apiFetch(`/api/colaboradores/${id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok || data?.ok === false) {
+    alert(data?.erro || "Erro ao atualizar colaborador.");
+    return;
+  }
+
+  cacheCadastros.colaboradores = null;
+  cacheCadastros.motoristas = null;  // manter compatibilidade
+  cacheUsuarios = null;
+  await renderCadastros();
+  await carregarSelectsNovoFrete();
+  await renderFretes().catch(() => {});
 }
 
 async function ensureCadastrosCache() {
+  if (!cacheCadastros.colaboradores) {
+    cacheCadastros.colaboradores = _ordenarListaNatural(await (await apiFetch("/api/colaboradores")).json());
+  }
   if (!cacheCadastros.motoristas) {
     cacheCadastros.motoristas = _ordenarListaNatural(await (await apiFetch("/api/motoristas")).json());
   }
@@ -650,18 +1350,77 @@ async function ensureCadastrosCache() {
   }
   if (!cacheCadastros.cargas) {
     cacheCadastros.cargas = _ordenarListaNatural(await (await apiFetch("/api/cargas")).json());
-  }  if (!cacheCadastros.conferentes) {
-    cacheCadastros.conferentes = _ordenarListaNatural(await (await apiFetch("/api/conferentes")).json());
   }
 }
 
-function optionsFrom(lista, selectedId) {
+function optionsFrom(lista, selectedId, options = {}) {
+  const { selectedFallbackItem = null, emptyLabel = "-" } = options;
   const sel = selectedId == null ? "" : String(selectedId);
-  return `<option value="">-</option>` + _ordenarListaNatural(lista)
+  let itens = _ordenarListaNatural(lista);
+  if (sel && selectedFallbackItem && !itens.some((item) => String(item.id) === sel)) {
+    itens = _ordenarListaNatural([...itens, selectedFallbackItem]);
+  }
+  return `<option value="">${_escHtml(emptyLabel)}</option>` + itens
     .map((i) => {
       const v = String(i.id);
       const s = v === sel ? "selected" : "";
-      return `<option value="${v}" ${s}>${i.nome}</option>`;
+      const label = i.optionLabel || i.nome;
+      return `<option value="${v}" ${s}>${_escHtml(label)}</option>`;
+    })
+    .join("");
+}
+
+function optionsFromColaboradores(funcao, selectedId) {
+  const selecionado = _buscarColaboradorCadastro(selectedId);
+  const labelFuncao = funcao === "motorista" ? "motorista" : "entregador";
+  const fallback = selecionado && !_colaboradorTemFuncao(selecionado, funcao)
+    ? { ...selecionado, optionLabel: `${selecionado.nome} (sem perfil de ${labelFuncao})` }
+    : selecionado;
+  return optionsFrom(_listaColaboradoresPorFuncao(funcao), selectedId, { selectedFallbackItem: fallback });
+}
+
+function _resolverEntregadorPadrao(motoristaId, entregadorId){
+  const motoristaNum = motoristaId ? Number(motoristaId) : null;
+  const entregadorNum = entregadorId ? Number(entregadorId) : null;
+  if (entregadorNum) return entregadorNum;
+  if (motoristaNum && _colaboradorTemFuncao(_buscarColaboradorCadastro(motoristaNum), "entregador")) {
+    return motoristaNum;
+  }
+  return null;
+}
+
+function _listaColaboradoresEscalaApoio() {
+  return _ordenarListaNatural((cacheCadastros.colaboradores || []).filter((item) => (
+    _colaboradorTemFuncao(item, "entregador") || _colaboradorTemFuncao(item, "ajudante")
+  )));
+}
+
+function optionsFromEscalaApoio(selectedId, motoristaId = null) {
+  const motorista = _buscarColaboradorCadastro(motoristaId);
+  const selecionado = _buscarColaboradorCadastro(selectedId);
+  const podeApoiar = selecionado && (
+    _colaboradorTemFuncao(selecionado, "entregador") || _colaboradorTemFuncao(selecionado, "ajudante")
+  );
+  const fallback = selecionado && !podeApoiar
+    ? { ...selecionado, optionLabel: `${selecionado.nome} (sem perfil de apoio)` }
+    : selecionado;
+  const emptyLabel = motorista && _colaboradorTemFuncao(motorista, "entregador")
+    ? "Vai sozinho / selecione apoio"
+    : "Selecione apoio";
+  return optionsFrom(_listaColaboradoresEscalaApoio(), selectedId, {
+    selectedFallbackItem: fallback,
+    emptyLabel,
+  });
+}
+
+async function preencherSelectColaboradores(selectId, funcao, textoPadrao, selectedId = "") {
+  await ensureCadastrosCache();
+  const select = document.getElementById(selectId);
+  if (!select) return;
+  select.innerHTML = `<option value="">${_escHtml(textoPadrao)}</option>` + _listaColaboradoresPorFuncao(funcao)
+    .map((item) => {
+      const selected = String(item.id) === String(selectedId || "") ? "selected" : "";
+      return `<option value="${item.id}" ${selected}>${_escHtml(item.nome)}</option>`;
     })
     .join("");
 }
@@ -681,15 +1440,29 @@ async function atualizarFreteCompleto(id, payload) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
+  const respClone = resp.clone();
   let data = {};
+  let rawText = "";
   try {
     data = await resp.json();
-  } catch {}
+  } catch {
+    try {
+      rawText = await respClone.text();
+    } catch {}
+  }
   if (!resp.ok || data?.ok === false) {
-    throw new Error(data?.erro || "Erro ao atualizar frete.");
+    const fallbackText = (rawText || "").toString().trim();
+    throw new Error(
+      data?.erro
+      || (fallbackText && !/^<!doctype html/i.test(fallbackText) ? fallbackText.slice(0, 300) : "")
+      || `Erro ao atualizar frete (HTTP ${resp.status || "?"}).`
+    );
   }
   if (data?.frete) _setFreteLocal(data.frete);
   await atualizarDash();
+  if (window.__cargasView === "escala") {
+    await renderEscala().catch(() => {});
+  }
   return data?.frete || null;
 }
 
@@ -831,6 +1604,8 @@ function _nfeModeLabel(modo){
 
 function _nfeImportSourceLabel(sourceType){
   const tipo = String(sourceType || "").toLowerCase();
+  if (tipo === "importar_xml") return "Importar XML / aguardando confirmacao";
+  if (tipo === "xml_fabrica") return "XML fabrica / transferencia";
   if (tipo === "pdf") return "PDF (contingencia)";
   if (tipo === "dfe") return "DF-e / XML oficial";
   if (tipo === "portal") return "Portal publico / HTML resumido";
@@ -1274,28 +2049,47 @@ async function atualizarDash() {
 // =====================================================
 // DASHBOARD SUBMENU + VIEWS
 // =====================================================
-function toggleDashboardSubmenu(ev){
-  // No desktop, hover resolve. No mobile, toca para abrir/fechar.
+function closeOpenSubmenus(exceptMenuItem = null){
+  document.querySelectorAll(".menu-item.has-submenu.open").forEach((item) => {
+    if (item !== exceptMenuItem) item.classList.remove("open");
+  });
+}
+
+function toggleExclusiveSubmenu(ev, onDesktopOpen){
   if (!ev) return;
   const isMobile = window.matchMedia && window.matchMedia("(max-width: 768px)").matches;
-  if (!isMobile) { openDashboardView(null,'resumo'); return; } // desktop: clique abre resumo
+  if (!isMobile) {
+    closeOpenSubmenus();
+    if (typeof onDesktopOpen === "function") onDesktopOpen();
+    return;
+  }
+
   ev.preventDefault();
   ev.stopPropagation();
   const mi = ev.currentTarget;
-  if (mi && mi.classList.contains("has-submenu")) {
-    mi.classList.toggle("open");
-  }
+  if (!mi || !mi.classList.contains("has-submenu")) return;
+
+  const shouldOpen = !mi.classList.contains("open");
+  closeOpenSubmenus(mi);
+  mi.classList.toggle("open", shouldOpen);
+}
+
+function toggleDashboardSubmenu(ev){
+  // No desktop, hover resolve. No mobile, toca para abrir/fechar.
+  toggleExclusiveSubmenu(ev, () => openDashboardView(null, "resumo"));
 }
 
 function openDashboardView(ev, view){
   if (ev){ ev.preventDefault(); ev.stopPropagation(); }
   // ativa tab dashboard
   const dashMenu = document.querySelector('.menu-item.has-submenu[data-tab="dashboard"]');
+  window.__dashboardSubmenuNavigation = true;
   showTab("dashboard", dashMenu);
 
   // marca submenu ativo
   document.querySelectorAll("#submenuDashboard .submenu-item").forEach(x=>x.classList.remove("active"));
-  const target = (view === "frota") ? 1 : 0;
+  const targetMap = { resumo: 0, frota: 1, estoque: 2, bonificacoes: 3, variacao_preco: 4, mix_embalagens: 5, grupos_embalagem: 5, vendas: 3 };
+  const target = targetMap[view] ?? 0;
   const items = document.querySelectorAll("#submenuDashboard .submenu-item");
   if (items && items[target]) items[target].classList.add("active");
 
@@ -1305,42 +2099,322 @@ function openDashboardView(ev, view){
   const isMobile = window.matchMedia && window.matchMedia("(max-width: 768px)").matches;
   if (isMobile && dashMenu) dashMenu.classList.remove("open");
   try{ toggleMenuMobile(false); }catch{}
+  window.__dashboardSubmenuNavigation = false;
 }
 
 function setDashboardView(view){
-  window.__dashView = view;
+  const raw = String(view || "resumo").toLowerCase();
+  const target = _dashboardVendasIsView(raw)
+    ? _dashboardVendasNormalizeView(raw === "vendas" ? (window.__dashVendasView || dashboardVendasPainelState.view || "bonificacoes") : raw)
+    : ["resumo", "frota", "estoque"].includes(raw) ? raw : "resumo";
+  const isVendasView = _dashboardVendasIsView(target);
+  window.__dashView = target;
   const vResumo = document.getElementById("dashViewResumo");
   const vFrota = document.getElementById("dashViewFrota");
-  if (vResumo) vResumo.classList.toggle("hidden", view === "frota");
-  if (vFrota) vFrota.classList.toggle("hidden", view !== "frota");
+  const vEstoque = document.getElementById("dashViewEstoque");
+  const vVendas = document.getElementById("dashViewVendas");
+  if (vResumo) vResumo.classList.toggle("hidden", target !== "resumo");
+  if (vFrota) vFrota.classList.toggle("hidden", target !== "frota");
+  if (vEstoque) vEstoque.classList.toggle("hidden", target !== "estoque");
+  if (vVendas) vVendas.classList.toggle("hidden", !isVendasView);
 
-  if (view === "frota") {
+  if (target === "frota") {
     renderDashboardFrota().catch(e=>console.warn("dash frota erro:", e));
+  } else if (target === "estoque") {
+    renderDashboardEstoque().catch(e=>console.warn("dash estoque erro:", e));
+  } else if (isVendasView) {
+    setDashboardVendasView(target);
+    recarregarDashboardVendaAtual().catch(e=>console.warn("dash vendas erro:", e));
   } else {
-    // mantém o dash principal
     atualizarDash().catch(()=>{});
   }
 }
 
-function toggleCadastrosSubmenu(ev){
-  if (!ev) return;
+function _dashboardVendasIsView(view){
+  return ["bonificacoes", "variacao_preco", "mix_embalagens", "grupos_embalagem", "vendas"].includes(String(view || "").toLowerCase());
+}
+
+function _dashboardVendasNormalizeView(view){
+  const valor = String(view || "bonificacoes").toLowerCase();
+  if (valor === "variacao_preco") return "variacao_preco";
+  if (valor === "mix_embalagens" || valor === "grupos_embalagem") return "mix_embalagens";
+  return "bonificacoes";
+}
+
+function setDashboardVendasView(view){
+  const target = _dashboardVendasNormalizeView(view);
+  dashboardVendasPainelState.view = target;
+  window.__dashVendasView = target;
+
+  const tituloEl = document.getElementById("dashVendasTitulo");
+  if (tituloEl) {
+    tituloEl.textContent = target === "variacao_preco"
+      ? "Dashboard - Variação de Preço"
+      : target === "mix_embalagens"
+      ? "Dashboard - Grupos Embalagem"
+      : "Dashboard - Bonificações";
+  }
+
+  const pBon = document.getElementById("dashVendasPanelBonificacoes");
+  const pVar = document.getElementById("dashVendasPanelVariacao");
+  const pMix = document.getElementById("dashVendasPanelMix");
+  if (pBon) pBon.classList.toggle("hidden", target !== "bonificacoes");
+  if (pVar) pVar.classList.toggle("hidden", target !== "variacao_preco");
+  if (pMix) pMix.classList.toggle("hidden", target !== "mix_embalagens");
+}
+
+function _dashboardVendasAtualizarInfo(payload = {}) {
+  const infoEl = document.getElementById("dashVendasArquivoInfo");
+  if (!infoEl) return;
+  const partes = [
+    `Arquivo: ${payload?.arquivo?.nome || "Base atual"}`,
+    `Atualizado em: ${payload?.arquivo?.atualizado_em || "-"}`,
+    `Mês: ${_vendasMesLabelTexto(payload?.mes_atual || payload?.filtros?.mes || "")}`,
+  ];
+  infoEl.textContent = partes.join(" | ");
+}
+
+function renderDashboardBonificacoes(payload = {}) {
+  dashboardVendasPainelState.payload = payload || {};
+  dashboardVendasPainelState.cacheId = _as_str(payload?.cache?.id);
+  _dashboardVendasAtualizarInfo(payload);
+  _dashboardVendasRenderBonificacoes(payload);
+}
+
+function renderDashboardVariacao(payload = {}) {
+  dashboardVendasPainelState.payload = payload || {};
+  dashboardVendasPainelState.cacheId = _as_str(payload?.cache?.id);
+  _dashboardVendasAtualizarInfo(payload);
+  _dashboardVendasRenderVariacao(payload);
+}
+
+function renderDashboardMixEmbalagens(payload = {}) {
+  dashboardVendasPainelState.payload = payload || {};
+  dashboardVendasPainelState.cacheId = _as_str(payload?.cache?.id);
+  _dashboardVendasAtualizarInfo(payload);
+  _dashboardVendasRenderMixEmbalagens(payload);
+}
+
+async function carregarDashboardBonificacoes(force = false) {
+  const infoEl = document.getElementById("dashVendasArquivoInfo");
+  if (infoEl) infoEl.textContent = "Carregando dashboard de bonificações...";
+  const resp = await apiFetch("/api/vendas/relatorio?tipo_relatorio=bonificacoes");
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    const erro = data?.erro || "Falha ao carregar dashboard de bonificações.";
+    if (infoEl) infoEl.textContent = erro;
+    if (resp.status !== 409) alert(erro);
+    return;
+  }
+  renderDashboardBonificacoes(data || {});
+}
+
+async function carregarDashboardVariacao(force = false) {
+  const infoEl = document.getElementById("dashVendasArquivoInfo");
+  if (infoEl) infoEl.textContent = "Carregando dashboard de variação de preço...";
+  const resp = await apiFetch("/api/vendas/relatorio?tipo_relatorio=variacao_preco");
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    const erro = data?.erro || "Falha ao carregar dashboard de variação de preço.";
+    if (infoEl) infoEl.textContent = erro;
+    if (resp.status !== 409) alert(erro);
+    return;
+  }
+  renderDashboardVariacao(data || {});
+}
+
+async function carregarDashboardMixEmbalagens(force = false) {
+  const infoEl = document.getElementById("dashVendasArquivoInfo");
+  if (infoEl) infoEl.textContent = "Carregando dashboard de grupos embalagem...";
+  const resp = await apiFetch("/api/vendas/relatorio?tipo_relatorio=grupos_embalagem");
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    const erro = data?.erro || "Falha ao carregar dashboard de grupos embalagem.";
+    if (infoEl) infoEl.textContent = erro;
+    if (resp.status !== 409) alert(erro);
+    return;
+  }
+  renderDashboardMixEmbalagens(data || {});
+}
+
+async function recarregarDashboardVendaAtual(force = false) {
+  const target = _dashboardVendasNormalizeView(window.__dashView || dashboardVendasPainelState.view || window.__dashVendasView || "bonificacoes");
+  setDashboardVendasView(target);
+  if (target === "variacao_preco") {
+    await carregarDashboardVariacao(force);
+    return;
+  }
+  if (target === "mix_embalagens") {
+    await carregarDashboardMixEmbalagens(force);
+    return;
+  }
+  await carregarDashboardBonificacoes(force);
+}
+
+function _dashboardVendasCelulaResumo(valorAtual = 0, valorAnterior = null) {
+  if (valorAnterior === null || valorAnterior === undefined) {
+    return "vendas-dashboard-cell vendas-dashboard-cell-neutral";
+  }
+  if (valorAtual > valorAnterior) return "vendas-dashboard-cell vendas-dashboard-cell-up";
+  if (valorAtual < valorAnterior) return "vendas-dashboard-cell vendas-dashboard-cell-down";
+  return "vendas-dashboard-cell vendas-dashboard-cell-equal";
+}
+
+function _dashboardVendasRenderLinhaTabela(valorAtual = 0, valorAnterior = null) {
+  const delta = valorAnterior === null || valorAnterior === undefined ? null : (valorAtual - valorAnterior);
+  const pct = valorAnterior && valorAnterior !== 0 ? (delta / Math.abs(valorAnterior)) * 100.0 : 0.0;
+  const classe = _dashboardVendasCelulaResumo(valorAtual, valorAnterior);
+  return `
+    <td class="${classe}">
+      <strong>${_escHtml(_fmtMoneyVendas(valorAtual))}</strong>
+      ${delta === null ? "" : `<span>${_escHtml(`${delta >= 0 ? "+" : ""}${_fmtNumVendas(pct, 1)}%`)}</span>`}
+    </td>
+  `;
+}
+
+function _dashboardVendasRenderBonificacoes(payload = {}) {
+  const resumo = payload?.resumo_geral || {};
+  const grupos = Array.isArray(payload?.resumo_grupos) ? payload.resumo_grupos : [];
+  const vendedores = Array.isArray(payload?.vendedores) ? payload.vendedores : [];
+  const cardsEl = document.getElementById("dashVendasBonifCards");
+  if (cardsEl) {
+    cardsEl.innerHTML = _renderCardsVendasResumo([
+      ["Mês", _vendasMesLabelTexto(payload?.mes_atual || "")],
+      ["Itens", _fmtNumVendas(resumo.itens)],
+      ["Vendedores", _fmtNumVendas(resumo.vendedores)],
+      ["PDV", _fmtNumVendas(resumo.clientes)],
+      ["Bonif.", _fmtMoneyVendas(resumo.bonificacao)],
+      ["% Bonif.", `${_fmtNumVendas(resumo.percentual_bonificacao || resumo.percentual || 0, 2)}%`],
+      ["Média %", `${_fmtNumVendas(resumo.media_percentual_bonificacao || 0, 2)}%`],
+      ["Líquido", _fmtMoneyVendas(resumo.valor_liquido)],
+    ]);
+  }
+  const gruposEl = document.getElementById("dashVendasBonifGrupos");
+  if (gruposEl) {
+    gruposEl.innerHTML = _vendasRenderGrupoBonificacoes(grupos);
+  }
+  const bodyEl = document.getElementById("dashVendasBonifBody");
+  if (bodyEl) {
+    bodyEl.innerHTML = vendedores.length ? vendedores.slice(0, 12).map((item) => `
+      <tr>
+        <td>${_escHtml(item.codigo || "-")}</td>
+        <td>${_escHtml(item.nome || item.vendedor || "-")}</td>
+        <td>${_escHtml(_fmtNumVendas(item.itens))}</td>
+        <td>${_escHtml(_fmtNumVendas(item.clientes))}</td>
+        <td>${_escHtml(_fmtNumVendas(item.notas))}</td>
+        <td>${_escHtml(_fmtMoneyVendas(item.bonificacao))}</td>
+        <td>${_escHtml(_fmtMoneyVendas(item.valor_liquido || item.total_valor_liquido || 0))}</td>
+        <td>${_escHtml(`${_fmtNumVendas(item.percentual_bonificacao || item.percentual || 0, 2)}%`)}</td>
+      </tr>
+    `).join("") : '<tr><td colspan="8">Nenhum dado de bonificações para o período.</td></tr>';
+  }
+}
+
+function _dashboardVendasRenderVariacao(payload = {}) {
+  const resumo = payload?.resumo_geral || {};
+  const grupos = Array.isArray(payload?.resumo_grupos) ? payload.resumo_grupos : [];
+  const variacoes = Array.isArray(payload?.variacoes) ? payload.variacoes : [];
+  const cardsEl = document.getElementById("dashVendasVarCards");
+  if (cardsEl) {
+    cardsEl.innerHTML = _vendasResumoVariacaoCards(resumo, payload);
+  }
+  const gruposEl = document.getElementById("dashVendasVarGrupos");
+  if (gruposEl) {
+    gruposEl.innerHTML = _vendasRenderGrupoVariacao(grupos);
+  }
+  const bodyEl = document.getElementById("dashVendasVarBody");
+  if (bodyEl) {
+    bodyEl.innerHTML = variacoes.length ? _vendasRenderVariacoesTabela(variacoes) : '<tr><td colspan="12">Nenhuma variação de preço encontrada para o período selecionado.</td></tr>';
+  }
+}
+
+function _dashboardVendasRenderMixEmbalagens(payload = {}) {
+  const resumo = payload?.resumo_geral || {};
+  const faixas = Array.isArray(payload?.resumo_faixas) ? payload.resumo_faixas : [];
+  const clientes = Array.isArray(payload?.clientes) ? payload.clientes : [];
+  const cardsEl = document.getElementById("dashVendasMixCards");
+  if (cardsEl) {
+    cardsEl.innerHTML = _renderCardsVendasResumo(_vendasResumoMixEmbalagensCards(resumo, payload));
+  }
+  const faixasBody = document.getElementById("dashVendasMixFaixasBody");
+  if (faixasBody) {
+    faixasBody.innerHTML = faixas.length ? faixas.map((item) => `
+      <tr>
+        <td>${_escHtml(item.faixa || "-")}</td>
+        <td>${_escHtml(_fmtNumVendas(item.pdvs))}</td>
+        <td>${_escHtml(`${_fmtNumVendas(item.percentual || 0, 2)}%`)}</td>
+      </tr>
+    `).join("") : '<tr><td colspan="3">Nenhum PDV encontrado no período.</td></tr>';
+  }
+  const bodyEl = document.getElementById("dashVendasMixBody");
+  if (bodyEl) {
+    bodyEl.innerHTML = clientes.length ? clientes.slice(0, 15).map((item) => `
+      <tr>
+        <td>${_escHtml(item.cliente || "-")}</td>
+        <td>${_escHtml(item.cidade || "-")}</td>
+        <td>${_escHtml(item.vendedor || item.vendedores_lista || "-")}</td>
+        <td>${_escHtml(_fmtNumVendas(item.qtd_grupos))}</td>
+        <td>${_escHtml(item.faixa_grupos || "-")}</td>
+        <td>${_escHtml(item.grupos_lista || "-")}</td>
+      </tr>
+    `).join("") : '<tr><td colspan="6">Nenhum PDV encontrado para o período.</td></tr>';
+  }
+}
+
+function toggleCargasSubmenu(ev){
+  toggleExclusiveSubmenu(ev, () => openCargasView(null, window.__cargasView || "cadastro"));
+}
+
+function openCargasView(ev, view){
+  if (ev){ ev.preventDefault(); ev.stopPropagation(); }
+  const menu = document.querySelector('.menu-item.has-submenu[data-tab="cargas"]');
+  window.__cargasView = view;
+  showTab("cargas", menu);
+
+  document.querySelectorAll("#submenuCargas .submenu-item").forEach((x) => x.classList.remove("active"));
+  const map = { cadastro: 0, escala: 1 };
+  const target = map[view] ?? 0;
+  const items = document.querySelectorAll("#submenuCargas .submenu-item");
+  if (items && items[target]) items[target].classList.add("active");
+
   const isMobile = window.matchMedia && window.matchMedia("(max-width: 768px)").matches;
-  if (!isMobile) { openCadastrosView(null, window.__cadastrosView || "motoristas"); return; }
-  ev.preventDefault();
-  ev.stopPropagation();
-  const mi = ev.currentTarget;
-  if (mi && mi.classList.contains("has-submenu")) mi.classList.toggle("open");
+  if (isMobile && menu) menu.classList.remove("open");
+  try{ toggleMenuMobile(false); }catch{}
+}
+
+function setCargasView(view){
+  window.__cargasView = view;
+  const views = {
+    cadastro: document.getElementById("cargasViewCadastro"),
+    escala: document.getElementById("cargasViewEscala"),
+  };
+  Object.entries(views).forEach(([key, el]) => {
+    if (el) el.classList.toggle("hidden", key !== view);
+  });
+  document.querySelectorAll("#submenuCargas .submenu-item").forEach((item) => item.classList.remove("active"));
+  const map = { cadastro: 0, escala: 1 };
+  const items = document.querySelectorAll("#submenuCargas .submenu-item");
+  const target = map[view] ?? 0;
+  if (items && items[target]) items[target].classList.add("active");
+  if (view === "escala") {
+    renderEscala().catch((e) => console.warn("escala erro:", e));
+  }
+}
+
+function toggleCadastrosSubmenu(ev){
+  toggleExclusiveSubmenu(ev, () => openCadastrosView(null, window.__cadastrosView || "colaboradores"));
 }
 
 function openCadastrosView(ev, view){
   if (ev){ ev.preventDefault(); ev.stopPropagation(); }
   const menu = document.querySelector('.menu-item.has-submenu[data-tab="cadastros"]');
-  window.__cadastrosView = view;
+  const normalizedView = view === "motoristas" || view === "conferentes" || view === "usuarios" ? "colaboradores" : view;
+  window.__cadastrosView = normalizedView;
   showTab("cadastros", menu);
 
   document.querySelectorAll("#submenuCadastros .submenu-item").forEach((x) => x.classList.remove("active"));
-  const map = { motoristas: 0, conferentes: 1, veiculos: 2, usuarios: 3, comissao: 4 };
-  const target = map[view] ?? 0;
+  const map = { colaboradores: 0, veiculos: 1, comissao: 2 };
+  const target = map[normalizedView] ?? 0;
   const items = document.querySelectorAll("#submenuCadastros .submenu-item");
   if (items && items[target]) items[target].classList.add("active");
 
@@ -1350,35 +2424,28 @@ function openCadastrosView(ev, view){
 }
 
 function setCadastrosView(view){
-  window.__cadastrosView = view;
+  const normalizedView = view === "motoristas" || view === "conferentes" || view === "usuarios" ? "colaboradores" : view;
+  window.__cadastrosView = normalizedView;
   const views = {
-    motoristas: document.getElementById("cadastrosViewMotoristas"),
-    conferentes: document.getElementById("cadastrosViewConferentes"),
+    colaboradores: document.getElementById("cadastrosViewMotoristas"),
     veiculos: document.getElementById("cadastrosViewVeiculos"),
-    usuarios: document.getElementById("cadastrosViewUsuarios"),
     comissao: document.getElementById("cadastrosViewComissao"),
   };
   Object.entries(views).forEach(([key, el]) => {
-    if (el) el.classList.toggle("hidden", key !== view);
+    if (el) el.classList.toggle("hidden", key !== normalizedView);
   });
   document.querySelectorAll("#submenuCadastros .submenu-item").forEach((item) => item.classList.remove("active"));
-  const map = { motoristas: 0, conferentes: 1, veiculos: 2, usuarios: 3, comissao: 4 };
+  const map = { colaboradores: 0, veiculos: 1, comissao: 2 };
   const items = document.querySelectorAll("#submenuCadastros .submenu-item");
-  const target = map[view] ?? 0;
+  const target = map[normalizedView] ?? 0;
   if (items && items[target]) items[target].classList.add("active");
-  if (view === "comissao") {
+  if (normalizedView === "comissao") {
     carregarComissaoCadastros().catch(() => {});
   }
 }
 
 function toggleGestaoFrotaSubmenu(ev){
-  if (!ev) return;
-  const isMobile = window.matchMedia && window.matchMedia("(max-width: 768px)").matches;
-  if (!isMobile) { openGestaoFrotaView(null, "registrar"); return; }
-  ev.preventDefault();
-  ev.stopPropagation();
-  const mi = ev.currentTarget;
-  if (mi && mi.classList.contains("has-submenu")) mi.classList.toggle("open");
+  toggleExclusiveSubmenu(ev, () => openGestaoFrotaView(null, "registrar"));
 }
 
 function openGestaoFrotaView(ev, view){
@@ -1415,6 +2482,38 @@ function setGestaoFrotaView(view){
   carregarFrotaResumo().catch(()=>{});
 }
 
+function openGestaoFrotaCargas(ev){
+  if (ev){ ev.preventDefault(); ev.stopPropagation(); }
+  const menu = document.querySelector('.menu-item.has-submenu[data-tab="gestaofrota"]');
+  showTab("cargas", menu);
+  setCargasView("cadastro");
+
+  document.querySelectorAll("#submenuGestaoFrota .submenu-item").forEach((item) => item.classList.remove("active"));
+  const items = document.querySelectorAll("#submenuGestaoFrota .submenu-item");
+  const target = 3;
+  if (items && items[target]) items[target].classList.add("active");
+
+  const isMobile = window.matchMedia && window.matchMedia("(max-width: 768px)").matches;
+  if (isMobile && menu) menu.classList.remove("open");
+  try{ toggleMenuMobile(false); }catch{}
+}
+
+function openGestaoFrotaEscala(ev){
+  if (ev){ ev.preventDefault(); ev.stopPropagation(); }
+  const menu = document.querySelector('.menu-item.has-submenu[data-tab="gestaofrota"]');
+  showTab("cargas", menu);
+  setCargasView("escala");
+
+  document.querySelectorAll("#submenuGestaoFrota .submenu-item").forEach((item) => item.classList.remove("active"));
+  const items = document.querySelectorAll("#submenuGestaoFrota .submenu-item");
+  const target = 4;
+  if (items && items[target]) items[target].classList.add("active");
+
+  const isMobile = window.matchMedia && window.matchMedia("(max-width: 768px)").matches;
+  if (isMobile && menu) menu.classList.remove("open");
+  try{ toggleMenuMobile(false); }catch{}
+}
+
 function openGestaoRegistroView(view){
   setGestaoRegistroView(view);
 }
@@ -1438,16 +2537,13 @@ function setGestaoRegistroView(view){
   });
 
   carregarFrotaResumo().catch(()=>{});
+  if (view === "manutencao") {
+    carregarPreLancamentosManutencaoXml().catch(()=>{});
+  }
 }
 
 function toggleComissaoSubmenu(ev){
-  if (!ev) return;
-  const isMobile = window.matchMedia && window.matchMedia("(max-width: 768px)").matches;
-  if (!isMobile) { openComissaoView(null, "lancamento"); return; }
-  ev.preventDefault();
-  ev.stopPropagation();
-  const mi = ev.currentTarget;
-  if (mi && mi.classList.contains("has-submenu")) mi.classList.toggle("open");
+  toggleExclusiveSubmenu(ev, () => openComissaoView(null, "lancamento"));
 }
 
 function openComissaoView(ev, view){
@@ -1478,24 +2574,27 @@ function setComissaoView(view){
 }
 
 function toggleVendasSubmenu(ev){
-  if (!ev) return;
-  const isMobile = window.matchMedia && window.matchMedia("(max-width: 768px)").matches;
-  if (!isMobile) { openVendasView(null, "relatorio"); return; }
-  ev.preventDefault();
-  ev.stopPropagation();
-  const mi = ev.currentTarget;
-  if (mi && mi.classList.contains("has-submenu")) mi.classList.toggle("open");
+  toggleExclusiveSubmenu(ev, () => openVendasView(null, window.__vendasView || "relatorio"));
 }
 
 function openVendasView(ev, view){
   if (ev){ ev.preventDefault(); ev.stopPropagation(); }
   const menu = document.querySelector('.menu-item.has-submenu[data-tab="vendas"]');
-  window.__vendasView = "relatorio";
-  showTab("vendas", menu);
-
   document.querySelectorAll("#submenuVendas .submenu-item").forEach((x) => x.classList.remove("active"));
   const items = document.querySelectorAll("#submenuVendas .submenu-item");
-  if (items && items[0]) items[0].classList.add("active");
+  const targetView = (view === "pontosvenda" ? "pontosvenda" : "relatorio");
+  const itemAtivo = document.querySelector(`#submenuVendas .submenu-item[data-vendas-view="${targetView}"]`);
+
+  if (targetView === "pontosvenda") {
+    window.__pontosVendaView = "cadastro";
+    showTab("pontosvenda", menu);
+    if (itemAtivo) itemAtivo.classList.add("active");
+  } else {
+    window.__vendasView = "relatorio";
+    showTab("vendas", menu);
+    if (itemAtivo) itemAtivo.classList.add("active");
+    setVendasView("relatorio");
+  }
 
   const isMobile = window.matchMedia && window.matchMedia("(max-width: 768px)").matches;
   if (isMobile && menu) menu.classList.remove("open");
@@ -1503,13 +2602,172 @@ function openVendasView(ev, view){
 }
 
 function setVendasView(view){
-  window.__vendasView = "relatorio";
-  vendasState.view = "relatorio";
+  const target = String(view || "relatorio").toLowerCase() === "pontosvenda" ? "pontosvenda" : "relatorio";
+  window.__vendasView = target;
+  vendasState.view = target;
   const rel = document.getElementById("vendasViewRelatorio");
-  if (rel) rel.classList.toggle("hidden", false);
-  carregarRelatorioVendas().catch((err) => {
-    console.warn("relatorio vendas erro:", err);
-  });
+  if (rel) rel.classList.toggle("hidden", target !== "relatorio");
+  if (target === "relatorio") {
+    setVendasRelatorioModo(window.__vendasRelatorioModo || "bonificacoes");
+  }
+}
+
+function openVendasComissao(ev){
+  if (ev){ ev.preventDefault(); ev.stopPropagation(); }
+  const menu = document.querySelector('.menu-item.has-submenu[data-tab="vendas"]');
+  showTab("comissao", menu);
+
+  document.querySelectorAll("#submenuVendas .submenu-item").forEach((item) => item.classList.remove("active"));
+  const items = document.querySelectorAll("#submenuVendas .submenu-item");
+  const target = 2;
+  if (items && items[target]) items[target].classList.add("active");
+
+  const isMobile = window.matchMedia && window.matchMedia("(max-width: 768px)").matches;
+  if (isMobile && menu) menu.classList.remove("open");
+  try{ toggleMenuMobile(false); }catch{}
+}
+
+function _vendasDashboardCelulaClassificacao(valorAtual = 0, valorAnterior = null) {
+  if (valorAnterior === null || valorAnterior === undefined) {
+    return "vendas-dashboard-cell vendas-dashboard-cell-neutral";
+  }
+  if (valorAtual > valorAnterior) return "vendas-dashboard-cell vendas-dashboard-cell-up";
+  if (valorAtual < valorAnterior) return "vendas-dashboard-cell vendas-dashboard-cell-down";
+  return "vendas-dashboard-cell vendas-dashboard-cell-equal";
+}
+
+function renderDashboardVendas(payload = {}) {
+  window.__vendasDashboardLastPayload = payload;
+  const meses = Array.isArray(payload?.meses_disponiveis) ? payload.meses_disponiveis : [];
+  const vendedores = Array.isArray(payload?.vendedores) ? payload.vendedores : [];
+  const resumo = payload?.resumo_geral || {};
+  const mesAtual = payload?.mes_atual || (meses.length ? meses[meses.length - 1] : "");
+  const mesAnterior = payload?.mes_anterior || (meses.length > 1 ? meses[meses.length - 2] : "");
+  const arquivo = payload?.arquivo || {};
+
+  const infoEl = document.getElementById("vendasDashArquivoInfo");
+  if (infoEl) {
+    const parts = [
+      `Arquivo: ${arquivo.nome || "Base atual"}`,
+      `Mês atual: ${_vendasMesLabelTexto(mesAtual)}`,
+    ];
+    if (mesAnterior) parts.push(`Mês anterior: ${_vendasMesLabelTexto(mesAnterior)}`);
+    infoEl.textContent = parts.join(" | ");
+  }
+
+  const cardsEl = document.getElementById("vendasDashResumoCards");
+  if (cardsEl) {
+    cardsEl.innerHTML = _renderCardsVendasResumo([
+      ["Mês atual", _vendasMesLabelTexto(mesAtual)],
+      ["Vendedores", _fmtNumVendas(resumo.vendedores)],
+      ["Valor atual", _fmtMoneyVendas(resumo.valor_atual)],
+      ["Valor anterior", _fmtMoneyVendas(resumo.valor_anterior)],
+      ["Diferença", _fmtMoneyVendas(resumo.variacao_valor)],
+      ["Dif. %", `${_fmtNumVendas(resumo.variacao_percentual || 0, 2)}%`],
+      ["Cresceu", _fmtNumVendas(resumo.cresceu)],
+      ["Caiu", _fmtNumVendas(resumo.caiu)],
+      ["Estável", _fmtNumVendas(resumo.estavel)],
+      ["Meses", _fmtNumVendas(meses.length)],
+    ]);
+  }
+
+  const headEl = document.getElementById("vendasDashHead");
+  if (headEl) {
+    const monthHeaders = meses.map((mes) => `<th>${_escHtml(_vendasMesLabelTexto(mes))}</th>`).join("");
+    headEl.innerHTML = `
+      <tr>
+        <th>Vendedor</th>
+        <th>Cod</th>
+        <th>Total</th>
+        <th>Último</th>
+        <th>Δ</th>
+        <th>Δ%</th>
+        ${monthHeaders}
+      </tr>
+    `;
+  }
+
+  const bodyEl = document.getElementById("vendasDashBody");
+  if (bodyEl) {
+    bodyEl.innerHTML = vendedores.length ? vendedores.map((item) => {
+      const serie = item?.meses || {};
+      let anterior = null;
+      const mesesHtml = meses.map((mes) => {
+        const valorAtual = _asFloat(serie?.[mes]?.valor_liquido, 0.0);
+        const valorAnterior = anterior;
+        const delta = valorAnterior === null ? 0.0 : valorAtual - valorAnterior;
+        const deltaPct = valorAnterior && valorAnterior !== 0 ? (delta / Math.abs(valorAnterior)) * 100.0 : 0.0;
+        const classe = _vendasDashboardCelulaClassificacao(valorAtual, valorAnterior);
+        anterior = valorAtual;
+        return `
+          <td class="${classe}" title="${_escHtml(_vendasMesLabelTexto(mes))}">
+            <strong>${_escHtml(_fmtMoneyVendas(valorAtual))}</strong>
+            ${valorAnterior !== null ? `<span>${_escHtml(`${delta >= 0 ? "+" : ""}${_fmtNumVendas(deltaPct, 1)}%`)}</span>` : ""}
+          </td>
+        `;
+      }).join("");
+      const total = _asFloat(item?.total_valor_liquido, 0.0);
+      const ultimo = _asFloat(item?.ultimo_valor_liquido, 0.0);
+      const delta = _asFloat(item?.delta_ultimo_mes, 0.0);
+      const deltaPct = _asFloat(item?.delta_percentual_ultimo_mes, 0.0);
+      const classeResumo = delta > 0 ? "vendas-dashboard-chip vendas-dashboard-chip-up" : (delta < 0 ? "vendas-dashboard-chip vendas-dashboard-chip-down" : "vendas-dashboard-chip vendas-dashboard-chip-equal");
+      return `
+        <tr>
+          <td>${_escHtml(item.nome || "-")}</td>
+          <td>${_escHtml(item.codigo || "-")}</td>
+          <td>${_escHtml(_fmtMoneyVendas(total))}</td>
+          <td>${_escHtml(_fmtMoneyVendas(ultimo))}</td>
+          <td><span class="${classeResumo}">${_escHtml(_fmtMoneyVendas(delta))}</span></td>
+          <td><span class="${classeResumo}">${_escHtml(`${delta >= 0 ? "+" : ""}${_fmtNumVendas(deltaPct, 2)}%`)}</span></td>
+          ${mesesHtml}
+        </tr>
+      `;
+    }).join("") : `<tr><td colspan="${6 + meses.length}">Nenhum dado de evolução encontrado para o período selecionado.</td></tr>`;
+  }
+}
+
+async function carregarDashboardVendas() {
+  const infoEl = document.getElementById("vendasDashArquivoInfo");
+  if (infoEl) infoEl.textContent = "Carregando dashboard de vendas...";
+  const resp = await apiFetch("/api/vendas/dashboard");
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    const erro = data?.erro || "Falha ao carregar dashboard de vendas.";
+    if (infoEl) infoEl.textContent = erro;
+    alert(erro);
+    return;
+  }
+  renderDashboardVendas(data || {});
+}
+
+function openPontosVendaView(ev, view){
+  if (ev){ ev.preventDefault(); ev.stopPropagation(); }
+  const menu = document.querySelector('.menu-item.has-submenu[data-tab="vendas"]');
+  window.__pontosVendaView = view;
+  showTab("pontosvenda", menu);
+
+  document.querySelectorAll("#submenuVendas .submenu-item").forEach((x) => x.classList.remove("active"));
+  const items = document.querySelectorAll("#submenuVendas .submenu-item");
+  if (items && items[2]) items[2].classList.add("active");
+
+  const isMobile = window.matchMedia && window.matchMedia("(max-width: 768px)").matches;
+  if (isMobile && menu) menu.classList.remove("open");
+  try { toggleMenuMobile(false); } catch {}
+}
+
+function setPontosVendaView(view){
+  window.__pontosVendaView = view;
+  pontosVendaState.view = view;
+  const vCadastro = document.getElementById("pontosVendaViewCadastro");
+  const vRelatorio = document.getElementById("pontosVendaViewRelatorio");
+  if (vCadastro) vCadastro.classList.toggle("hidden", view !== "cadastro");
+  if (vRelatorio) vRelatorio.classList.toggle("hidden", view !== "relatorio");
+  if (view === "relatorio") {
+    const dataRef = document.getElementById("pontosVendaDataRef");
+    if (dataRef && !dataRef.value) dataRef.value = _dataHojeInputLocal();
+  }
+  if (view === "cadastro") carregarPontosVenda().catch(() => {});
+  if (view === "relatorio") carregarPontosVendaRelatorio().catch(() => {});
 }
 
 function _fmtMoneyVendas(value){
@@ -1532,38 +2790,567 @@ function _resumoCardVendas(label, value){
   `;
 }
 
+function _renderCardsVendasResumo(items){
+  return items.map(([label, value]) => _resumoCardVendas(label, value)).join("");
+}
+
+const _VENDAS_RELATORIO_ESPECIAL_TIPOS = new Set([
+  "volume_diario_resumo",
+  "volume_diario_vendedor",
+  "percentual_vendas_anual",
+  "percentual_vendas_grupo_anual",
+]);
+
+function _vendasRelatorioEhEspecial(tipoRelatorio){
+  return _VENDAS_RELATORIO_ESPECIAL_TIPOS.has(String(tipoRelatorio || ""));
+}
+
+function _vendasTabelaVazia(colspan, mensagem){
+  return `<tr><td colspan="${_escHtml(colspan)}">${_escHtml(mensagem)}</td></tr>`;
+}
+
+function _vendasBoxTabelaHtml({ titulo, hint = "", maxHeight = "360px", thead = "", tbody = "", colspan = 1 } = {}) {
+  return `
+    <div class="boxFrota">
+      <h3>${_escHtml(titulo || "-")}</h3>
+      ${hint ? `<div class="hint">${_escHtml(hint)}</div>` : ""}
+      <div style="overflow:auto; max-height:${_escHtml(maxHeight)};">
+        <table>
+          <thead>${thead}</thead>
+          <tbody>${tbody || _vendasTabelaVazia(colspan, "Nenhum dado encontrado.")}</tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+function _vendasBoxesEmGrupos(boxes = []){
+  const itens = Array.isArray(boxes) ? boxes.filter(Boolean) : [];
+  if (!itens.length) return "";
+  const grupos = [];
+  for (let i = 0; i < itens.length; i += 2) {
+    grupos.push(`<div class="frotaGrid">${itens.slice(i, i + 2).join("")}</div>`);
+  }
+  return grupos.join("");
+}
+
+function _vendasResumoCardsParaTipo(tipoRelatorio, resumo = {}, payload = {}){
+  if (tipoRelatorio === "volume_diario_resumo") {
+    return [
+      ["Dias", _fmtNumVendas(resumo.dias)],
+      ["Itens", _fmtNumVendas(resumo.itens)],
+      ["Notas", _fmtNumVendas(resumo.notas)],
+      ["Clientes", _fmtNumVendas(resumo.clientes)],
+      ["Vendedores", _fmtNumVendas(resumo.vendedores)],
+      ["Hectolitros", _fmtNumVendas(resumo.hectolitros, 3)],
+      ["Venda", _fmtMoneyVendas(resumo.valor_venda)],
+      ["Devolvido", _fmtMoneyVendas(resumo.valor_devolvido)],
+      ["Bonificação", _fmtMoneyVendas(resumo.bonificacao)],
+      ["Líquido", _fmtMoneyVendas(resumo.valor_liquido)],
+    ];
+  }
+
+  if (tipoRelatorio === "volume_diario_vendedor") {
+    return [
+      ["Dias", _fmtNumVendas(resumo.dias)],
+      ["Vendedores", _fmtNumVendas(resumo.vendedores)],
+      ["Itens", _fmtNumVendas(resumo.itens)],
+      ["Clientes", _fmtNumVendas(resumo.clientes)],
+      ["Notas", _fmtNumVendas(resumo.notas)],
+      ["Hectolitros", _fmtNumVendas(resumo.hectolitros, 3)],
+    ];
+  }
+
+  if (tipoRelatorio === "percentual_vendas_anual") {
+    return [
+      ["Ano atual", _fmtNumVendas(resumo.total_atual, 3)],
+      ["Ano anterior", _fmtNumVendas(resumo.total_anterior, 3)],
+      ["Variação", `${_fmtNumVendas(resumo.variacao_total, 2)}%`],
+      ["Meses", _fmtNumVendas(Array.isArray(payload?.meses) ? payload.meses.length : 0)],
+    ];
+  }
+
+  if (tipoRelatorio === "percentual_vendas_grupo_anual") {
+    const primeiro = Array.isArray(payload?.blocos) && payload.blocos.length ? (payload.blocos[0]?.dados?.resumo || {}) : {};
+    return [
+      ["Blocos", _fmtNumVendas(Array.isArray(payload?.blocos) ? payload.blocos.length : 0)],
+      ["Ano atual", _fmtNumVendas(primeiro.total_atual, 3)],
+      ["Ano anterior", _fmtNumVendas(primeiro.total_anterior, 3)],
+      ["Variação", `${_fmtNumVendas(primeiro.variacao_total, 2)}%`],
+    ];
+  }
+
+  return [];
+}
+
+function _vendasTabelaComparativoAnualHtml(dados = {}, titulo = "", hint = "") {
+  const meses = Array.isArray(dados?.meses) ? dados.meses : [];
+  const linhas = Array.isArray(dados?.linhas) ? dados.linhas : [];
+  if (!meses.length) {
+    return _vendasBoxTabelaHtml({
+      titulo,
+      hint,
+      thead: "<tr><th>Ano</th></tr>",
+      tbody: _vendasTabelaVazia(1, "Nenhum dado encontrado."),
+      colspan: 1,
+    });
+  }
+  const colunas = meses.map((mes) => `<th>${_escHtml(mes?.label || "-")}</th>`).join("");
+  const linhasHtml = linhas.map((linha) => {
+    const valores = Array.isArray(linha?.valores) ? linha.valores : [];
+    const rotulo = _as_str(linha?.rotulo || "-");
+    const total = rotulo === "%"
+      ? `${_fmtNumVendas(linha?.total, 2)}%`
+      : _fmtNumVendas(linha?.total, 3);
+    return `
+      <tr${rotulo === "%" ? ' style="font-weight:700;"' : ""}>
+        <td>${_escHtml(rotulo)}</td>
+        ${valores.map((valor) => `<td>${_escHtml(rotulo === "%" ? `${_fmtNumVendas(valor, 2)}%` : _fmtNumVendas(valor, 3))}</td>`).join("")}
+        <td>${_escHtml(total)}</td>
+      </tr>
+    `;
+  }).join("");
+  return _vendasBoxTabelaHtml({
+    titulo,
+    hint,
+    maxHeight: "320px",
+    thead: `<tr><th>Ano</th>${colunas}<th>Total</th></tr>`,
+    tbody: linhasHtml,
+    colspan: meses.length + 2,
+  });
+}
+
+function _vendasRenderRelatorioEspecial(tipoRelatorio, payload = {}) {
+  const resumo = payload?.resumo_geral || {};
+  if (tipoRelatorio === "volume_diario_resumo") {
+    const dias = Array.isArray(payload?.dias) ? payload.dias : [];
+    const tbody = dias.length ? dias.map((item) => `
+      <tr>
+        <td>${_escHtml(item.data || "-")}</td>
+        <td>${_escHtml(item.dia_semana || "-")}</td>
+        <td>${_escHtml(_fmtNumVendas(item.itens))}</td>
+        <td>${_escHtml(_fmtNumVendas(item.notas))}</td>
+        <td>${_escHtml(_fmtNumVendas(item.clientes))}</td>
+        <td>${_escHtml(_fmtNumVendas(item.vendedores))}</td>
+        <td>${_escHtml(_fmtNumVendas(item.hectolitros, 3))}</td>
+        <td>${_escHtml(_fmtMoneyVendas(item.valor_venda))}</td>
+        <td>${_escHtml(_fmtMoneyVendas(item.valor_devolvido))}</td>
+        <td>${_escHtml(_fmtMoneyVendas(item.bonificacao))}</td>
+        <td>${_escHtml(_fmtMoneyVendas(item.valor_liquido))}</td>
+      </tr>
+    `).join("") : _vendasTabelaVazia(11, "Nenhum dado encontrado para o intervalo selecionado.");
+    return _vendasBoxTabelaHtml({
+      titulo: "Resumo de volume diário",
+      hint: "Os volumes são exibidos em hectolitros e a bonificação não entra na base.",
+      maxHeight: "420px",
+      thead: `
+        <tr>
+          <th>Data</th>
+          <th>Dia</th>
+          <th>Itens</th>
+          <th>Notas</th>
+          <th>Clientes</th>
+          <th>Vendedores</th>
+          <th>HL</th>
+          <th>Venda</th>
+          <th>Devolvido</th>
+          <th>Bonificação</th>
+          <th>Líquido</th>
+        </tr>
+      `,
+      tbody,
+      colspan: 11,
+    });
+  }
+
+  if (tipoRelatorio === "volume_diario_vendedor") {
+    const dias = Array.isArray(payload?.dias) ? payload.dias : [];
+    const vendedores = Array.isArray(payload?.vendedores) ? payload.vendedores : [];
+    const colunasDias = dias.map((dia) => `<th>${_escHtml(dia?.label || dia?.data || "-")}</th>`).join("");
+    const tbody = vendedores.length ? vendedores.map((item) => `
+      <tr>
+        <td>${_escHtml(item.codigo || "-")}</td>
+        <td>${_escHtml(item.nome || "-")}</td>
+        <td>${_escHtml(_fmtNumVendas(item.itens))}</td>
+        <td>${_escHtml(_fmtNumVendas(item.notas))}</td>
+        <td>${_escHtml(_fmtNumVendas(item.clientes))}</td>
+        ${(Array.isArray(item.valores) ? item.valores : []).map((valor) => `<td>${_escHtml(_fmtNumVendas(valor, 3))}</td>`).join("")}
+        <td>${_escHtml(_fmtNumVendas(item.total, 3))}</td>
+      </tr>
+    `).join("") : _vendasTabelaVazia(dias.length + 6, "Nenhum vendedor encontrado para o intervalo selecionado.");
+    return _vendasBoxTabelaHtml({
+      titulo: "Volume diário por vendedor",
+      hint: "Cada coluna de data mostra o volume em hectolitros para aquele vendedor.",
+      maxHeight: "420px",
+      thead: `<tr><th>Cod</th><th>Vendedor</th><th>Itens</th><th>Notas</th><th>Clientes</th>${colunasDias}<th>Total</th></tr>`,
+      tbody,
+      colspan: dias.length + 6,
+    });
+  }
+
+  if (tipoRelatorio === "percentual_vendas_anual") {
+    return _vendasTabelaComparativoAnualHtml(
+      payload,
+      "Percentual de vendas anual",
+      "Comparativo entre o ano atual e o anterior, em hectolitros.",
+    );
+  }
+
+  if (tipoRelatorio === "percentual_vendas_grupo_anual") {
+    const blocos = Array.isArray(payload?.blocos) ? payload.blocos : [];
+    const boxes = blocos.map((bloco) => _vendasTabelaComparativoAnualHtml(
+      bloco?.dados || {},
+      bloco?.titulo || "-",
+      "Comparativo anual em hectolitros.",
+    ));
+    return _vendasBoxesEmGrupos(boxes);
+  }
+
+  return "";
+}
+
+function _vendasPainelMensalHtml(painel = {}) {
+  const meses = Array.isArray(painel?.meses) ? painel.meses : [];
+  const linhas = Array.isArray(painel?.linhas) ? painel.linhas : [];
+  const total = painel?.total || {};
+  if (!meses.length) return "";
+
+  const colunasMes = meses.map((mes) => `<th>${_escHtml(mes?.label || "-")}</th>`).join("");
+
+  const rowsHtml = linhas.map((item) => {
+    const valores = Array.isArray(item?.valores) ? item.valores : [];
+    return `
+      <tr style="${item?.nome === "Total" ? "background:#fff3c4;font-weight:700;" : ""}">
+        <td>${_escHtml(item?.nome || item?.rotulo || "-")}${item?.codigo ? ` <small style="display:block; opacity:.75;">${_escHtml(item.codigo)}</small>` : ""}</td>
+        <td>${_escHtml(Number(item?.tendencia || 0) > 0 ? `+${_fmtNumVendas(Number(item.tendencia || 0), 1)}%` : `${_fmtNumVendas(Number(item?.tendencia || 0), 1)}%`)}</td>
+        ${valores.map((valor) => `<td>${_escHtml(_fmtNumVendas(Number(valor || 0), 0))}</td>`).join("")}
+        <td>${_escHtml(_fmtNumVendas(Number(item?.total || 0), 0))}</td>
+      </tr>
+    `;
+  }).join("");
+
+  const totalHtml = `
+    <tr style="background:#fff3c4;font-weight:700;">
+      <td>${_escHtml(total?.nome || "Total")}</td>
+      <td>${_escHtml(Number(total?.tendencia || 0) > 0 ? `+${_fmtNumVendas(Number(total.tendencia || 0), 1)}%` : `${_fmtNumVendas(Number(total?.tendencia || 0), 1)}%`)}</td>
+      ${(Array.isArray(total?.valores) ? total.valores : []).map((valor) => `<td>${_escHtml(_fmtNumVendas(Number(valor || 0), 0))}</td>`).join("")}
+      <td>${_escHtml(_fmtNumVendas(Number(total?.total || 0), 0))}</td>
+    </tr>
+  `;
+
+  return `
+    <div class="boxFrota">
+      <h3>${_escHtml(painel?.titulo || "VOLUME EM HL 12 ULTIMOS MESES")}</h3>
+      <div class="hint">Referência: ${_escHtml(painel?.referencia || "-")}</div>
+      <div style="overflow:auto; max-height:360px;">
+        <table>
+          <thead>
+            <tr>
+              <th>Vendedor</th>
+              <th>Tend.</th>
+              ${colunasMes}
+              <th>Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rowsHtml}
+            ${totalHtml}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+function _vendasSetVisibilidadeRelatorio(tipoRelatorio){
+  const resumoView = document.getElementById("vendasRelResumoView");
+  const embalagensView = document.getElementById("vendasRelEmbalagensView");
+  const variacaoView = document.getElementById("vendasRelVariacaoVendaView");
+  const consolidadoView = document.getElementById("vendasRelConsolidadoVendaView");
+  const bonificacaoView = document.getElementById("vendasRelBonificacaoView");
+  const especialView = document.getElementById("vendasRelEspecialView");
+  const especial = _vendasRelatorioEhEspecial(tipoRelatorio);
+  if (resumoView) resumoView.classList.toggle("hidden", tipoRelatorio !== "resumo");
+  if (embalagensView) embalagensView.classList.toggle("hidden", tipoRelatorio !== "embalagens");
+  if (variacaoView) variacaoView.classList.toggle("hidden", tipoRelatorio !== "variacao_venda");
+  if (consolidadoView) consolidadoView.classList.toggle("hidden", tipoRelatorio !== "consolidado_venda");
+  if (bonificacaoView) bonificacaoView.classList.toggle("hidden", tipoRelatorio !== "bonificacao_percentual");
+  if (especialView) especialView.classList.toggle("hidden", !especial);
+}
+
+function _vendasPreencherSelectClientes(clientes, selectedKey = "", selectId = "vendasRelCliente", placeholder = "Todos os PDVs"){
+  const select = document.getElementById(selectId);
+  if (!select) return;
+  const current = String(selectedKey || select.value || "");
+  const options = [`<option value="">${_escHtml(placeholder)}</option>`].concat(
+    (Array.isArray(clientes) ? clientes : []).map((item) => {
+      const key = item?.chave || "";
+      const label = item?.cliente || item?.nome || "Sem PDV";
+      const cidade = item?.cidade ? ` (${item.cidade})` : "";
+      const qtd = item?.qtd_grupos != null ? ` - ${_fmtNumVendas(item.qtd_grupos)} grupos` : "";
+      return `<option value="${_escHtml(key)}">${_escHtml(label + cidade + qtd)}</option>`;
+    })
+  );
+  select.innerHTML = options.join("");
+  select.value = (Array.isArray(clientes) && clientes.some((item) => String(item?.chave || "") === current)) ? current : "";
+}
+
+function atualizarVisibilidadeFiltrosRelatorioVendas() {
+  const vendedorWrap = document.getElementById("vendasRelVendedorWrap");
+  if (vendedorWrap) vendedorWrap.classList.remove("hidden");
+}
+
 function selecionarVendedorRelatorioVendas(chave = ""){
   const select = document.getElementById("vendasRelVendedor");
   if (select) select.value = chave || "";
-  carregarRelatorioVendas().catch(() => {});
+  agendarCarregarRelatorioVendas();
+}
+
+function agendarCarregarRelatorioVendas(delayMs = 180){
+  if (window.__vendasRelatorioTimer) {
+    clearTimeout(window.__vendasRelatorioTimer);
+  }
+  window.__vendasRelatorioTimer = setTimeout(() => {
+    window.__vendasRelatorioTimer = null;
+    carregarRelatorioVendas().catch((err) => {
+      console.warn("relatorio vendas erro:", err);
+    });
+  }, delayMs);
 }
 
 function renderRelatorioVendas(payload = {}){
   vendasState.lastPayload = payload;
+  const tipoRelatorioRaw = (payload?.relatorio_tipo || document.getElementById("vendasRelTipo")?.value || "bonificacoes").toLowerCase();
+  const tipoRelatorio = tipoRelatorioRaw.replace(/-/g, "_");
+  vendasState.tipoRelatorio = tipoRelatorio;
+  const mesAtual = payload?.mes_atual || payload?.filtros?.mes || "";
+  vendasState.mes = mesAtual;
+  const meses = Array.isArray(payload?.meses_disponiveis) ? payload.meses_disponiveis : [];
   const resumo = payload?.resumo_geral || {};
   const vendedores = Array.isArray(payload?.vendedores) ? payload.vendedores : [];
   const cidades = Array.isArray(payload?.cidades) ? payload.cidades : [];
   const produtos = Array.isArray(payload?.produtos) ? payload.produtos : [];
   const detalhes = Array.isArray(payload?.detalhes_vendedor) ? payload.detalhes_vendedor : [];
+  const clientes = Array.isArray(payload?.clientes) ? payload.clientes : [];
+  const clientesDisponiveis = Array.isArray(payload?.clientes_disponiveis) ? payload.clientes_disponiveis : [];
+  const variacoes = Array.isArray(payload?.variacoes) ? payload.variacoes : [];
+  const consolidados = Array.isArray(payload?.consolidados) ? payload.consolidados : [];
+  const resumoGrupos = Array.isArray(payload?.resumo_grupos) ? payload.resumo_grupos : [];
   const arquivo = payload?.arquivo || {};
+  const vendedorFiltro = document.getElementById("vendasRelVendedor")?.value || payload?.filtros?.vendedor || "";
+  const clienteFiltro = document.getElementById("vendasRelCliente")?.value || payload?.filtros?.cliente || "";
+  const especial = _vendasRelatorioEhEspecial(tipoRelatorio);
+  const tipoSelect = document.getElementById("vendasRelTipo");
+  if (tipoSelect) {
+    tipoSelect.value = tipoRelatorio;
+  }
+  _vendasPreencherSelectMeses(meses, mesAtual, "vendasRelMes");
+  _vendasPreencherSelectVendedores(vendedores, vendedorFiltro);
+
+  if (tipoRelatorio === "resumo" || tipoRelatorio === "bonificacoes") {
+    const infoEl = document.getElementById("vendasRelArquivoInfo");
+    if (infoEl) {
+      const parts = [];
+      parts.push(`Arquivo: ${arquivo.nome || "Base atual"}`);
+      parts.push(`Atualizado em: ${arquivo.atualizado_em || "-"}`);
+      parts.push(`Mês: ${_vendasMesLabelTexto(mesAtual)}`);
+      if (vendedorFiltro) parts.push(`Vendedor: ${vendedorFiltro}`);
+      infoEl.textContent = parts.join(" | ");
+    }
+
+    const cardsEl = document.getElementById("vendasRelResumoCards");
+    if (cardsEl) {
+      cardsEl.innerHTML = _renderCardsVendasResumo(_vendasResumoBonificacoesCards(resumo, payload));
+    }
+
+    const grupoResumoEl = document.getElementById("vendasRelGrupoResumo");
+    if (grupoResumoEl) {
+      grupoResumoEl.innerHTML = _vendasRenderGrupoBonificacoes(resumoGrupos);
+    }
+
+    const vendedoresBody = document.getElementById("vendasRelVendedoresBody");
+    if (vendedoresBody) {
+      vendedoresBody.innerHTML = vendedores.length ? vendedores.map((item) => `
+        <tr onclick="selecionarVendedorRelatorioVendas('${_escJsString(item.chave || "")}')">
+          <td>${_escHtml(item.codigo || "-")}</td>
+          <td>${_escHtml(item.nome || "-")}</td>
+          <td>${_escHtml(_fmtNumVendas(item.itens))}</td>
+          <td>${_escHtml(_fmtNumVendas(item.clientes))}</td>
+          <td>${_escHtml(_fmtNumVendas(item.notas))}</td>
+          <td>${_escHtml(_fmtMoneyVendas(item.valor_venda))}</td>
+          <td>${_escHtml(_fmtMoneyVendas(item.bonificacao))}</td>
+          <td>${_escHtml(`${_fmtNumVendas(item.percentual, 2)}%`)}</td>
+          <td>${_escHtml(`${_fmtNumVendas(item.media_percentual_bonificacao || 0, 2)}%`)}</td>
+        </tr>
+      `).join("") : '<tr><td colspan="9">Nenhum vendedor encontrado para o mês selecionado.</td></tr>';
+    }
+
+    const detalhesHint = document.getElementById("vendasRelDetalhesHint");
+    if (detalhesHint) {
+      if (vendedorFiltro) {
+        detalhesHint.textContent = `Mostrando detalhe individual para ${vendedorFiltro} no mês ${_vendasMesLabelTexto(mesAtual)}.`;
+      } else {
+        detalhesHint.textContent = "Selecione vendedor para ver o detalhe individual.";
+      }
+    }
+
+    const detalhesBody = document.getElementById("vendasRelDetalhesBody");
+    if (detalhesBody) {
+      detalhesBody.innerHTML = detalhes.length ? detalhes.map((item) => `
+        <tr>
+          <td>${_escHtml(item.data || "-")}</td>
+          <td>${_escHtml(item.numero_nf || "-")}</td>
+          <td>${_escHtml(item.cliente || "-")}</td>
+          <td>${_escHtml(item.cidade || "-")}</td>
+          <td>${_escHtml(item.produto || "-")}</td>
+          <td>${_escHtml(_fmtNumVendas(item.tab_venda))}</td>
+          <td>${_escHtml(_fmtMoneyVendas(item.valor_venda))}</td>
+          <td>${_escHtml(_fmtMoneyVendas(item.valor_devolvido))}</td>
+          <td>${_escHtml(_fmtMoneyVendas(item.bonificacao))}</td>
+          <td>${_escHtml(_fmtMoneyVendas(item.valor_liquido))}</td>
+        </tr>
+      `).join("") : '<tr><td colspan="10">Selecione vendedor para carregar os detalhes.</td></tr>';
+    }
+    return;
+  }
+
+  _vendasPreencherSelectClientes(clientesDisponiveis, clienteFiltro);
+  atualizarVisibilidadeFiltrosRelatorioVendas();
+  _vendasSetVisibilidadeRelatorio(tipoRelatorio);
 
   const infoEl = document.getElementById("vendasRelArquivoInfo");
   if (infoEl) {
-    const vendedorFiltro = document.getElementById("vendasRelVendedor")?.value || "";
-    const escopo = vendedorFiltro ? `Filtro de vendedor aplicado: ${vendedorFiltro}.` : "Visao geral de todos os vendedores.";
-    infoEl.textContent = `Arquivo: ${arquivo.nome || "-"} | Atualizado em: ${arquivo.atualizado_em || "-"} | ${escopo}`;
+    const parts = [];
+    const relatorioLabels = {
+      embalagens: "Embalagens por cliente",
+      variacao_venda: "Variação de venda",
+      consolidado_venda: "Consolidado de vendas",
+      bonificacao_percentual: "Bonificação por vendedor",
+      volume_diario_resumo: "Resumo de volume diário",
+      volume_diario_vendedor: "Volume diário por vendedor",
+      percentual_vendas_anual: "Percentual de vendas anual",
+      percentual_vendas_grupo_anual: "Percentual de vendas por grupo anual",
+      resumo: "Resumo de vendas",
+    };
+    const relatorioLabel = relatorioLabels[tipoRelatorio] || "Resumo de vendas";
+    parts.push(`Arquivo: ${arquivo.nome || "Base atual"}`);
+    parts.push(`Atualizado em: ${arquivo.atualizado_em || "-"}`);
+    parts.push(`Relatorio: ${relatorioLabel}`);
+    if (vendedorFiltro) parts.push(`Vendedor: ${vendedorFiltro}`);
+    if (clienteFiltro) parts.push(`Cliente: ${clienteFiltro}`);
+    infoEl.textContent = parts.join(" | ");
   }
 
   const cardsEl = document.getElementById("vendasRelResumoCards");
+  const cardsResumo = especial
+    ? _vendasResumoCardsParaTipo(tipoRelatorio, resumo, payload)
+    : (tipoRelatorio === "embalagens"
+    ? [
+        ["Volumes", _fmtNumVendas(resumo.volumes ?? resumo.qtd_embalagens, 3)],
+        ["Clientes", _fmtNumVendas(resumo.clientes)],
+        ["Retornável", _fmtNumVendas(resumo.retornavel, 3)],
+        ["Descartável (PET)", _fmtNumVendas(resumo.pet, 3)],
+        ["Bonificação", _fmtMoneyVendas(resumo.bonificacao)],
+        ["Categorias usadas", _fmtNumVendas(resumo.tipos_utilizados)],
+        ["Categorias retornáveis", _fmtNumVendas(resumo.tipos_retornavel)],
+        ["Categorias PET", _fmtNumVendas(resumo.tipos_pet)],
+      ]
+    : tipoRelatorio === "variacao_venda"
+    ? [
+        ["Variações", _fmtNumVendas(resumo.variacoes)],
+        ["Categorias", _fmtNumVendas(resumo.categorias)],
+        ["Cidades", _fmtNumVendas(resumo.cidades)],
+        ["Preços distintos", _fmtNumVendas(resumo.precos_distintos)],
+        ["Hectolitros", _fmtNumVendas(resumo.volumes ?? resumo.hectolitros, 3)],
+        ["Bonificação", _fmtMoneyVendas(resumo.bonificacao)],
+        ["Valor líquido", _fmtMoneyVendas(resumo.valor_liquido)],
+      ]
+    : tipoRelatorio === "consolidado_venda"
+    ? [
+        ["Categorias", _fmtNumVendas(resumo.categorias)],
+        ["Clientes", _fmtNumVendas(resumo.clientes)],
+        ["Cidades", _fmtNumVendas(resumo.cidades)],
+        ["Hectolitros cliente", _fmtNumVendas(resumo.volumes_cliente, 3)],
+        ["Hectolitros vendedor", _fmtNumVendas(resumo.volumes_vendedor, 3)],
+        ["Participação total", `${_fmtNumVendas(resumo.participacao_total, 2)}%`],
+        ["Bonificação", _fmtMoneyVendas(resumo.bonificacao)],
+        ["Valor líquido", _fmtMoneyVendas(resumo.valor_liquido)],
+      ]
+    : tipoRelatorio === "bonificacao_percentual"
+    ? [
+        ["Vendedores", _fmtNumVendas(resumo.vendedores)],
+        ["Clientes", _fmtNumVendas(resumo.clientes)],
+        ["Notas", _fmtNumVendas(resumo.notas)],
+        ["Itens", _fmtNumVendas(resumo.itens)],
+        ["Líquido", _fmtMoneyVendas(resumo.valor_liquido)],
+        ["Bonificação", _fmtMoneyVendas(resumo.bonificacao)],
+        ["% Bonificação", `${_fmtNumVendas(resumo.percentual, 2)}%`],
+      ]
+    : [
+        ["Valor liquido", _fmtMoneyVendas(resumo.valor_liquido)],
+        ["Valor venda", _fmtMoneyVendas(resumo.valor_venda)],
+        ["Valor devolvido", _fmtMoneyVendas(resumo.valor_devolvido)],
+        ["Bonificação", _fmtMoneyVendas(resumo.bonificacao)],
+        ["Notas", _fmtNumVendas(resumo.notas)],
+        ["Clientes", _fmtNumVendas(resumo.clientes)],
+        ["Itens", _fmtNumVendas(resumo.itens)],
+      ]);
   if (cardsEl) {
-    cardsEl.innerHTML = [
-      _resumoCardVendas("Valor liquido", _fmtMoneyVendas(resumo.valor_liquido)),
-      _resumoCardVendas("Valor venda", _fmtMoneyVendas(resumo.valor_venda)),
-      _resumoCardVendas("Valor devolvido", _fmtMoneyVendas(resumo.valor_devolvido)),
-      _resumoCardVendas("Notas", _fmtNumVendas(resumo.notas)),
-      _resumoCardVendas("Clientes", _fmtNumVendas(resumo.clientes)),
-      _resumoCardVendas("Itens", _fmtNumVendas(resumo.itens)),
-    ].join("");
+    cardsEl.innerHTML = _renderCardsVendasResumo(cardsResumo);
+  }
+
+  const grupoResumoEl = document.getElementById("vendasRelGrupoResumo");
+  if (grupoResumoEl) {
+    if (tipoRelatorio === "consolidado_venda" && resumoGrupos.length) {
+      grupoResumoEl.innerHTML = `
+        <h4>Resumo por tipo de vendedor</h4>
+        <div style="overflow:auto; max-height:240px;">
+          <table>
+            <thead>
+              <tr>
+                <th>Grupo</th>
+                <th>Vendedores</th>
+                <th>Clientes</th>
+                <th>Notas</th>
+                <th>Itens</th>
+                <th>HL cliente</th>
+                <th>HL vendedor</th>
+                <th>%</th>
+                <th>Liquido</th>
+                <th>Bonificacao</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${resumoGrupos.map((item) => `
+                <tr>
+                  <td>${_escHtml(item.nome || item.grupo || "-")}</td>
+                  <td>${_escHtml(_fmtNumVendas(item.vendedores))}</td>
+                  <td>${_escHtml(_fmtNumVendas(item.clientes))}</td>
+                  <td>${_escHtml(_fmtNumVendas(item.notas))}</td>
+                  <td>${_escHtml(_fmtNumVendas(item.itens))}</td>
+                  <td>${_escHtml(_fmtNumVendas(item.hectolitros_cliente, 3))}</td>
+                  <td>${_escHtml(_fmtNumVendas(item.hectolitros_vendedor, 3))}</td>
+                  <td>${_escHtml(`${_fmtNumVendas(item.participacao_total, 2)}%`)}</td>
+                  <td>${_escHtml(_fmtMoneyVendas(item.valor_liquido))}</td>
+                  <td>${_escHtml(_fmtMoneyVendas(item.bonificacao))}</td>
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>
+        </div>
+      `;
+    } else {
+      grupoResumoEl.innerHTML = "";
+    }
+  }
+
+  const especialView = document.getElementById("vendasRelEspecialView");
+  if (especialView) {
+    especialView.innerHTML = especial ? _vendasRenderRelatorioEspecial(tipoRelatorio, payload) : "";
+  }
+
+  if (especial) {
+    return;
   }
 
   const select = document.getElementById("vendasRelVendedor");
@@ -1578,6 +3365,90 @@ function renderRelatorioVendas(payload = {}){
     );
     select.innerHTML = options.join("");
     select.value = vendedores.some((item) => (item?.chave || "") === current) ? current : "";
+  }
+
+  if (tipoRelatorio === "embalagens") {
+    const embalagensBody = document.getElementById("vendasRelEmbalagensBody");
+    if (embalagensBody) {
+      embalagensBody.innerHTML = clientes.length ? clientes.map((item) => `
+        <tr>
+          <td>${_escHtml(item.cliente || "-")}</td>
+          <td>${_escHtml(item.cidade || "-")}</td>
+          <td>${_escHtml(_fmtNumVendas(item.volumes ?? item.qtd_embalagens, 3))}</td>
+          <td>${_escHtml(_fmtNumVendas(item.retornavel, 3))}</td>
+          <td>${_escHtml(_fmtNumVendas(item.pet, 3))}</td>
+          <td>${_escHtml(_fmtMoneyVendas(item.bonificacao))}</td>
+          <td>${_escHtml(_fmtNumVendas(item.tipos_utilizados))}</td>
+          <td>${_escHtml(_fmtNumVendas(item.tipos_retornavel))}</td>
+          <td>${_escHtml(_fmtNumVendas(item.tipos_pet))}</td>
+          <td>${_escHtml(item.tipos_lista || "-")}</td>
+        </tr>
+      `).join("") : '<tr><td colspan="10">Nenhum dado de embalagens encontrado.</td></tr>';
+    }
+    return;
+  }
+
+  if (tipoRelatorio === "variacao_venda") {
+    const variacaoBody = document.getElementById("vendasRelVariacaoBody");
+    if (variacaoBody) {
+      variacaoBody.innerHTML = variacoes.length ? variacoes.map((item) => `
+        <tr>
+          <td>${_escHtml(item.categoria || "-")}</td>
+          <td>${_escHtml(item.cidade || "-")}</td>
+          <td>${_escHtml(_fmtMoneyVendas(item.preco_aplicado))}</td>
+          <td>${_escHtml(_fmtNumVendas(item.hectolitros ?? item.volumes, 3))}</td>
+          <td>${_escHtml(_fmtNumVendas(item.itens))}</td>
+          <td>${_escHtml(_fmtMoneyVendas(item.valor_venda))}</td>
+          <td>${_escHtml(_fmtMoneyVendas(item.valor_devolvido))}</td>
+          <td>${_escHtml(_fmtMoneyVendas(item.bonificacao))}</td>
+          <td>${_escHtml(_fmtMoneyVendas(item.valor_liquido))}</td>
+          <td>${_escHtml(_fmtNumVendas(item.notas))}</td>
+          <td>${_escHtml(_fmtNumVendas(item.clientes))}</td>
+        </tr>
+      `).join("") : '<tr><td colspan="11">Nenhuma variação de venda encontrada.</td></tr>';
+    }
+    return;
+  }
+
+  if (tipoRelatorio === "consolidado_venda") {
+    const consolidadoBody = document.getElementById("vendasRelConsolidadoBody");
+    if (consolidadoBody) {
+      consolidadoBody.innerHTML = consolidados.length ? consolidados.map((item) => `
+        <tr>
+          <td>${_escHtml(item.cidade || "-")}</td>
+          <td>${_escHtml(item.categoria || "-")}</td>
+          <td>${_escHtml(_fmtNumVendas(item.hectolitros_cliente ?? item.volumes_cliente, 3))}</td>
+          <td>${_escHtml(_fmtNumVendas(item.hectolitros_vendedor ?? item.volumes_vendedor, 3))}</td>
+          <td>${_escHtml(`${_fmtNumVendas(item.percentual, 2)}%`)}</td>
+          <td>${_escHtml(_fmtNumVendas(item.itens))}</td>
+          <td>${_escHtml(_fmtNumVendas(item.notas))}</td>
+          <td>${_escHtml(_fmtMoneyVendas(item.valor_venda))}</td>
+          <td>${_escHtml(_fmtMoneyVendas(item.valor_devolvido))}</td>
+          <td>${_escHtml(_fmtMoneyVendas(item.bonificacao))}</td>
+          <td>${_escHtml(_fmtMoneyVendas(item.valor_liquido))}</td>
+        </tr>
+      `).join("") : '<tr><td colspan="11">Nenhum dado encontrado para os filtros atuais.</td></tr>';
+    }
+    return;
+  }
+
+  if (tipoRelatorio === "bonificacao_percentual") {
+    const bonificacaoBody = document.getElementById("vendasRelBonificacaoBody");
+    if (bonificacaoBody) {
+      bonificacaoBody.innerHTML = vendedores.length ? vendedores.map((item) => `
+        <tr>
+          <td>${_escHtml(item.codigo || "-")}</td>
+          <td>${_escHtml(item.nome || "-")}</td>
+          <td>${_escHtml(_fmtNumVendas(item.clientes))}</td>
+          <td>${_escHtml(_fmtNumVendas(item.notas))}</td>
+          <td>${_escHtml(_fmtNumVendas(item.itens))}</td>
+          <td>${_escHtml(_fmtMoneyVendas(item.valor_liquido))}</td>
+          <td>${_escHtml(_fmtMoneyVendas(item.bonificacao))}</td>
+          <td>${_escHtml(`${_fmtNumVendas(item.percentual, 2)}%`)}</td>
+        </tr>
+      `).join("") : '<tr><td colspan="8">Nenhuma bonificação encontrada.</td></tr>';
+    }
+    return;
   }
 
   const vendedoresBody = document.getElementById("vendasRelVendedoresBody");
@@ -1628,7 +3499,6 @@ function renderRelatorioVendas(payload = {}){
 
   const detalhesHint = document.getElementById("vendasRelDetalhesHint");
   if (detalhesHint) {
-    const vendedorFiltro = document.getElementById("vendasRelVendedor")?.value || "";
     if (!vendedorFiltro) {
       detalhesHint.textContent = "Selecione um vendedor para ver as linhas do relatorio.";
     } else if (payload?.detalhes_limitados) {
@@ -1658,13 +3528,19 @@ function renderRelatorioVendas(payload = {}){
 
 async function carregarRelatorioVendas(){
   const infoEl = document.getElementById("vendasRelArquivoInfo");
-  if (infoEl) infoEl.textContent = "Carregando relatorio de vendas...";
+  if (infoEl) infoEl.textContent = "Carregando relatorios vendas...";
 
   const params = new URLSearchParams();
+  const tipoRelatorio = "bonificacoes";
+  const mes = document.getElementById("vendasRelMes")?.value || vendasState.mes || "";
   const vendedor = document.getElementById("vendasRelVendedor")?.value || "";
+  const cliente = document.getElementById("vendasRelCliente")?.value || "";
   const dataInicio = document.getElementById("vendasRelDataInicio")?.value || "";
   const dataFim = document.getElementById("vendasRelDataFim")?.value || "";
+  params.set("tipo_relatorio", tipoRelatorio);
+  if (mes) params.set("mes", mes);
   if (vendedor) params.set("vendedor", vendedor);
+  if (cliente) params.set("cliente", cliente);
   if (dataInicio) params.set("data_inicio", dataInicio);
   if (dataFim) params.set("data_fim", dataFim);
   if (vendedor) params.set("limite", "300");
@@ -1673,47 +3549,804 @@ async function carregarRelatorioVendas(){
   const data = await resp.json().catch(() => ({}));
   if (!resp.ok) {
     if (infoEl) infoEl.textContent = data?.erro || "Falha ao carregar relatorio de vendas.";
-    alert(data?.erro || "Falha ao carregar relatorio de vendas.");
+    if (resp.status !== 409) {
+      alert(data?.erro || "Falha ao carregar relatorio de vendas.");
+    }
     return;
   }
   renderRelatorioVendas(data || {});
 }
 
-function limparFiltrosRelatorioVendas(){
+function _vendasMesLabelTexto(valor) {
+  const texto = String(valor || "").trim();
+  const m = texto.match(/^(\d{4})-(\d{2})$/);
+  if (!m) return texto || "-";
+  const meses = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
+  const idx = Math.max(1, Math.min(12, Number(m[2]) || 1)) - 1;
+  return `${meses[idx]} ${m[1]}`;
+}
+
+function _vendasPreencherSelectMeses(meses, selected = "", selectId = "vendasRelMes") {
+  const select = document.getElementById(selectId);
+  if (!select) return;
+  const current = String(selected || select.value || "");
+  const values = Array.isArray(meses) ? meses : [];
+  const fallbackValues = values.length ? values : (current ? [current] : []);
+  const options = ['<option value="">Último mês processado</option>'].concat(
+    fallbackValues.map((mes) => `<option value="${_escHtml(mes)}">${_escHtml(_vendasMesLabelTexto(mes))}</option>`)
+  );
+  select.innerHTML = options.join("");
+  select.value = fallbackValues.includes(current) ? current : (fallbackValues.length ? fallbackValues[fallbackValues.length - 1] : "");
+}
+
+function _vendasPreencherSelectVendedores(vendedores, selected = "", selectId = "vendasRelVendedor") {
+  const select = document.getElementById(selectId);
+  if (!select) return;
+  const current = String(selected || select.value || "");
+  const options = ['<option value="">Todos os vendedores</option>'].concat(
+    (Array.isArray(vendedores) ? vendedores : []).map((item) => {
+      const key = item?.chave || "";
+      const label = [item?.codigo, item?.nome].filter(Boolean).join(" - ") || "Sem vendedor";
+      return `<option value="${_escHtml(key)}">${_escHtml(label)}</option>`;
+    })
+  );
+  select.innerHTML = options.join("");
+  select.value = (Array.isArray(vendedores) && vendedores.some((item) => String(item?.chave || "") === current)) ? current : "";
+}
+
+function _vendasResumoBonificacoesCards(resumo = {}, payload = {}) {
+  const mes = payload?.mes_atual || "";
+  return [
+    ["Mês", _vendasMesLabelTexto(mes)],
+    ["Itens", _fmtNumVendas(resumo.itens)],
+    ["Vendedores", _fmtNumVendas(resumo.vendedores)],
+    ["PDV", _fmtNumVendas(resumo.clientes)],
+    ["Notas", _fmtNumVendas(resumo.notas)],
+    ["Venda", _fmtMoneyVendas(resumo.valor_venda)],
+    ["Bonificação", _fmtMoneyVendas(resumo.bonificacao)],
+    ["% Bonif.", `${_fmtNumVendas(resumo.percentual_bonificacao || resumo.percentual || 0, 2)}%`],
+    ["Média %", `${_fmtNumVendas(resumo.media_percentual_bonificacao || 0, 2)}%`],
+    ["Líquido", _fmtMoneyVendas(resumo.valor_liquido)],
+  ];
+}
+
+function _vendasRenderGrupoBonificacoes(resumoGrupos = []) {
+  if (!Array.isArray(resumoGrupos) || !resumoGrupos.length) {
+    return "";
+  }
+  const labelGrupo = (item) => {
+    const grupo = String(item?.grupo || "").toLowerCase();
+    if (grupo === "todos") return "Rio Branco";
+    if (grupo === "rio_branco") return "CLT";
+    if (grupo === "autonomos") return "Autônomos";
+    return item?.nome || item?.grupo || "-";
+  };
+  return `
+    <table>
+      <thead>
+        <tr>
+          <th>Grupo</th>
+          <th>Itens</th>
+          <th>PDV</th>
+          <th>Notas</th>
+          <th>Venda</th>
+          <th>Bonificação</th>
+          <th>% Bonif.</th>
+          <th>Líquido</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${resumoGrupos.map((item) => `
+          <tr>
+            <td>${_escHtml(labelGrupo(item))}</td>
+            <td>${_escHtml(_fmtNumVendas(item.itens))}</td>
+            <td>${_escHtml(_fmtNumVendas(item.clientes))}</td>
+            <td>${_escHtml(_fmtNumVendas(item.notas))}</td>
+            <td>${_escHtml(_fmtMoneyVendas(item.valor_venda))}</td>
+            <td>${_escHtml(_fmtMoneyVendas(item.bonificacao))}</td>
+            <td>${_escHtml(`${_fmtNumVendas(item.percentual_bonificacao || 0, 2)}%`)}</td>
+            <td>${_escHtml(_fmtMoneyVendas(item.valor_liquido))}</td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+  `;
+}
+
+function _vendasResumoMixEmbalagensCards(resumo = {}, payload = {}) {
+  const mes = payload?.mes_atual || "";
+  return [
+    ["Mês", _vendasMesLabelTexto(mes)],
+    ["PDVs", _fmtNumVendas(resumo.pdvs)],
+    ["6 grupos", _fmtNumVendas(resumo.pdvs_6)],
+    ["5 grupos", _fmtNumVendas(resumo.pdvs_5)],
+    ["4 grupos", _fmtNumVendas(resumo.pdvs_4)],
+    ["3 grupos", _fmtNumVendas(resumo.pdvs_3)],
+    ["2 grupos", _fmtNumVendas(resumo.pdvs_2)],
+    ["1 grupo", _fmtNumVendas(resumo.pdvs_1)],
+    ["Média grupos/PDV", _fmtNumVendas(resumo.media_grupos_por_pdv || 0, 2)],
+  ];
+}
+
+function _vendasRenderMixEmbalagensFaixas(faixas = [], bodyId = "vendasMixFaixasBody") {
+  const body = document.getElementById(bodyId);
+  if (!body) return;
+  body.innerHTML = Array.isArray(faixas) && faixas.length ? faixas.map((item) => `
+    <tr>
+      <td>${_escHtml(item.faixa || "-")}</td>
+      <td>${_escHtml(_fmtNumVendas(item.pdvs))}</td>
+      <td>${_escHtml(`${_fmtNumVendas(item.percentual || 0, 2)}%`)}</td>
+    </tr>
+  `).join("") : '<tr><td colspan="3">Nenhum PDV encontrado no período.</td></tr>';
+}
+
+function _vendasRenderMixEmbalagensDetalhe(item = null, hintId = "vendasMixDetalheHint", bodyId = "vendasMixDetalheBody") {
+  const hint = document.getElementById(hintId);
+  const body = document.getElementById(bodyId);
+  if (!hint || !body) return;
+  if (!item) {
+    hint.textContent = "Selecione um PDV para ver exatamente quais grupos ele usou no mês.";
+    body.innerHTML = '<tr><td colspan="6">Nenhum PDV selecionado.</td></tr>';
+    return;
+  }
+  hint.textContent = `PDV ${item.cliente || "-"} no mês selecionado.`;
+  body.innerHTML = `
+    <tr>
+      <td>${_escHtml(item.cliente || "-")}</td>
+      <td>${_escHtml(item.cidade || "-")}</td>
+      <td>${_escHtml(item.vendedor || item.vendedores_lista || "-")}</td>
+      <td>${_escHtml(_fmtNumVendas(item.qtd_grupos))}</td>
+      <td>${_escHtml(item.faixa_grupos || "-")}</td>
+      <td>${_escHtml(item.grupos_lista || "-")}</td>
+    </tr>
+  `;
+}
+
+function selecionarClienteRelatorioMixEmbalagens(chave = "") {
+  const select = document.getElementById("vendasMixCliente");
+  if (select) select.value = chave || "";
+  carregarRelatorioMixEmbalagens().catch(() => {});
+}
+
+function limparFiltrosRelatorioMixEmbalagens() {
+  const mes = document.getElementById("vendasMixMes");
+  const vendedor = document.getElementById("vendasMixVendedor");
+  const cliente = document.getElementById("vendasMixCliente");
+  if (mes) mes.value = "";
+  if (vendedor) vendedor.value = "";
+  if (cliente) cliente.value = "";
+  carregarRelatorioMixEmbalagens().catch(() => {});
+}
+
+function renderRelatorioMixEmbalagens(payload = {}) {
+  vendasState.lastPayload = payload;
+  vendasState.tipoRelatorio = "grupos_embalagem";
+  vendasState.mes = payload?.mes_atual || payload?.filtros?.mes || "";
+
+  const mesAtual = payload?.mes_atual || payload?.filtros?.mes || "";
+  const meses = Array.isArray(payload?.meses_disponiveis) ? payload.meses_disponiveis : [];
+  const vendedores = Array.isArray(payload?.vendedores) ? payload.vendedores : [];
+  const clientes = Array.isArray(payload?.clientes) ? payload.clientes : [];
+  const clientesDisponiveis = Array.isArray(payload?.clientes_disponiveis) ? payload.clientes_disponiveis : [];
+  const faixas = Array.isArray(payload?.resumo_faixas) ? payload.resumo_faixas : [];
+  const resumo = payload?.resumo_geral || {};
+  const detalhe = payload?.detalhe_pdv || null;
+  const vendedorFiltro = payload?.filtros?.vendedor || document.getElementById("vendasMixVendedor")?.value || "";
+  const clienteFiltro = payload?.filtros?.cliente || document.getElementById("vendasMixCliente")?.value || "";
+  const pdvLabel = detalhe?.cliente || clienteFiltro;
+  const arquivo = payload?.arquivo || {};
+
+  _vendasPreencherSelectMeses(meses, mesAtual, "vendasMixMes");
+  _vendasPreencherSelectVendedores(vendedores, vendedorFiltro, "vendasMixVendedor");
+  _vendasPreencherSelectClientes(clientesDisponiveis, clienteFiltro, "vendasMixCliente", "Todos os PDVs");
+
+  const infoEl = document.getElementById("vendasRelArquivoInfo");
+  if (infoEl) {
+    const parts = [
+      `Arquivo: ${arquivo.nome || "Base atual"}`,
+      `Atualizado em: ${arquivo.atualizado_em || "-"}`,
+      `Relatorio: Grupos Embalagem`,
+      `Mês: ${_vendasMesLabelTexto(mesAtual)}`,
+    ];
+    if (vendedorFiltro) parts.push(`Vendedor: ${vendedorFiltro}`);
+    if (clienteFiltro) parts.push(`PDV: ${pdvLabel}`);
+    infoEl.textContent = parts.join(" | ");
+  }
+
+  const cardsEl = document.getElementById("vendasMixResumoCards");
+  if (cardsEl) {
+    cardsEl.innerHTML = _renderCardsVendasResumo(_vendasResumoMixEmbalagensCards(resumo, payload));
+  }
+
+  _vendasRenderMixEmbalagensFaixas(faixas, "vendasMixFaixasBody");
+
+  const clientesBody = document.getElementById("vendasMixClientesBody");
+  if (clientesBody) {
+    clientesBody.innerHTML = clientes.length ? clientes.map((item) => `
+      <tr onclick="selecionarClienteRelatorioMixEmbalagens('${_escJsString(item.chave || "")}')">
+        <td>${_escHtml(item.cliente || "-")}</td>
+        <td>${_escHtml(item.cidade || "-")}</td>
+        <td>${_escHtml(item.vendedor || item.vendedores_lista || "-")}</td>
+        <td>${_escHtml(_fmtNumVendas(item.qtd_grupos))}</td>
+        <td>${_escHtml(item.faixa_grupos || "-")}</td>
+        <td>${_escHtml(_fmtNumVendas(item.itens))}</td>
+        <td>${_escHtml(_fmtNumVendas(item.notas))}</td>
+        <td>${_escHtml(item.grupos_lista || "-")}</td>
+      </tr>
+    `).join("") : '<tr><td colspan="8">Nenhum PDV encontrado para os filtros atuais.</td></tr>';
+  }
+
+  _vendasRenderMixEmbalagensDetalhe(detalhe);
+}
+
+async function carregarRelatorioMixEmbalagens() {
+  const infoEl = document.getElementById("vendasRelArquivoInfo");
+  if (infoEl) infoEl.textContent = "Carregando grupos embalagem...";
+
+  const params = new URLSearchParams();
+  const mes = document.getElementById("vendasMixMes")?.value || vendasState.mes || "";
+  const vendedor = document.getElementById("vendasMixVendedor")?.value || "";
+  const cliente = document.getElementById("vendasMixCliente")?.value || "";
+  params.set("tipo_relatorio", "grupos_embalagem");
+  if (mes) params.set("mes", mes);
+  if (vendedor) params.set("vendedor", vendedor);
+  if (cliente) params.set("cliente", cliente);
+
+  const resp = await apiFetch(`/api/vendas/relatorio?${params.toString()}`);
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    const erro = data?.erro || "Falha ao carregar relatorio de grupos embalagem.";
+    if (infoEl) infoEl.textContent = erro;
+    if (resp.status !== 409) alert(erro);
+    return;
+  }
+  renderRelatorioMixEmbalagens(data || {});
+}
+
+async function recarregarRelatorioVendasAtual() {
+  const modo = String(window.__vendasRelatorioModo || vendasState.tipoRelatorio || "bonificacoes").toLowerCase();
+  if (modo === "variacao_preco") {
+    await carregarRelatorioVariacaoPreco();
+    return;
+  }
+  if (modo === "mix_embalagens" || modo === "grupos_embalagem") {
+    await carregarRelatorioMixEmbalagens();
+    return;
+  }
+  await carregarRelatorioVendas();
+}
+
+function setVendasRelatorioModo(modo){
+  const raw = String(modo || "bonificacoes").toLowerCase();
+  const valor = raw === "variacao_preco"
+    ? "variacao_preco"
+    : raw === "mix_embalagens" || raw === "grupos_embalagem"
+    ? "grupos_embalagem"
+    : "bonificacoes";
+  window.__vendasRelatorioModo = valor;
+  vendasState.tipoRelatorio = valor;
+  const viewBon = document.getElementById("vendasViewRelatorio");
+  const viewVar = document.getElementById("vendasViewRelatorioVariacao");
+  const viewMix = document.getElementById("vendasViewRelatorioMix");
+  const tabBon = document.getElementById("vendasRelTabBonificacoes");
+  const tabVar = document.getElementById("vendasRelTabVariacao");
+  const tabMix = document.getElementById("vendasRelTabMix");
+  if (viewBon) viewBon.classList.toggle("hidden", valor !== "bonificacoes");
+  if (viewVar) viewVar.classList.toggle("hidden", valor !== "variacao_preco");
+  if (viewMix) viewMix.classList.toggle("hidden", valor !== "grupos_embalagem");
+  if (tabBon) tabBon.classList.toggle("active", valor === "bonificacoes");
+  if (tabVar) tabVar.classList.toggle("active", valor === "variacao_preco");
+  if (tabMix) tabMix.classList.toggle("active", valor === "grupos_embalagem");
+  recarregarRelatorioVendasAtual().catch(() => {});
+}
+
+function _vendasResumoVariacaoCards(resumo = {}, payload = {}) {
+  const mes = payload?.mes_atual || "";
+  return [
+    ["Mês", _vendasMesLabelTexto(mes)],
+    ["Linhas válidas", _fmtNumVendas(resumo.itens)],
+    ["Vendedores", _fmtNumVendas(resumo.vendedores)],
+    ["Grupos", _fmtNumVendas(resumo.grupos)],
+    ["Variações", _fmtNumVendas(resumo.variacoes)],
+    ["Preços distintos", _fmtNumVendas(resumo.precos_distintos)],
+    ["Clientes", _fmtNumVendas(resumo.clientes)],
+    ["Cidades", _fmtNumVendas(resumo.cidades)],
+    ["Preço mín.", _fmtMoneyVendas(resumo.preco_min)],
+    ["Preço máx.", _fmtMoneyVendas(resumo.preco_max)],
+    ["Diferença", _fmtMoneyVendas(resumo.variacao_absoluta || resumo.variacao_valor)],
+    ["Dif. %", `${_fmtNumVendas(resumo.variacao_percentual || 0, 2)}%`],
+  ];
+}
+
+function _vendasRenderGrupoVariacao(resumoGrupos = []) {
+  if (!Array.isArray(resumoGrupos) || !resumoGrupos.length) {
+    return "";
+  }
+  const labelGrupo = (item) => {
+    const grupo = String(item?.grupo || "").toLowerCase();
+    if (grupo === "todos") return "Todos";
+    if (grupo === "rio_branco") return "Rio Branco";
+    if (grupo === "autonomos") return "Autônomos";
+    return item?.nome || item?.grupo || "-";
+  };
+  return `
+    <table>
+      <thead>
+        <tr>
+          <th>Grupo</th>
+          <th>Itens</th>
+          <th>Grupos</th>
+          <th>Variações</th>
+          <th>Preços</th>
+          <th>Clientes</th>
+          <th>Cidades</th>
+          <th>Min</th>
+          <th>Max</th>
+          <th>Dif.</th>
+          <th>Dif.%</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${resumoGrupos.map((item) => `
+          <tr>
+            <td>${_escHtml(labelGrupo(item))}</td>
+            <td>${_escHtml(_fmtNumVendas(item.itens))}</td>
+            <td>${_escHtml(_fmtNumVendas(item.grupos))}</td>
+            <td>${_escHtml(_fmtNumVendas(item.variacoes))}</td>
+            <td>${_escHtml(_fmtNumVendas(item.precos_distintos))}</td>
+            <td>${_escHtml(_fmtNumVendas(item.clientes))}</td>
+            <td>${_escHtml(_fmtNumVendas(item.cidades))}</td>
+            <td>${_escHtml(_fmtMoneyVendas(item.preco_min))}</td>
+            <td>${_escHtml(_fmtMoneyVendas(item.preco_max))}</td>
+            <td>${_escHtml(_fmtMoneyVendas(item.variacao_absoluta || item.variacao_valor))}</td>
+            <td>${_escHtml(`${_fmtNumVendas(item.variacao_percentual || 0, 2)}%`)}</td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+  `;
+}
+
+function _vendasRenderVariacoesTabela(variacoes = []) {
+  if (!Array.isArray(variacoes) || !variacoes.length) {
+    return '<tr><td colspan="12">Nenhuma variação de preço encontrada no mês selecionado.</td></tr>';
+  }
+  return variacoes.map((item) => `
+    <tr onclick="selecionarVendedorRelatorioVariacao('${_escJsString(item.vendedor_key || "")}')">
+      <td>${_escHtml(item.codigo || "-")}</td>
+      <td>${_escHtml(item.vendedor || "-")}</td>
+      <td>${_escHtml(item.grupo || "-")}</td>
+      <td>${_escHtml(item.produtos || "-")}</td>
+      <td>${_escHtml(item.precos || "-")}</td>
+      <td>${_escHtml(_fmtMoneyVendas(item.preco_min))}</td>
+      <td>${_escHtml(_fmtMoneyVendas(item.preco_max))}</td>
+      <td>${_escHtml(_fmtMoneyVendas(item.variacao_valor))}</td>
+      <td>${_escHtml(`${_fmtNumVendas(item.variacao_percentual || 0, 2)}%`)}</td>
+      <td>${_escHtml(item.cidades_lista || "-")}</td>
+      <td>${_escHtml(item.clientes_lista || "-")}</td>
+      <td>${_escHtml(_fmtNumVendas(item.itens))}</td>
+    </tr>
+  `).join("");
+}
+
+function _vendasRenderDetalheVariacao(detalhes = [], vendedorFiltro = "", mesAtual = "", hintId = "vendasRelDetalhesHint", bodyId = "vendasRelDetalhesBody") {
+  const detalheHint = document.getElementById(hintId);
+  if (detalheHint) {
+    if (vendedorFiltro) {
+      detalheHint.textContent = `Mostrando as linhas de preço para ${vendedorFiltro} no mês ${_vendasMesLabelTexto(mesAtual)}.`;
+    } else {
+      detalheHint.textContent = "Selecione um vendedor para ver as linhas de preço e a origem da variação.";
+    }
+  }
+  const detalhesBody = document.getElementById(bodyId);
+  if (detalhesBody) {
+    detalhesBody.innerHTML = detalhes.length ? detalhes.map((item) => `
+      <tr>
+        <td>${_escHtml(item.data || "-")}</td>
+        <td>${_escHtml(item.numero_nf || "-")}</td>
+        <td>${_escHtml(item.cliente || "-")}</td>
+        <td>${_escHtml(item.cidade || "-")}</td>
+        <td>${_escHtml(item.grupo || "-")}</td>
+        <td>${_escHtml(item.produto || "-")}</td>
+        <td>${_escHtml(_fmtMoneyVendas(item.preco_aplicado))}</td>
+        <td>${_escHtml(_fmtNumVendas(item.quantidade, 3))}</td>
+        <td>${_escHtml(_fmtMoneyVendas(item.valor_venda))}</td>
+        <td>${_escHtml(item.tipo_operacao || "-")}</td>
+      </tr>
+    `).join("") : `<tr><td colspan="10">${vendedorFiltro ? "Sem linhas para exibir." : "Selecione vendedor para carregar os detalhes."}</td></tr>`;
+  }
+}
+
+const VENDAS_RELATORIO_CACHE_KEY = "riobranco.vendas.bonificacoes.last_payload.v3";
+const VENDAS_RELATORIO_ACTIVE_CACHE_KEY = "riobranco.vendas.bonificacoes.active_cache_id.v3";
+const VENDAS_VARIACAO_CACHE_KEY = "riobranco.vendas.variacao_preco.last_payload.v3";
+const VENDAS_VARIACAO_ACTIVE_CACHE_KEY = "riobranco.vendas.variacao_preco.active_cache_id.v3";
+
+function _vendasCacheLocalMigrarLimparAntigo() {
+  try {
+    [
+      "riobranco.vendas.bonificacoes.last_payload.v2",
+      "riobranco.vendas.bonificacoes.active_cache_id.v2",
+      "riobranco.vendas.variacao_preco.last_payload.v2",
+      "riobranco.vendas.variacao_preco.active_cache_id.v2",
+      "riobranco.vendas.dashboard.last_payload.v2",
+      "riobranco.vendas.dashboard.active_cache_id.v2",
+      "riobranco.vendas.dashboard.last_payload.v3",
+      "riobranco.vendas.dashboard.active_cache_id.v3",
+    ].forEach((key) => localStorage.removeItem(key));
+  } catch {}
+}
+
+_vendasCacheLocalMigrarLimparAntigo();
+
+function _vendasCacheLocalSalvar(payload = {}) {
+  try {
+    _vendasCacheLocalMigrarLimparAntigo();
+    const clean = {
+      __cache_local_schema: 3,
+      cache: { id: payload?.cache?.id || "" },
+      cache_entry: { id: payload?.cache_entry?.id || "" },
+      relatorio_tipo: "bonificacoes",
+      mes_atual: _asStr(payload?.mes_atual || ""),
+      filtro_vendedor: _asStr(payload?.filtros?.vendedor || payload?.filtro_vendedor || ""),
+      filtro_cliente: _asStr(payload?.filtros?.cliente || payload?.filtro_cliente || ""),
+      atualizado_em: _asStr(payload?.arquivo?.atualizado_em || ""),
+    };
+    localStorage.setItem(VENDAS_RELATORIO_CACHE_KEY, JSON.stringify(clean));
+    const cacheId = clean?.cache?.id || clean?.cache_entry?.id || "";
+    if (cacheId) {
+      localStorage.setItem(VENDAS_RELATORIO_ACTIVE_CACHE_KEY, String(cacheId));
+    }
+  } catch {}
+}
+
+function _vendasCacheLocalObter() {
+  try {
+    const raw = localStorage.getItem(VENDAS_RELATORIO_CACHE_KEY);
+    if (!raw) return null;
+    const payload = JSON.parse(raw);
+    return payload && typeof payload === "object" ? payload : null;
+  } catch {
+    return null;
+  }
+}
+
+function _vendasCacheLocalAtualizarAtivo(cacheId = "") {
+  try {
+    const texto = String(cacheId || "").trim();
+    if (texto) {
+      localStorage.setItem(VENDAS_RELATORIO_ACTIVE_CACHE_KEY, texto);
+    } else {
+      localStorage.removeItem(VENDAS_RELATORIO_ACTIVE_CACHE_KEY);
+    }
+  } catch {}
+}
+
+function _vendasConfigMonitorCancelar(){
+  if (vendasConfigMonitorTimer) {
+    clearTimeout(vendasConfigMonitorTimer);
+    vendasConfigMonitorTimer = null;
+  }
+}
+
+function _vendasConfigTemImportando(imports){
+  const rows = Array.isArray(imports) ? imports : [];
+  return rows.some((item) => _asStr(item?.status) === "importando");
+}
+
+function _vendasConfigTemErro(imports){
+  const rows = Array.isArray(imports) ? imports : [];
+  return rows.some((item) => _asStr(item?.status) === "erro");
+}
+
+function _vendasConfigQtdProntos(imports){
+  const rows = Array.isArray(imports) ? imports : [];
+  return rows.filter((item) => _asBool(item?.cache_exists, false) && _asStr(item?.status) !== "importando").length;
+}
+
+function _vendasConfigAgendarMonitor(importando){
+  vendasConfigMonitorAtivo = !!importando;
+  _vendasConfigMonitorCancelar();
+  if (!importando) return;
+  vendasConfigMonitorTimer = setTimeout(() => {
+    vendasConfigMonitorTimer = null;
+    carregarConfigVendas().catch(() => {});
+  }, 3000);
+}
+
+function _vendasConfigAtualizarIndicador(cfg = {}, fonte = {}, imports = [], meta = {}){
+  const statusEl = document.getElementById("vendasConfigStatus");
+  const importando = !!meta?.processando_importacao || _vendasConfigTemImportando(imports);
+  const erro = _vendasConfigTemErro(imports);
+  const prontos = _vendasConfigQtdProntos(imports);
+  const textoFonte = _asStr(meta?.mensagem || fonte?.message || "");
+  const textoBase = cfg?.updated_at
+    ? `Atualizado em ${_chatDataLabel(cfg.updated_at)}`
+    : "Configuracao pronta para uso.";
+
+  let texto = textoBase;
+  let classe = "is-idle";
+  if (importando) {
+    classe = "is-running";
+    texto = textoFonte || "Importacao em andamento. A tela sera atualizada automaticamente.";
+  } else if (erro) {
+    classe = "is-error";
+    texto = textoFonte || "Ultima importacao com erro. Verifique a fonte e tente novamente.";
+  } else if (prontos > 0) {
+    classe = "is-success";
+    texto = textoFonte || `${prontos} cache(s) pronto(s) para uso.`;
+  } else if (textoFonte) {
+    texto = textoFonte;
+  }
+
+  if (statusEl) {
+    statusEl.className = `hint vendas-config-status ${classe}`;
+    statusEl.innerHTML = `
+      <span class="vendas-config-status-dot"></span>
+      <span>${_escHtml(texto)}</span>
+    `;
+  }
+
+  _vendasConfigAgendarMonitor(importando);
+}
+
+function _vendasCacheLocalRestaurar() {
+  const payload = _vendasCacheLocalObter();
+  if (!payload) return false;
+  if (_asInt(payload?.__cache_local_schema, 0) !== 3) {
+    localStorage.removeItem(VENDAS_RELATORIO_CACHE_KEY);
+    localStorage.removeItem(VENDAS_RELATORIO_ACTIVE_CACHE_KEY);
+    return false;
+  }
+  const cacheId = String(payload?.cache?.id || payload?.cache_entry?.id || "").trim();
+  const cacheAtivo = String(localStorage.getItem(VENDAS_RELATORIO_ACTIVE_CACHE_KEY) || "").trim();
+  const tipoRelatorio = String(payload?.relatorio_tipo || "").replace(/-/g, "_");
+  const meses = Array.isArray(payload?.meses_disponiveis) ? payload.meses_disponiveis : [];
+  const vendedores = Array.isArray(payload?.vendedores) ? payload.vendedores : Array.isArray(payload?.vendedores_disponiveis) ? payload.vendedores_disponiveis : [];
+  if (tipoRelatorio && !["bonificacoes", "resumo"].includes(tipoRelatorio)) {
+    localStorage.removeItem(VENDAS_RELATORIO_CACHE_KEY);
+    localStorage.removeItem(VENDAS_RELATORIO_ACTIVE_CACHE_KEY);
+    return false;
+  }
+  if (!meses.length || !vendedores.length) return false;
+  if (cacheAtivo && cacheId && cacheAtivo !== cacheId) {
+    return false;
+  }
+  if (!cacheId) {
+    return false;
+  }
+  renderRelatorioVendas({ ...(payload || {}), __cache_local_restaurado: true });
+  return true;
+}
+
+function _vendasVariacaoCacheLocalSalvar(payload = {}) {
+  try {
+    _vendasCacheLocalMigrarLimparAntigo();
+    const clean = {
+      __cache_local_schema: 3,
+      cache: { id: payload?.cache?.id || "" },
+      cache_entry: { id: payload?.cache_entry?.id || "" },
+      relatorio_tipo: "variacao_preco",
+      mes_atual: _asStr(payload?.mes_atual || ""),
+      filtro_vendedor: _asStr(payload?.filtros?.vendedor || payload?.filtro_vendedor || ""),
+      atualizado_em: _asStr(payload?.arquivo?.atualizado_em || ""),
+    };
+    localStorage.setItem(VENDAS_VARIACAO_CACHE_KEY, JSON.stringify(clean));
+    const cacheId = clean?.cache?.id || clean?.cache_entry?.id || "";
+    if (cacheId) {
+      localStorage.setItem(VENDAS_VARIACAO_ACTIVE_CACHE_KEY, String(cacheId));
+    }
+  } catch {}
+}
+
+function _vendasVariacaoCacheLocalObter() {
+  try {
+    const raw = localStorage.getItem(VENDAS_VARIACAO_CACHE_KEY);
+    if (!raw) return null;
+    const payload = JSON.parse(raw);
+    return payload && typeof payload === "object" ? payload : null;
+  } catch {
+    return null;
+  }
+}
+
+function _vendasVariacaoCacheLocalAtualizarAtivo(cacheId = "") {
+  try {
+    const texto = String(cacheId || "").trim();
+    if (texto) {
+      localStorage.setItem(VENDAS_VARIACAO_ACTIVE_CACHE_KEY, texto);
+    } else {
+      localStorage.removeItem(VENDAS_VARIACAO_ACTIVE_CACHE_KEY);
+    }
+  } catch {}
+}
+
+function _vendasVariacaoCacheLocalRestaurar() {
+  const payload = _vendasVariacaoCacheLocalObter();
+  if (!payload) return false;
+  if (_asInt(payload?.__cache_local_schema, 0) !== 3) {
+    localStorage.removeItem(VENDAS_VARIACAO_CACHE_KEY);
+    localStorage.removeItem(VENDAS_VARIACAO_ACTIVE_CACHE_KEY);
+    return false;
+  }
+  const meses = Array.isArray(payload?.meses_disponiveis) ? payload.meses_disponiveis : [];
+  const vendedores = Array.isArray(payload?.vendedores) ? payload.vendedores : Array.isArray(payload?.vendedores_disponiveis) ? payload.vendedores_disponiveis : [];
+  if (!meses.length || !vendedores.length) return false;
+  const cacheId = String(payload?.cache?.id || payload?.cache_entry?.id || "").trim();
+  const cacheAtivo = String(localStorage.getItem(VENDAS_VARIACAO_ACTIVE_CACHE_KEY) || "").trim();
+  const tipoRelatorio = String(payload?.relatorio_tipo || "").replace(/-/g, "_");
+  if (tipoRelatorio && !["variacao_preco", "variacao_venda"].includes(tipoRelatorio)) {
+    return false;
+  }
+  if (cacheAtivo && cacheId && cacheAtivo !== cacheId) {
+    return false;
+  }
+  if (!cacheId) {
+    return false;
+  }
+  renderRelatorioVariacaoPreco({ ...(payload || {}), __cache_local_restaurado: true });
+  return true;
+}
+
+function selecionarVendedorRelatorioVariacao(chave = "") {
+  const select = document.getElementById("vendasVarVendedor");
+  if (select) select.value = chave || "";
+  carregarRelatorioVariacaoPreco().catch(() => {});
+}
+
+function renderRelatorioVariacaoPreco(payload = {}) {
+  const filtros = payload?.filtros || {};
+  const mesAtual = payload?.mes_atual || filtros?.mes || "";
+  vendasState.mes = mesAtual;
+  const meses = Array.isArray(payload?.meses_disponiveis) ? payload.meses_disponiveis : [];
+  const vendedores = Array.isArray(payload?.vendedores) ? payload.vendedores : Array.isArray(payload?.vendedores_disponiveis) ? payload.vendedores_disponiveis : [];
+  const variacoes = Array.isArray(payload?.variacoes) ? payload.variacoes : [];
+  const detalhes = Array.isArray(payload?.detalhes_vendedor) ? payload.detalhes_vendedor : [];
+  const resumo = payload?.resumo_geral || {};
+  const resumoGrupos = Array.isArray(payload?.resumo_grupos) ? payload.resumo_grupos : [];
+  const arquivo = payload?.arquivo || {};
+  const vendedorFiltro = filtros?.vendedor || document.getElementById("vendasVarVendedor")?.value || "";
+  const cacheId = payload?.cache?.id || payload?.cache_entry?.id || "";
+
+  vendasState.tipoRelatorio = "variacao_preco";
+  _vendasPreencherSelectMeses(meses, mesAtual, "vendasVarMes");
+  _vendasPreencherSelectVendedores(vendedores, vendedorFiltro, "vendasVarVendedor");
+  atualizarVisibilidadeFiltrosRelatorioVendas();
+
+  const infoEl = document.getElementById("vendasVarArquivoInfo");
+  if (infoEl) {
+    const parts = [
+      "Cache remoto carregado",
+      `Arquivo: ${arquivo.nome || "Base atual"}`,
+        `Atualizado em: ${arquivo.atualizado_em || "-"}`,
+        `Mês: ${_vendasMesLabelTexto(mesAtual)}`,
+    ];
+    if (vendedorFiltro) parts.push(`Vendedor: ${vendedorFiltro}`);
+    if (cacheId) parts.push(`Cache: ${cacheId}`);
+    infoEl.textContent = parts.join(" | ");
+  }
+
+  const cardsEl = document.getElementById("vendasVarResumoCards");
+  if (cardsEl) {
+    cardsEl.innerHTML = _renderCardsVendasResumo(_vendasResumoVariacaoCards(resumo, payload));
+  }
+
+  const grupoResumoEl = document.getElementById("vendasVarGrupoResumo");
+  if (grupoResumoEl) {
+    grupoResumoEl.innerHTML = _vendasRenderGrupoVariacao(resumoGrupos);
+  }
+
+  const vendedoresBody = document.getElementById("vendasVarVendedoresBody");
+  if (vendedoresBody) {
+    vendedoresBody.innerHTML = _vendasRenderVariacoesTabela(variacoes);
+  }
+
+  _vendasRenderDetalheVariacao(detalhes, vendedorFiltro, mesAtual, "vendasVarDetalhesHint", "vendasVarDetalhesBody");
+}
+
+async function carregarRelatorioVariacaoPreco() {
+  const infoEl = document.getElementById("vendasVarArquivoInfo");
+  if (infoEl) infoEl.textContent = "Carregando relatorios vendas...";
+
+  const params = new URLSearchParams();
+  const mes = document.getElementById("vendasVarMes")?.value || vendasState.mes || "";
+  const vendedor = document.getElementById("vendasVarVendedor")?.value || "";
+  if (mes) params.set("mes", mes);
+  if (vendedor) params.set("vendedor", vendedor);
+  params.set("tipo_relatorio", "variacao_preco");
+
+  const resp = await apiFetch(`/api/vendas/relatorio?${params.toString()}`);
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    const erro = data?.erro || "Falha ao carregar relatorio de variacao de preco.";
+    if (infoEl) infoEl.textContent = erro;
+    if (resp.status !== 409) {
+      alert(erro);
+    }
+    return;
+  }
+  renderRelatorioVariacaoPreco(data || {});
+}
+
+function limparFiltrosRelatorioVendas() {
+  const mes = document.getElementById("vendasRelMes");
+  const vendedor = document.getElementById("vendasRelVendedor");
+  const cliente = document.getElementById("vendasRelCliente");
   const dataInicio = document.getElementById("vendasRelDataInicio");
   const dataFim = document.getElementById("vendasRelDataFim");
-  const vendedor = document.getElementById("vendasRelVendedor");
+  if (mes) mes.value = "";
+  if (vendedor) vendedor.value = "";
+  if (cliente) cliente.value = "";
   if (dataInicio) dataInicio.value = "";
   if (dataFim) dataFim.value = "";
-  if (vendedor) vendedor.value = "";
-  carregarRelatorioVendas().catch(() => {});
+  atualizarVisibilidadeFiltrosRelatorioVendas();
+  agendarCarregarRelatorioVendas();
+}
+
+async function processarRelatoriosVendas() {
+  const resumo = document.getElementById("vendasConfigResumo");
+  if (resumo) resumo.textContent = "Processando cache dos relatórios de vendas...";
+  const resp = await apiFetch("/api/vendas/cache/processar", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({}),
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    const erro = data?.erro || "Falha ao processar relatórios.";
+    if (resumo) resumo.textContent = erro;
+    alert(erro);
+    return;
+  }
+  if (resumo) resumo.textContent = data?.mensagem || "Todos dashboards e relatorios criados com sucesso.";
+  await carregarConfigVendas();
+  if (window.__vendasView === "relatorio") {
+    await recarregarRelatorioVendasAtual().catch(() => {});
+  }
+  if (_dashboardVendasIsView(window.__dashView)) {
+    await recarregarDashboardVendaAtual(true).catch(() => {});
+  }
 }
 
 const MONITOR_APPS = {
-  esxi: () => `/monitor/esxi/`,
-  cameras: () => `/monitor/cameras/`,
+  esxi: {
+    label: "ESXi",
+    url: () => "/monitor/esxi/",
+    bootMonitor: true,
+  },
+  cameras: {
+    label: "Cameras",
+    url: () => "/monitor/cameras/",
+    bootMonitor: true,
+  },
+  automacao: {
+    label: "Automacao",
+    url: () => "/monitor/automacao/",
+    bootMonitor: true,
+  },
+  importar_xml: {
+    label: "Importar XML",
+    url: () => "/importar-xml/",
+  },
+  gestor_emails: {
+    label: "Gestor de E-mails",
+    url: () => "/gestor-emails/",
+  },
 };
 
 function toggleMonitorSubmenu(ev){
-  if (!ev) return;
-  const isMobile = window.matchMedia && window.matchMedia("(max-width: 768px)").matches;
-  if (!isMobile) { openMonitorView(null, "esxi"); return; }
-  ev.preventDefault();
-  ev.stopPropagation();
-  const mi = ev.currentTarget;
-  if (mi && mi.classList.contains("has-submenu")) mi.classList.toggle("open");
+  toggleExclusiveSubmenu(ev, () => openMonitorView(null, window.__monitorView || "esxi"));
 }
 
 function openMonitorView(ev, view){
   if (ev){ ev.preventDefault(); ev.stopPropagation(); }
   const menu = document.querySelector('.menu-item.has-submenu[data-tab="monitor"]');
-  window.__monitorView = (view === "cameras") ? "cameras" : "esxi";
+  window.__monitorView = MONITOR_APPS[view] ? view : "esxi";
   showTab("monitor", menu);
 
-  document.querySelectorAll("#submenuMonitor .submenu-item").forEach(x=>x.classList.remove("active"));
-  const items = document.querySelectorAll("#submenuMonitor .submenu-item");
-  const target = window.__monitorView === "cameras" ? 1 : 0;
-  if (items && items[target]) items[target].classList.add("active");
+  document.querySelectorAll("#submenuMonitor .submenu-item").forEach((item) => item.classList.remove("active"));
+  const active = document.querySelector(`#submenuMonitor .submenu-item[data-monitor-view="${window.__monitorView}"]`);
+  if (active) active.classList.add("active");
 
   const isMobile = window.matchMedia && window.matchMedia("(max-width: 768px)").matches;
   if (isMobile && menu) menu.classList.remove("open");
@@ -1721,12 +4354,12 @@ function openMonitorView(ev, view){
 }
 
 function setMonitorView(view){
-  window.__monitorView = (view === "cameras") ? "cameras" : "esxi";
+  window.__monitorView = MONITOR_APPS[view] ? view : "esxi";
+  const config = MONITOR_APPS[window.__monitorView];
   const appLabel = document.getElementById("monitorAppLabel");
   const frame = document.getElementById("monitorFrame");
-  const urlFactory = MONITOR_APPS[window.__monitorView];
-  const url = urlFactory ? urlFactory() : "";
-  if (appLabel) appLabel.textContent = window.__monitorView === "cameras" ? "Cameras" : "ESXi";
+  const url = config?.url ? config.url() : "";
+  if (appLabel) appLabel.textContent = config?.label || "Monitor";
 
   const loadFrame = () => {
     if (!frame || !url) return;
@@ -1736,27 +4369,39 @@ function setMonitorView(view){
     }
   };
 
-  apiFetch("/api/monitor_boot")
-    .then(() => setTimeout(loadFrame, 350))
-    .catch(() => loadFrame());
+  if (config?.bootMonitor) {
+    apiFetch("/api/monitor_boot")
+      .then(() => setTimeout(loadFrame, 350))
+      .catch(() => loadFrame());
+  } else {
+    loadFrame();
+  }
+}
+
+function openMonitorComunicacao(ev){
+  if (ev){ ev.preventDefault(); ev.stopPropagation(); }
+  const menu = document.querySelector('.menu-item.has-submenu[data-tab="monitor"]');
+  showTab("comunicacao", menu);
+
+  document.querySelectorAll("#submenuMonitor .submenu-item").forEach((item) => item.classList.remove("active"));
+  const active = document.querySelector('#submenuMonitor .submenu-item[data-monitor-view="comunicacao"]');
+  if (active) active.classList.add("active");
+
+  const isMobile = window.matchMedia && window.matchMedia("(max-width: 768px)").matches;
+  if (isMobile && menu) menu.classList.remove("open");
+  try{ toggleMenuMobile(false); }catch{}
 }
 
 function openMonitorExternal(){
   const view = window.__monitorView || "esxi";
-  const urlFactory = MONITOR_APPS[view];
-  const url = urlFactory ? urlFactory() : "";
+  const config = MONITOR_APPS[view];
+  const url = config?.url ? config.url() : "";
   if (!url) return;
   window.open(url, "_blank", "noopener");
 }
 
 function toggleConfigSubmenu(ev){
-  if (!ev) return;
-  const isMobile = window.matchMedia && window.matchMedia("(max-width: 768px)").matches;
-  if (!isMobile) { openConfigView(null, "status"); return; }
-  ev.preventDefault();
-  ev.stopPropagation();
-  const mi = ev.currentTarget;
-  if (mi && mi.classList.contains("has-submenu")) mi.classList.toggle("open");
+  toggleExclusiveSubmenu(ev, () => openConfigView(null, "status"));
 }
 
 function openConfigView(ev, view){
@@ -1779,6 +4424,7 @@ function openConfigView(ev, view){
 function openDocsPortal(ev){
   if (ev){ ev.preventDefault(); ev.stopPropagation(); }
   const menu = document.querySelector('.menu-item.has-submenu[data-tab="config"]');
+  closeOpenSubmenus();
   const isMobile = window.matchMedia && window.matchMedia("(max-width: 768px)").matches;
   if (isMobile && menu) menu.classList.remove("open");
   try{ toggleMenuMobile(false); }catch{}
@@ -2149,17 +4795,47 @@ async function _sipRepararAuthERegistrar(sessionKey, modeLabel) {
   return sipState.authRepairPromise;
 }
 
-function preencherConfigVendas(cfg = {}, fonte = {}, imports = []){
+function _vendasConfigAtualizarRegras(regras = null) {
+  if (regras) vendasImportRulesState = regras;
+  const regrasAtuais = regras || vendasImportRulesState || null;
+  const regrasEl = document.getElementById("vendasConfigRegras");
+  const gruposEl = document.getElementById("vendasConfigGrupos");
+  if (!regrasEl && !gruposEl) return;
+  if (!regrasAtuais) {
+    if (regrasEl) regrasEl.textContent = "Arquivo de regras: Relatorios/config-rel-vendas.";
+    if (gruposEl) gruposEl.textContent = "Regras de importacao indisponiveis no momento.";
+    return;
+  }
+  const arquivo = regrasAtuais?.arquivo_relativo || regrasAtuais?.arquivo || "Relatorios/config-rel-vendas";
+  const descartar = Array.isArray(regrasAtuais?.descartar_registros) ? regrasAtuais.descartar_registros : [];
+  const grupos = Array.isArray(regrasAtuais?.grupos) ? regrasAtuais.grupos : [];
+  const colunasIgnoradas = Array.isArray(regrasAtuais?.colunas_ignoradas) ? regrasAtuais.colunas_ignoradas : [];
+  const gruposTexto = grupos.map((item) => {
+    const codigo = item?.codigo_exibicao || item?.codigo || "";
+    const nome = item?.nome || "";
+    return [codigo, nome].filter(Boolean).join(" ");
+  }).filter(Boolean).join(" | ");
+  const origem = regrasAtuais?.carregado_de_arquivo ? "regras aplicadas do arquivo" : "regras padrao aplicadas";
+  if (regrasEl) {
+    const partes = [`Arquivo de regras: ${arquivo}`, origem];
+    if (descartar.length) partes.push(`descartes: ${descartar.join(", ")}`);
+    if (colunasIgnoradas.length) partes.push(`colunas ignoradas: ${colunasIgnoradas.length}`);
+    partes.push("colunas fora do conjunto necessario sao ignoradas na importacao");
+    regrasEl.textContent = partes.join(" | ");
+  }
+  if (gruposEl) {
+    gruposEl.textContent = gruposTexto
+      ? `Grupos normalizados: ${gruposTexto}`
+      : "Grupos normalizados: sem configuracao detalhada.";
+  }
+}
+
+function preencherConfigVendas(cfg = {}, fonte = {}, imports = [], meta = {}){
   vendasConfigState = cfg || {};
+  _vendasCacheLocalAtualizarAtivo(cfg?.active_cache_id || "");
   const habilitado = document.getElementById("vendasConfigHabilitado");
   const sourceType = document.getElementById("vendasConfigSourceType");
   const csvDir = document.getElementById("vendasConfigCsvDir");
-  const fbHost = document.getElementById("vendasConfigFirebirdHost");
-  const fbPort = document.getElementById("vendasConfigFirebirdPort");
-  const fbDb = document.getElementById("vendasConfigFirebirdDatabase");
-  const fbUser = document.getElementById("vendasConfigFirebirdUser");
-  const fbPass = document.getElementById("vendasConfigFirebirdPassword");
-  const fbQuery = document.getElementById("vendasConfigFirebirdQuery");
   const resumo = document.getElementById("vendasConfigResumo");
   const fonteEl = document.getElementById("vendasConfigFonte");
   const body = document.getElementById("vendasCacheBody");
@@ -2167,12 +4843,6 @@ function preencherConfigVendas(cfg = {}, fonte = {}, imports = []){
   if (habilitado) habilitado.checked = !!cfg.habilitado;
   if (sourceType) sourceType.value = cfg.source_type || "csv_relatorios_dir";
   if (csvDir) csvDir.value = cfg.csv_dir || "";
-  if (fbHost) fbHost.value = cfg.firebird_host || "";
-  if (fbPort) fbPort.value = cfg.firebird_port || 3050;
-  if (fbDb) fbDb.value = cfg.firebird_database || "";
-  if (fbUser) fbUser.value = cfg.firebird_user || "";
-  if (fbPass) fbPass.value = cfg.firebird_password || "";
-  if (fbQuery) fbQuery.value = cfg.firebird_query || "";
 
   if (resumo) {
     resumo.textContent = cfg.updated_at
@@ -2191,11 +4861,13 @@ function preencherConfigVendas(cfg = {}, fonte = {}, imports = []){
         <td>${_escHtml(item.source_name || "-")}</td>
         <td>${_escHtml(_fmtNumVendas(item.rows_importadas || 0))}</td>
         <td>${_escHtml(item.importado_em || "-")}</td>
-        <td>${_escHtml(item.status || "-")}</td>
+        <td>${_escHtml(item.cache_exists ? `${item.status || "-"} | cache pronto` : (item.status || "-"))}</td>
         <td><button type="button" onclick="excluirCacheVendas('${_escJsString(item.id || "")}')">Excluir</button></td>
       </tr>
     `).join("") : '<tr><td colspan="6">Nenhum cache importado ainda.</td></tr>';
   }
+  _vendasConfigAtualizarRegras(meta?.regras_importacao || null);
+  _vendasConfigAtualizarIndicador(cfg, fonte, imports, meta);
 }
 
 async function carregarConfigVendas(){
@@ -2205,9 +4877,12 @@ async function carregarConfigVendas(){
   const data = await resp.json().catch(() => ({}));
   if (!resp.ok) {
     if (resumo) resumo.textContent = data?.erro || "Erro ao carregar configuracao de vendas.";
+    if (vendasConfigMonitorAtivo) _vendasConfigAgendarMonitor(true);
     return;
   }
-  preencherConfigVendas(data?.config || {}, data?.fonte || {}, data?.imports || []);
+  preencherConfigVendas(data?.config || {}, data?.fonte || {}, data?.imports || [], {
+    regras_importacao: data?.regras_importacao || null,
+  });
 }
 
 async function salvarConfigVendas(){
@@ -2215,12 +4890,6 @@ async function salvarConfigVendas(){
     habilitado: !!document.getElementById("vendasConfigHabilitado")?.checked,
     source_type: document.getElementById("vendasConfigSourceType")?.value || "csv_relatorios_dir",
     csv_dir: (document.getElementById("vendasConfigCsvDir")?.value || "").trim(),
-    firebird_host: (document.getElementById("vendasConfigFirebirdHost")?.value || "").trim(),
-    firebird_port: Number(document.getElementById("vendasConfigFirebirdPort")?.value || 3050) || 3050,
-    firebird_database: (document.getElementById("vendasConfigFirebirdDatabase")?.value || "").trim(),
-    firebird_user: (document.getElementById("vendasConfigFirebirdUser")?.value || "").trim(),
-    firebird_password: document.getElementById("vendasConfigFirebirdPassword")?.value || "",
-    firebird_query: (document.getElementById("vendasConfigFirebirdQuery")?.value || "").trim(),
   };
   const resp = await apiFetch("/api/vendas/config", {
     method: "PUT",
@@ -2232,12 +4901,14 @@ async function salvarConfigVendas(){
     alert(data?.erro || "Erro ao salvar configuracao de vendas.");
     return;
   }
-  preencherConfigVendas(data?.config || payload, data?.fonte || {}, data?.imports || []);
+  preencherConfigVendas(data?.config || payload, data?.fonte || {}, data?.imports || [], {
+    regras_importacao: data?.regras_importacao || null,
+  });
 }
 
 async function importarCacheVendas(){
   const resumo = document.getElementById("vendasConfigResumo");
-  if (resumo) resumo.textContent = "Importando relatorio de vendas para o banco...";
+  if (resumo) resumo.textContent = "Importando CSV da pasta configurada...";
   const resp = await apiFetch("/api/vendas/cache/importar", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -2249,8 +4920,23 @@ async function importarCacheVendas(){
     alert(data?.erro || "Falha ao importar relatorio de vendas.");
     return;
   }
-  preencherConfigVendas(data?.config || vendasConfigState || {}, data?.fonte || {}, data?.imports || []);
-  if (window.__vendasView === "relatorio") carregarRelatorioVendas().catch(()=>{});
+  preencherConfigVendas(
+    data?.config || vendasConfigState || {},
+    data?.fonte || {},
+    data?.imports || [],
+    {
+      processando_importacao: !!data?.processando_importacao,
+      mensagem: data?.mensagem || "",
+      regras_importacao: data?.regras_importacao || null,
+    }
+  );
+  if (resumo) {
+    resumo.textContent = data?.mensagem || "Todos dashboards e relatorios criados com sucesso.";
+  }
+  if (!(resp.status === 202 || data?.processando_importacao)) await carregarConfigVendas().catch(() => {});
+  if (_dashboardVendasIsView(window.__dashView)) {
+    recarregarDashboardVendaAtual(true).catch(()=>{});
+  }
 }
 
 async function importarRelatorioCsvVendas(){
@@ -2275,8 +4961,23 @@ async function importarRelatorioCsvVendas(){
     return;
   }
   if (input) input.value = "";
-  preencherConfigVendas(data?.config || vendasConfigState || {}, data?.fonte || {}, data?.imports || []);
-  if (window.__vendasView === "relatorio") carregarRelatorioVendas().catch(()=>{});
+  preencherConfigVendas(
+    data?.config || vendasConfigState || {},
+    data?.fonte || {},
+    data?.imports || [],
+    {
+      processando_importacao: !!data?.processando_importacao,
+      mensagem: data?.mensagem || "",
+      regras_importacao: data?.regras_importacao || null,
+    }
+  );
+  if (resumo) {
+    resumo.textContent = data?.mensagem || "Todos dashboards e relatorios criados com sucesso.";
+  }
+  if (!(resp.status === 202 || data?.processando_importacao)) await carregarConfigVendas().catch(() => {});
+  if (_dashboardVendasIsView(window.__dashView)) {
+    recarregarDashboardVendaAtual(true).catch(()=>{});
+  }
 }
 
 async function ativarCacheVendas(cacheId, checked){
@@ -2296,8 +4997,11 @@ async function ativarCacheVendas(cacheId, checked){
     await carregarConfigVendas();
     return;
   }
-  preencherConfigVendas(data?.config || vendasConfigState || {}, data?.fonte || {}, data?.imports || []);
-  if (window.__vendasView === "relatorio") carregarRelatorioVendas().catch(()=>{});
+  preencherConfigVendas(data?.config || vendasConfigState || {}, data?.fonte || {}, data?.imports || [], {
+    regras_importacao: data?.regras_importacao || null,
+  });
+  if (window.__vendasView === "relatorio") recarregarRelatorioVendasAtual().catch(()=>{});
+  if (_dashboardVendasIsView(window.__dashView)) recarregarDashboardVendaAtual(true).catch(()=>{});
 }
 
 async function excluirCacheVendas(cacheId){
@@ -2310,6 +5014,9 @@ async function excluirCacheVendas(cacheId){
     return;
   }
   await carregarConfigVendas();
+  if (_dashboardVendasIsView(window.__dashView)) {
+    recarregarDashboardVendaAtual(true).catch(()=>{});
+  }
 }
 
 function setConfigView(view){
@@ -2441,8 +5148,6 @@ function _initDashFrotaTooltips(dados){
     }
   }, { once:false });
 }
-// =====================================================================
-// Adicione esta função antes de renderDashboardFrota()
 function getStatusBadge(status) {
   const statusMap = {
     chegada: { label: "Chegou", color: "#4CAF50", bgColor: "#E8F5E9" },
@@ -2455,27 +5160,9 @@ function getStatusBadge(status) {
     paradoVasio: { label: "Parado (vazio)", color: "#795548", bgColor: "#EFEBE9" },
     paradoCarregado: { label: "Parado (carregado)", color: "#607D8B", bgColor: "#ECEFF1" }
   };
-  
+
   const s = statusMap[status] || { label: "-", color: "#999", bgColor: "#f0f0f0" };
   return `<span style="background-color: ${s.bgColor}; color: ${s.color}; padding: 4px 8px; border-radius: 4px; font-weight: bold;">${s.label}</span>`;
-}
-
-// Depois use na renderização:
-async function renderDashboardFrota(){
-  // ... código anterior ...
-  const status = d.frete_status || "-";
-  
-  return `
-    <tr class="${cls}">
-      <td>${_escHtml(veiculo)}</td>
-      <td>${_escHtml(motorista)}</td>
-      <td>${_escHtml(frete)}</td>
-      <td>${getStatusBadge(status)}</td>  <!-- COM CORES -->
-      <td>${_escHtml(media.toString())}</td>
-      <td>${_escHtml(faltaManut.toString())} km</td>
-      <td>${_escHtml(faltaOleo.toString())} km</td>
-    </tr>
-  `;
 }
 
 async function renderDashboardFrota(){
@@ -2491,7 +5178,7 @@ async function renderDashboardFrota(){
     const veiculoDetalhe = [d.placa || "", d.modelo || ""].filter(Boolean).join(" / ") || "-";
     const motorista = d.motorista_nome || "-";
     const frete = d.frete_nome || "-";
-    const status = d.frete_status || "-"; 
+    const status = d.frete_status || "-";
     const media = (d.media_km !== null && d.media_km !== undefined)
       ? Number(d.media_km).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
       : "-";
@@ -2528,6 +5215,8 @@ function showTab(tabId, el) {
     toggleChatPopup(false).catch(() => {});
   }
 
+  closeOpenSubmenus();
+
   document.querySelectorAll(".section").forEach((sec) => sec.classList.remove("activeSection"));
 
   const target = document.getElementById(tabId);
@@ -2548,11 +5237,10 @@ function showTab(tabId, el) {
     setGestaoFrotaView(window.__gestaoView);
   }
   if (tabId === "dashboard") {
-    // mantém a última view selecionada (default: resumo)
-    if (!window.__dashView) window.__dashView = "resumo";
-    setDashboardView(window.__dashView);
-    if (window.__dashView === "frota") {
-      renderDashboardFrota().catch(()=>{});
+    // Ao abrir o item Dashboard sem escolher um submenu específico, volta para o resumo.
+    if (!window.__dashboardSubmenuNavigation) {
+      window.__dashView = "resumo";
+      setDashboardView("resumo");
     }
   }
   if (tabId === "comissao") {
@@ -2562,13 +5250,13 @@ function showTab(tabId, el) {
     setComissaoView(window.__comissaoView);
   }
   if (tabId === "vendas") {
-    if (!window.__vendasView || !["relatorio"].includes(window.__vendasView)) {
+    if (!window.__vendasView || !["dashboard", "relatorio"].includes(window.__vendasView)) {
       window.__vendasView = "relatorio";
     }
     setVendasView(window.__vendasView);
   }
   if (tabId === "monitor") {
-    if (!window.__monitorView || !["esxi", "cameras"].includes(window.__monitorView)) {
+    if (!MONITOR_APPS[window.__monitorView]) {
       window.__monitorView = "esxi";
     }
     setMonitorView(window.__monitorView);
@@ -2583,14 +5271,29 @@ function showTab(tabId, el) {
     }
     setConfigView(window.__configView);
   }
+  if (tabId === "pontosvenda") {
+    if (!window.__pontosVendaView || !["cadastro", "relatorio"].includes(window.__pontosVendaView)) {
+      window.__pontosVendaView = "cadastro";
+    }
+    setPontosVendaView(window.__pontosVendaView);
+  }
   if (tabId === "estoque") {
-    if (!window.__estoqueView || !["lancar", "conferir"].includes(window.__estoqueView)) {
+    if (!window.__estoqueView || !["lancar", "posicao", "cadastrar", "rastreio"].includes(window.__estoqueView)) {
       window.__estoqueView = "lancar";
     }
     setEstoqueView(window.__estoqueView);
   }
+  if (tabId === "cargas") {
+    if (!window.__cargasView || !["cadastro", "escala"].includes(window.__cargasView)) {
+      window.__cargasView = "cadastro";
+    }
+    setCargasView(window.__cargasView);
+  }
+  if (tabId === "agentia") {
+    iniciarAgentIa();
+  }
   if (tabId === "cadastros") {
-    if (!window.__cadastrosView) window.__cadastrosView = "motoristas";
+    if (!window.__cadastrosView) window.__cadastrosView = "colaboradores";
     setCadastrosView(window.__cadastrosView);
   }
   if (tabId === "fretes") {
@@ -2599,6 +5302,573 @@ function showTab(tabId, el) {
     _atualizarScrollbarAuxiliarKanban();
   }
 
+}
+
+//////////////////////////////////////////////////////
+// AGENT IA EMBUTIDO
+//////////////////////////////////////////////////////
+const AGENTIA_STORAGE_KEY = "riobranco_agentia_state_v1";
+const AGENTIA_MESSAGE_LIMIT = 80;
+const AGENTIA_HISTORY_LIMIT = 12;
+const agentIaState = {
+  initialized: false,
+  busy: false,
+  cards: [],
+  selectedId: null,
+  history: [],
+  messages: [],
+  thinkingBox: null,
+  thinkingTimer: null,
+};
+
+function agentIaEscape(value){
+  return String(value ?? "").replace(/[&<>"']/g, (ch) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+  }[ch]));
+}
+
+function agentIaNormalizeRole(role){
+  const value = String(role || "").trim().toLowerCase();
+  if (value === "assistant" || value === "agent") return "agent";
+  return "user";
+}
+
+function agentIaHistoryRole(role){
+  return agentIaNormalizeRole(role) === "agent" ? "assistant" : "user";
+}
+
+function agentIaNormalizeMessage(message){
+  const role = agentIaNormalizeRole(message?.role);
+  const text = String(message?.text ?? message?.content ?? "").trim().slice(0, 2000);
+  const output = String(message?.output ?? "").trim().slice(0, 4000);
+  const actions = Array.isArray(message?.actions) ? message.actions : [];
+  return {
+    role,
+    text,
+    output,
+    actions: actions
+      .map((action) => ({
+        name: String(action?.name || "").trim(),
+        label: String(action?.label || "").trim(),
+        kind: String(action?.kind || "").trim() || undefined,
+        danger: !!action?.danger,
+        needsMessage: !!(action?.needsMessage || action?.needs_message),
+      }))
+      .filter((action) => !!action.name),
+  };
+}
+
+function agentIaPersistState(){
+  try {
+    const payload = {
+      selectedId: agentIaState.selectedId || null,
+      history: agentIaState.history.slice(-AGENTIA_HISTORY_LIMIT),
+      messages: agentIaState.messages.slice(-AGENTIA_MESSAGE_LIMIT),
+    };
+    localStorage.setItem(AGENTIA_STORAGE_KEY, JSON.stringify(payload));
+  } catch {}
+}
+
+function agentIaLoadState(){
+  try {
+    const raw = localStorage.getItem(AGENTIA_STORAGE_KEY);
+    if (!raw) return false;
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object") {
+      if (Array.isArray(parsed.history)) {
+        agentIaState.history = parsed.history
+          .map((item) => ({
+            role: agentIaHistoryRole(item?.role),
+            content: String(item?.content ?? "").trim(),
+          }))
+          .filter((item) => !!item.content)
+          .slice(-AGENTIA_HISTORY_LIMIT);
+      }
+      if (Array.isArray(parsed.messages)) {
+        agentIaState.messages = parsed.messages
+          .map((item) => agentIaNormalizeMessage(item))
+          .filter((item) => !!item.text || !!item.output)
+          .slice(-AGENTIA_MESSAGE_LIMIT);
+      } else if (!agentIaState.messages.length && Array.isArray(parsed.history)) {
+        agentIaState.messages = parsed.history
+          .map((item) => ({
+            role: agentIaHistoryRole(item?.role),
+            text: String(item?.content ?? "").trim(),
+            output: "",
+            actions: [],
+          }))
+          .filter((item) => !!item.text)
+          .slice(-AGENTIA_MESSAGE_LIMIT);
+      }
+      if (parsed.selectedId !== undefined && parsed.selectedId !== null) {
+        const selected = Number(parsed.selectedId);
+        agentIaState.selectedId = Number.isFinite(selected) ? selected : null;
+      }
+      return true;
+    }
+  } catch {}
+  return false;
+}
+
+function agentIaBuildMessageBox(message){
+  const box = document.createElement("div");
+  box.className = `agentia-msg ${message.role}`;
+  box.textContent = message.text || "";
+
+  if (Array.isArray(message.actions) && message.actions.length) {
+    const row = document.createElement("div");
+    row.className = "agentia-msg-actions";
+    message.actions.forEach((action) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "agentia-action" + (action.kind === "secondary" ? " secondary" : "") + (action.danger ? " danger" : "");
+      btn.textContent = action.label || action.name || "Executar";
+      btn.onclick = () => agentIaSendAction(action);
+      row.appendChild(btn);
+    });
+    box.appendChild(row);
+  }
+
+  if (message.output) {
+    const pre = document.createElement("pre");
+    pre.textContent = message.output;
+    box.appendChild(pre);
+  }
+
+  return box;
+}
+
+function agentIaBuildThinkingBox(){
+  const box = document.createElement("div");
+  box.className = "agentia-msg agent thinking";
+  box.setAttribute("aria-live", "polite");
+  box.innerHTML = `
+    <span class="agentia-thinking-label">Pensando</span>
+    <span class="agentia-thinking-dots" aria-hidden="true">
+      <span></span><span></span><span></span>
+    </span>
+  `;
+  return box;
+}
+
+function agentIaRenderConversation(){
+  const chat = document.getElementById("agentIaChat");
+  if (!chat) return;
+  chat.innerHTML = "";
+  agentIaState.messages.forEach((message) => {
+    chat.appendChild(agentIaBuildMessageBox(message));
+  });
+  chat.scrollTop = chat.scrollHeight;
+}
+
+function agentIaRecordMessage(message){
+  const normalized = agentIaNormalizeMessage(message);
+  if (!normalized.text && !normalized.output) return null;
+  agentIaState.messages.push(normalized);
+  if (agentIaState.messages.length > AGENTIA_MESSAGE_LIMIT) {
+    agentIaState.messages = agentIaState.messages.slice(-AGENTIA_MESSAGE_LIMIT);
+  }
+  agentIaState.history.push({
+    role: agentIaHistoryRole(normalized.role),
+    content: normalized.output ? `${normalized.text}\n${normalized.output}`.trim().slice(0, 2000) : normalized.text,
+  });
+  if (agentIaState.history.length > AGENTIA_HISTORY_LIMIT) {
+    agentIaState.history = agentIaState.history.slice(-AGENTIA_HISTORY_LIMIT);
+  }
+  agentIaPersistState();
+  return normalized;
+}
+
+function agentIaSetBusy(busy){
+  agentIaState.busy = !!busy;
+  const btn = document.getElementById("agentIaSendBtn");
+  if (btn) {
+    btn.disabled = !!busy;
+    btn.textContent = busy ? "Enviando..." : "Enviar";
+  }
+}
+
+function agentIaShowThinking(){
+  agentIaHideThinking();
+  const chat = document.getElementById("agentIaChat");
+  if (!chat) return;
+  const box = agentIaBuildThinkingBox();
+  agentIaState.thinkingBox = box;
+  chat.appendChild(box);
+  chat.scrollTop = chat.scrollHeight;
+  const labels = ["Pensando", "Pensando.", "Pensando..", "Pensando..."];
+  let idx = 0;
+  agentIaState.thinkingTimer = window.setInterval(() => {
+    if (!agentIaState.thinkingBox) return;
+    const labelEl = agentIaState.thinkingBox.querySelector(".agentia-thinking-label");
+    if (labelEl) labelEl.textContent = labels[idx % labels.length];
+    idx += 1;
+  }, 450);
+}
+
+function agentIaUpdateThinkingText(text){
+  const box = agentIaState.thinkingBox;
+  if (!box) return;
+  if (agentIaState.thinkingTimer) {
+    window.clearInterval(agentIaState.thinkingTimer);
+    agentIaState.thinkingTimer = null;
+  }
+  box.classList.remove("thinking");
+  box.classList.add("streaming");
+  box.textContent = text || "Pensando...";
+}
+
+function agentIaFinalizeLiveReply(text, actions = [], output = "", workspace = null){
+  if (workspace) agentIaRenderWorkspace(workspace);
+
+  const stored = agentIaRecordMessage({
+    role: "agent",
+    text: text || "Sem resposta.",
+    actions,
+    output,
+  });
+  const chat = document.getElementById("agentIaChat");
+  const liveBox = agentIaState.thinkingBox;
+  const finalBox = stored ? agentIaBuildMessageBox(stored) : agentIaBuildMessageBox({
+    role: "agent",
+    text: text || "Sem resposta.",
+    actions,
+    output,
+  });
+
+  if (liveBox && liveBox.parentNode) {
+    liveBox.replaceWith(finalBox);
+  } else if (chat) {
+    chat.appendChild(finalBox);
+  }
+
+  agentIaState.thinkingBox = null;
+  if (chat) {
+    chat.scrollTop = chat.scrollHeight;
+  }
+}
+
+function agentIaHideThinking(){
+  if (agentIaState.thinkingTimer) {
+    window.clearInterval(agentIaState.thinkingTimer);
+    agentIaState.thinkingTimer = null;
+  }
+  if (agentIaState.thinkingBox) {
+    agentIaState.thinkingBox.remove();
+    agentIaState.thinkingBox = null;
+  }
+}
+
+function agentIaSetActiveMenu(option){
+  document.querySelectorAll(".agentia-menu-btn").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.agentiaOption === option);
+  });
+}
+
+function agentIaAddMessage(role, text, actions = [], output = ""){
+  const stored = agentIaRecordMessage({ role, text, actions, output });
+  const chat = document.getElementById("agentIaChat");
+  if (!chat || !stored) return;
+  chat.appendChild(agentIaBuildMessageBox(stored));
+  chat.scrollTop = chat.scrollHeight;
+}
+
+function agentIaSelectedCardHtml(card){
+  if (!card) return "";
+  const statuses = [
+    ["chegada", "Chegada"],
+    ["descarregado", "Descarregado"],
+    ["liberado", "Liberado"],
+    ["carregando", "Carregando"],
+    ["carregado", "Carregado"],
+    ["entregando", "Entregando"],
+    ["retornando", "Retornando"],
+  ];
+  const buttons = statuses.map(([status, label]) => {
+    const disabled = status === card.status ? "disabled" : "";
+    return `<button type="button" class="agentia-action secondary" data-agentia-move-status="${agentIaEscape(status)}" ${disabled}>${agentIaEscape(label)}</button>`;
+  }).join("");
+  return `
+    <div class="agentia-frete-title">#${agentIaEscape(card.id)} ${agentIaEscape(card.title)}</div>
+    <div class="agentia-frete-row">Status atual: ${agentIaEscape(card.status_label)} | Caminhao: ${agentIaEscape(card.vehicle)} ${card.plate ? "| Placa: " + agentIaEscape(card.plate) : ""}</div>
+    <div class="agentia-frete-row">Motorista: ${agentIaEscape(card.driver)} | Entregador: ${agentIaEscape(card.helper)}</div>
+    <div class="agentia-frete-row">Carga: ${agentIaEscape(card.load)} ${card.date ? "| Data: " + agentIaEscape(card.date) : ""}</div>
+    <div class="agentia-selected-actions">${buttons}</div>
+  `;
+}
+
+function agentIaSelectCard(id){
+  agentIaState.selectedId = Number(id);
+  agentIaPersistState();
+  const selected = agentIaState.cards.find((card) => Number(card.id) === agentIaState.selectedId);
+  document.querySelectorAll(".agentia-frete-card").forEach((el) => {
+    el.classList.toggle("selected", Number(el.dataset.id) === agentIaState.selectedId);
+  });
+
+  const panel = document.getElementById("agentIaSelectedCard");
+  if (!panel) return;
+  if (!selected) {
+    panel.classList.remove("visible");
+    panel.innerHTML = "";
+    return;
+  }
+
+  panel.innerHTML = agentIaSelectedCardHtml(selected);
+  panel.classList.add("visible");
+  panel.querySelectorAll("[data-agentia-move-status]").forEach((btn) => {
+    btn.onclick = () => {
+      const status = btn.dataset.agentiaMoveStatus;
+      agentIaAddMessage("user", `mover frete ${selected.id} para ${btn.textContent}`);
+      agentIaChat({ action: "move_frete", frete_id: selected.id, status, confirmed: true });
+    };
+  });
+}
+
+function agentIaRenderWorkspace(workspace){
+  if (!workspace) return;
+  if (workspace.active) agentIaSetActiveMenu(workspace.active);
+
+  const title = document.getElementById("agentIaWorkspaceTitle");
+  const meta = document.getElementById("agentIaWorkspaceMeta");
+  const grid = document.getElementById("agentIaCardGrid");
+  const selectedPanel = document.getElementById("agentIaSelectedCard");
+  if (title && workspace.title) title.textContent = workspace.title;
+  if (meta && workspace.meta) meta.textContent = workspace.meta;
+  if (!grid || !Array.isArray(workspace.cards)) return;
+
+  agentIaState.cards = workspace.cards;
+  grid.innerHTML = "";
+
+  if (!agentIaState.cards.length) {
+    grid.innerHTML = `<div class="agentia-frete-row">Nenhum card encontrado.</div>`;
+    if (selectedPanel) {
+      selectedPanel.classList.remove("visible");
+      selectedPanel.innerHTML = "";
+    }
+    return;
+  }
+
+  agentIaState.cards.forEach((card) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "agentia-frete-card";
+    btn.dataset.id = card.id;
+    btn.innerHTML = `
+      <div class="agentia-frete-title">#${agentIaEscape(card.id)} ${agentIaEscape(card.title)}</div>
+      <div class="agentia-frete-status">${agentIaEscape(card.status_label)}</div>
+      <div class="agentia-frete-row">Caminhao: ${agentIaEscape(card.vehicle)} ${card.plate ? "| " + agentIaEscape(card.plate) : ""}</div>
+      <div class="agentia-frete-row">Motorista: ${agentIaEscape(card.driver)}</div>
+      <div class="agentia-frete-row">Carga: ${agentIaEscape(card.load)}</div>
+    `;
+    btn.onclick = () => agentIaSelectCard(card.id);
+    grid.appendChild(btn);
+  });
+
+  agentIaSelectCard(workspace.selected_id || agentIaState.selectedId || agentIaState.cards[0].id);
+}
+
+async function agentIaSincronizarAplicacao(data){
+  if (!data || typeof data !== "object") return;
+  const tasks = [];
+  if (data.workspace?.active === "kanban" && typeof carregarFretes === "function") {
+    tasks.push(carregarFretes().catch((err) => console.warn("Agent IA: falha ao atualizar kanban", err)));
+  }
+  if (data.devolucoes_updated && typeof carregarDevolucoes === "function") {
+    tasks.push(carregarDevolucoes().catch((err) => console.warn("Agent IA: falha ao atualizar devolucoes", err)));
+  }
+  if (tasks.length) await Promise.all(tasks);
+}
+
+async function agentIaChat(payload){
+  if (agentIaState.busy) return;
+  agentIaSetBusy(true);
+  agentIaShowThinking();
+  try {
+    if (!usuarioLogado && !LOGIN_BYPASS) {
+      await restaurarSessaoLogin().catch(() => false);
+    }
+    const payloadFinal = { ...(payload || {}) };
+    if (usuarioLogado?.id) {
+      payloadFinal.usuario_id = usuarioLogado.id;
+      payloadFinal.usuario_login = usuarioLogado.login || "";
+      payloadFinal.usuario_nome = usuarioLogado.nome || "";
+    }
+    if (!payloadFinal.chat_mode) payloadFinal.chat_mode = "agent";
+    payloadFinal.history = agentIaState.history.slice(-12);
+    payloadFinal.stream = true;
+    const resp = await apiFetch("/api/agent/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payloadFinal),
+    });
+    if (!resp.ok) {
+      const errorText = await resp.text();
+      throw new Error(errorText || `Falha HTTP ${resp.status}`);
+    }
+
+    const contentType = (resp.headers.get("content-type") || "").toLowerCase();
+    if (contentType.includes("application/x-ndjson") && resp.body) {
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let finalData = null;
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (value) {
+          buffer += decoder.decode(value, { stream: !done });
+        }
+
+        let newlineIndex = buffer.indexOf("\n");
+        while (newlineIndex !== -1) {
+          const line = buffer.slice(0, newlineIndex).trim();
+          buffer = buffer.slice(newlineIndex + 1);
+          if (line) {
+            try {
+              const event = JSON.parse(line);
+              if (event.type === "status") {
+                agentIaUpdateThinkingText(event.reply || "Pensando...");
+              } else if (event.type === "delta") {
+                agentIaUpdateThinkingText(event.reply || event.text || "Pensando...");
+              } else if (event.type === "final") {
+                finalData = event;
+              } else if (event.type === "error") {
+                throw new Error(event.reply || event.message || "Nao consegui conversar com o Agent IA.");
+              }
+            } catch (parseErr) {
+              console.warn("Agent IA stream parse error", parseErr);
+            }
+          }
+          newlineIndex = buffer.indexOf("\n");
+        }
+
+        if (done) {
+          const tail = buffer.trim();
+          if (tail) {
+            try {
+              const event = JSON.parse(tail);
+              if (event.type === "status") {
+                agentIaUpdateThinkingText(event.reply || "Pensando...");
+              } else if (event.type === "delta") {
+                agentIaUpdateThinkingText(event.reply || event.text || "Pensando...");
+              } else if (event.type === "final") {
+                finalData = event;
+              } else if (event.type === "error") {
+                throw new Error(event.reply || event.message || "Nao consegui conversar com o Agent IA.");
+              }
+            } catch (parseErr) {
+              console.warn("Agent IA stream parse error", parseErr);
+            }
+          }
+          break;
+        }
+      }
+
+      if (!finalData) {
+        throw new Error("A resposta terminou sem finalizar o stream.");
+      }
+
+      agentIaFinalizeLiveReply(
+        finalData.reply || finalData.output || "Sem resposta.",
+        finalData.actions || [],
+        finalData.output || "",
+        finalData.workspace || null,
+      );
+      await agentIaSincronizarAplicacao(finalData);
+    } else {
+      const data = await resp.json();
+      agentIaFinalizeLiveReply(
+        data.reply || data.output || "Sem resposta.",
+        data.actions || [],
+        data.output || "",
+        data.workspace || null,
+      );
+      await agentIaSincronizarAplicacao(data);
+    }
+  } catch (err) {
+    agentIaHideThinking();
+    agentIaAddMessage("agent", err?.message || "Nao consegui conversar com o Agent IA.");
+  } finally {
+    agentIaHideThinking();
+    agentIaSetBusy(false);
+    const input = document.getElementById("agentIaInput");
+    if (input) input.focus();
+  }
+}
+
+function agentIaSendAction(action){
+  if (!action) return;
+  if (String(action.name || "").startsWith("module_")) {
+    agentIaAddMessage("user", action.label || action.name || "Abrir modulo");
+    agentIaChat({ action: action.name, confirmed: true });
+    return;
+  }
+  if (action.needsMessage) {
+    const message = prompt("Mensagem do commit:");
+    if (!message) return;
+    agentIaAddMessage("user", `${action.label || action.name} - ${message}`);
+    agentIaChat({ action: action.name, commit_message: message, confirmed: true });
+    return;
+  }
+  agentIaAddMessage("user", action.label || action.name || "Executar");
+  agentIaChat({ ...action, action: action.name, confirmed: true });
+}
+
+function agentIaEnviarPergunta(event){
+  event.preventDefault();
+  const input = document.getElementById("agentIaInput");
+  const text = (input?.value || "").trim();
+  if (!text) return;
+  input.value = "";
+  agentIaAddMessage("user", text);
+  agentIaChat({ message: text });
+}
+
+function agentIaMenu(option){
+  agentIaSetActiveMenu(option);
+  const messages = {
+    kanban: "listar cargas",
+    devolucoes: "explicar devolucoes",
+    status: "explicar status",
+    backup: "explicar backup",
+    brief: "analisar pedido",
+    validate: "validar baseline",
+    git: "explicar git",
+    deploy: "explicar deploy",
+  };
+  const text = messages[option] || "ajuda";
+  agentIaAddMessage("user", text);
+  agentIaChat({ message: text });
+}
+
+function iniciarAgentIa(){
+  if (agentIaState.initialized) return;
+  agentIaState.initialized = true;
+  const restored = agentIaLoadState();
+  if (restored && agentIaState.messages.length) {
+    agentIaRenderConversation();
+    return;
+  }
+  agentIaAddMessage("agent", "Oi. Eu sou o Agent IA do RioBranco. Posso conversar, listar cargas, destacar cards do kanban e executar rotinas do sistema quando voce pedir. Exemplos: listar cargas, mostrar caminhao 13, mover status para carregado caminhao 13.", [
+    { name: "module_base", label: "Visao geral" },
+    { name: "module_nfe", label: "NF-e", kind: "secondary" },
+    { name: "module_fretes", label: "Fretes", kind: "secondary" },
+    { name: "refresh_fretes", label: "Listar cargas" },
+    { name: "status", label: "Status geral", kind: "secondary" },
+  ]);
+}
+
+function abrirAgentIaDoChat(){
+  try {
+    showTab("agentia");
+  } catch {}
+  try {
+    iniciarAgentIa();
+  } catch {}
 }
 
 //////////////////////////////////////////////////////
@@ -2810,6 +6080,203 @@ function _chatAnexoMensagemHtml(msg) {
       ${meta}
     </a>
   `;
+}
+
+function _chatEhContatoAIRio(contatoId = chatState.contatoId) {
+  return String(contatoId || "") === CHAT_AI_RIO_CONTACT_ID;
+}
+
+function _chatAIRioNormalizeMessage(message){
+  const role = String(message?.role || "").toLowerCase() === "user" ? "user" : "agent";
+  return {
+    role,
+    text: String(message?.text ?? message?.content ?? "").trim().slice(0, 4000),
+    output: String(message?.output ?? "").trim().slice(0, 4000),
+    pending: !!message?.pending,
+  };
+}
+
+function _chatAIRioPersistState(){
+  try {
+    localStorage.setItem(CHAT_AI_RIO_STORAGE_KEY, JSON.stringify({
+      messages: (chatState.aiRioMessages || []).slice(-60),
+    }));
+  } catch {}
+}
+
+function _chatAIRioLoadState(){
+  try {
+    const raw = localStorage.getItem(CHAT_AI_RIO_STORAGE_KEY);
+    if (!raw) return false;
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && Array.isArray(parsed.messages)) {
+      chatState.aiRioMessages = parsed.messages
+        .map((item) => _chatAIRioNormalizeMessage(item))
+        .filter((item) => !!item.text || !!item.output || item.pending);
+      return true;
+    }
+  } catch {}
+  return false;
+}
+
+function _chatAIRioEnsureGreeting(){
+  if (chatState.aiRioMessages && chatState.aiRioMessages.length) return;
+  chatState.aiRioMessages = [{
+    role: "agent",
+    text: "Oi. Eu sou a I.A-Rio. Posso conversar com voce por aqui, como se fosse mais uma pessoa da equipe.",
+    output: "",
+    pending: false,
+  }];
+  _chatAIRioPersistState();
+}
+
+function _chatAIRioConversationToHistory(){
+  return (chatState.aiRioMessages || [])
+    .filter((m) => !m.pending)
+    .map((m) => ({
+      role: m.role === "user" ? "user" : "assistant",
+      content: (m.output ? `${m.text}\n${m.output}` : m.text).trim().slice(0, 2000),
+    }))
+    .filter((m) => !!m.content);
+}
+
+function _chatAIRioBuildMessageBox(message){
+  const box = document.createElement("div");
+  box.className = `chat-item ${message.role === "user" ? "me" : "other"}${message.pending ? " chat-item-sending" : ""}`;
+  const text = String(message.text || "").trim();
+  if (message.pending) {
+    box.innerHTML = `
+      ${text ? `<div class="chat-item-text">${_chatMensagemHtml(text)}</div>` : ""}
+      <small class="chat-item-meta">
+        <span class="chat-item-sending-label">I.A-Rio pensando</span>
+        <span class="chat-item-sending-dots" aria-hidden="true"><span></span><span></span><span></span></span>
+      </small>
+    `;
+    return box;
+  }
+  if (text) {
+    box.innerHTML = `<div class="chat-item-text">${_chatMensagemHtml(text)}</div>`;
+  }
+  if (message.output) {
+    const pre = document.createElement("pre");
+    pre.textContent = message.output;
+    box.appendChild(pre);
+  }
+  return box;
+}
+
+function _chatAIRioRenderConversation(){
+  const box = document.getElementById("chatMensagens");
+  if (!box) return;
+  const mensagens = chatState.aiRioMessages || [];
+  if (!mensagens.length) {
+    box.innerHTML = `<div class='chat-empty'><div class='chat-empty-title'>I.A-Rio pronta para conversar</div><div class='chat-empty-text'>Escreva algo para iniciar a conversa.</div></div>`;
+    return;
+  }
+  box.innerHTML = "";
+  mensagens.forEach((message) => {
+    box.appendChild(_chatAIRioBuildMessageBox(message));
+  });
+  box.scrollTop = box.scrollHeight;
+}
+
+function _chatAIRioAppendMessage(message){
+  chatState.aiRioMessages.push(_chatAIRioNormalizeMessage(message));
+  chatState.aiRioMessages = chatState.aiRioMessages.slice(-60);
+  _chatAIRioPersistState();
+  _chatAIRioRenderConversation();
+}
+
+function _chatAIRioReplaceLastAgentMessage(message){
+  const msgs = chatState.aiRioMessages || [];
+  for (let i = msgs.length - 1; i >= 0; i -= 1) {
+    if (msgs[i].role === "agent") {
+      msgs[i] = _chatAIRioNormalizeMessage(message);
+      chatState.aiRioMessages = msgs.slice(-60);
+      _chatAIRioPersistState();
+      _chatAIRioRenderConversation();
+      return msgs[i];
+    }
+  }
+  return null;
+}
+
+function _chatAIRioSetPending(text = "Pensando..."){
+  const msgs = chatState.aiRioMessages || [];
+  const last = msgs[msgs.length - 1];
+  if (!last || last.role !== "agent" || !last.pending) {
+    msgs.push(_chatAIRioNormalizeMessage({ role: "agent", text, pending: true }));
+  } else {
+    last.text = text;
+    last.pending = true;
+  }
+  chatState.aiRioMessages = msgs.slice(-60);
+  _chatAIRioPersistState();
+  _chatAIRioRenderConversation();
+}
+
+function _chatAIRioFinalize(replyText, output = ""){
+  const msgs = chatState.aiRioMessages || [];
+  const last = msgs[msgs.length - 1];
+  const finalText = String(replyText || output || "Sem resposta.").trim();
+  if (last && last.role === "agent" && last.pending) {
+    last.text = finalText;
+    last.output = String(output || "").trim();
+    last.pending = false;
+  } else {
+    msgs.push(_chatAIRioNormalizeMessage({ role: "agent", text: finalText, output, pending: false }));
+  }
+  chatState.aiRioMessages = msgs.slice(-60);
+  _chatAIRioPersistState();
+  _chatAIRioRenderConversation();
+}
+
+function _chatFriendlyHttpError(status, rawText) {
+  const code = Number(status || 0);
+  const text = String(rawText || "").trim();
+  if (code === 504) return "Tempo limite ao consultar a I.A-Rio. Tente novamente com uma pergunta mais objetiva.";
+  if (code >= 500) return `Falha HTTP ${code} ao consultar a I.A-Rio.`;
+  if (!text) return `Falha HTTP ${code || "desconhecida"} ao consultar a I.A-Rio.`;
+  if (/<html[\s>]/i.test(text)) return `Falha HTTP ${code || "desconhecida"} ao consultar a I.A-Rio.`;
+  return text;
+}
+
+function _chatBuildSendingBubble(mensagem = "", anexo = null) {
+  const box = document.createElement("div");
+  box.className = "chat-item me chat-item-sending";
+  const texto = String(mensagem || "").trim();
+  const temAnexo = !!anexo;
+  box.innerHTML = `
+    ${texto ? `<div class="chat-item-text">${_chatMensagemHtml(texto)}</div>` : ""}
+    ${temAnexo ? `<div class="chat-item-text chat-item-sending-attachment">Enviando anexo...</div>` : ""}
+    <small class="chat-item-meta">
+      <span class="chat-item-sending-label">Enviando</span>
+      <span class="chat-item-sending-dots" aria-hidden="true"><span></span><span></span><span></span></span>
+    </small>
+  `;
+  return box;
+}
+
+function _chatMostrarEnviando(mensagem = "", anexo = null) {
+  const box = document.getElementById("chatMensagens");
+  if (!box) return null;
+  _chatRemoverEnviando();
+  const bubble = _chatBuildSendingBubble(mensagem, anexo);
+  chatState.pendingSendBubble = bubble;
+  box.appendChild(bubble);
+  box.scrollTop = box.scrollHeight;
+  chatState.sendingMessage = true;
+  atualizarEstadoEnvioChat();
+  return bubble;
+}
+
+function _chatRemoverEnviando() {
+  if (chatState.pendingSendBubble) {
+    try { chatState.pendingSendBubble.remove(); } catch {}
+    chatState.pendingSendBubble = null;
+  }
+  chatState.sendingMessage = false;
+  atualizarEstadoEnvioChat();
 }
 
 function _sipSetStatus(text, level = "warn") {
@@ -3558,10 +7025,13 @@ function atualizarEstadoEnvioChat() {
   const attachBtn = document.getElementById("chatAnexoBtn");
   const attachInput = document.getElementById("chatAnexoInput");
   const ok = !!chatState.usuarioId && !!chatState.contatoId;
-  if (btn) btn.disabled = !ok;
+  const sending = !!chatState.sendingMessage;
+  const allowAttachment = ok && !_chatEhContatoAIRio();
+  if (btn) btn.disabled = !ok || sending;
+  if (btn) btn.textContent = sending ? "Enviando..." : "Enviar";
   if (input) input.disabled = !ok;
-  if (attachBtn) attachBtn.disabled = !ok;
-  if (attachInput) attachInput.disabled = !ok;
+  if (attachBtn) attachBtn.disabled = !allowAttachment;
+  if (attachInput) attachInput.disabled = !allowAttachment;
   atualizarEstadoSipChat();
 }
 
@@ -3570,6 +7040,13 @@ function atualizarCabecalhoChat() {
   const statusEl = document.getElementById("chatContatoAtualStatus");
   const avatarEl = document.getElementById("chatContatoAvatar");
   if (!nomeEl) return;
+  if (_chatEhContatoAIRio()) {
+    nomeEl.textContent = CHAT_AI_RIO_NAME;
+    if (statusEl) statusEl.textContent = "Assistente da equipe";
+    if (avatarEl) avatarEl.textContent = "IA";
+    atualizarEstadoSipChat();
+    return;
+  }
   const contato = _sipContatoAtual();
   nomeEl.textContent = contato?.nome || "Selecione um contato";
   if (statusEl) statusEl.textContent = _chatResumoContato(contato);
@@ -3647,7 +7124,19 @@ function renderListaContatosChat() {
 
   const usuarios = cacheUsuarios || [];
   const eu = String(chatState.usuarioId || "");
-  const contatos = usuarios.filter((u) => String(u.id) !== eu);
+  const contatos = [
+    {
+      id: CHAT_AI_RIO_CONTACT_ID,
+      nome: CHAT_AI_RIO_NAME,
+      login: "ia-rio",
+      sip_ramal: "",
+      sip_usuario: "",
+      ativo: true,
+      codbar_modo: "bip",
+      is_ai_rio: true,
+    },
+    ...usuarios.filter((u) => String(u.id) !== eu),
+  ];
 
   if (!eu) {
     wrap.innerHTML = `<div class="hint">Faca login para usar o chat.</div>`;
@@ -3666,12 +7155,14 @@ function renderListaContatosChat() {
     const uid = String(u.id);
     const active = String(chatState.contatoId) === uid ? "active" : "";
     const qtd = Number(chatState.unreadByContato?.[uid] || 0);
-    const badge = qtd > 0 ? `<span class="chat-contato-badge">${qtd > 99 ? "99+" : qtd}</span>` : "";
-    const subtitulo = qtd > 0
-      ? `${qtd} ${qtd === 1 ? "mensagem nao lida" : "mensagens nao lidas"}`
-      : (u.sip_ramal ? `Ramal ${_escHtml(String(u.sip_ramal))}` : (u.login ? `Login ${_escHtml(String(u.login))}` : "Clique para conversar"));
+    const badge = qtd > 0 && !u.is_ai_rio ? `<span class="chat-contato-badge">${qtd > 99 ? "99+" : qtd}</span>` : "";
+    const subtitulo = u.is_ai_rio
+      ? "Assistente da equipe"
+      : (qtd > 0
+        ? `${qtd} ${qtd === 1 ? "mensagem nao lida" : "mensagens nao lidas"}`
+        : (u.sip_ramal ? `Ramal ${_escHtml(String(u.sip_ramal))}` : (u.login ? `Login ${_escHtml(String(u.login))}` : "Clique para conversar")));
     return `
-      <button type="button" class="chat-contato ${active}" onclick="selecionarContatoChat(${u.id})" title="Abrir conversa com ${_escHtml(u.nome)}">
+      <button type="button" class="chat-contato ${active}${u.is_ai_rio ? " chat-contato-ai" : ""}" onclick='selecionarContatoChat(${JSON.stringify(uid)})' title="Abrir conversa com ${_escHtml(u.nome)}">
         <span class="chat-contato-avatar">${_chatIniciais(u.nome)}</span>
         <span class="chat-contato-textos">
           <span class="chat-contato-nome">${_escHtml(u.nome)}</span>
@@ -3689,9 +7180,16 @@ function renderListaContatosChat() {
 
 async function carregarUsuariosChat(manterSelecao = true) {
   if (!cacheUsuarios) cacheUsuarios = await carregarUsuariosCadastro();
-  const contatos = (cacheUsuarios || []).filter((u) => String(u.id) !== String(chatState.usuarioId));
+  const contatos = [
+    { id: CHAT_AI_RIO_CONTACT_ID, is_ai_rio: true },
+    ...(cacheUsuarios || []).filter((u) => String(u.id) !== String(chatState.usuarioId)),
+  ];
   if (!manterSelecao || !contatos.some((u) => String(u.id) === String(chatState.contatoId))) {
-    chatState.contatoId = contatos[0] ? String(contatos[0].id) : "";
+    chatState.contatoId = CHAT_AI_RIO_CONTACT_ID;
+  }
+  _chatAIRioLoadState();
+  if (String(chatState.contatoId) === CHAT_AI_RIO_CONTACT_ID && !(chatState.aiRioMessages || []).length) {
+    _chatAIRioEnsureGreeting();
   }
   renderListaContatosChat();
   atualizarCabecalhoChat();
@@ -3701,7 +7199,17 @@ async function carregarUsuariosChat(manterSelecao = true) {
 async function selecionarContatoChat(contatoId) {
   limparAnexoChat();
   chatState.contatoId = String(contatoId || "");
-  await marcarLidasContatoChat(chatState.contatoId);
+  if (_chatEhContatoAIRio()) {
+    _chatAIRioLoadState();
+    if (!(chatState.aiRioMessages || []).length) _chatAIRioEnsureGreeting();
+    _chatAIRioRenderConversation();
+    atualizarCabecalhoChat();
+    atualizarEstadoEnvioChat();
+    return;
+  }
+  if (!_chatEhContatoAIRio(chatState.contatoId)) {
+    await marcarLidasContatoChat(chatState.contatoId);
+  }
   await carregarChat();
 }
 
@@ -3712,6 +7220,17 @@ async function carregarChat() {
     box.innerHTML = "<div class='chat-empty'><div class='chat-empty-title'>Nenhuma conversa aberta</div><div class='chat-empty-text'>Selecione um contato para iniciar o chat.</div></div>";
     atualizarCabecalhoChat();
     atualizarEstadoEnvioChat();
+    return;
+  }
+
+  if (_chatEhContatoAIRio()) {
+    _chatAIRioLoadState();
+    if (!(chatState.aiRioMessages || []).length) _chatAIRioEnsureGreeting();
+    _chatAIRioRenderConversation();
+    atualizarCabecalhoChat();
+    renderListaContatosChat();
+    atualizarEstadoEnvioChat();
+    _chatAutoResizeInput();
     return;
   }
 
@@ -3738,7 +7257,9 @@ async function carregarChat() {
     box.scrollTop = box.scrollHeight;
   }
 
-  await marcarLidasContatoChat(chatState.contatoId);
+  if (!_chatEhContatoAIRio(chatState.contatoId)) {
+    await marcarLidasContatoChat(chatState.contatoId);
+  }
   atualizarCabecalhoChat();
   renderListaContatosChat();
   atualizarEstadoEnvioChat();
@@ -3750,42 +7271,163 @@ async function enviarMensagemChat() {
   const mensagem = (txt?.value || "").trim();
   const anexo = chatState.pendingAttachment || null;
   if (!chatState.usuarioId || !chatState.contatoId) return;
+  if (chatState.sendingMessage) return;
   if (!mensagem && !anexo) return;
 
-  let resp;
-  if (anexo) {
-    const form = new FormData();
-    form.append("remetente_id", String(Number(chatState.usuarioId)));
-    form.append("destinatario_id", String(Number(chatState.contatoId)));
-    form.append("mensagem", mensagem);
-    form.append("anexo", anexo);
-    resp = await apiFetch("/api/chat/mensagens", {
-      method: "POST",
-      body: form,
-    });
-  } else {
-    resp = await apiFetch("/api/chat/mensagens", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        remetente_id: Number(chatState.usuarioId),
-        destinatario_id: Number(chatState.contatoId),
-        mensagem,
-      }),
-    });
-  }
-  if (!resp.ok) {
-    const j = await resp.json().catch(() => null);
-    alert(j?.erro || "Erro ao enviar mensagem.");
+  if (_chatEhContatoAIRio()) {
+    await enviarMensagemChatAIRio(mensagem, anexo);
     return;
   }
-  if (txt) {
-    txt.value = "";
-    _chatAutoResizeInput();
-    txt.focus();
+
+  _chatMostrarEnviando(mensagem, anexo);
+  try {
+    let resp;
+    if (anexo) {
+      const form = new FormData();
+      form.append("remetente_id", String(Number(chatState.usuarioId)));
+      form.append("destinatario_id", String(Number(chatState.contatoId)));
+      form.append("mensagem", mensagem);
+      form.append("anexo", anexo);
+      resp = await apiFetch("/api/chat/mensagens", {
+        method: "POST",
+        body: form,
+      });
+    } else {
+      resp = await apiFetch("/api/chat/mensagens", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          remetente_id: Number(chatState.usuarioId),
+          destinatario_id: Number(chatState.contatoId),
+          mensagem,
+        }),
+      });
+    }
+    if (!resp.ok) {
+      const j = await resp.json().catch(() => null);
+      alert(j?.erro || "Erro ao enviar mensagem.");
+      return;
+    }
+    if (txt) {
+      txt.value = "";
+      _chatAutoResizeInput();
+      txt.focus();
+    }
+    limparAnexoChat();
+    await carregarChat();
+  } finally {
+    _chatRemoverEnviando();
   }
-  limparAnexoChat();
-  await carregarChat();
+}
+
+async function enviarMensagemChatAIRio(mensagem, anexo = null) {
+  if (anexo) {
+    alert("A I.A-Rio nao recebe anexos. Envie apenas texto.");
+    return;
+  }
+  const textoUsuario = String(mensagem || "").trim();
+  if (!textoUsuario) return;
+  if (chatState.sendingMessage) return;
+
+  chatState.sendingMessage = true;
+  atualizarEstadoEnvioChat();
+  try {
+    _chatAIRioAppendMessage({ role: "user", text: textoUsuario, pending: false });
+    _chatAIRioSetPending("Pensando...");
+
+    const payload = {
+      message: textoUsuario,
+      history: _chatAIRioConversationToHistory().slice(-12),
+      persona_name: CHAT_AI_RIO_NAME,
+      chat_mode: "ia",
+      stream: true,
+    };
+
+    const resp = await apiFetch("/api/agent/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!resp.ok) {
+      const errorText = await resp.text().catch(() => "");
+      throw new Error(_chatFriendlyHttpError(resp.status, errorText));
+    }
+
+    const contentType = (resp.headers.get("content-type") || "").toLowerCase();
+    let finalData = null;
+    if (contentType.includes("application/x-ndjson") && resp.body) {
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (value) buffer += decoder.decode(value, { stream: !done });
+
+        let newlineIndex = buffer.indexOf("\n");
+        while (newlineIndex !== -1) {
+          const line = buffer.slice(0, newlineIndex).trim();
+          buffer = buffer.slice(newlineIndex + 1);
+          if (line) {
+            try {
+              const event = JSON.parse(line);
+              if (event.type === "status") {
+                _chatAIRioSetPending(event.reply || "Pensando...");
+              } else if (event.type === "delta") {
+                _chatAIRioSetPending(event.reply || event.text || "Pensando...");
+              } else if (event.type === "final") {
+                finalData = event;
+              } else if (event.type === "error") {
+                throw new Error(event.reply || event.message || "Nao consegui conversar com a I.A-Rio.");
+              }
+            } catch (parseErr) {
+              console.warn("I.A-Rio stream parse error", parseErr);
+            }
+          }
+          newlineIndex = buffer.indexOf("\n");
+        }
+
+        if (done) {
+          const tail = buffer.trim();
+          if (tail) {
+            try {
+              const event = JSON.parse(tail);
+              if (event.type === "status") {
+                _chatAIRioSetPending(event.reply || "Pensando...");
+              } else if (event.type === "delta") {
+                _chatAIRioSetPending(event.reply || event.text || "Pensando...");
+              } else if (event.type === "final") {
+                finalData = event;
+              } else if (event.type === "error") {
+                throw new Error(event.reply || event.message || "Nao consegui conversar com a I.A-Rio.");
+              }
+            } catch (parseErr) {
+              console.warn("I.A-Rio stream parse error", parseErr);
+            }
+          }
+          break;
+        }
+      }
+    } else {
+      finalData = await resp.json();
+    }
+
+    const finalText = finalData?.reply || finalData?.output || "Sem resposta.";
+    _chatAIRioFinalize(finalText, finalData?.output || "");
+    if (txt) {
+      txt.value = "";
+      _chatAutoResizeInput();
+      txt.focus();
+    }
+    limparAnexoChat();
+    renderListaContatosChat();
+  } catch (err) {
+    _chatAIRioFinalize(err?.message || "Nao consegui conversar com a I.A-Rio.");
+    alert(err?.message || "Nao consegui conversar com a I.A-Rio.");
+  } finally {
+    chatState.sendingMessage = false;
+    atualizarEstadoEnvioChat();
+  }
 }
 
 async function toggleChatPopup(force) {
@@ -3810,7 +7452,7 @@ async function toggleChatPopup(force) {
     }, 60);
   } else {
     toggleChatSipExternalPanel(false);
-    if (chatState.contatoId) await marcarLidasContatoChat(chatState.contatoId).catch(() => {});
+    if (chatState.contatoId && !_chatEhContatoAIRio(chatState.contatoId)) await marcarLidasContatoChat(chatState.contatoId).catch(() => {});
     renderListaContatosChat();
     atualizarBadgeFabDoMapa();
     atualizarEstadoSipChat();
@@ -3841,6 +7483,31 @@ function atualizarUsuarioLogadoUI() {
   atualizarStatusCodbarSistema();
 }
 
+function _syncBlockingPopupState() {
+  const body = document.body;
+  if (!body) return;
+  const hasBlockingPopup = !!document.querySelector(".foto-modal:not(.hidden), .login-modal:not(.hidden)");
+  body.classList.toggle("modal-open", hasBlockingPopup);
+}
+
+function _abrirPopupBloqueante(modal) {
+  if (!modal) return;
+  modal.classList.remove("hidden");
+  modal.setAttribute("aria-hidden", "false");
+  _syncBlockingPopupState();
+}
+
+function _fecharPopupBloqueante(modal) {
+  if (!modal) return;
+  modal.classList.add("hidden");
+  modal.setAttribute("aria-hidden", "true");
+  _syncBlockingPopupState();
+}
+
+if (document.readyState !== "loading") {
+  _syncBlockingPopupState();
+}
+
 function abrirLoginModal(showMsg = "") {
   const modal = document.getElementById("loginModal");
   const msg = document.getElementById("loginMsg");
@@ -3855,7 +7522,7 @@ function abrirLoginModal(showMsg = "") {
   } catch {}
 
   document.body.classList.add("login-active");
-  if (modal) modal.classList.remove("hidden");
+  _abrirPopupBloqueante(modal);
   if (msg) msg.textContent = showMsg || "";
   try { loginInput?.focus(); } catch {}
   setTimeout(() => { try { loginInput?.focus(); } catch {} }, 40);
@@ -3863,22 +7530,8 @@ function abrirLoginModal(showMsg = "") {
 
 function fecharLoginModal() {
   const modal = document.getElementById("loginModal");
-  if (modal) modal.classList.add("hidden");
+  _fecharPopupBloqueante(modal);
   document.body.classList.remove("login-active");
-}
-
-function bindLoginSubmitOnEnter() {
-  ["loginUsuario", "loginSenha"].forEach((id) => {
-    const el = document.getElementById(id);
-    if (!el || el.dataset.loginEnterBound === "1") return;
-    el.dataset.loginEnterBound = "1";
-    el.addEventListener("keydown", async (e) => {
-      if (e.key === "Enter") {
-        e.preventDefault();
-        await fazerLoginSistema();
-      }
-    });
-  });
 }
 
 function _sessaoObjFromStorage() {
@@ -3947,6 +7600,21 @@ function _sessaoExpirada(sessao) {
   return Date.now() > Number(sessao.expires_at);
 }
 
+function _aplicarUsuarioLogado(usuario, salvarSessao = false) {
+  if (!usuario?.id) return null;
+  usuarioLogado = {
+    id: usuario.id,
+    nome: usuario.nome,
+    login: usuario.login,
+    codbar_modo: usuario.codbar_modo || "bip",
+  };
+  chatState.usuarioId = String(usuarioLogado.id);
+  chatState.lastSeenMessageId = 0;
+  if (salvarSessao) _salvarSessaoLogin(usuarioLogado);
+  atualizarUsuarioLogadoUI();
+  return usuarioLogado;
+}
+
 async function fazerLoginSistema() {
   if (LOGIN_BYPASS) {
     fecharLoginModal();
@@ -3969,12 +7637,8 @@ async function fazerLoginSistema() {
     return;
   }
   const j = await resp.json();
-  usuarioLogado = j.usuario || null;
-  chatState.usuarioId = usuarioLogado ? String(usuarioLogado.id) : "";
-  chatState.lastSeenMessageId = 0;
-  if (usuarioLogado?.id) _salvarSessaoLogin(usuarioLogado);
+  _aplicarUsuarioLogado(j.usuario || null, true);
   fecharLoginModal();
-  atualizarUsuarioLogadoUI();
   await initSipClient(true).catch(() => {});
   await carregarUsuariosChat(false);
   await carregarNaoLidasChat();
@@ -3983,60 +7647,43 @@ async function fazerLoginSistema() {
 
 async function restaurarSessaoLogin() {
   if (LOGIN_BYPASS) return true;
-  try {
-    const portalResp = await apiFetch("/api/status");
-    if (portalResp.ok) {
-      const statusPayload = await portalResp.json();
-      if (statusPayload?.usuario_logado?.id) {
-        usuarioLogado = {
-          id: statusPayload.usuario_logado.id,
-          nome: statusPayload.usuario_logado.nome,
-          login: statusPayload.usuario_logado.login,
-          codbar_modo: statusPayload.usuario_logado.codbar_modo || "bip",
-        };
-        chatState.usuarioId = String(usuarioLogado.id);
-        chatState.lastSeenMessageId = 0;
-        _salvarSessaoLogin(usuarioLogado);
-        atualizarUsuarioLogadoUI();
-        await initSipClient(true).catch(() => {});
-        return true;
-      }
-    }
-  } catch {}
-
   const sessao = _sessaoObjFromStorage();
   if (!sessao) return false;
   if (_sessaoExpirada(sessao)) {
     _logoutSessaoLocal(false, "");
     return false;
   }
-  try {
-    const uid = sessao?.usuario?.id;
-    if (!uid) return false;
-    const resp = await apiFetch(`/api/usuarios/${encodeURIComponent(uid)}`);
-    if (!resp.ok) return false;
-    const user = await resp.json();
-    usuarioLogado = {
-      id: user.id,
-      nome: user.nome,
-      login: user.login,
-      codbar_modo: user.codbar_modo || "bip",
-    };
-    chatState.usuarioId = String(user.id);
-    chatState.lastSeenMessageId = 0;
-    _salvarSessaoLogin(usuarioLogado); // renova por mais 8h após revalidação
-    atualizarUsuarioLogadoUI();
-    await initSipClient(true).catch(() => {});
-    return true;
-  } catch {
-    return false;
-  }
+  const usuarioSessao = sessao?.usuario || null;
+  if (!usuarioSessao?.id) return false;
+  _aplicarUsuarioLogado(usuarioSessao, false);
+  fecharLoginModal();
+
+  const uid = usuarioSessao.id;
+  void (async () => {
+    try {
+      const resp = await apiFetch(`/api/me?usuario_id=${encodeURIComponent(uid)}`);
+      if (!resp.ok) throw new Error("sessao invalida");
+      const payload = await resp.json();
+      const user = payload?.usuario || payload;
+      if (String(usuarioLogado?.id || "") !== String(uid)) return;
+      _aplicarUsuarioLogado(user, true); // renova por mais 8h após revalidação
+      await initSipClient(true).catch(() => {});
+    } catch {
+      if (String(usuarioLogado?.id || "") === String(uid)) {
+        _logoutSessaoLocal(true, "Sessao expirada. Faca login novamente.");
+      }
+    }
+  })();
+
+  return true;
 }
 
 function initChatInterno() {
   if (window.__chatIniciado) return;
   window.__chatIniciado = true;
   renderAnexoPendenteChat();
+  _chatAIRioLoadState();
+  if (!(chatState.aiRioMessages || []).length) _chatAIRioEnsureGreeting();
 
   const input = document.getElementById("chatTexto");
   if (input) {
@@ -4049,8 +7696,6 @@ function initChatInterno() {
     input.addEventListener("input", () => _chatAutoResizeInput());
     _chatAutoResizeInput();
   }
-
-  bindLoginSubmitOnEnter();
 
   if (chatState.pollHandle) clearInterval(chatState.pollHandle);
   chatState.pollHandle = setInterval(async () => {
@@ -4088,6 +7733,49 @@ const FRETE_STATUS_OPCOES = [
   { key: "paradoVasio", label: "Parado (vazio)" },
   { key: "paradoCarregado", label: "Parado (carregado)" },
 ];
+const FRETE_CARD_TEMPLATE_VERSION = "kanban-minimo-popup-20260429";
+const ESCALA_STATUS_OPCOES = FRETE_STATUS_OPCOES.filter((item) => ["chegada", "descarregado", "liberado"].includes(item.key));
+const ESCALA_STATUS_VIAGEM = new Set(["carregado", "entregando"]);
+
+function _freteStatusLabel(status){
+  return FRETE_STATUS_OPCOES.find((item) => item.key === status)?.label || status || "-";
+}
+
+function _rotuloFreteExibicao(frete){
+  const cidades = (frete?.carga_cidades || "").toString().trim();
+  const veiculo = (frete?.carga_veiculo_numero || frete?.veiculo_nome || frete?.veiculo_placa || "").toString().trim();
+  const rota = (frete?.carga_rota || "").toString().trim();
+  const nomeCalculado = (frete?.frete_nome || frete?.nome_exibicao || "").toString().trim();
+  if (nomeCalculado) return nomeCalculado;
+  if (cidades && veiculo) return `${cidades} - ${veiculo}`;
+  if (!veiculo && cidades && rota) return `${cidades} - ${rota}`;
+  if (cidades) return cidades;
+  if (rota) return rota;
+  if (veiculo) return veiculo;
+  return (frete?.nome || "").toString().trim() || "Frete sem nome";
+}
+
+function _resumoFreteCabecalho(frete = {}) {
+  const cidade = (frete?.carga_cidades || frete?.carga_nome || frete?.cidade || "").toString().trim();
+  const rota = (frete?.carga_rota || "").toString().trim();
+  const veiculo = (frete?.carga_veiculo_numero || frete?.veiculo_nome || frete?.veiculo_placa || "").toString().trim();
+  if (cidade && rota) return `${cidade} - rota ${rota}`;
+  if (cidade) return cidade;
+  if (rota) return `rota ${rota}`;
+  if (veiculo) return veiculo;
+  return (frete?.nome || "").toString().trim() || "Frete sem nome";
+}
+
+function _resumoVeiculoPlacaFrete(frete = {}) {
+  const veiculo = _buscarVeiculoCadastro(_resolverVeiculoIdDoFrete(frete));
+  if (veiculo?.id) {
+    const numeroOuNome = (veiculo.nome || `Veiculo ${veiculo.id}`).toString().trim();
+    const placa = (veiculo.placa || "").toString().trim();
+    return placa ? `${numeroOuNome} - ${placa}` : numeroOuNome;
+  }
+  const numero = _extrairNumeroVeiculoTexto(frete?.carga_veiculo_numero || frete?.veiculo_nome || frete?.carga_nome || frete?.nome);
+  return numero ? numero : "";
+}
 
 function _freteKey(id){
   return String(id ?? "");
@@ -4095,6 +7783,28 @@ function _freteKey(id){
 
 function _findFreteById(id){
   return fretes.find((f) => String(f.id) === String(id)) || null;
+}
+
+function _indiceStatusFrete(status){
+  return FRETE_STATUS_OPCOES.findIndex((item) => item.key === String(status || ""));
+}
+
+function _atualizarBotoesMovimentoMobile(card, status){
+  if (!card) return;
+  const idx = _indiceStatusFrete(status);
+  const btnPrev = card.querySelector(".btn-mover-mobile-prev");
+  const btnNext = card.querySelector(".btn-mover-mobile-next");
+  const temPrev = idx > 0;
+  const temNext = idx >= 0 && idx < FRETE_STATUS_OPCOES.length - 1;
+
+  if (btnPrev) {
+    btnPrev.disabled = !temPrev;
+    btnPrev.title = temPrev ? `Mover para ${_freteStatusLabel(FRETE_STATUS_OPCOES[idx - 1].key)}` : "Sem coluna anterior";
+  }
+  if (btnNext) {
+    btnNext.disabled = !temNext;
+    btnNext.title = temNext ? `Mover para ${_freteStatusLabel(FRETE_STATUS_OPCOES[idx + 1].key)}` : "Sem coluna seguinte";
+  }
 }
 
 function _setFreteLocal(frete){
@@ -4106,6 +7816,330 @@ function _setFreteLocal(frete){
 
 function _removeFreteLocal(id){
   fretes = fretes.filter((item) => String(item.id) !== String(id));
+}
+
+function _normalizarApoioEscalaId(motoristaId, apoioId) {
+  const motoristaNum = motoristaId ? Number(motoristaId) : null;
+  const apoioNum = apoioId ? Number(apoioId) : null;
+  if (!apoioNum) return null;
+  return motoristaNum && motoristaNum === apoioNum ? null : apoioNum;
+}
+
+function _resolverEquipeEscala(motoristaId, apoioId) {
+  const motoristaNum = motoristaId ? Number(motoristaId) : null;
+  const motorista = _buscarColaboradorCadastro(motoristaNum);
+  const apoioNum = _normalizarApoioEscalaId(motoristaNum, apoioId);
+  const apoio = _buscarColaboradorCadastro(apoioNum);
+  const motoristaEntregador = _colaboradorTemFuncao(motorista, "entregador");
+  const entregadorId = apoioNum || (motoristaEntregador ? motoristaNum : null);
+  return {
+    motoristaId: motoristaNum,
+    apoioId: apoioNum,
+    entregadorId,
+    motorista,
+    apoio,
+    motoristaEntregador,
+  };
+}
+
+function _listaFretesEscalaAtivos(excludeFreteId = null) {
+  return (fretes || []).filter((item) => (
+    ESCALA_STATUS_OPCOES.some((statusInfo) => statusInfo.key === item?.status) &&
+    String(item?.id) !== String(excludeFreteId ?? "")
+  ));
+}
+
+function _buscarConflitosPessoaEscala(freteId, pessoaIds) {
+  const ids = Array.from(new Set((pessoaIds || []).filter(Boolean).map((item) => String(item))));
+  const vistos = new Set();
+  const conflitos = [];
+  if (!ids.length) return conflitos;
+
+  _listaFretesEscalaAtivos(freteId).forEach((outroFrete) => {
+    const usados = new Set();
+    const motoristaAtual = _freteColaboradorMotoristaId(outroFrete);
+    const entregadorAtual = _freteColaboradorEntregadorId(outroFrete);
+    if (motoristaAtual) usados.add(String(motoristaAtual));
+    if (entregadorAtual) usados.add(String(entregadorAtual));
+    ids.forEach((id) => {
+      if (!usados.has(id)) return;
+      const chave = `${id}:${String(outroFrete?.id ?? "")}`;
+      if (vistos.has(chave)) return;
+      vistos.add(chave);
+      conflitos.push({
+        pessoaId: Number(id),
+        frete: outroFrete,
+      });
+    });
+  });
+
+  return conflitos;
+}
+
+function _buscarPessoasEmViagem(freteId, pessoaIds) {
+  const ids = Array.from(new Set((pessoaIds || []).filter(Boolean).map((item) => String(item))));
+  const vistos = new Set();
+  const avisos = [];
+  if (!ids.length) return avisos;
+
+  (fretes || []).forEach((outroFrete) => {
+    if (String(outroFrete?.id ?? "") === String(freteId ?? "")) return;
+    if (!ESCALA_STATUS_VIAGEM.has(String(outroFrete?.status || ""))) return;
+
+    const usados = new Set();
+    const motoristaAtual = _freteColaboradorMotoristaId(outroFrete);
+    const entregadorAtual = _freteColaboradorEntregadorId(outroFrete);
+    if (motoristaAtual) usados.add(String(motoristaAtual));
+    if (entregadorAtual) usados.add(String(entregadorAtual));
+
+    ids.forEach((id) => {
+      if (!usados.has(id)) return;
+      const chave = `${id}:${String(outroFrete?.id ?? "")}`;
+      if (vistos.has(chave)) return;
+      vistos.add(chave);
+      avisos.push({
+        pessoaId: Number(id),
+        frete: outroFrete,
+      });
+    });
+  });
+
+  return avisos;
+}
+
+function _avaliarEscalaFreteSelecao(frete, motoristaId, apoioId) {
+  const equipe = _resolverEquipeEscala(motoristaId, apoioId);
+  const pendencias = [];
+  const avisos = [];
+
+  if (!equipe.motoristaId) {
+    pendencias.push("Selecione um motorista.");
+  } else if (!equipe.motorista) {
+    pendencias.push("Motorista informado nao foi encontrado.");
+  } else if (!_colaboradorTemFuncao(equipe.motorista, "motorista")) {
+    pendencias.push(`${equipe.motorista.nome} nao tem perfil de motorista.`);
+  }
+
+  if (!equipe.entregadorId) {
+    pendencias.push("Selecione um apoio entregador ou use um motorista-entregador.");
+  } else if (equipe.apoioId) {
+    if (!equipe.apoio) {
+      pendencias.push("Apoio informado nao foi encontrado.");
+    } else if (
+      !_colaboradorTemFuncao(equipe.apoio, "entregador") &&
+      !_colaboradorTemFuncao(equipe.apoio, "ajudante")
+    ) {
+      pendencias.push(`${equipe.apoio.nome} nao tem perfil de apoio.`);
+    } else if (!equipe.motoristaEntregador && !_colaboradorTemFuncao(equipe.apoio, "entregador")) {
+      pendencias.push(`${equipe.apoio.nome} precisa ter perfil de entregador com este motorista.`);
+    }
+  }
+
+  const conflitos = pendencias.length ? [] : _buscarConflitosPessoaEscala(frete?.id, [
+    equipe.motoristaId,
+    equipe.apoioId,
+  ]);
+
+  conflitos.forEach((conflito) => {
+    const pessoa = _buscarColaboradorCadastro(conflito.pessoaId);
+    const nomePessoa = pessoa?.nome || "Colaborador";
+    const nomeVeiculo = conflito.frete?.veiculo_nome || conflito.frete?.nome || `frete ${conflito.frete?.id}`;
+    pendencias.push(`${nomePessoa} ja esta escalado no veiculo ${nomeVeiculo}.`);
+  });
+
+  const pessoasEmViagem = pendencias.length ? [] : _buscarPessoasEmViagem(frete?.id, [
+    equipe.motoristaId,
+    equipe.apoioId,
+  ]);
+
+  pessoasEmViagem.forEach((item) => {
+    const pessoa = _buscarColaboradorCadastro(item.pessoaId);
+    const nomePessoa = pessoa?.nome || "Colaborador";
+    const nomeVeiculo = item.frete?.veiculo_nome || item.frete?.nome || `frete ${item.frete?.id}`;
+    avisos.push(`${nomePessoa} consta em viagem no veiculo ${nomeVeiculo} (${_freteStatusLabel(item.frete?.status)}). Confirme antes de escalar.`);
+  });
+
+  if (
+    equipe.apoioId &&
+    equipe.motoristaEntregador &&
+    equipe.apoio &&
+    _colaboradorTemFuncao(equipe.apoio, "ajudante") &&
+    _colaboradorTemFuncao(equipe.apoio, "entregador")
+  ) {
+    avisos.push(`${equipe.apoio.nome} esta como ajudante-entregador com motorista que ja entrega. Confirme essa dupla.`);
+  }
+
+  if (
+    equipe.apoioId &&
+    equipe.apoio &&
+    _colaboradorTemFuncao(equipe.apoio, "motorista")
+  ) {
+    avisos.push(`${equipe.apoio.nome} tambem e motorista. Confirme se faz sentido escalar dois motoristas juntos.`);
+  }
+
+  return { equipe, pendencias, avisos };
+}
+
+function _renderMensagensEscala(avaliacao) {
+  const badges = [];
+  avaliacao.pendencias.forEach((mensagem) => {
+    badges.push(`<span class="escala-pendencia">${_escHtml(mensagem)}</span>`);
+  });
+  avaliacao.avisos.forEach((mensagem) => {
+    badges.push(`<span class="escala-aviso">${_escHtml(mensagem)}</span>`);
+  });
+  if (!badges.length) {
+    badges.push(`<span class="escala-ok">Equipe valida</span>`);
+  }
+  return badges.join("");
+}
+
+function _pendenciasEscalaFrete(frete){
+  const motoristaId = _freteColaboradorMotoristaId(frete);
+  const apoioId = _normalizarApoioEscalaId(motoristaId, _freteColaboradorEntregadorId(frete));
+  const avaliacao = _avaliarEscalaFreteSelecao(frete, motoristaId, apoioId);
+  const pendencias = [...avaliacao.pendencias];
+  if (!frete?.veiculo_id) pendencias.unshift("Sem veiculo.");
+  return pendencias;
+}
+
+function atualizarPreviewEscalaFrete(id) {
+  const card = document.querySelector(`.escala-item[data-frete-id="${String(id)}"]`);
+  const frete = _findFreteById(id);
+  if (!card || !frete) return;
+
+  const motoristaId = card.querySelector(".escala-motorista")?.value
+    ? Number(card.querySelector(".escala-motorista").value)
+    : null;
+  const apoioId = card.querySelector(".escala-apoio")?.value
+    ? Number(card.querySelector(".escala-apoio").value)
+    : null;
+  const avaliacao = _avaliarEscalaFreteSelecao(frete, motoristaId, apoioId);
+  card.classList.toggle("escala-item--pendente", avaliacao.pendencias.length > 0);
+  card.classList.toggle("escala-item--aviso", !avaliacao.pendencias.length && avaliacao.avisos.length > 0);
+  const area = card.querySelector(".escala-pendencias");
+  if (area) area.innerHTML = _renderMensagensEscala(avaliacao);
+}
+
+async function salvarEscalaFrete(id) {
+  const card = document.querySelector(`.escala-item[data-frete-id="${String(id)}"]`);
+  const frete = _findFreteById(id);
+  if (!card || !frete) return;
+
+  const motoristaId = card.querySelector(".escala-motorista")?.value
+    ? Number(card.querySelector(".escala-motorista").value)
+    : null;
+  const apoioEscolhido = card.querySelector(".escala-apoio")?.value
+    ? Number(card.querySelector(".escala-apoio").value)
+    : null;
+  const avaliacao = _avaliarEscalaFreteSelecao(frete, motoristaId, apoioEscolhido);
+
+  if (avaliacao.pendencias.length) {
+    alert(avaliacao.pendencias.join("\n"));
+    return;
+  }
+
+  if (avaliacao.avisos.length && !window.confirm(avaliacao.avisos.join("\n\n"))) return;
+
+  try {
+    await atualizarFreteCompleto(frete.id, {
+      ..._cloneFretePayload(frete),
+      motorista_id: avaliacao.equipe.motoristaId,
+      colaborador_motorista_id: avaliacao.equipe.motoristaId,
+      entregador_id: avaliacao.equipe.entregadorId,
+      colaborador_entregador_id: avaliacao.equipe.entregadorId,
+    });
+    await renderFretes();
+    await renderEscala();
+  } catch (err) {
+    alert(err?.message || "Erro ao salvar a escala.");
+  }
+}
+
+async function renderEscala() {
+  await ensureCadastrosCache();
+
+  const grid = document.getElementById("escalaGrid");
+  if (!grid) return;
+
+  const fretesEscala = fretes
+    .filter((frete) => ESCALA_STATUS_OPCOES.some((item) => item.key === frete.status))
+    .sort((a, b) => {
+      const statusA = ESCALA_STATUS_OPCOES.findIndex((item) => item.key === a.status);
+      const statusB = ESCALA_STATUS_OPCOES.findIndex((item) => item.key === b.status);
+      if (statusA !== statusB) return statusA - statusB;
+      return String(a.veiculo_nome || a.nome || "").localeCompare(String(b.veiculo_nome || b.nome || ""), "pt-BR", { numeric: true, sensitivity: "base" });
+    });
+
+  const pendentes = fretesEscala.filter((frete) => _pendenciasEscalaFrete(frete).length > 0);
+  const resumoTotal = document.getElementById("escalaResumoTotal");
+  const resumoCompleta = document.getElementById("escalaResumoCompleta");
+  const resumoPendentes = document.getElementById("escalaResumoPendentes");
+  if (resumoTotal) resumoTotal.textContent = String(fretesEscala.length);
+  if (resumoCompleta) resumoCompleta.textContent = String(fretesEscala.length - pendentes.length);
+  if (resumoPendentes) resumoPendentes.textContent = String(pendentes.length);
+
+  grid.innerHTML = ESCALA_STATUS_OPCOES.map((statusInfo) => {
+    const itens = fretesEscala.filter((frete) => frete.status === statusInfo.key);
+    const conteudo = itens.length ? itens.map((frete) => {
+      const motoristaAtual = _freteColaboradorMotoristaId(frete);
+      const apoioAtualId = _freteColaboradorEntregadorId(frete);
+      const apoioSelecionado = _normalizarApoioEscalaId(motoristaAtual, apoioAtualId);
+      const avaliacao = _avaliarEscalaFreteSelecao(frete, motoristaAtual, apoioSelecionado);
+      const pendenciasFrete = [...avaliacao.pendencias];
+      if (!frete?.veiculo_id) pendenciasFrete.unshift("Sem veiculo.");
+      const rotuloFrete = _rotuloFreteExibicao(frete);
+      const veiculoRotulo = (frete.carga_veiculo_numero || frete.veiculo_nome || frete.veiculo_placa || "").toString().trim();
+      const rotaRotulo = (frete.carga_rota || "").toString().trim();
+      const apoioAtual = apoioSelecionado
+        ? (_buscarColaboradorCadastro(apoioSelecionado)?.nome || frete.entregador_nome || "-")
+        : (avaliacao.equipe.motoristaEntregador ? "Motorista vai sozinho" : (frete.entregador_nome || "-"));
+      return `
+        <article class="escala-item ${pendenciasFrete.length ? "escala-item--pendente" : (avaliacao.avisos.length ? "escala-item--aviso" : "")}" data-frete-id="${_escAttr(String(frete.id))}">
+          <div class="escala-item-header">
+            <div>
+              <strong>${_escHtml(rotuloFrete)}</strong>
+              <div class="escala-item-subtitle">${_escHtml(veiculoRotulo ? `Veiculo ${veiculoRotulo}` : (rotaRotulo ? `Rota ${rotaRotulo}` : (frete.nome || "-")))}</div>
+            </div>
+            <span class="escala-status-pill">${_escHtml(statusInfo.label)}</span>
+          </div>
+          <div class="escala-item-meta">
+            <span>Carga: ${_escHtml(frete.carga_nome || "-")}</span>
+            <span>Motorista atual: ${_escHtml(frete.motorista_nome || "-")}</span>
+            <span>Apoio atual: ${_escHtml(apoioAtual)}</span>
+          </div>
+          <div class="escala-item-grid">
+            <label class="escala-field">
+              <span>Motorista</span>
+              <select class="escala-motorista" onchange="atualizarPreviewEscalaFrete(${frete.id})">
+                ${optionsFromColaboradores("motorista", motoristaAtual)}
+              </select>
+            </label>
+            <label class="escala-field">
+              <span>Entregador / Ajudante</span>
+              <select class="escala-apoio" onchange="atualizarPreviewEscalaFrete(${frete.id})">
+                ${optionsFromEscalaApoio(apoioSelecionado, motoristaAtual)}
+              </select>
+            </label>
+          </div>
+          <div class="escala-item-footer">
+            <div class="escala-pendencias">${_renderMensagensEscala({ pendencias: pendenciasFrete, avisos: avaliacao.avisos })}</div>
+            <button type="button" onclick="salvarEscalaFrete(${frete.id})">Salvar equipe</button>
+          </div>
+        </article>
+      `;
+    }).join("") : `<div class="escala-empty">Nenhum caminhao nesta etapa.</div>`;
+
+    return `
+      <section class="escala-coluna">
+        <div class="escala-coluna-header">
+          <h3>${_escHtml(statusInfo.label)}</h3>
+          <span>${itens.length}</span>
+        </div>
+        <div class="escala-coluna-body">${conteudo}</div>
+      </section>
+    `;
+  }).join("");
 }
 
 function filtrarFretesKanban(valor = ""){
@@ -4124,8 +8158,80 @@ function _freteCombinaBusca(frete, termo = ""){
     frete?.entregador_nome,
     frete?.cidade,
     frete?.carga_nome,
+    frete?.carga_cidades,
+    frete?.carga_rota,
+    frete?.carga_veiculo_numero,
   ].map((v) => (v || "").toString().toLowerCase()).join(" ");
   return alvo.includes(filtro);
+}
+
+function _freteOcultoNoKanban(frete){
+  return !!frete?.arquivado;
+}
+
+function _parseFreteDateTime(value){
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+  const m = raw.match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?$/);
+  if (!m) return null;
+  const dt = new Date(
+    Number(m[1]),
+    Number(m[2]) - 1,
+    Number(m[3]),
+    Number(m[4] || 0),
+    Number(m[5] || 0),
+    Number(m[6] || 0),
+    0
+  );
+  return Number.isNaN(dt.getTime()) ? null : dt;
+}
+
+function _getNomeById(lista, id) {
+  if (!id || !lista) return null;
+  const item = lista.find(item => item.id == id);
+  return item ? (item.optionLabel || item.nome) : null;
+}
+
+function _getNomeColaborador(id) {
+  if (!id) return null;
+  const colaborador = cacheCadastros.colaboradores?.find(c => c.id == id);
+  return colaborador ? colaborador.nome : null;
+}
+
+function _formatDate(dateStr) {
+  if (!dateStr) return 'N/A';
+  try {
+    const date = new Date(dateStr);
+    return date.toLocaleDateString('pt-BR');
+  } catch {
+    return dateStr;
+  }
+}
+
+async function _arquivarFretesAutomaticamente() {
+  // Arquivar cards em "retornando" com mais de 1 dia.
+  const candidatos = fretes.filter(f =>
+    String(f.status || "") === "retornando" &&
+    !f.arquivado &&
+    _parseFreteDateTime(f.finalizado_em) &&
+    (Date.now() - _parseFreteDateTime(f.finalizado_em).getTime()) >= (FRETE_AUTO_ARQUIVO_HORAS * 60 * 60 * 1000)
+  );
+
+  for (const frete of candidatos) {
+    try {
+      const r = await apiFetch(`/api/fretes/${frete.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ arquivado: true })
+      });
+      if (r.ok) {
+        frete.arquivado = true;
+        console.info(`Frete ${frete.id} arquivado automaticamente.`);
+      }
+    } catch (e) {
+      console.error(`Erro ao arquivar frete ${frete.id}:`, e);
+    }
+  }
 }
 
 function _normalizarDataFreteInput(value){
@@ -4142,6 +8248,65 @@ function _hojeInputDate(){
 function _buscarVeiculoCadastro(veiculoId){
   if (!veiculoId) return null;
   return (cacheCadastros.veiculos || []).find((item) => String(item.id) === String(veiculoId)) || null;
+}
+
+function _extrairNumeroVeiculoTexto(valor) {
+  const texto = (valor ?? "").toString().trim();
+  if (!texto) return "";
+  const match = texto.match(/\d+/);
+  if (!match) return "";
+  return match[0].replace(/^0+/, "") || "0";
+}
+
+function _normalizarNumeroVeiculoTexto(valor) {
+  return (valor ?? "").toString().trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function _buscarVeiculoPorNumeroTexto(valor) {
+  const texto = (valor ?? "").toString().trim();
+  if (!texto) return null;
+  const alvoTexto = _normalizarNumeroVeiculoTexto(texto);
+  const alvoNumero = _extrairNumeroVeiculoTexto(texto);
+  return (cacheCadastros.veiculos || []).find((item) => {
+    const candidatos = [
+      item?.nome,
+      item?.placa,
+      item?.optionLabel,
+    ];
+    return candidatos.some((candidato) => {
+      const atualTexto = _normalizarNumeroVeiculoTexto(candidato);
+      if (atualTexto && atualTexto === alvoTexto) return true;
+      const atualNumero = _extrairNumeroVeiculoTexto(candidato);
+      if (alvoNumero && atualNumero && atualNumero === alvoNumero) return true;
+      return false;
+    });
+  }) || null;
+}
+
+function _resolverVeiculoIdDoFrete(frete = {}) {
+  const veiculoId = Number(frete?.veiculo_id || 0);
+  if (veiculoId > 0) return veiculoId;
+  const candidatos = [
+    frete?.carga_veiculo_numero,
+    frete?.veiculo_nome,
+    frete?.veiculo_placa,
+    frete?.carga_nome,
+    frete?.nome,
+  ];
+  for (const candidato of candidatos) {
+    const veiculo = _buscarVeiculoPorNumeroTexto(candidato);
+    if (veiculo?.id) return Number(veiculo.id);
+  }
+  return null;
+}
+
+function _rotuloVeiculoCadastradoDoFrete(frete = {}) {
+  const veiculo = _buscarVeiculoCadastro(_resolverVeiculoIdDoFrete(frete));
+  if (veiculo?.id) {
+    return `${veiculo.nome || "Veiculo"}${veiculo.placa ? ` (${veiculo.placa})` : ""}`;
+  }
+  const numero = _extrairNumeroVeiculoTexto(frete?.carga_veiculo_numero || frete?.veiculo_nome || frete?.carga_nome || frete?.nome);
+  return numero ? `Veiculo ${numero}` : "";
 }
 
 function _kmAtualCadastroVeiculo(veiculoId){
@@ -4186,21 +8351,71 @@ function _bindNovoFreteKmAtual(){
   }
 }
 
+function _bindNovoAbastecimentoKmAtual(){
+  const selVeiculo = document.getElementById("abast_veiculo");
+  const inpKmAtual = document.getElementById("abast_km");
+  const selCombustivel = document.getElementById("abast_combustivel");
+  if (!selVeiculo || !inpKmAtual || !selCombustivel) return;
+
+  if (inpKmAtual.dataset.kmManualBound !== "1") {
+    inpKmAtual.dataset.kmManualBound = "1";
+    inpKmAtual.addEventListener("input", () => {
+      inpKmAtual.dataset.autoFromVehicle = "0";
+    });
+    inpKmAtual.addEventListener("change", () => {
+      inpKmAtual.dataset.autoFromVehicle = "0";
+    });
+  }
+
+  if (selVeiculo.dataset.kmCadastroBound !== "1") {
+    selVeiculo.dataset.kmCadastroBound = "1";
+    selVeiculo.addEventListener("change", () => {
+      _sincronizarKmAtualComVeiculo(selVeiculo, inpKmAtual, { force: true });
+      _sincronizarCombustivelAbastecimentoComVeiculo(selVeiculo, selCombustivel);
+    });
+  }
+
+  _sincronizarKmAtualComVeiculo(selVeiculo, inpKmAtual, { force: false });
+  _sincronizarCombustivelAbastecimentoComVeiculo(selVeiculo, selCombustivel, selCombustivel.value);
+}
+
+function _freteColaboradorMotoristaId(frete = {}) {
+  return frete.colaborador_motorista_id ? Number(frete.colaborador_motorista_id) : (frete.motorista_id ? Number(frete.motorista_id) : null);
+}
+
+function _freteColaboradorEntregadorId(frete = {}) {
+  return frete.colaborador_entregador_id ? Number(frete.colaborador_entregador_id) : (frete.entregador_id ? Number(frete.entregador_id) : null);
+}
+
 function _cloneFretePayload(frete = {}){
-  const motoristaId = frete.motorista_id ? Number(frete.motorista_id) : null;
+  const motoristaId = _freteColaboradorMotoristaId(frete);
+  const entregadorId = _freteColaboradorEntregadorId(frete);
   return {
+    id: frete.id != null ? Number(frete.id) : null,
     nome: (frete.nome || "").toString().trim(),
     cidade: (frete.cidade || "").toString().trim(),
     data_carga: _normalizarDataFreteInput(frete.data_carga || frete.created_at || ""),
     status: (frete.status || "liberado").toString(),
-    veiculo_id: frete.veiculo_id ? Number(frete.veiculo_id) : null,
+    veiculo_id: _resolverVeiculoIdDoFrete(frete),
     motorista_id: motoristaId,
-    entregador_id: frete.entregador_id ? Number(frete.entregador_id) : motoristaId,
+    colaborador_motorista_id: motoristaId,
+    entregador_id: entregadorId || _resolverEntregadorPadrao(motoristaId, null),
+    colaborador_entregador_id: entregadorId || _resolverEntregadorPadrao(motoristaId, null),
     carga_id: frete.carga_id ? Number(frete.carga_id) : null,
     km_atual: Number(frete.km_atual || 0) || 0,
     peso: Number(frete.peso || 0) || 0,
     qtd_entregas: Number(frete.qtd_entregas || 0) || 0,
     observacao: (frete.observacao || "").toString(),
+    carga_rota: (frete.carga_rota || "").toString().trim(),
+    carga_cidades: (frete.carga_cidades || "").toString().trim(),
+    carga_veiculo_numero: (frete.carga_veiculo_numero || "").toString().trim(),
+    carga_nome: (frete.carga_nome || "").toString().trim(),
+    veiculo_nome: (frete.veiculo_nome || "").toString().trim(),
+    veiculo_placa: (frete.veiculo_placa || "").toString().trim(),
+    colaborador_motorista_nome: (frete.colaborador_motorista_nome || "").toString().trim(),
+    motorista_nome: (frete.motorista_nome || "").toString().trim(),
+    colaborador_entregador_nome: (frete.colaborador_entregador_nome || "").toString().trim(),
+    entregador_nome: (frete.entregador_nome || "").toString().trim(),
   };
 }
 
@@ -4215,9 +8430,9 @@ function _freteRemoteSignature(frete){
     frete.cidade || "",
     _normalizarDataFreteInput(frete.data_carga || frete.created_at || ""),
     frete.status || "",
-    frete.motorista_id || "",
-    frete.entregador_id || "",
-    frete.veiculo_id || "",
+    frete.colaborador_motorista_id || frete.motorista_id || "",
+    frete.colaborador_entregador_id || frete.entregador_id || "",
+    _resolverVeiculoIdDoFrete(frete) || "",
     frete.carga_id || "",
     frete.observacao || "",
     Number(frete.km_atual || 0),
@@ -4225,6 +8440,16 @@ function _freteRemoteSignature(frete){
     Number(frete.qtd_entregas || 0),
     frete.updated_at || "",
     frete.finalizado_em || "",
+    frete.carga_rota || "",
+    frete.carga_cidades || "",
+    frete.carga_veiculo_numero || "",
+    frete.carga_nome || "",
+    frete.veiculo_nome || "",
+    frete.veiculo_placa || "",
+    frete.colaborador_motorista_nome || "",
+    frete.motorista_nome || "",
+    frete.colaborador_entregador_nome || "",
+    frete.entregador_nome || "",
   ]);
 }
 
@@ -4423,7 +8648,6 @@ function _renderFreteSaveStatus(card, id){
 
 function _coletarPayloadFreteDoCard(card, freteBase){
   if (!card) return _cloneFretePayload(freteBase || {});
-  const inpNome = card.querySelector(".frete-nome");
   const inpDataCarga = card.querySelector(".frete-data-carga");
   const selVeiculo = card.querySelector(".frete-veiculo");
   const selMotorista = card.querySelector(".frete-motorista");
@@ -4434,19 +8658,32 @@ function _coletarPayloadFreteDoCard(card, freteBase){
   const inpEntregas = card.querySelector(".frete-qtd-entregas");
   const txtObs = card.querySelector(".frete-obs");
   const motoristaId = selMotorista?.value ? Number(selMotorista.value) : null;
+  const entregadorId = _resolverEntregadorPadrao(motoristaId, selEntregador?.value ? Number(selEntregador.value) : null);
   return {
-    nome: (inpNome?.value || freteBase?.nome || "").toString().trim(),
+    nome: (freteBase?.nome || "").toString().trim() || _resumoFreteCabecalho(freteBase || {}),
     cidade: (freteBase?.cidade || "").toString().trim(),
     data_carga: _normalizarDataFreteInput(inpDataCarga?.value || freteBase?.data_carga || freteBase?.created_at || ""),
     status: (freteBase?.status || "liberado").toString(),
-    veiculo_id: selVeiculo?.value ? Number(selVeiculo.value) : null,
+    veiculo_id: selVeiculo?.value ? Number(selVeiculo.value) : _resolverVeiculoIdDoFrete(freteBase || {}),
     motorista_id: motoristaId,
-    entregador_id: selEntregador?.value ? Number(selEntregador.value) : motoristaId,
+    colaborador_motorista_id: motoristaId,
+    entregador_id: entregadorId,
+    colaborador_entregador_id: entregadorId,
     carga_id: selCarga?.value ? Number(selCarga.value) : null,
     km_atual: inpKmAtual && inpKmAtual.value.trim() !== "" ? Number(inpKmAtual.value) : 0,
     peso: inpPeso && inpPeso.value.trim() !== "" ? Number(inpPeso.value) : 0,
     qtd_entregas: inpEntregas && inpEntregas.value.trim() !== "" ? Number(inpEntregas.value) : 0,
     observacao: (txtObs?.value || "").trim(),
+    carga_rota: (freteBase?.carga_rota || "").toString().trim(),
+    carga_cidades: (freteBase?.carga_cidades || "").toString().trim(),
+    carga_veiculo_numero: (freteBase?.carga_veiculo_numero || "").toString().trim(),
+    carga_nome: (freteBase?.carga_nome || "").toString().trim(),
+    veiculo_nome: (freteBase?.veiculo_nome || "").toString().trim(),
+    veiculo_placa: (freteBase?.veiculo_placa || "").toString().trim(),
+    colaborador_motorista_nome: (freteBase?.colaborador_motorista_nome || freteBase?.motorista_nome || "").toString().trim(),
+    motorista_nome: (freteBase?.motorista_nome || freteBase?.colaborador_motorista_nome || "").toString().trim(),
+    colaborador_entregador_nome: (freteBase?.colaborador_entregador_nome || freteBase?.entregador_nome || "").toString().trim(),
+    entregador_nome: (freteBase?.entregador_nome || freteBase?.colaborador_entregador_nome || "").toString().trim(),
   };
 }
 
@@ -4531,7 +8768,7 @@ async function _salvarFreteAutomaticamente(id, options = {}){
     if (freteRender) _renderOrUpdateFreteCard(freteRender, { force: true });
     return atualizado || freteAtual;
   } catch (err) {
-    state.error = "Falha ao salvar";
+    state.error = (err?.message || "Falha ao salvar").toString().trim();
     state.dirty = true;
     _renderFreteSaveStatus(card, id);
     throw err;
@@ -4558,204 +8795,136 @@ async function _salvarFreteAutomaticamente(id, options = {}){
 async function _atualizarStatusFrete(id, novoStatus){
   const freteAtual = _findFreteById(id);
   if (!freteAtual) return null;
-  const card = _getFreteCard(id);
-  const payload = card
-    ? _coletarPayloadFreteDoCard(card, freteAtual)
-    : _cloneFretePayload(freteAtual);
-  payload.status = novoStatus;
-  return _salvarFreteAutomaticamente(id, { payloadOverride: payload });
+  const atualizado = await atualizarFreteCompleto(id, { status: novoStatus });
+  if (atualizado) {
+    const state = freteDraftState.get(_freteKey(id));
+    if (state) {
+      state.draft = _cloneFretePayload(atualizado);
+      state.lastSavedSignature = _fretePayloadSignature(state.draft);
+      state.dirty = false;
+      state.error = "";
+      state.saving = false;
+      state.queued = false;
+      state.queuedPayload = null;
+      _clearFreteSaveTimer(state);
+    }
+    _setFreteLocal(atualizado);
+    _renderOrUpdateFreteCard(atualizado, { force: true });
+  }
+  return atualizado;
+}
+
+async function _moverFreteStatusAdjacente(frete, direcao){
+  if (!frete) return;
+  const idx = _indiceStatusFrete(frete.status);
+  if (idx < 0) return;
+  const destinoIdx = idx + direcao;
+  if (destinoIdx < 0 || destinoIdx >= FRETE_STATUS_OPCOES.length) return;
+  const destino = FRETE_STATUS_OPCOES[destinoIdx]?.key;
+  if (!destino || destino === frete.status) return;
+  await _atualizarStatusFrete(frete.id, destino);
+}
+
+async function _moverFreteStatusAdjacenteComFeedback(frete, direcao){
+  try {
+    await _moverFreteStatusAdjacente(frete, direcao);
+  } catch (err) {
+    alert(err?.message || "Nao foi possivel mover o frete.");
+  }
 }
 
 function _freteCardTemplate(frete){
   const data = _cloneFretePayload(frete);
   return `
-    <div class="card-header" draggable="true" data-frete-id="${_escAttr(String(frete.id))}">Segure e arraste</div>
+    <div class="card-header" draggable="true" data-frete-id="${_escAttr(String(frete.id))}">
+      <span class="frete-card-header-title">Arrastar</span>
+      <div class="frete-card-actions" aria-label="Acoes do card">
+        <button class="btn-mover-mobile btn-mover-mobile-prev" type="button" aria-label="Mover para a coluna anterior">←</button>
+        <button class="btn-mover-mobile btn-mover-mobile-next" type="button" aria-label="Mover para a coluna seguinte">→</button>
+        <button class="btn-excluir-icon" type="button" aria-label="Excluir frete">×</button>
+      </div>
+    </div>
     <div class="card-body">
-      <div class="frete-card-grid">
-        <div class="crud-field crud-field--full">
-          <span>Nome</span>
-          <input type="text" class="frete-nome" value="${_escAttr(String(data.nome || ""))}" placeholder="Nome do frete">
+      <div class="frete-carga-info">${_escHtml(_resumoFreteCabecalho(data) || "-")}</div>
+      <div class="frete-card-compact-grid">
+        <div>
+          <span>Veículo</span>
+          <strong class="frete-veiculo-resumo">${_escHtml(_resumoVeiculoPlacaFrete(data) || "-")}</strong>
         </div>
-        <div class="crud-field">
-          <span>Data carga</span>
-          <input type="date" class="frete-data-carga" value="${_escAttr(String(data.data_carga || ""))}">
-        </div>
-        <div class="crud-field">
-          <span>Veiculo</span>
-          <select class="frete-veiculo">
-            ${optionsFrom(cacheCadastros.veiculos, data.veiculo_id)}
-          </select>
-        </div>
-        <div class="crud-field">
+        <div>
           <span>Motorista</span>
-          <select class="frete-motorista">
-            ${optionsFrom(cacheCadastros.motoristas, data.motorista_id)}
-          </select>
-        </div>
-        <div class="crud-field">
-          <span>Entregador</span>
-          <select class="frete-entregador">
-            ${optionsFrom(cacheCadastros.motoristas, data.entregador_id)}
-          </select>
-        </div>
-        <div class="crud-field">
-          <span>Carga</span>
-          <select class="frete-carga">
-            ${optionsFrom(cacheCadastros.cargas, data.carga_id)}
-          </select>
-        </div>
-        <div class="crud-field">
-          <span>KM atual</span>
-          <input type="number" class="frete-km-atual" min="0" value="${_escAttr(String(data.km_atual))}">
-        </div>
-        <div class="crud-field">
-          <span>Peso</span>
-          <input type="number" class="frete-peso" min="0" step="0.001" value="${_escAttr(String(data.peso))}">
-        </div>
-        <div class="crud-field">
-          <span>Entregas</span>
-          <input type="number" class="frete-qtd-entregas" min="0" value="${_escAttr(String(data.qtd_entregas))}">
-        </div>
-        <div class="crud-field crud-field--full">
-          <span>Observacao</span>
-          <textarea class="frete-obs" rows="2" placeholder="Digite uma observacao...">${_escHtml(data.observacao)}</textarea>
+          <strong class="frete-card-motorista">${_escHtml(data.colaborador_motorista_nome || data.motorista_nome || "-")}</strong>
         </div>
       </div>
-      <div class="crud-actions">
-        <span class="frete-save-status" data-tone="saved">Salvo automaticamente</span>
-        <button class="btn-mover-mobile" type="button">Mover</button>
-        <button class="btn-excluir" type="button">Excluir</button>
+      <div class="frete-card-footer">
+        <button class="btn-dados" type="button">Dados</button>
       </div>
     </div>
   `;
 }
 
+function _atualizarResumoCompactoFreteCard(card, data){
+  if (!card) return;
+  const payload = data || {};
+  const infoCarga = card.querySelector(".frete-carga-info");
+  const infoVeiculo = card.querySelector(".frete-veiculo-resumo");
+  const infoMotorista = card.querySelector(".frete-card-motorista");
+  if (infoCarga) infoCarga.textContent = _resumoFreteCabecalho(payload) || "-";
+  if (infoVeiculo) infoVeiculo.textContent = _resumoVeiculoPlacaFrete(payload) || "-";
+  if (infoMotorista) infoMotorista.textContent = payload.colaborador_motorista_nome || payload.motorista_nome || "-";
+}
+
+function _abrirFreteDadosDoCard(id, tab = "dados"){
+  const freteAtual = _findFreteById(id);
+  if (!freteAtual) return;
+  abrirDetalhesFrete(id, tab);
+}
+
 function _preencherFreteCard(card, frete){
-  const state = _ensureFreteDraftState(frete);
-  const data = _cloneFretePayload(state.dirty ? state.draft : frete);
-  const header = card.querySelector(".card-header");
-  if (header) {
-    header.textContent = "Segure e arraste";
-    header.dataset.freteId = String(frete.id);
-    header.title = frete.nome || "(sem nome)";
-  }
+  const data = _cloneFretePayload(frete);
+  _atualizarResumoCompactoFreteCard(card, data);
+  _atualizarBotoesMovimentoMobile(card, data.status);
 
-  const inpNome = card.querySelector(".frete-nome");
-  const inpDataCarga = card.querySelector(".frete-data-carga");
-  const selVeiculo = card.querySelector(".frete-veiculo");
-  const selMotorista = card.querySelector(".frete-motorista");
-  const selEntregador = card.querySelector(".frete-entregador");
-  const selCarga = card.querySelector(".frete-carga");
-  const inpKmAtual = card.querySelector(".frete-km-atual");
-  const inpPeso = card.querySelector(".frete-peso");
-  const inpEntregas = card.querySelector(".frete-qtd-entregas");
-  const txtObs = card.querySelector(".frete-obs");
+  const btnDados = card.querySelector(".btn-dados");
+  const btnExcluir = card.querySelector(".btn-excluir-icon");
+  const btnMoverPrev = card.querySelector(".btn-mover-mobile-prev");
+  const btnMoverNext = card.querySelector(".btn-mover-mobile-next");
 
-  if (inpNome) inpNome.value = data.nome || "";
-  if (inpDataCarga) inpDataCarga.value = data.data_carga || "";
-  if (selVeiculo) selVeiculo.innerHTML = optionsFrom(cacheCadastros.veiculos, data.veiculo_id);
-  if (selMotorista) selMotorista.innerHTML = optionsFrom(cacheCadastros.motoristas, data.motorista_id);
-  if (selEntregador) selEntregador.innerHTML = optionsFrom(cacheCadastros.motoristas, data.entregador_id);
-  if (selCarga) selCarga.innerHTML = optionsFrom(cacheCadastros.cargas, data.carga_id);
-  if (inpKmAtual) {
-    const kmCadastro = _kmAtualCadastroVeiculo(data.veiculo_id);
-    const kmFrete = Number(data.km_atual ?? 0) || 0;
-    const usaKmCadastro = kmFrete <= 0 && kmCadastro > 0;
-    inpKmAtual.value = String(usaKmCadastro ? kmCadastro : kmFrete);
-    inpKmAtual.dataset.autoFromVehicle = usaKmCadastro ? "1" : "0";
+  if (btnDados) btnDados.onclick = () => _abrirFreteDadosDoCard(frete.id, "dados");
+  if (btnExcluir) {
+    btnExcluir.onclick = async () => {
+      if (!confirm("Deseja excluir este frete?")) return;
+      await excluirFrete(frete.id);
+    };
   }
-  if (inpPeso) inpPeso.value = String(data.peso ?? 0);
-  if (inpEntregas) inpEntregas.value = String(data.qtd_entregas ?? 0);
-  if (txtObs) txtObs.value = data.observacao || "";
+  if (btnMoverPrev) {
+    btnMoverPrev.onclick = async () => {
+      const freteAtual = _findFreteById(frete.id);
+      if (freteAtual) await _moverFreteStatusAdjacenteComFeedback(freteAtual, -1);
+    };
+  }
+  if (btnMoverNext) {
+    btnMoverNext.onclick = async () => {
+      const freteAtual = _findFreteById(frete.id);
+      if (freteAtual) await _moverFreteStatusAdjacenteComFeedback(freteAtual, 1);
+    };
+  }
 }
 
 function _bindFreteCardEvents(card){
   const id = card.dataset.freteId;
-  const state = _ensureFreteDraftState(_findFreteById(id) || { id });
   const header = card.querySelector(".card-header");
-  const selVeiculo = card.querySelector(".frete-veiculo");
-  const inpKmAtual = card.querySelector(".frete-km-atual");
+  const cardBody = card.querySelector(".card-body");
   if (header) {
     header.draggable = true;
     header.ondragstart = (e) => e.dataTransfer.setData("id", id);
   }
-
-  card.addEventListener("focusin", () => {
-    const current = freteDraftState.get(_freteKey(id));
-    if (!current) return;
-    current.focused = true;
-    current.error = "";
-    _renderFreteSaveStatus(card, id);
-  });
-
-  card.addEventListener("focusout", () => {
-    setTimeout(() => {
-      const currentCard = _getFreteCard(id);
-      const current = freteDraftState.get(_freteKey(id));
-      if (!current) return;
-      current.focused = !!(currentCard && currentCard.contains(document.activeElement));
-      if (!current.focused) {
-        _atualizarDraftFreteDoCard(id);
-        if (current.dirty) _agendarAutoSaveFrete(id, 120);
-      }
-      _renderFreteSaveStatus(currentCard, id);
-    }, 0);
-  });
-
-  const onInput = () => {
-    _atualizarDraftFreteDoCard(id);
-    const currentName = (card.querySelector(".frete-nome")?.value || "").trim();
-    const headerEl = card.querySelector(".card-header");
-    if (headerEl) headerEl.title = currentName || "(sem nome)";
-    _agendarAutoSaveFrete(id);
-  };
-  const onChange = () => {
-    _atualizarDraftFreteDoCard(id);
-    _agendarAutoSaveFrete(id, 150);
-  };
-
-  if (inpKmAtual) {
-    inpKmAtual.addEventListener("input", () => {
-      inpKmAtual.dataset.autoFromVehicle = "0";
-    });
-    inpKmAtual.addEventListener("change", () => {
-      inpKmAtual.dataset.autoFromVehicle = "0";
+  if (cardBody) {
+    cardBody.addEventListener("click", (event) => {
+      if (event.target.closest("button")) return;
+      _abrirFreteDadosDoCard(id, "dados");
     });
   }
-
-  card.querySelectorAll("input, textarea").forEach((field) => {
-    field.addEventListener("input", onInput);
-    field.addEventListener("change", onChange);
-  });
-  card.querySelectorAll("select").forEach((field) => {
-    if (field === selVeiculo) return;
-    field.addEventListener("change", onChange);
-  });
-  if (selVeiculo) {
-    selVeiculo.addEventListener("change", () => {
-      _sincronizarKmAtualComVeiculo(selVeiculo, inpKmAtual, { force: true });
-      onChange();
-    });
-  }
-
-  const btnMoverMobile = card.querySelector(".btn-mover-mobile");
-  if (btnMoverMobile) {
-    btnMoverMobile.onclick = async () => {
-      const freteAtual = _findFreteById(id);
-      if (!freteAtual) return;
-      await moverFreteMobile(freteAtual);
-    };
-    btnMoverMobile.style.display = window.matchMedia("(max-width: 768px)").matches ? "" : "none";
-  }
-
-  const btnExcluir = card.querySelector(".btn-excluir");
-  if (btnExcluir) {
-    btnExcluir.onclick = async () => {
-      await excluirFrete(id);
-    };
-  }
-
-  _clearFreteSaveTimer(state);
 }
 
 function _renderOrUpdateFreteCard(frete, options = {}){
@@ -4769,19 +8938,23 @@ function _renderOrUpdateFreteCard(frete, options = {}){
   const signature = _freteRemoteSignature(frete);
   const locked = _isFreteCardLocked(frete.id);
   const mesmaColuna = !!(card && card.parentElement === targetCol);
+  const precisaRecriarTemplate = !!(card && card.dataset.templateVersion !== FRETE_CARD_TEMPLATE_VERSION);
 
   if (card && locked && !force) {
     _renderFreteSaveStatus(card, frete.id);
     return card;
   }
 
-  if (!card) {
+  if (!card || (precisaRecriarTemplate && (!locked || force))) {
+    const cardAntigo = card;
     card = document.createElement("div");
     card.className = "card";
     card.dataset.freteId = String(frete.id);
+    card.dataset.templateVersion = FRETE_CARD_TEMPLATE_VERSION;
     card.innerHTML = _freteCardTemplate(frete);
     _bindFreteCardEvents(card);
-  } else if (!force && card.dataset.remoteSignature === signature) {
+    if (cardAntigo) cardAntigo.replaceWith(card);
+  } else if (!force && !precisaRecriarTemplate && card.dataset.remoteSignature === signature) {
     if (!mesmaColuna) targetCol.appendChild(card);
     _renderFreteSaveStatus(card, frete.id);
     _agendarEqualizacaoAlturaKanban();
@@ -4790,6 +8963,7 @@ function _renderOrUpdateFreteCard(frete, options = {}){
 
   _preencherFreteCard(card, frete);
   card.dataset.remoteSignature = signature;
+  card.dataset.templateVersion = FRETE_CARD_TEMPLATE_VERSION;
   if (!mesmaColuna) targetCol.appendChild(card);
   _renderFreteSaveStatus(card, frete.id);
   _agendarEqualizacaoAlturaKanban();
@@ -4803,7 +8977,7 @@ async function moverFreteMobile(frete){
     .map((s, idx) => `${idx + 1}. ${s.label}${s.key === atual ? " (atual)" : ""}`)
     .join("\n");
   const entrada = prompt(
-    `Mover "${frete.nome || "Frete"}" para:\n\n${opcoes}\n\nDigite o numero do destino:`,
+    `Mover "${_rotuloFreteExibicao(frete)}" para:\n\n${opcoes}\n\nDigite o numero do destino:`,
     ""
   );
   if (entrada == null) return;
@@ -4828,7 +9002,7 @@ async function carregarInfoFrete() {
   if (!frete) return;
 
   document.getElementById("infoFreteSelecionado").innerHTML = `
-    🚛 ${frete.veiculo_nome || "-"} |
+    🚛 ${frete.veiculo_nome || _rotuloVeiculoCadastradoDoFrete(frete) || "-"} |
     👤 ${frete.motorista_nome || "-"} |
     📦 ${frete.carga_nome || "-"}
   `;
@@ -4847,6 +9021,206 @@ async function toggleNovoFrete() {
   }
 }
 
+async function toggleArquivados() {
+  const fretesSection = document.getElementById("fretes");
+  const arquivadosSection = document.getElementById("fretesArquivados");
+
+  if (arquivadosSection.classList.contains("hidden")) {
+    // Mostrar arquivados
+    fretesSection.classList.add("hidden");
+    fretesSection.classList.remove("activeSection");
+    arquivadosSection.classList.remove("hidden");
+    arquivadosSection.classList.add("activeSection");
+    await renderFretesArquivados();
+  } else {
+    // Voltar ao kanban
+    arquivadosSection.classList.add("hidden");
+    arquivadosSection.classList.remove("activeSection");
+    fretesSection.classList.remove("hidden");
+    fretesSection.classList.add("activeSection");
+    await renderFretes();
+  }
+}
+
+async function renderFretesArquivados(filtro = "") {
+  const container = document.getElementById("fretesArquivadosContainer");
+  if (!container) return;
+
+  container.innerHTML = '<div class="loading">Carregando fretes arquivados...</div>';
+  await ensureCadastrosCache();
+
+  // Filtrar fretes arquivados
+  const arquivados = fretes.filter(f => f.arquivado && _freteCombinaBusca(f, filtro));
+
+  container.innerHTML = '';
+
+  if (arquivados.length === 0) {
+    container.innerHTML = '<div class="empty-state">Nenhum frete arquivado encontrado.</div>';
+    return;
+  }
+
+  // Renderizar como lista/grid de cards read-only
+  arquivados.forEach(f => {
+    const card = document.createElement("div");
+    card.className = "card card-arquivado";
+    card.tabIndex = 0;
+    card.setAttribute("role", "button");
+    card.setAttribute("aria-label", `Ver detalhes do frete arquivado ${f.nome || f.id || ""}`.trim());
+    const veiculo = f.veiculo_nome || _rotuloVeiculoCadastradoDoFrete(f) || _getNomeById(cacheCadastros.veiculos, f.veiculo_id) || "N/A";
+    const motorista = f.motorista_nome || _getNomeColaborador(f.colaborador_motorista_id || f.motorista_id) || "N/A";
+    const entregador = f.entregador_nome || _getNomeColaborador(f.colaborador_entregador_id || f.entregador_id) || "N/A";
+    const dataCarga = f.data_carga ? _fmtDataCurtaBr(f.data_carga) : "N/A";
+    card.innerHTML = `
+      <div class="card-header">
+        <span>${_escHtml(f.nome || "(sem nome)")}</span>
+        <small>Arquivado em ${_escHtml(_formatDate(f.finalizado_em))}</small>
+      </div>
+      <div class="card-body">
+        <div class="arquivado-info">
+          <div><strong>Veiculo:</strong> ${_escHtml(veiculo)}</div>
+          <div><strong>Motorista:</strong> ${_escHtml(motorista)}</div>
+          <div><strong>Entregador:</strong> ${_escHtml(entregador)}</div>
+          <div><strong>Data carga:</strong> ${_escHtml(dataCarga)}</div>
+          <div><strong>Status final:</strong> ${_escHtml(f.status || 'N/A')}</div>
+          <div><strong>Observacao:</strong> ${_escHtml(f.observacao || 'N/A')}</div>
+        </div>
+        <div class="crud-actions">
+          <button class="btn-primary btn-arquivado-detalhes" type="button">${f.carga_id ? "Ver tudo" : "Detalhes"}</button>
+          <button class="btn-secondary btn-arquivado-desarquivar" type="button">Desarquivar</button>
+        </div>
+      </div>
+    `;
+    card.addEventListener("click", (ev) => {
+      if (ev.target?.closest?.("button")) return;
+      abrirDetalhesFreteArquivado(f.id);
+    });
+    card.addEventListener("keydown", (ev) => {
+      if (ev.key !== "Enter" && ev.key !== " ") return;
+      ev.preventDefault();
+      abrirDetalhesFreteArquivado(f.id);
+    });
+    card.querySelector(".btn-arquivado-detalhes")?.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      abrirDetalhesFreteArquivado(f.id);
+    });
+    card.querySelector(".btn-arquivado-desarquivar")?.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      desarquivarFrete(f.id);
+    });
+    container.appendChild(card);
+  });
+}
+
+function filtrarFretesArquivados(filtro) {
+  renderFretesArquivados(filtro);
+}
+
+function _freteCamposRegistradosHtml(frete = {}) {
+  const rows = Object.entries(frete)
+    .sort(([a], [b]) => String(a).localeCompare(String(b), "pt-BR"))
+    .map(([campo, valor]) => {
+      const texto = valor && typeof valor === "object"
+        ? JSON.stringify(valor, null, 2)
+        : String(valor ?? "-");
+      return `
+        <tr>
+          <td>${_escHtml(campo)}</td>
+          <td><pre style="white-space:pre-wrap;margin:0;">${_escHtml(texto)}</pre></td>
+        </tr>
+      `;
+    });
+  if (!rows.length) return "";
+  return `
+    <div class="frota-historico-card">
+      <h4>Campos gravados no frete</h4>
+      <details open>
+        <summary>Ver todos os campos do registro</summary>
+        <div class="frota-historico-table-wrap">
+          <table class="frota-historico-table">
+            <thead><tr><th>Campo</th><th>Valor</th></tr></thead>
+            <tbody>${rows.join("")}</tbody>
+          </table>
+        </div>
+      </details>
+    </div>
+  `;
+}
+
+function _freteResumoDetalhadoHtml(frete = {}) {
+  return `
+    <div class="frota-historico-card">
+      <h4>Resumo do frete</h4>
+      <div class="frota-historico-kv">
+        ${_frotaHistoricoResumoRow("Nome", frete.nome || "-")}
+        ${_frotaHistoricoResumoRow("Status", frete.status || "-")}
+        ${_frotaHistoricoResumoRow("Cidade", frete.cidade || "-")}
+        ${_frotaHistoricoResumoRow("Rota", frete.carga_rota || frete.rota || "-")}
+        ${_frotaHistoricoResumoRow("Veiculo importado", frete.carga_veiculo_numero || "-")}
+        ${_frotaHistoricoResumoRow("Veiculo cadastrado", _rotuloVeiculoCadastradoDoFrete(frete) || frete.veiculo_nome || "-")}
+        ${_frotaHistoricoResumoRow("Motorista", frete.motorista_nome || _getNomeColaborador(frete.colaborador_motorista_id || frete.motorista_id) || "-")}
+        ${_frotaHistoricoResumoRow("Entregador", frete.entregador_nome || _getNomeColaborador(frete.colaborador_entregador_id || frete.entregador_id) || "-")}
+        ${_frotaHistoricoResumoRow("Data carga", frete.data_carga ? _fmtDataCurtaBr(frete.data_carga) : "-")}
+        ${_frotaHistoricoResumoRow("KM atual", frete.km_atual ?? 0)}
+        ${_frotaHistoricoResumoRow("Peso", _fmtNumeroCarga(frete.peso, 3))}
+        ${_frotaHistoricoResumoRow("Entregas", frete.qtd_entregas ?? frete.numero_entregas ?? 0)}
+        ${_frotaHistoricoResumoRow("Carga vinculada", frete.carga_id || "-")}
+        ${_frotaHistoricoResumoRow("Criado em", frete.created_at ? _fmtDateBr(frete.created_at) : "-")}
+        ${_frotaHistoricoResumoRow("Atualizado em", frete.updated_at ? _fmtDateBr(frete.updated_at) : "-")}
+        ${_frotaHistoricoResumoRow("Finalizado em", frete.finalizado_em ? _fmtDateBr(frete.finalizado_em) : "-")}
+        ${_frotaHistoricoResumoRow("Arquivado", frete.arquivado ? "Sim" : "Nao")}
+        ${_frotaHistoricoResumoRow("Observacao", frete.observacao || "-")}
+      </div>
+    </div>
+  `;
+}
+
+async function abrirDetalhesFreteArquivado(freteId) {
+  const frete = _findFreteById(freteId);
+  if (!frete) {
+    alert("Frete arquivado nao encontrado.");
+    return;
+  }
+  if (Number(frete.carga_id) > 0) {
+    await abrirDetalhesCarga(frete.carga_id);
+    return;
+  }
+
+  const modal = document.getElementById("cargaDetalheModal");
+  const body = document.getElementById("cargaDetalheBody");
+  const title = modal?.querySelector(".foto-modal-header h3");
+  if (!modal || !body) return;
+
+  await ensureCadastrosCache();
+  if (title) title.textContent = "Detalhes do Frete Arquivado";
+  body.innerHTML = `
+    <div class="frota-historico-grid">
+      ${_freteResumoDetalhadoHtml(frete)}
+      ${_freteCamposRegistradosHtml(frete)}
+    </div>
+  `;
+  _abrirPopupBloqueante(modal);
+}
+
+async function desarquivarFrete(freteId) {
+  if (!confirm("Deseja desarquivar este frete? Ele voltará ao Kanban ativo.")) return;
+
+  try {
+    const r = await apiFetch(`/api/fretes/${freteId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ arquivado: false })
+    });
+
+    if (!r.ok) throw new Error("Erro ao desarquivar frete.");
+
+    // Recarregar fretes e voltar ao kanban
+    await carregarFretes();
+    toggleArquivados();
+  } catch (e) {
+    alert("Erro ao desarquivar frete: " + e.message);
+  }
+}
+
 async function salvarFrete() {
   let nome = document.getElementById("novoFreteNome").value;
   let dataCarga = document.getElementById("novoFreteDataCarga").value;
@@ -4858,7 +9232,12 @@ async function salvarFrete() {
   let peso = document.getElementById("novoFretePeso").value;
   let qtdEntregas = document.getElementById("novoFreteQtdEntregas").value;
 
-  if (!nome || !motorista || !veiculo || !carga) return alert("Preencha todos os campos");
+  const motoristaId = motorista ? Number(motorista) : null;
+  const entregadorId = _resolverEntregadorPadrao(motoristaId, entregador ? Number(entregador) : null);
+
+  if (!nome || !motoristaId || !entregadorId || !veiculo || !carga) {
+    return alert("Informe nome, motorista, entregador, veiculo e carga.");
+  }
 
   const resp = await apiFetch("/api/fretes", {
     method: "POST",
@@ -4866,8 +9245,10 @@ async function salvarFrete() {
     body: JSON.stringify({
       nome: nome,
       data_carga: dataCarga || _hojeInputDate(),
-      motorista_id: motorista,
-      entregador_id: entregador || motorista,
+      motorista_id: motoristaId,
+      colaborador_motorista_id: motoristaId,
+      entregador_id: entregadorId,
+      colaborador_entregador_id: entregadorId,
       veiculo_id: veiculo,
       carga_id: carga,
       km_atual: kmAtual ? Number(kmAtual) : 0,
@@ -4885,6 +9266,10 @@ async function salvarFrete() {
   await atualizarDash();
   document.getElementById("novoFreteNome").value = "";
   document.getElementById("novoFreteDataCarga").value = _hojeInputDate();
+  document.getElementById("novoFreteMotorista").value = "";
+  document.getElementById("novoFreteEntregador").value = "";
+  document.getElementById("novoFreteVeiculo").value = "";
+  document.getElementById("novoFreteCarga").value = "";
   document.getElementById("novoFreteKmAtual").value = "";
   document.getElementById("novoFretePeso").value = "";
   document.getElementById("novoFreteQtdEntregas").value = "";
@@ -4899,7 +9284,10 @@ async function preencherSelect(tipo, selectId, textoPadrao) {
 
   select.innerHTML = `<option value="">${textoPadrao}</option>`;
   dados.forEach((item) => {
-    select.innerHTML += `<option value="${item.id}">${item.nome}</option>`;
+    const label = item.optionLabel || (tipo === "cargas" && item.veiculo_numero
+      ? `${item.nome || item.cidade || "Carga"} - Veiculo ${item.veiculo_numero}`
+      : item.nome);
+    select.innerHTML += `<option value="${item.id}">${_escHtml(label || "")}</option>`;
   });
 }
 
@@ -4921,6 +9309,9 @@ async function excluirFrete(id) {
   if (card) card.remove();
   _agendarEqualizacaoAlturaKanban();
   await atualizarDash();
+  if (window.__cargasView === "escala") {
+    await renderEscala().catch(() => {});
+  }
 }
 
 function ativarDragDrop() {
@@ -5096,137 +9487,11 @@ function ativarDragDropMobile() {
 }
 
 async function carregarSelectsNovoFrete() {
-  await preencherSelect("motoristas", "novoFreteMotorista", "Selecione motorista");
-  await preencherSelect("motoristas", "novoFreteEntregador", "Selecione entregador");
+  await preencherSelectColaboradores("novoFreteMotorista", "motorista", "Selecione motorista");
+  await preencherSelectColaboradores("novoFreteEntregador", "entregador", "Selecione entregador");
   await preencherSelect("veiculos", "novoFreteVeiculo", "Selecione veículo");
   await preencherSelect("cargas", "novoFreteCarga", "Selecione carga");
   _bindNovoFreteKmAtual();
-}
-
-async function renderFretes() {
-  await ensureCadastrosCache();
-
-  const colunas = {
-    chegada: document.getElementById("col-chegada"),
-    descarregado: document.getElementById("col-descarregado"),
-    liberado: document.getElementById("col-liberado"),
-    carregando: document.getElementById("col-carregando"),
-    carregado: document.getElementById("col-carregado"),
-    entregando: document.getElementById("col-entregando"),
-    retornando: document.getElementById("col-retornando"),
-    paradoVasio: document.getElementById("col-paradoVasio"),
-    paradoCarregado: document.getElementById("col-paradoCarregado"),
-  };
-
-  Object.values(colunas).forEach((col) => col && (col.innerHTML = ""));
-
-  fretes.forEach((f) => {
-    const col = colunas[f.status];
-    if (!col) return;
-
-    const card = document.createElement("div");
-    card.className = "card";
-    card.dataset.freteId = String(f.id);
-
-    const header = document.createElement("div");
-    header.className = "card-header";
-    header.draggable = true;
-    header.dataset.freteId = String(f.id); // ✅ usado no touch (celular)
-    header.ondragstart = (e) => e.dataTransfer.setData("id", f.id);
-    header.innerText = f.nome || "(sem nome)";
-
-    const body = document.createElement("div");
-    body.className = "card-body";
-
-    const nomeVal = (f.nome || "").toString();
-    const obsVal = (f.observacao || "").toString();
-
-    body.innerHTML = `
-      <div class="crud-row">
-        <label>Nome</label>
-        <input type="text" class="frete-nome" value="${nomeVal.replaceAll('"', "&quot;")}">
-      </div>
-
-      <div class="crud-row-line1">
-        <div class="crud-field">
-          <span>🚛</span>
-          <select class="frete-veiculo">
-            ${optionsFrom(cacheCadastros.veiculos, f.veiculo_id)}
-          </select>
-        </div>
-
-        <div class="crud-field">
-          <span>👤</span>
-          <select class="frete-motorista">
-            ${optionsFrom(cacheCadastros.motoristas, f.motorista_id)}
-          </select>
-        </div>
-
-        <div class="crud-field">
-          <span>📦</span>
-          <select class="frete-carga">
-            ${optionsFrom(cacheCadastros.cargas, f.carga_id)}
-          </select>
-        </div>
-      </div>
-
-      <div class="crud-row">
-        <label>Observação</label>
-        <textarea class="frete-obs" rows="2" placeholder="Digite uma observação...">${obsVal}</textarea>
-      </div>
-
-      <div class="crud-actions">
-        <button class="btn-mover-mobile">↔ Mover</button>
-        <button class="btn-salvar">💾 Salvar</button>
-        <button class="btn-excluir">🗑 Excluir</button>
-      </div>
-    `;
-
-    const inpNome = body.querySelector(".frete-nome");
-    const selVeiculo = body.querySelector(".frete-veiculo");
-    const selMotorista = body.querySelector(".frete-motorista");
-    const selCarga = body.querySelector(".frete-carga");
-    const txtObs = body.querySelector(".frete-obs");
-    const btnMoverMobile = body.querySelector(".btn-mover-mobile");
-
-    if (btnMoverMobile) {
-      btnMoverMobile.onclick = async () => {
-        await moverFreteMobile(f);
-      };
-      btnMoverMobile.style.display = window.matchMedia("(max-width: 768px)").matches ? "" : "none";
-    }
-
-    body.querySelector(".btn-salvar").onclick = async () => {
-      const payload = {
-        nome: (inpNome.value || "").trim(),
-        status: f.status,
-        veiculo_id: selVeiculo.value ? Number(selVeiculo.value) : null,
-        motorista_id: selMotorista.value ? Number(selMotorista.value) : null,
-        carga_id: selCarga.value ? Number(selCarga.value) : null,
-        observacao: (txtObs.value || "").trim(),
-      };
-
-      if (!payload.nome) return alert("Nome do frete é obrigatório.");
-      await atualizarFreteCompleto(f.id, payload);
-    };
-
-    body.querySelector(".btn-excluir").onclick = async () => {
-      await excluirFrete(f.id);
-    };
-
-    card.appendChild(header);
-    card.appendChild(body);
-    col.appendChild(card);
-  });
-
-  ativarDragDrop();
-  ativarDragDropMobile(); // ✅ touch drag no celular
-}
-
-async function carregarFretes() {
-  let r = await apiFetch("/api/fretes");
-  fretes = await r.json();
-  renderFretes();
 }
 
 //////////////////////////////////////////////////////
@@ -5240,13 +9505,17 @@ async function deletar(tipo, id) {
 
   // Força recarregar o cache deste tipo
   cacheCadastros[tipo] = null; // Marca como inválido
-  
+  if (tipo === "colaboradores" || tipo === "usuarios") {
+    cacheUsuarios = null;
+  }
+
   // Recarrega do servidor
   await renderCadastros();
-  
-  // Se tipo é "veiculos", recarrega os fretes também
-  if (tipo === "veiculos") {
-    await carregarSelectsNovoFrete();
+
+  await carregarSelectsNovoFrete();
+  await renderFretes().catch(() => {});
+  if (window.__cargasView === "escala") {
+    await renderEscala().catch(() => {});
   }
 }
 
@@ -5264,7 +9533,7 @@ async function abrirFotosDevolucao(id) {
   const r = await apiFetch(`/api/devolucoes/${id}/fotos`);
   if (!r.ok) {
     body.innerHTML = "Erro ao carregar fotos.";
-    modal.classList.remove("hidden");
+    _abrirPopupBloqueante(modal);
     return;
   }
 
@@ -5273,7 +9542,7 @@ async function abrirFotosDevolucao(id) {
 
   if (!fotos.length) {
     body.innerHTML = "Nenhuma foto anexada.";
-    modal.classList.remove("hidden");
+    _abrirPopupBloqueante(modal);
     return;
   }
 
@@ -5281,20 +9550,18 @@ async function abrirFotosDevolucao(id) {
     .map((url) => `<img src="${url}" alt="Foto devolução ${id}">`)
     .join("");
 
-  modal.classList.remove("hidden");
+  _abrirPopupBloqueante(modal);
 }
 
 function fecharFotosDevolucao(e) {
   // se clicar no fundo (overlay), fecha também
   const modal = document.getElementById("fotoModal");
-  if (!modal) return;
-  modal.classList.add("hidden");
+  _fecharPopupBloqueante(modal);
 }
 
 function fecharHistoricoFrota(e) {
   const modal = document.getElementById("frotaHistoricoModal");
-  if (!modal) return;
-  modal.classList.add("hidden");
+  _fecharPopupBloqueante(modal);
 }
 
 function _frotaHistoricoResumoRow(label, value) {
@@ -5313,117 +9580,474 @@ function _frotaHistoricoTable(headers, rowsHtml, emptyMsg) {
   `;
 }
 
-async function abrirHistoricoFrota(veiculoId) {
-  const modal = document.getElementById("frotaHistoricoModal");
-  const body = document.getElementById("frotaHistoricoBody");
+function fecharDetalhesCarga(e) {
+  const modal = document.getElementById("cargaDetalheModal");
+  _fecharPopupBloqueante(modal);
+}
+
+function fecharDetalhesFrete(e) {
+  const modal = document.getElementById("freteDetalheModal");
+  _fecharPopupBloqueante(modal);
+}
+
+function _freteDetalheDadosTemplate(frete) {
+  return `
+    <div class="frete-detail-grid">
+      <div class="crud-field crud-field--full">
+        <span>Nome do frete</span>
+        <input type="text" class="frete-nome" value="${_escAttr(String(frete.nome || frete.frete_nome || ""))}">
+      </div>
+      <div class="crud-field">
+        <span>Data carga</span>
+        <input type="date" class="frete-data-carga" value="${_escAttr(String(frete.data_carga || ""))}">
+      </div>
+      <div class="crud-field">
+        <span>Veiculo</span>
+        <select class="frete-veiculo">
+          ${optionsFrom(cacheCadastros.veiculos, frete.veiculo_id || _resolverVeiculoIdDoFrete(frete))}
+        </select>
+      </div>
+      <div class="crud-field">
+        <span>Motorista</span>
+        <select class="frete-motorista">
+          ${optionsFromColaboradores("motorista", frete.motorista_id)}
+        </select>
+      </div>
+      <div class="crud-field">
+        <span>Entregador</span>
+        <select class="frete-entregador">
+          ${optionsFromColaboradores("entregador", frete.entregador_id)}
+        </select>
+      </div>
+      <div class="crud-field">
+        <span>Carga</span>
+        <select class="frete-carga">
+          ${optionsFrom(cacheCadastros.cargas, frete.carga_id)}
+        </select>
+      </div>
+      <div class="crud-field">
+        <span>KM atual</span>
+        <input type="number" class="frete-km-atual" min="0" value="${_escAttr(String(frete.km_atual ?? 0))}">
+      </div>
+      <div class="crud-field">
+        <span>Peso</span>
+        <input type="number" class="frete-peso" min="0" step="0.001" value="${_escAttr(String(frete.peso ?? 0))}">
+      </div>
+      <div class="crud-field">
+        <span>Entregas</span>
+        <input type="number" class="frete-qtd-entregas" min="0" value="${_escAttr(String(frete.qtd_entregas ?? 0))}">
+      </div>
+      <div class="crud-field crud-field--full">
+        <span>Observacao</span>
+        <textarea class="frete-obs" rows="4" placeholder="Digite uma observacao...">${_escHtml(frete.observacao || "")}</textarea>
+      </div>
+    </div>
+    <div class="crud-actions frete-detail-actions">
+      <button class="btn-primary btn-salvar-frete" type="button">Salvar</button>
+      <button class="btn-secondary" type="button" onclick="fecharDetalhesFrete()">Fechar</button>
+    </div>
+  `;
+}
+
+function _freteDetalheCargaTemplate(frete) {
+  const cargaId = frete.carga_id;
+  return `
+    <div class="frete-detail-carga-summary">
+      ${cargaId ? `
+        <p><strong>ID da carga:</strong> ${_escHtml(String(cargaId))}</p>
+        ${frete.carga_nome ? `<p><strong>Nome da carga:</strong> ${_escHtml(frete.carga_nome)}</p>` : ""}
+        ${frete.carga_cidades ? `<p><strong>Cidades:</strong> ${_escHtml(frete.carga_cidades)}</p>` : ""}
+        ${frete.carga_rota ? `<p><strong>Rota:</strong> ${_escHtml(frete.carga_rota)}</p>` : ""}
+        <button class="btn-primary btn-abre-carga" type="button">Ver detalhes da carga</button>
+      ` : `<p>Este frete não possui carga vinculada.</p>`}
+    </div>
+  `;
+}
+
+function _freteDetalheNotasSaidaTemplate(notas) {
+  if (!Array.isArray(notas) || !notas.length) {
+    return `<div class="frete-detail-empty">Nenhuma nota de saida vinculada a este frete.</div>`;
+  }
+  return `
+    <div class="frete-notas-summary">${notas.length} nota(s) de saida vinculada(s)</div>
+    <div class="frota-historico-table-wrap">
+      <table class="frota-historico-table">
+        <thead>
+          <tr>
+            <th>Nota</th>
+            <th>Emissao</th>
+            <th>Rota registrada</th>
+            <th>Vinculo XML</th>
+            <th>Destino</th>
+            <th>Itens</th>
+            <th>Quantidade</th>
+            <th>Valor</th>
+            <th>Registro</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${notas.map((nota) => `
+            <tr>
+              <td>
+                <strong>${_escHtml(nota.numero_nota || "-")}</strong>
+                ${nota.chave_nfe ? `<div class="hint">${_escHtml(nota.chave_nfe)}</div>` : ""}
+              </td>
+              <td>${_escHtml(_fmtDataCurtaBr(nota.data_emissao) || "-")}</td>
+              <td>${_escHtml(nota.rota_registrada || "-")}</td>
+              <td>
+                ${_escHtml(nota.vinculacao_origem === "automatica_xml" ? "Automatico" : "Manual")}
+                ${(nota.placa_xml || nota.mapa_xml) ? `<div class="hint">${_escHtml([
+                  nota.placa_xml ? `Placa ${nota.placa_xml}` : "",
+                  nota.mapa_xml ? `Mapa ${nota.mapa_xml}` : "",
+                ].filter(Boolean).join(" | "))}</div>` : ""}
+              </td>
+              <td>${_escHtml(nota.destinatario_nome || "-")}</td>
+              <td>${_escHtml(String(nota.itens_total || 0))}</td>
+              <td>${_escHtml(_fmtNumeroCarga(nota.quantidade_total, 3))}</td>
+              <td>${_escHtml(_fmtMoney(nota.valor_total_nota || 0))}</td>
+              <td>
+                ${_escHtml(_fmtDateBr(nota.criado_em) || nota.criado_em || "-")}
+                ${nota.usuario_registro ? `<div class="hint">${_escHtml(nota.usuario_registro)}</div>` : ""}
+              </td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+async function _renderFreteDetalheTab(frete, tab = "dados") {
+  const modal = document.getElementById("freteDetalheModal");
+  const body = document.getElementById("freteDetalheBody");
+  if (!modal || !body || !frete) return;
+  modal.dataset.activeTab = tab;
+  modal.querySelectorAll(".frete-detail-tab").forEach((button) => {
+    button.classList.toggle("active", button.dataset.tab === tab);
+  });
+  if (tab === "carga") {
+    if (frete.carga_id) {
+      fecharDetalhesFrete();
+      await abrirDetalhesCarga(frete.carga_id);
+      return;
+    }
+    body.innerHTML = _freteDetalheCargaTemplate(frete);
+  } else if (tab === "notas_saida") {
+    body.innerHTML = `<div class="frete-detail-empty">Carregando notas de saida...</div>`;
+    const resp = await apiFetch(`/api/fretes/${Number(frete.id)}/notas-saida`);
+    const data = await resp.json().catch(() => ({}));
+    body.innerHTML = resp.ok
+      ? _freteDetalheNotasSaidaTemplate(data?.notas || [])
+      : `<div class="frete-detail-empty">${_escHtml(data?.erro || "Falha ao carregar notas de saida.")}</div>`;
+  } else {
+    body.innerHTML = _freteDetalheDadosTemplate(frete);
+  }
+  const btnSalvar = body.querySelector(".btn-salvar-frete");
+  if (btnSalvar) {
+    btnSalvar.onclick = async () => {
+      try {
+        btnSalvar.disabled = true;
+        btnSalvar.textContent = "Salvando...";
+        const payload = _coletarPayloadFreteDoDetalheModal(frete);
+        await atualizarFreteCompleto(Number(frete.id), payload);
+        fecharDetalhesFrete();
+        const atualizado = _findFreteById(frete.id);
+        if (atualizado) _renderOrUpdateFreteCard(atualizado, { force: true });
+      } catch (err) {
+        alert(err?.message || "Erro ao salvar frete.");
+      } finally {
+        btnSalvar.disabled = false;
+        btnSalvar.textContent = "Salvar";
+      }
+    };
+  }
+  const btnAbreCarga = body.querySelector(".btn-abre-carga");
+  if (btnAbreCarga) {
+    btnAbreCarga.onclick = async () => {
+      fecharDetalhesFrete();
+      await abrirDetalhesCarga(frete.carga_id);
+    };
+  }
+}
+
+function _bindFreteDetalheModalEvents(freteId) {
+  const modal = document.getElementById("freteDetalheModal");
+  if (!modal) return;
+  modal.querySelectorAll(".frete-detail-tab").forEach((button) => {
+    const abrirAba = async (event) => {
+      if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+      const frete = _findFreteById(freteId);
+      if (!frete) return;
+      await _renderFreteDetalheTab(frete, button.dataset.tab || "dados");
+    };
+    button.onclick = abrirAba;
+    button.ontouchend = abrirAba;
+  });
+}
+
+async function abrirDetalhesFrete(freteId, initialTab = "dados"){
+  const modal = document.getElementById("freteDetalheModal");
+  const body = document.getElementById("freteDetalheBody");
   if (!modal || !body) return;
-  if (!(Number(veiculoId) > 0)) return;
+  const frete = _findFreteById(freteId);
+  if (!frete) return;
 
-  body.innerHTML = "Carregando historico...";
-  modal.classList.remove("hidden");
+  await ensureCadastrosCache();
+  const state = _ensureFreteDraftState(frete);
+  const data = _cloneFretePayload(state.dirty ? state.draft : frete);
+  modal.dataset.freteId = String(freteId);
+  _abrirPopupBloqueante(modal);
+  _bindFreteDetalheModalEvents(freteId);
+  await _renderFreteDetalheTab(data, initialTab);
+}
 
-  const r = await apiFetch(`/api/frota_historico/${veiculoId}`);
-  if (!r.ok) {
-    body.innerHTML = "Erro ao carregar historico do caminhao.";
+function _coletarPayloadFreteDoDetalheModal(freteBase){
+  const modal = document.getElementById("freteDetalheModal");
+  if (!modal) return {};
+  const body = modal.querySelector(".frete-detail-body");
+  if (!body) return {};
+  const inpDataCarga = body.querySelector(".frete-data-carga");
+  const selVeiculo = body.querySelector(".frete-veiculo");
+  const selMotorista = body.querySelector(".frete-motorista");
+  const selEntregador = body.querySelector(".frete-entregador");
+  const selCarga = body.querySelector(".frete-carga");
+  const inpKmAtual = body.querySelector(".frete-km-atual");
+  const inpPeso = body.querySelector(".frete-peso");
+  const inpEntregas = body.querySelector(".frete-qtd-entregas");
+  const txtObs = body.querySelector(".frete-obs");
+  const txtNome = body.querySelector(".frete-nome");
+  const motoristaId = selMotorista?.value ? Number(selMotorista.value) : null;
+  const entregadorId = _resolverEntregadorPadrao(motoristaId, selEntregador?.value ? Number(selEntregador.value) : null);
+  return {
+    nome: (txtNome?.value || "").toString().trim() || (freteBase?.nome || freteBase?.frete_nome || "").toString().trim(),
+    cidade: (freteBase?.cidade || "").toString().trim(),
+    data_carga: _normalizarDataFreteInput(inpDataCarga?.value || freteBase?.data_carga || ""),
+    status: (freteBase?.status || "liberado").toString(),
+    veiculo_id: selVeiculo?.value ? Number(selVeiculo.value) : _resolverVeiculoIdDoFrete(freteBase || {}),
+    motorista_id: motoristaId,
+    colaborador_motorista_id: motoristaId,
+    entregador_id: entregadorId,
+    colaborador_entregador_id: entregadorId,
+    carga_id: selCarga?.value ? Number(selCarga.value) : null,
+    km_atual: inpKmAtual && inpKmAtual.value.trim() !== "" ? Number(inpKmAtual.value) : 0,
+    peso: inpPeso && inpPeso.value.trim() !== "" ? Number(inpPeso.value) : 0,
+    qtd_entregas: inpEntregas && inpEntregas.value.trim() !== "" ? Number(inpEntregas.value) : 0,
+    observacao: (txtObs?.value || "").trim(),
+    carga_rota: (freteBase?.carga_rota || "").toString().trim(),
+    carga_cidades: (freteBase?.carga_cidades || "").toString().trim(),
+    carga_veiculo_numero: (freteBase?.carga_veiculo_numero || "").toString().trim(),
+    carga_nome: (freteBase?.carga_nome || "").toString().trim(),
+    veiculo_nome: (freteBase?.veiculo_nome || "").toString().trim(),
+    veiculo_placa: (freteBase?.veiculo_placa || "").toString().trim(),
+  };
+}
+
+function _fmtNumeroCarga(v, casas = 3) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return "-";
+  return n.toLocaleString("pt-BR", {
+    minimumFractionDigits: casas,
+    maximumFractionDigits: casas,
+  });
+}
+
+function _fmtDataCurtaBr(v){
+  const raw = String(v || "").trim();
+  const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (match) return `${match[3]}/${match[2]}/${match[1]}`;
+  return _fmtDateBr(raw);
+}
+
+function _cargaTipoImportacaoLabel(tipo = ""){
+  const valor = String(tipo || "").toLowerCase();
+  if (valor === "pdf") return "PDF de carga";
+  if (valor === "csv") return "CSV";
+  return valor ? valor.toUpperCase() : "Manual";
+}
+
+function _cargaEstoqueStatusLabel(carga = {}, estoque = {}){
+  const baixadoEm = estoque?.baixado_em || carga?.estoque_baixado_em || "";
+  const baixadoPor = estoque?.baixado_por || carga?.estoque_baixado_por || "";
+  if (baixadoEm) {
+    return `Baixado em ${_fmtDateBr(baixadoEm)}${baixadoPor ? ` por ${baixadoPor}` : ""}`;
+  }
+  if (String(carga?.tipo_importacao || "").toLowerCase() === "pdf") {
+    return "Aguardando baixa no estoque";
+  }
+  return "Sem baixa automatica";
+}
+
+async function abrirDetalhesCarga(cargaId) {
+  const modal = document.getElementById("cargaDetalheModal");
+  const body = document.getElementById("cargaDetalheBody");
+  const title = modal?.querySelector(".foto-modal-header h3");
+  if (!modal || !body) return;
+  if (!(Number(cargaId) > 0)) return;
+
+  await ensureCadastrosCache();
+  if (title) title.textContent = "Detalhes da Carga";
+  body.innerHTML = "Carregando detalhes da carga...";
+  _abrirPopupBloqueante(modal);
+
+  const r = await apiFetch(`/api/cargas/${cargaId}/detalhes`);
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok || data?.ok === false) {
+    body.innerHTML = _escHtml(data?.erro || "Erro ao carregar detalhes da carga.");
     return;
   }
 
-  const j = await r.json();
-  const v = j.veiculo || {};
-  const resumo = j.resumo || {};
-  const frete = j.frete_atual || {};
-  const hist = j.historico || {};
-  const manutencoes = hist.manutencoes || [];
-  const trocasOleo = hist.trocas_oleo || [];
-  const trocasPneu = hist.trocas_pneu || [];
-  const abastecimentos = hist.abastecimentos || [];
+  const carga = data.carga || {};
+  const frete = data.frete || null;
+  const linhas = Array.isArray(data.linhas) ? data.linhas : [];
+  const itensEstoque = Array.isArray(data.itens_estoque) ? data.itens_estoque : [];
+  const estoque = data.estoque || {};
+  const resumo = data.resumo || {};
 
-  const titulo = `${v.placa || "-"} ${v.modelo || v.nome || ""}`.trim();
-  const mediaKm = (resumo.media_km !== null && resumo.media_km !== undefined && Number.isFinite(Number(resumo.media_km)))
-    ? Number(resumo.media_km).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-    : "-";
+  const freteHtml = frete ? `
+    <div class="frota-historico-card">
+      <h4>Frete vinculado</h4>
+      <div class="frota-historico-kv">
+        ${_frotaHistoricoResumoRow("Nome", frete.nome || "-")}
+        ${_frotaHistoricoResumoRow("Status", frete.status || "-")}
+        ${_frotaHistoricoResumoRow("Cidade", frete.cidade || "-")}
+        ${_frotaHistoricoResumoRow("Cidades", Array.isArray(carga.cidades) && carga.cidades.length ? carga.cidades.join(", ") : (carga.cidade || "-"))}
+        ${_frotaHistoricoResumoRow("Veiculo importado", frete.carga_veiculo_numero || carga.veiculo_numero || "-")}
+        ${_frotaHistoricoResumoRow("Veiculo cadastrado", _rotuloVeiculoCadastradoDoFrete(frete) || "-")}
+        ${_frotaHistoricoResumoRow("Motorista", frete.motorista_nome || "-")}
+        ${_frotaHistoricoResumoRow("Entregador", frete.entregador_nome || "-")}
+        ${_frotaHistoricoResumoRow("Data carga", frete.data_carga ? _fmtDataCurtaBr(frete.data_carga) : "-")}
+        ${_frotaHistoricoResumoRow("KM atual", frete.km_atual ?? 0)}
+        ${_frotaHistoricoResumoRow("Peso", _fmtNumeroCarga(frete.peso, 3))}
+        ${_frotaHistoricoResumoRow("Entregas", frete.qtd_entregas ?? 0)}
+        ${_frotaHistoricoResumoRow("Observacao", frete.observacao || "-")}
+      </div>
+    </div>
+    ${_freteCamposRegistradosHtml(frete)}
+  ` : `
+    <div class="frota-historico-card">
+      <h4>Frete vinculado</h4>
+      <div>Nenhum frete encontrado para esta carga.</div>
+    </div>
+  `;
 
-  const manutRows = manutencoes.map((m) => `
-    <tr>
-      <td>${_escHtml(_fmtDateBr(m.data_manutencao))}</td>
-      <td>${_escHtml(m.tipo || "-")}</td>
-      <td>${_escHtml(String(m.km || 0))}</td>
-      <td>R$ ${_escHtml(_fmtMoney(m.valor))}</td>
-    </tr>
-  `);
+  const itensEstoqueHtml = itensEstoque.map((item) => `
+      <tr>
+        <td>${_escHtml(String(item.item_seq || "-"))}</td>
+        <td>${_escHtml(item.codigo_produto || item.codigo_barras || "-")}</td>
+        <td>${_escHtml(item.nome_produto || "-")}</td>
+        <td>${_escHtml(item.embalagem || item.unidade_embalagem || "-")}</td>
+        <td>${_escHtml(_fmtNumeroCarga(item.quantidade_embalagem, 3))}</td>
+        <td>${_escHtml(_fmtNumeroCarga(item.quantidade_solta, 3))}</td>
+        <td>${_escHtml(_fmtNumeroCarga(item.fator_embalagem, 3))}</td>
+        <td>${_escHtml(_fmtNumeroCarga(item.quantidade_total, 3))}</td>
+        <td>${_escHtml(item.baixado_em ? _fmtDateBr(item.baixado_em) : "Pendente")}</td>
+      </tr>
+    `);
 
-  const oleoRows = trocasOleo.map((o) => `
-    <tr>
-      <td>${_escHtml(_fmtDateBr(o.data_troca))}</td>
-      <td>${_escHtml(o.tipo || "-")}</td>
-      <td>${_escHtml(String(o.km || 0))}</td>
-    </tr>
-  `);
-
-  const pneuRows = trocasPneu.map((p) => `
-    <tr>
-      <td>${_escHtml(_fmtDateBr(p.data_troca || p.data_registro))}</td>
-      <td>${_escHtml(p.marca || "-")}</td>
-      <td>${_escHtml(String(p.km || 0))}</td>
-      <td>${_escHtml(String(p.quantidade || 0))}</td>
-      <td>R$ ${_escHtml(_fmtMoney(p.valor_total))}</td>
-      <td>R$ ${_escHtml(_fmtMoney(p.custo_por_pneu))}</td>
-      <td>${_escHtml(p.localizacao || "-")}</td>
-    </tr>
-  `);
-
-  const abastRows = abastecimentos.map((a) => {
-    const postoEmitente = [a.posto || "", a.emitente_nome || ""]
-      .filter((value, idx, arr) => value && arr.indexOf(value) === idx)
-      .join(" / ") || "-";
-    const nota = a.numero_nota || a.chave_acesso_nfe || "-";
+  const linhasHtml = linhas.map((linha) => {
+    const bruto = typeof linha.dados_json === "string"
+      ? linha.dados_json
+      : JSON.stringify(linha.dados_json || {}, null, 2);
     return `
       <tr>
-        <td>${_escHtml(_fmtDateBr(a.data_abastecimento || a.data_liberacao))}</td>
-        <td>${_escHtml(a.status || "-")}</td>
-        <td>${_escHtml(_combustivelLabel(a.combustivel_tipo))}</td>
-        <td>${_escHtml(String(a.km || 0))}</td>
-        <td>${_escHtml(postoEmitente)}</td>
-        <td>${_escHtml(nota)}</td>
-        <td>${_escHtml(_fmtNumber(a.quantidade_litros, 3))}</td>
-        <td>R$ ${_escHtml(_fmtMoney(a.valor))}</td>
-        <td>${_escHtml(_fmtNumber(a.km_l, 2))}</td>
+        <td>${_escHtml(String(linha.linha_num ?? ""))}</td>
+        <td>${_escHtml(linha.cliente || "-")}</td>
+        <td>${_escHtml(linha.veiculo_numero || carga.veiculo_numero || "-")}</td>
+        <td>${_escHtml(linha.numero_nf || "-")}</td>
+        <td>${_escHtml(linha.produto || "-")}</td>
+        <td>${_escHtml(_fmtNumeroCarga(linha.quantidade, 3))}</td>
+        <td>${_escHtml(_fmtNumeroCarga(linha.litro, 3))}</td>
+        <td>${_escHtml(_fmtNumeroCarga(linha.peso, 3))}</td>
+        <td>R$ ${_escHtml(_fmtMoney(linha.valor_venda ?? 0))}</td>
+        <td>
+          <details>
+            <summary>Ver</summary>
+            <pre style="white-space:pre-wrap;max-width:420px;">${_escHtml(bruto)}</pre>
+          </details>
+        </td>
       </tr>
     `;
   });
 
   body.innerHTML = `
+    <div class="frota-historico-grid">
+      <div class="frota-historico-card">
+        <h4>Resumo da carga</h4>
+        <div class="frota-historico-kv">
+          ${_frotaHistoricoResumoRow("Carga", carga.nome || carga.cidade || "-")}
+          ${_frotaHistoricoResumoRow("Tipo", _cargaTipoImportacaoLabel(carga.tipo_importacao))}
+          ${_frotaHistoricoResumoRow("Mapa", carga.mapa_numero || "-")}
+          ${_frotaHistoricoResumoRow("Cidade", Array.isArray(carga.cidades) && carga.cidades.length ? carga.cidades.join(", ") : (carga.cidade || "-"))}
+          ${_frotaHistoricoResumoRow("Rota", carga.rota || "-")}
+          ${_frotaHistoricoResumoRow("Veiculo", carga.veiculo_numero || "-")}
+          ${_frotaHistoricoResumoRow("Arquivo origem", carga.arquivo_origem || carga.origem_csv || "-")}
+          ${_frotaHistoricoResumoRow("Data carga", carga.data_carga ? _fmtDataCurtaBr(carga.data_carga) : "-")}
+          ${_frotaHistoricoResumoRow("Entregas", carga.numero_entregas ?? 0)}
+          ${_frotaHistoricoResumoRow("Volumes", _fmtNumeroCarga(carga.volumes_total ?? 0, 3))}
+          ${_frotaHistoricoResumoRow("Linhas importadas", carga.registros_importados ?? resumo.linhas ?? 0)}
+          ${_frotaHistoricoResumoRow("Itens estoque", resumo.itens_estoque ?? itensEstoque.length)}
+          ${_frotaHistoricoResumoRow("Clientes distintos", carga.clientes_distintos ?? resumo.clientes ?? 0)}
+          ${_frotaHistoricoResumoRow("Quantidade total", _fmtNumeroCarga(carga.quantidade_total ?? resumo.quantidade_total ?? 0, 3))}
+          ${_frotaHistoricoResumoRow("Litros total", _fmtNumeroCarga(carga.litros_total ?? resumo.litros_total ?? 0, 3))}
+          ${_frotaHistoricoResumoRow("Peso total", _fmtNumeroCarga(carga.peso_total ?? resumo.peso_total ?? 0, 3))}
+          ${_frotaHistoricoResumoRow("Bonificacao", `R$ ${_fmtMoney(carga.valor_bonificacao ?? 0)}`)}
+          ${_frotaHistoricoResumoRow("Valor total", `R$ ${_fmtMoney(carga.valor_total ?? resumo.valor_total ?? 0)}`)}
+          ${_frotaHistoricoResumoRow("Estoque", _cargaEstoqueStatusLabel(carga, estoque))}
+          ${_frotaHistoricoResumoRow("Atualizado em", carga.atualizado_em || "-")}
+        </div>
+      </div>
+      ${freteHtml}
+    </div>
+
     <div class="frota-historico-card">
-      <h4>${_escHtml(titulo || "Historico do Caminhao")}</h4>
-      <div class="frota-historico-kv">
-        ${_frotaHistoricoResumoRow("Placa", v.placa || "-")}
-        ${_frotaHistoricoResumoRow("Modelo", v.modelo || v.nome || "-")}
-        ${_frotaHistoricoResumoRow("KM atual", v.km_atual ?? 0)}
-        ${_frotaHistoricoResumoRow("Media KM/L", mediaKm)}
-        ${_frotaHistoricoResumoRow("Falta p/ manutencao", `${resumo.falta_manut_km ?? "-"} km`)}
-        ${_frotaHistoricoResumoRow("Falta p/ oleo", `${resumo.falta_oleo_km ?? "-"} km`)}
-        ${_frotaHistoricoResumoRow("Motorista atual", frete.motorista_nome || "-")}
-        ${_frotaHistoricoResumoRow("Frete atual", frete.nome || "-")}
-        ${_frotaHistoricoResumoRow("Status frete", frete.status || "-")}
+      <h4>Itens para baixa de estoque</h4>
+      <div class="frota-historico-table-wrap">
+        <table class="frota-historico-table carga-detalhe-table">
+          <thead>
+            <tr>
+              <th>Item</th>
+              <th>Codigo</th>
+              <th>Produto</th>
+              <th>Emb.</th>
+              <th>Qtd emb.</th>
+              <th>Qtd solta</th>
+              <th>Fator</th>
+              <th>Total un.</th>
+              <th>Baixa</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${itensEstoqueHtml.length ? itensEstoqueHtml.join("") : `<tr><td colspan="9">Nenhum item de estoque vinculado a esta carga.</td></tr>`}
+          </tbody>
+        </table>
       </div>
     </div>
 
-    <div class="frota-historico-grid">
-      <div class="frota-historico-card">
-        <h4>Manutencoes</h4>
-        ${_frotaHistoricoTable(["Data", "Tipo", "KM", "Valor"], manutRows, "Sem manutencoes registradas.")}
-      </div>
-      <div class="frota-historico-card">
-        <h4>Trocas de Oleo</h4>
-        ${_frotaHistoricoTable(["Data", "Tipo", "KM"], oleoRows, "Sem trocas de oleo registradas.")}
-      </div>
-      <div class="frota-historico-card">
-        <h4>Trocas de Pneu</h4>
-        ${_frotaHistoricoTable(["Data", "Marca", "KM", "Qtd", "Valor", "Custo/pneu", "Localizacao"], pneuRows, "Sem trocas de pneu registradas.")}
-      </div>
-      <div class="frota-historico-card">
-        <h4>Abastecimentos</h4>
-        ${_frotaHistoricoTable(["Data", "Status", "Comb.", "KM", "Posto / Emitente", "NF-e", "Qtd", "Valor", "KM/L"], abastRows, "Sem abastecimentos registrados.")}
+    <div class="frota-historico-card">
+      <h4>Linhas importadas</h4>
+      <div class="frota-historico-table-wrap">
+        <table class="frota-historico-table carga-detalhe-table">
+          <thead>
+            <tr>
+              <th>Linha</th>
+              <th>Cliente</th>
+              <th>Veiculo</th>
+              <th>NF</th>
+              <th>Produto</th>
+              <th>Qtd.</th>
+              <th>Litros</th>
+              <th>Peso</th>
+              <th>Valor</th>
+              <th>Bruto</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${linhasHtml.length ? linhasHtml.join("") : `<tr><td colspan="10">Nenhuma linha CSV vinculada a esta carga.</td></tr>`}
+          </tbody>
+        </table>
       </div>
     </div>
   `;
@@ -5463,6 +10087,7 @@ async function addDevolucao() {
   fd.append("frete_id", String(dev_frete.value));
   fd.append("veiculo_id", String(frete.veiculo_id || ""));
   fd.append("conferente_id", String(dev_conf.value));
+  fd.append("colaborador_conferente_id", String(dev_conf.value));
 
   fd.append("c24", String(dev_c24.value || 0));
   fd.append("c48", String(dev_c48.value || 0));
@@ -5499,7 +10124,7 @@ const fileCamera = (camera?.files && camera.files[0]) ? [camera.files[0]] : [];
   if (!resp.ok) {
     let t = "";
     try { t = await resp.text(); } catch {}
-    console.log("Erro ao salvar devolução:", resp.status, t);
+    console.error("Erro ao salvar devolução:", resp.status, t);
     return alert("Erro ao salvar devolução (veja o console F12).");
   }
 
@@ -5517,7 +10142,7 @@ async function toggleNovaDevolucao() {
   if (card.classList.contains("hidden")) {
     card.classList.remove("hidden");
     await preencherSelectFretes();
-    await preencherSelect("conferentes", "dev_conf", "Selecione conferente");
+    await preencherSelectColaboradores("dev_conf", "conferente", "Selecione conferente");
   } else {
     card.classList.add("hidden");
   }
@@ -5624,6 +10249,7 @@ async function salvarDevolucaoInline(id) {
     frete_id: d.frete_id,
     veiculo_id: d.veiculo_id,
     conferente_id: d.conferente_id,
+    colaborador_conferente_id: d.colaborador_conferente_id || d.conferente_id,
 
     c24: Number(document.getElementById(`ed_c24_${id}`).value || 0),
     c48: Number(document.getElementById(`ed_c48_${id}`).value || 0),
@@ -5642,7 +10268,7 @@ async function salvarDevolucaoInline(id) {
     obs_agua_sem_gas: document.getElementById(`ed_obs_agua_sem_gas_${id}`).value,
     cx_600: parseInt(document.getElementById(`ed_cx_600_${id}`).value || 0),
     obs_cx_600: document.getElementById(`ed_obs_cx_600_${id}`).value,
-  
+
   };
 
   const resp = await fetch(`/api/devolucoes/${id}`, {
@@ -5665,61 +10291,6 @@ async function excluirDevolucao(id) {
 
 
 
-// =====================================================
-// GESTÃO DE FROTA (PERSISTÊNCIA EM BANCO)
-// =====================================================
-async function carregarFrotaResumo(){
-  // popula selects de manutenção/óleo e tabela resumo
-  const [veiculosResp, resumoResp] = await Promise.allSettled([
-    fetch("/api/veiculos"),
-    fetch("/api/frota_resumo"),
-  ]);
-
-  let veiculos = [];
-  if (veiculosResp.status === "fulfilled") {
-    try { veiculos = await veiculosResp.value.json(); } catch {}
-  }
-
-  // Selects
-  const selManut = document.getElementById("manut_veiculo");
-  const selOleo = document.getElementById("oleo_veiculo");
-  const selPneu = document.getElementById("pneu_veiculo");
-  const selAbast = document.getElementById("abast_veiculo");
-  const opt = (v)=>`<option value="${v.id}">${_escHtml(v.nome || (v.placa||'') || ('Veículo '+v.id))}</option>`;
-  if (selManut) selManut.innerHTML = `<option value="">Selecione...</option>` + veiculos.map(opt).join("");
-  if (selOleo) selOleo.innerHTML = `<option value="">Selecione...</option>` + veiculos.map(opt).join("");
-  if (selPneu) selPneu.innerHTML = `<option value="">Selecione...</option>` + veiculos.map(opt).join("");
-  if (selAbast) selAbast.innerHTML = `<option value="">Selecione...</option>` + veiculos.map(opt).join("");
-
-  // Tabela
-  const tbody = document.getElementById("tabelaFrota");
-  if (!tbody) return;
-  if (resumoResp.status !== "fulfilled") {
-    tbody.innerHTML = `<tr><td colspan="6">Erro ao carregar frota.</td></tr>`;
-    return;
-  }
-  const resumo = await resumoResp.value.json();
-
-  tbody.innerHTML = (resumo || []).map((v)=> {
-    const ultimoOleo = (v.ultimo_oleo_km ?? "-");
-    const manutCount = (v.manut_count ?? 0);
-    const custo = Number(v.custo_total ?? 0).toFixed(2);
-    return `
-      <tr>
-        <td>${_escHtml(v.placa || "-")}</td>
-        <td>${_escHtml(v.modelo || v.nome || "-")}</td>
-        <td>${_escHtml((v.km_atual ?? 0).toString())}</td>
-        <td>${_escHtml(ultimoOleo.toString())}</td>
-        <td>${_escHtml(manutCount.toString())}</td>
-        <td>R$ ${_escHtml(custo)}</td>
-      </tr>
-    `;
-  }).join("");
-
-  await carregarAbastecimentos();
-  await carregarTrocasPneu();
-}
-
 function _fmtMoney(v){
   const n = Number(v || 0);
   if (!Number.isFinite(n)) return "-";
@@ -5730,6 +10301,18 @@ function _fmtNumber(v, casas = 2){
   const n = Number(v);
   if (!Number.isFinite(n)) return "-";
   return n.toLocaleString("pt-BR", { minimumFractionDigits: casas, maximumFractionDigits: casas });
+}
+
+function _fmtNumberNullable(v, casas = 2){
+  if (v === null || v === undefined || v === "") return "-";
+  return _fmtNumber(v, casas);
+}
+
+function _fmtKmNullable(v){
+  if (v === null || v === undefined || v === "") return "-";
+  const n = Number(v);
+  if (!Number.isFinite(n)) return "-";
+  return String(Math.trunc(n));
 }
 
 function _fmtDateBr(v){
@@ -5743,15 +10326,184 @@ function _digitsOnly(v){
   return String(v ?? "").replace(/\D+/g, "");
 }
 
+function _normalizarCombustivelTipo(v){
+  const tipo = String(v || "").trim().toLowerCase().replace(/\s+/g, " ");
+  if (["arla", "arla32", "arla 32"].includes(tipo)) return "arla";
+  if (["gasolina", "gasolina comum", "gasolina c", "gasolina c comum"].includes(tipo)) return "gasolina";
+  if (["etanol", "etanol comum", "etanol hidratado", "etanol hidratado comum", "alcool", "álcool"].includes(tipo)) return "etanol";
+  if (["diesel_500", "diesel_s500", "diesel 500", "diesel s500", "diesel s-500", "diesel500", "diesels500", "s500", "s-500"].includes(tipo)) {
+    return "diesel_500";
+  }
+  return "diesel_s10";
+}
+
 function _combustivelLabel(v){
-  return String(v || "").toLowerCase() === "arla" ? "Arla" : "Diesel";
+  return {
+    diesel_s10: "Diesel S10",
+    diesel_500: "Diesel 500",
+    gasolina: "Gasolina",
+    etanol: "Etanol",
+    arla: "Arla",
+  }[_normalizarCombustivelTipo(v)];
+}
+
+function _normalizarCombustivelPadraoVeiculo(v){
+  const tipo = String(v || "").trim().toLowerCase().replace(/\s+/g, " ");
+  if (["flex", "gasolina/etanol", "gasolina e etanol", "etanol/gasolina", "etanol e gasolina"].includes(tipo)) return "flex";
+  if (["gasolina", "gasolina comum", "gasolina c", "gasolina c comum"].includes(tipo)) return "gasolina";
+  if (["etanol", "etanol comum", "etanol hidratado", "etanol hidratado comum", "alcool", "álcool"].includes(tipo)) return "etanol";
+  if (["diesel_s10", "diesel s10", "diesel s-10", "diesels10", "diesel10", "s10", "s-10", "diesel"].includes(tipo)) return "diesel_s10";
+  if (["diesel_500", "diesel_s500", "diesel 500", "diesel s500", "diesel s-500", "diesel500", "diesels500", "s500", "s-500"].includes(tipo)) return "diesel_500";
+  return "diesel_500";
+}
+
+function _combustivelOptionsVeiculoHtml(combustivelPadrao, selected = ""){
+  const padrao = _normalizarCombustivelPadraoVeiculo(combustivelPadrao);
+  let permitidos;
+  if (padrao === "diesel_s10") {
+    permitidos = [["diesel_s10", "Diesel S10"], ["arla", "Arla"]];
+  } else if (padrao === "flex") {
+    permitidos = [["gasolina", "Gasolina"], ["etanol", "Etanol"]];
+  } else {
+    permitidos = [[padrao, _combustivelLabel(padrao)]];
+  }
+  const solicitado = _normalizarCombustivelTipo(selected || padrao);
+  const atual = permitidos.some(([value]) => value === solicitado)
+    ? solicitado
+    : permitidos[0][0];
+  return permitidos.map(([value, label]) => (
+    `<option value="${value}" ${atual === value ? "selected" : ""}>${label}</option>`
+  )).join("");
+}
+
+function _combustivelPadraoCadastroVeiculo(veiculoId){
+  const veiculo = _buscarVeiculoCadastro(veiculoId);
+  return _normalizarCombustivelPadraoVeiculo(veiculo?.combustivel_padrao);
+}
+
+function _sincronizarCombustivelAbastecimentoComVeiculo(veiculoSelect, combustivelSelect, selected = ""){
+  if (!veiculoSelect || !combustivelSelect) return;
+  if (!veiculoSelect.value) {
+    combustivelSelect.innerHTML = `<option value="">Selecione o veiculo</option>`;
+    return;
+  }
+  const padrao = _combustivelPadraoCadastroVeiculo(veiculoSelect.value);
+  combustivelSelect.innerHTML = _combustivelOptionsVeiculoHtml(padrao, selected || padrao);
+}
+
+function _normalizarDraftAbastecimento(draft = {}){
+  const dados = draft && typeof draft === "object" ? draft : {};
+  return {
+    chave_acesso_nfe: _digitsOnly(dados.chave_acesso_nfe || dados.chave_acesso || ""),
+    numero_nota: String(dados.numero_nota || "").trim(),
+    emitente_nome: String(dados.emitente_nome || "").trim(),
+    valor: dados.valor != null && dados.valor !== "" ? String(dados.valor) : "",
+    quantidade_litros: dados.quantidade_litros != null && dados.quantidade_litros !== "" ? String(dados.quantidade_litros) : "",
+    combustivel_tipo: _normalizarCombustivelTipo(dados.combustivel_tipo),
+  };
+}
+
+function _salvarDraftAbastecimento(id, draft = {}){
+  const key = String(id ?? "");
+  if (!key) return;
+  const atual = _normalizarDraftAbastecimento(abastecimentoDraftState.get(key) || {});
+  abastecimentoDraftState.set(key, _normalizarDraftAbastecimento({ ...atual, ...draft }));
+}
+
+function _limparDraftAbastecimento(id){
+  const key = String(id ?? "");
+  if (!key) return;
+  abastecimentoDraftState.delete(key);
+}
+
+function _draftAbastecimentoLinha(id, row = {}){
+  const key = String(id ?? "");
+  return _normalizarDraftAbastecimento({
+    ...(row && typeof row === "object" ? row : {}),
+    ...(abastecimentoDraftState.get(key) || {}),
+  });
+}
+
+function _capturarDraftAbastecimentoDom(id){
+  _salvarDraftAbastecimento(id, {
+    chave_acesso_nfe: document.getElementById(`abast_chave_${id}`)?.value || "",
+    numero_nota: document.getElementById(`abast_nota_${id}`)?.value || "",
+    emitente_nome: document.getElementById(`abast_emitente_${id}`)?.value || "",
+    valor: document.getElementById(`abast_valor_${id}`)?.value || "",
+    quantidade_litros: document.getElementById(`abast_qtd_${id}`)?.value || "",
+    combustivel_tipo: document.getElementById(`abast_combustivel_${id}`)?.value || "diesel_s10",
+  });
+}
+
+function _formatBytesProgress(bytes){
+  const value = Number(bytes || 0);
+  if (!(value > 0)) return "0 KB";
+  if (value >= 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+  return `${Math.max(1, Math.round(value / 1024))} KB`;
+}
+
+function _renderAbastecimentoFeedback(id){
+  const slot = document.getElementById(`abast_feedback_slot_${id}`);
+  if (!slot) return;
+  slot.innerHTML = _getAbastecimentoFeedbackHtml(id);
+}
+
+function _setAbastecimentoFeedback(id, message = "", tone = "info", extra = {}){
+  const key = String(id ?? "");
+  if (!key) return;
+  const texto = String(message || "").trim();
+  const detalhes = extra && typeof extra === "object" ? extra : {};
+  if (!texto && !String(detalhes.title || "").trim()) {
+    abastecimentoFeedbackState.delete(key);
+    _renderAbastecimentoFeedback(id);
+    return;
+  }
+  abastecimentoFeedbackState.set(key, {
+    message: texto,
+    tone: String(tone || "info"),
+    title: String(detalhes.title || "").trim(),
+    detail: String(detalhes.detail || "").trim(),
+    progress: Number.isFinite(Number(detalhes.progress)) ? Math.max(0, Math.min(100, Math.round(Number(detalhes.progress)))) : null,
+    indeterminate: !!detalhes.indeterminate,
+  });
+  _renderAbastecimentoFeedback(id);
+}
+
+function _getAbastecimentoFeedbackHtml(id){
+  const state = abastecimentoFeedbackState.get(String(id ?? ""));
+  if (!state?.message) return "";
+  const title = String(state.title || "").trim();
+  const detail = String(state.detail || "").trim();
+  const hasProgress = state.progress != null || state.indeterminate;
+  return `<div class="abastecimento-feedback${hasProgress ? " abastecimento-feedback--progress" : ""}" data-tone="${_escAttr(state.tone || "info")}">
+    ${title ? `<div class="abastecimento-feedback-title">${_escHtml(title)}</div>` : ""}
+    <div class="abastecimento-feedback-message">${_escHtml(state.message || "")}</div>
+    ${detail ? `<div class="abastecimento-feedback-detail">${_escHtml(detail)}</div>` : ""}
+    ${hasProgress ? `
+      <div class="abastecimento-feedback-progress" aria-hidden="true">
+        <span class="abastecimento-feedback-progress-fill${state.indeterminate ? " is-indeterminate" : ""}" style="${state.indeterminate ? "" : `width:${_escAttr(String(state.progress || 0))}%`}"></span>
+      </div>
+    ` : ""}
+  </div>`;
+}
+
+function _resumoNfeAbastecimentoFeedback(nfe){
+  const info = nfe && typeof nfe === "object" ? nfe : {};
+  const partes = [];
+  if (info.numero_nota) partes.push(`nota ${info.numero_nota}`);
+  if (info.emitente_nome) partes.push(`emitente ${info.emitente_nome}`);
+  if (info.valor != null && info.valor !== "") partes.push(`V.Total R$ ${_fmtMoney(info.valor)}`);
+  if (info.quantidade_litros != null && info.quantidade_litros !== "") {
+    partes.push(`Quantidade ${_fmtNumber(info.quantidade_litros, 3)}`);
+  }
+  return partes.length ? `DF-e localizou ${partes.join(" | ")}.` : "DF-e localizou a NF-e.";
 }
 
 async function liberarAbastecimento(){
   const veiculo_id = Number((document.getElementById("abast_veiculo")?.value || "").trim());
   const km = Number((document.getElementById("abast_km")?.value || "").trim() || 0);
   const posto = (document.getElementById("abast_posto")?.value || "").trim();
-  const combustivel_tipo = (document.getElementById("abast_combustivel")?.value || "diesel").trim() || "diesel";
+  const combustivel_tipo = (document.getElementById("abast_combustivel")?.value || "").trim();
 
   if (!veiculo_id) return alert("Selecione o veiculo.");
   if (!(km > 0)) return alert("Informe uma quilometragem válida.");
@@ -5765,9 +10517,15 @@ async function liberarAbastecimento(){
   const data = await resp.json().catch(() => ({}));
   if (!resp.ok) return alert(data?.erro || "Erro ao liberar abastecimento.");
 
-  if (document.getElementById("abast_km")) document.getElementById("abast_km").value = "";
+  if (document.getElementById("abast_km")) {
+    document.getElementById("abast_km").value = "";
+    document.getElementById("abast_km").dataset.autoFromVehicle = "1";
+  }
   if (document.getElementById("abast_posto")) document.getElementById("abast_posto").value = "";
-  if (document.getElementById("abast_combustivel")) document.getElementById("abast_combustivel").value = "diesel";
+  _sincronizarCombustivelAbastecimentoComVeiculo(
+    document.getElementById("abast_veiculo"),
+    document.getElementById("abast_combustivel"),
+  );
 
   await Promise.all([carregarFrotaResumo(), carregarAbastecimentos()]);
   if (window.__dashView === "frota") await renderDashboardFrota();
@@ -5776,10 +10534,58 @@ async function liberarAbastecimento(){
   }
 }
 
+async function carregarResumoAbastecimentosXml(){
+  const status = document.getElementById("abastXmlSyncStatus");
+  if (!status) return;
+  const resp = await apiFetch("/api/abastecimentos/importacoes-xml");
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    status.textContent = data?.erro || "Falha ao carregar o resumo das NF-e de abastecimento.";
+    return;
+  }
+  const meta = data?.meta || {};
+  const pendente = (data?.rows || []).find((item) => item.status === "pendente");
+  status.textContent = [
+    `${Number(meta.total || 0)} NF-e processada(s)`,
+    `${Number(meta.vinculados || 0)} vinculada(s) a lancamentos existentes`,
+    `${Number(meta.criados || 0)} requisicao(oes) criada(s) automaticamente`,
+    `${Number(meta.pendentes || 0)} pendente(s)`,
+    `${Number(meta.manutencoes_pendentes || 0)} pre-manutencao(oes) para conferencia`,
+    pendente ? `Primeira pendencia: nota ${pendente.numero_nota || pendente.chave_nfe || "-"} - ${pendente.motivo || "revisao necessaria"}` : "",
+  ].filter(Boolean).join(" | ");
+}
+
+async function sincronizarAbastecimentosXml(){
+  const status = document.getElementById("abastXmlSyncStatus");
+  if (status) status.textContent = "Sincronizando NF-e dos postos...";
+  const resp = await apiFetch("/api/abastecimentos/importacoes-xml/sincronizar", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({}),
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    if (status) status.textContent = data?.erro || "Falha ao sincronizar as NF-e dos postos.";
+    alert(data?.erro || "Falha ao sincronizar as NF-e dos postos.");
+    return;
+  }
+  const resumo = data?.resumo || {};
+  if (status) {
+    status.textContent = `${Number(resumo.requisicoes_concluidas || 0)} requisicao(oes) concluida(s), ${Number(resumo.manuais_vinculados || 0)} lancamento(s) manual(is) vinculado(s), ${Number(resumo.criados || 0)} criado(s), ${Number(resumo.manutencoes_pre_lancadas || 0)} enviado(s) para conferencia de manutencao e ${Number(resumo.pendentes || 0)} pendente(s).`;
+  }
+  await Promise.all([
+    carregarFrotaResumo(),
+    carregarAbastecimentos(),
+    carregarResumoAbastecimentosXml(),
+    carregarPreLancamentosManutencaoXml(),
+  ]);
+  if (window.__dashView === "frota") await renderDashboardFrota();
+}
+
 async function concluirAbastecimento(id){
   const valor = Number((document.getElementById(`abast_valor_${id}`)?.value || "").trim() || 0);
   const quantidade_litros = Number((document.getElementById(`abast_qtd_${id}`)?.value || "").trim() || 0);
-  const combustivel_tipo = (document.getElementById(`abast_combustivel_${id}`)?.value || "diesel").trim() || "diesel";
+  const combustivel_tipo = (document.getElementById(`abast_combustivel_${id}`)?.value || "diesel_s10").trim() || "diesel_s10";
   const chave_acesso_nfe = normalizarChaveNfeCampo(document.getElementById(`abast_chave_${id}`), false);
   const numero_nota = (document.getElementById(`abast_nota_${id}`)?.value || "").trim();
   const emitente_nome = (document.getElementById(`abast_emitente_${id}`)?.value || "").trim();
@@ -5798,6 +10604,7 @@ async function concluirAbastecimento(id){
   const data = await resp.json().catch(() => ({}));
   if (!resp.ok) return alert(data?.erro || "Erro ao concluir abastecimento.");
 
+  _limparDraftAbastecimento(id);
   await Promise.all([carregarFrotaResumo(), carregarAbastecimentos()]);
   if (window.__dashView === "frota") await renderDashboardFrota();
 }
@@ -5806,7 +10613,7 @@ async function importarNfeAbastecimento(id){
   const fileInput = document.getElementById(`abast_xml_${id}`);
   const file = fileInput?.files?.[0];
   const chave_acesso_esperada = _digitsOnly(document.getElementById(`abast_chave_${id}`)?.value || "");
-  const combustivel_tipo = (document.getElementById(`abast_combustivel_${id}`)?.value || "diesel").trim() || "diesel";
+  const combustivel_tipo = (document.getElementById(`abast_combustivel_${id}`)?.value || "diesel_s10").trim() || "diesel_s10";
 
   if (!file) return alert("Selecione o XML da NF-e para importar.");
   if (chave_acesso_esperada && chave_acesso_esperada.length !== 44) {
@@ -5826,17 +10633,17 @@ async function importarNfeAbastecimento(id){
   if (!resp.ok) return alert(data?.erro || "Erro ao importar XML da NF-e.");
 
   if (fileInput) fileInput.value = "";
+  _limparDraftAbastecimento(id);
+  _setAbastecimentoFeedback(id, `XML importado com sucesso. Nota ${data?.numero_nota || data?.chave_acesso_nfe || "-"}.`, "success");
   await Promise.all([carregarFrotaResumo(), carregarAbastecimentos()]);
   if (window.__dashView === "frota") await renderDashboardFrota();
   alert(`NF-e importada com sucesso para ${_combustivelLabel(data?.combustivel_tipo)}. Nota: ${data?.numero_nota || data?.chave_acesso_nfe || "-"}.`);
 }
 
-async function buscarNfeAbastecimento(id) {
-  const chave_acesso_esperada = _digitsOnly(document.getElementById(`abast_chave_${id}`)?.value || "");
-  const combustivel_tipo = (document.getElementById(`abast_combustivel_${id}`)?.value || "diesel").trim() || "diesel";
-  if (chave_acesso_esperada.length !== 44) {
-    return alert("A chave de acesso da NF-e precisa ter 44 digitos.");
-  }
+async function _consultarDfeAbastecimento(id, chave_acesso_esperada, combustivel_tipo) {
+  _capturarDraftAbastecimentoDom(id);
+  _setAbastecimentoFeedback(id, "Consultando DF-e...", "info");
+  await carregarAbastecimentos();
 
   const resp = await apiFetch(`/api/abastecimentos/${id}/importar_nfe_dfe`, {
     method: "POST",
@@ -5844,11 +10651,43 @@ async function buscarNfeAbastecimento(id) {
     body: JSON.stringify({ chave_acesso_esperada, combustivel_tipo }),
   });
   const data = await resp.json().catch(() => ({}));
-  if (!resp.ok) return alert(data?.erro || "Erro ao consultar DF-e do abastecimento.");
+  _aplicarResumoNfeAbastecimento(id, data?.nfe || data);
+  if (!resp.ok) {
+    const resumo = _resumoNfeAbastecimentoFeedback(data?.nfe || data);
+    _setAbastecimentoFeedback(
+      id,
+      resumo && data?.nfe ? `${resumo} ${data?.erro || ""}`.trim() : (data?.erro || "Erro ao consultar DF-e do abastecimento."),
+      resp.status === 409 ? "warning" : "error"
+    );
+    await carregarAbastecimentos();
+    alert((data?.erro || "Erro ao consultar DF-e do abastecimento.") + _resumoLimiteConsultasDfe(data?.limite_consultas));
+    return false;
+  }
 
+  _setAbastecimentoFeedback(id, `${_resumoNfeAbastecimentoFeedback(data)} Importacao concluida com sucesso.`, "success");
   await Promise.all([carregarFrotaResumo(), carregarAbastecimentos()]);
   if (window.__dashView === "frota") await renderDashboardFrota();
-  alert(`NF-e obtida via DF-e e importada com sucesso para ${_combustivelLabel(data?.combustivel_tipo)}. Nota: ${data?.numero_nota || data?.chave_acesso_nfe || "-"}.`);
+  alert(`NF-e obtida via DF-e e importada com sucesso para ${_combustivelLabel(data?.combustivel_tipo)}. Nota: ${data?.numero_nota || data?.chave_acesso_nfe || "-"}.${_resumoLimiteConsultasDfe(data?.limite_consultas)}`);
+  return true;
+}
+
+async function buscarNfeAbastecimento(id, opts = {}) {
+  const chave_acesso_esperada = _digitsOnly(opts?.chave || document.getElementById(`abast_chave_${id}`)?.value || "");
+  const combustivel_tipo = (document.getElementById(`abast_combustivel_${id}`)?.value || "diesel_s10").trim() || "diesel_s10";
+  if (chave_acesso_esperada.length === 44) {
+    return _consultarDfeAbastecimento(id, chave_acesso_esperada, combustivel_tipo);
+  }
+
+  estoqueState.cameraAfterScanAction = { type: "buscar_dfe_abastecimento", id: Number(id || 0) };
+  _setAbastecimentoFeedback(id, "Buscando chave NF-e pela camera ou foto...", "info");
+  await abrirCameraEstoque(`abast_chave_${id}`);
+  return false;
+}
+
+function buscarScrapingAbastecimento(id){
+  _capturarDraftAbastecimentoDom(id);
+  _setAbastecimentoFeedback(id, "Abrindo captura para scraping do codigo/QR...", "info");
+  selecionarImagemNfeOcr({ tipo: "abastecimento_barcode", id: Number(id || 0) });
 }
 
 async function excluirAbastecimento(id){
@@ -5858,6 +10697,100 @@ async function excluirAbastecimento(id){
   const data = await resp.json().catch(() => ({}));
   if (!resp.ok) return alert(data?.erro || "Erro ao excluir abastecimento.");
 
+  _limparDraftAbastecimento(id);
+  await Promise.all([carregarFrotaResumo(), carregarAbastecimentos()]);
+  if (window.__dashView === "frota") await renderDashboardFrota();
+}
+
+function _datetimeLocalAbastecimento(value){
+  const raw = String(value || "").trim().replace(" ", "T");
+  return raw ? raw.slice(0, 16) : "";
+}
+
+async function abrirEdicaoAbastecimento(id){
+  const item = abastecimentosCache.find((row) => Number(row.id) === Number(id));
+  if (!item) return alert("Lancamento de abastecimento nao encontrado.");
+
+  await ensureCadastrosCache();
+  const modal = document.getElementById("abastecimentoEditModal");
+  const veiculoSelect = document.getElementById("abastEditVeiculo");
+  if (!modal || !veiculoSelect) return;
+
+  veiculoSelect.innerHTML = optionsFrom(
+    cacheCadastros.veiculos || [],
+    item.veiculo_id,
+    {
+      emptyLabel: "Selecione...",
+      selectedFallbackItem: {
+        id: item.veiculo_id,
+        nome: item.veiculo_nome || item.placa || `Veiculo ${item.veiculo_id}`,
+      },
+    }
+  );
+  const combustivelSelect = document.getElementById("abastEditCombustivel");
+  _sincronizarCombustivelAbastecimentoComVeiculo(
+    veiculoSelect,
+    combustivelSelect,
+    item.combustivel_tipo,
+  );
+  if (veiculoSelect.dataset.combustivelBound !== "1") {
+    veiculoSelect.dataset.combustivelBound = "1";
+    veiculoSelect.addEventListener("change", () => {
+      _sincronizarCombustivelAbastecimentoComVeiculo(veiculoSelect, combustivelSelect);
+    });
+  }
+  document.getElementById("abastEditId").value = String(item.id || "");
+  document.getElementById("abastEditData").value = _datetimeLocalAbastecimento(item.data_abastecimento || item.data_liberacao);
+  document.getElementById("abastEditKm").value = String(item.km || "");
+  document.getElementById("abastEditPosto").value = item.posto || "";
+  document.getElementById("abastEditChave").value = item.chave_acesso_nfe || "";
+  document.getElementById("abastEditNota").value = item.numero_nota || "";
+  document.getElementById("abastEditEmitente").value = item.emitente_nome || "";
+  document.getElementById("abastEditQuantidade").value = item.quantidade_litros ?? "";
+  document.getElementById("abastEditValor").value = item.valor ?? "";
+  _abrirPopupBloqueante(modal);
+}
+
+function fecharEdicaoAbastecimento(){
+  _fecharPopupBloqueante(document.getElementById("abastecimentoEditModal"));
+}
+
+async function salvarEdicaoAbastecimento(){
+  const id = Number(document.getElementById("abastEditId")?.value || 0);
+  const payload = {
+    veiculo_id: Number(document.getElementById("abastEditVeiculo")?.value || 0),
+    data_abastecimento: document.getElementById("abastEditData")?.value || "",
+    km: Number(document.getElementById("abastEditKm")?.value || 0),
+    posto: (document.getElementById("abastEditPosto")?.value || "").trim(),
+    combustivel_tipo: document.getElementById("abastEditCombustivel")?.value || "diesel_s10",
+    chave_acesso_nfe: _digitsOnly(document.getElementById("abastEditChave")?.value || ""),
+    numero_nota: (document.getElementById("abastEditNota")?.value || "").trim(),
+    emitente_nome: (document.getElementById("abastEditEmitente")?.value || "").trim(),
+    quantidade_litros: Number(document.getElementById("abastEditQuantidade")?.value || 0),
+    valor: Number(document.getElementById("abastEditValor")?.value || 0),
+  };
+
+  if (!id) return alert("Lancamento invalido.");
+  if (!payload.veiculo_id) return alert("Selecione o veiculo.");
+  if (!payload.data_abastecimento) return alert("Informe a data do abastecimento.");
+  if (!(payload.km > 0)) return alert("Informe uma quilometragem valida.");
+  if (!payload.posto) return alert("Informe o posto.");
+  if (!(payload.quantidade_litros > 0)) return alert("Informe uma quantidade valida.");
+  if (!(payload.valor > 0)) return alert("Informe um valor valido.");
+  if (payload.chave_acesso_nfe && payload.chave_acesso_nfe.length !== 44) {
+    return alert("A chave de acesso da NF-e precisa ter 44 digitos.");
+  }
+
+  const resp = await apiFetch(`/api/abastecimentos/${id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) return alert(data?.erro || "Erro ao editar abastecimento.");
+
+  fecharEdicaoAbastecimento();
+  cacheCadastros.veiculos = null;
   await Promise.all([carregarFrotaResumo(), carregarAbastecimentos()]);
   if (window.__dashView === "frota") await renderDashboardFrota();
 }
@@ -5870,17 +10803,19 @@ async function carregarAbastecimentos(){
   const resp = await apiFetch("/api/abastecimentos");
   if (!resp.ok) {
     if (pendBody) pendBody.innerHTML = `<tr><td colspan="10">Erro ao carregar abastecimentos.</td></tr>`;
-    if (histBody) histBody.innerHTML = `<tr><td colspan="11">Erro ao carregar historico.</td></tr>`;
+    if (histBody) histBody.innerHTML = `<tr><td colspan="14">Erro ao carregar historico.</td></tr>`;
     return;
   }
   const dados = await resp.json();
+  abastecimentosCache = Array.isArray(dados) ? dados : [];
   const pendentes = (dados || []).filter((x) => (x.status || "").toLowerCase() === "liberado");
   const historico = (dados || []).filter((x) => (x.status || "").toLowerCase() === "abastecido");
 
   if (pendBody) {
     pendBody.innerHTML = pendentes.length ? pendentes.map((r) => {
       const v = `${r.placa || ""} ${r.modelo || r.veiculo_nome || ""}`.trim();
-      const combustivel = String(r.combustivel_tipo || "diesel").toLowerCase() === "arla" ? "arla" : "diesel";
+      const draft = _draftAbastecimentoLinha(r.id, r);
+      const combustivel = draft.combustivel_tipo || r.combustivel_padrao;
       return `
         <tr>
           <td>${_escHtml(v || ("Veiculo " + r.veiculo_id))}</td>
@@ -5888,32 +10823,34 @@ async function carregarAbastecimentos(){
           <td>${_escHtml(r.posto || "-")}</td>
           <td>
             <select id="abast_combustivel_${r.id}">
-              <option value="diesel" ${combustivel === "diesel" ? "selected" : ""}>Diesel</option>
-              <option value="arla" ${combustivel === "arla" ? "selected" : ""}>Arla</option>
+              ${_combustivelOptionsVeiculoHtml(r.combustivel_padrao, combustivel)}
             </select>
           </td>
           <td>
             <div class="abastecimento-inline">
-              <input id="abast_chave_${r.id}" class="barcode-input" type="text" maxlength="44" value="${_escAttr(r.chave_acesso_nfe || "")}" placeholder="Bipe a chave" oninput="normalizarChaveNfeCampo(this,false)" onkeydown="if(event.key==='Enter'){event.preventDefault(); normalizarChaveNfeCampo(this,true);}">
-              <button type="button" onclick="abrirCameraEstoque('abast_chave_${r.id}')">Camera</button>
+              <input id="abast_chave_${r.id}" class="barcode-input" type="text" maxlength="44" value="${_escAttr(draft.chave_acesso_nfe || "")}" placeholder="Bipe a chave" oninput="normalizarChaveNfeCampo(this,false)" onkeydown="if(event.key==='Enter'){event.preventDefault(); normalizarChaveNfeCampo(this,true);}">
             </div>
           </td>
           <td><input id="abast_xml_${r.id}" type="file" accept=".xml,text/xml,application/xml"></td>
           <td>
             <div class="abastecimento-manual-grid">
-              <input id="abast_nota_${r.id}" type="text" value="${_escAttr(r.numero_nota || "")}" placeholder="Numero da nota">
-              <input id="abast_emitente_${r.id}" type="text" value="${_escAttr(r.emitente_nome || "")}" placeholder="Emitente">
+              <input id="abast_nota_${r.id}" type="text" value="${_escAttr(draft.numero_nota || "")}" placeholder="Numero da nota">
+              <input id="abast_emitente_${r.id}" type="text" value="${_escAttr(draft.emitente_nome || "")}" placeholder="Emitente">
             </div>
           </td>
-          <td><input id="abast_valor_${r.id}" type="number" step="0.01" min="0" placeholder="0,00" value="${_escAttr(r.valor != null ? String(r.valor) : "")}"></td>
-          <td><input id="abast_qtd_${r.id}" type="number" step="0.001" min="0" placeholder="${_escAttr(combustivel === "arla" ? "Qtd" : "Litros")}" value="${_escAttr(r.quantidade_litros != null ? String(r.quantidade_litros) : "")}"></td>
-          <td class="abastecimento-actions">
-            <button type="button" onclick="concluirAbastecimento(${r.id})">Marcar abastecido</button>
-            <button type="button" onclick="importarNfeAbastecimento(${r.id})">Importar XML</button>
-            <button type="button" onclick="buscarNfeAbastecimento(${r.id})">Buscar DF-e</button>
-            <button type="button" onclick="selecionarImagemNfeOcr({ tipo: 'abastecimento', id: ${r.id} })">Foto OCR</button>
-            <button type="button" onclick="window.open('/api/abastecimentos/${r.id}/pdf','_blank')">PDF</button>
-            <button type="button" onclick="excluirAbastecimento(${r.id})">Excluir</button>
+          <td><input id="abast_valor_${r.id}" type="number" step="0.01" min="0" placeholder="0,00" value="${_escAttr(draft.valor)}"></td>
+          <td><input id="abast_qtd_${r.id}" type="number" step="0.001" min="0" placeholder="${_escAttr(combustivel === "arla" ? "Qtd" : "Litros")}" value="${_escAttr(draft.quantidade_litros)}"></td>
+          <td class="abastecimento-actions-cell">
+            <div class="abastecimento-actions">
+              <button type="button" onclick="concluirAbastecimento(${r.id})">Marcar abastecido</button>
+              <button type="button" onclick="importarNfeAbastecimento(${r.id})">Importar XML</button>
+              <button type="button" onclick="buscarNfeAbastecimento(${r.id})">Buscar DF-e</button>
+              <button type="button" onclick="buscarScrapingAbastecimento(${r.id})">Busca.s</button>
+              <button type="button" onclick="selecionarImagemNfeOcr({ tipo: 'abastecimento', id: ${r.id} })">Foto OCR</button>
+              <button type="button" onclick="window.open('/api/abastecimentos/${r.id}/pdf','_blank')">PDF</button>
+              <button type="button" onclick="excluirAbastecimento(${r.id})">Excluir</button>
+            </div>
+            <div id="abast_feedback_slot_${r.id}">${_getAbastecimentoFeedbackHtml(r.id)}</div>
           </td>
         </tr>
       `;
@@ -5927,26 +10864,373 @@ async function carregarAbastecimentos(){
         .filter((value, idx, arr) => value && arr.indexOf(value) === idx)
         .join(" / ") || "-";
       const nota = r.numero_nota || r.chave_acesso_nfe || "-";
+      const valorLitro = (r.valor_litro !== null && r.valor_litro !== undefined)
+        ? `R$ ${_fmtMoney(r.valor_litro)}`
+        : "-";
+      const valorTotal = (r.valor !== null && r.valor !== undefined)
+        ? `R$ ${_fmtMoney(r.valor)}`
+        : "-";
       return `
         <tr>
           <td>${_escHtml(_fmtDateBr(r.data_abastecimento || r.data_liberacao))}</td>
           <td>${_escHtml(v || ("Veiculo " + r.veiculo_id))}</td>
           <td>${_escHtml(_combustivelLabel(r.combustivel_tipo))}</td>
-          <td>${_escHtml(String(r.km || 0))}</td>
+          <td>${_escHtml(_fmtKmNullable(r.km_inicial))}</td>
+          <td>${_escHtml(_fmtKmNullable(r.km_final ?? r.km_atual ?? r.km))}</td>
+          <td>${_escHtml(_fmtKmNullable(r.km_rodado))}</td>
           <td>${_escHtml(postoEmitente)}</td>
           <td>${_escHtml(nota)}</td>
           <td>${_escHtml(_fmtNumber(r.quantidade_litros, 3))}</td>
-          <td>R$ ${_escHtml(_fmtMoney(r.valor))}</td>
-          <td>${_escHtml(_fmtNumber(r.km_l, 2))}</td>
+          <td>${_escHtml(valorLitro)}</td>
+          <td>${_escHtml(valorTotal)}</td>
+          <td>${_escHtml(_fmtNumberNullable(r.km_l, 2))}</td>
           <td>${_escHtml(r.status || "-")}</td>
           <td class="abastecimento-actions">
+            <button type="button" onclick="abrirEdicaoAbastecimento(${r.id})">Editar</button>
             <button type="button" onclick="window.open('/api/abastecimentos/${r.id}/pdf','_blank')">PDF</button>
             <button type="button" onclick="excluirAbastecimento(${r.id})">Excluir</button>
           </td>
         </tr>
       `;
-    }).join("") : `<tr><td colspan="11">Sem abastecimentos concluidos.</td></tr>`;
+    }).join("") : `<tr><td colspan="14">Sem abastecimentos concluidos.</td></tr>`;
   }
+  carregarResumoAbastecimentosXml().catch(() => {});
+}
+
+function _normalizarPreviewOcrManutencao(preview = {}){
+  const itens = Array.isArray(preview?.itens) ? preview.itens : [];
+  const warnings = Array.isArray(preview?.warnings) ? preview.warnings.filter(Boolean) : [];
+  const valorTotal = preview?.valor_total != null && preview?.valor_total !== "" ? Number(preview.valor_total) : null;
+  return {
+    arquivo_origem: String(preview?.arquivo_origem || ""),
+    emitente_nome: String(preview?.emitente_nome || ""),
+    emitente_cnpj: String(preview?.emitente_cnpj || ""),
+    numero_nota: String(preview?.numero_nota || ""),
+    serie: String(preview?.serie || ""),
+    data_documento: String(preview?.data_documento || preview?.data_emissao || ""),
+    valor_total: Number.isFinite(valorTotal) ? valorTotal : null,
+    valor_total_label: String(preview?.valor_total_label || ""),
+    texto_bruto: String(preview?.texto_bruto || ""),
+    itens,
+    warnings,
+  };
+}
+
+function _resumoItensPreManutencaoXml(itens = []){
+  const normalizados = _normalizarItensManutencao(itens);
+  if (!normalizados.length) return "-";
+  return normalizados
+    .slice(0, 3)
+    .map((item) => item.nome_produto || item.codigo_produto_nfe || "Item")
+    .join(", ") + (normalizados.length > 3 ? ` +${normalizados.length - 3}` : "");
+}
+
+function _renderPreLancamentosManutencaoXml(){
+  const body = document.getElementById("manutXmlPendenciasBody");
+  const resumo = document.getElementById("manutXmlPendenciasResumo");
+  if (!body || !resumo) return;
+  resumo.textContent = `${manutencaoXmlPendencias.length} nota(s) aguardando conferencia.`;
+  body.innerHTML = manutencaoXmlPendencias.length
+    ? manutencaoXmlPendencias.map((row) => {
+        const veiculo = [
+          row.veiculo_nome || "",
+          row.veiculo_placa || "",
+          row.veiculo_modelo || "",
+        ].filter(Boolean).join(" / ");
+        const confianca = Number(row.sugestao_confianca || 0);
+        const sugestao = veiculo
+          ? `${veiculo}${confianca > 0 && confianca < 1 ? ` (${Math.round(confianca * 100)}%)` : ""}`
+          : "Selecionar na conferencia";
+        return `
+          <tr class="${Number(row.id) === Number(manutencaoXmlPreLancamentoId) ? "is-selected" : ""}">
+            <td>${_escHtml(row.numero_nota || row.chave_nfe || "-")}</td>
+            <td>${_escHtml(row.placa_xml || "-")}</td>
+            <td>${_escHtml(sugestao)}</td>
+            <td>${_escHtml(_resumoItensPreManutencaoXml(row.itens || []))}</td>
+            <td>${_escHtml(row.motivo || "Revisao necessaria")}</td>
+            <td class="abastecimento-actions">
+              <button type="button" onclick="conferirPreLancamentoManutencaoXml(${Number(row.id)})">Conferir</button>
+              <button type="button" class="btn-secondary" onclick="descartarPreLancamentoManutencaoXml(${Number(row.id)})">Descartar</button>
+            </td>
+          </tr>
+        `;
+      }).join("")
+    : `<tr><td colspan="6">Nenhum pre-lancamento de manutencao pendente.</td></tr>`;
+}
+
+async function carregarPreLancamentosManutencaoXml(){
+  const body = document.getElementById("manutXmlPendenciasBody");
+  const resumo = document.getElementById("manutXmlPendenciasResumo");
+  if (!body || !resumo) return;
+  const resp = await apiFetch("/api/manutencoes/importacoes-xml?status=pendente");
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    resumo.textContent = data?.erro || "Falha ao carregar pre-lancamentos.";
+    body.innerHTML = `<tr><td colspan="6">Falha ao carregar pendencias.</td></tr>`;
+    return;
+  }
+  manutencaoXmlPendencias = Array.isArray(data?.rows) ? data.rows : [];
+  if (
+    manutencaoXmlPreLancamentoId
+    && !manutencaoXmlPendencias.some(
+      (row) => Number(row.id) === Number(manutencaoXmlPreLancamentoId)
+    )
+  ) {
+    manutencaoXmlPreLancamentoId = 0;
+  }
+  _renderPreLancamentosManutencaoXml();
+}
+
+function conferirPreLancamentoManutencaoXml(id){
+  const row = manutencaoXmlPendencias.find(
+    (item) => Number(item.id) === Number(id)
+  );
+  if (!row) return;
+  manutencaoXmlPreLancamentoId = Number(row.id || 0);
+  _aplicarPreviewOcrManutencao({
+    arquivo_origem: `Importar XML #${row.xml_id || row.id}`,
+    emitente_nome: row.emitente_nome || "",
+    numero_nota: row.numero_nota || "",
+    data_documento: row.data_documento || "",
+    valor_total: Number(row.valor || 0),
+    itens: row.itens || [],
+    warnings: [row.motivo || "Confira o veiculo e os itens antes de salvar."],
+  });
+  const campoVeiculo = document.getElementById("manut_veiculo");
+  const campoKm = document.getElementById("manut_km");
+  const campoTipo = document.getElementById("manut_tipo");
+  if (campoVeiculo) campoVeiculo.value = row.veiculo_id ? String(row.veiculo_id) : "";
+  if (campoKm) campoKm.value = Number(row.km || 0) > 0 ? String(row.km) : "";
+  if (campoTipo) campoTipo.value = _resumirItensManutencao(row.itens || []);
+  _renderPreLancamentosManutencaoXml();
+  document.getElementById("manut_veiculo")?.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+async function descartarPreLancamentoManutencaoXml(id){
+  if (!confirm("Descartar este pre-lancamento sem criar uma manutencao?")) return;
+  const resp = await apiFetch(`/api/manutencoes/importacoes-xml/${Number(id)}/descartar`, {
+    method: "POST",
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) return alert(data?.erro || "Falha ao descartar pre-lancamento.");
+  if (Number(manutencaoXmlPreLancamentoId) === Number(id)) {
+    limparPreviewOcrManutencao();
+  }
+  await carregarPreLancamentosManutencaoXml();
+}
+
+function _normalizarItemManutencao(item = {}, index = 0){
+  const quantidade = Number(item?.quantidade);
+  const valorUnitario = Number(item?.valor_unitario);
+  const valorTotalBruto = Number(item?.valor_total);
+  const valorTotal = Number.isFinite(valorTotalBruto)
+    ? valorTotalBruto
+    : (Number.isFinite(quantidade) && Number.isFinite(valorUnitario) ? quantidade * valorUnitario : 0);
+  return {
+    item_seq: String(item?.item_seq || index + 1),
+    codigo_produto_nfe: String(item?.codigo_produto_nfe || item?.codigo || ""),
+    codigo_barras: String(item?.codigo_barras || ""),
+    nome_produto: String(item?.nome_produto || item?.descricao || ""),
+    unidade: String(item?.unidade || ""),
+    quantidade: Number.isFinite(quantidade) ? quantidade : 0,
+    valor_unitario: Number.isFinite(valorUnitario) ? valorUnitario : 0,
+    valor_total: Number.isFinite(valorTotal) ? valorTotal : 0,
+    observacao: String(item?.observacao || item?.obs || ""),
+    _manual: Boolean(item?._manual),
+  };
+}
+
+function _normalizarItensManutencao(lista = [], preserveBlank = false){
+  if (!Array.isArray(lista)) return [];
+  return lista
+    .map((item, index) => _normalizarItemManutencao(item, index))
+    .filter((item) => {
+      if (item._manual && preserveBlank) return true;
+      return item.nome_produto || item.codigo_produto_nfe || item.codigo_barras || item.quantidade > 0 || item.valor_total > 0 || item.observacao;
+    });
+}
+
+function _resumirItensManutencao(lista = []){
+  const nomes = [];
+  _normalizarItensManutencao(lista).forEach((item) => {
+    const nome = String(item?.nome_produto || "").trim();
+    if (nome && !nomes.includes(nome)) nomes.push(nome);
+  });
+  if (!nomes.length) return "";
+  if (nomes.length === 1) return nomes[0];
+  const base = nomes.slice(0, 3).join(", ");
+  return `${nomes.length} itens: ${base}${nomes.length > 3 ? "..." : ""}`;
+}
+
+function _renderItensManutencaoEditor(){
+  const vazio = document.getElementById("manutItensVazio");
+  const wrap = document.getElementById("manutItensEditorWrap");
+  const body = document.getElementById("manutItensEditorBody");
+  if (!vazio || !wrap || !body) return;
+
+  manutencaoItensDraft = _normalizarItensManutencao(manutencaoItensDraft, true);
+  if (!manutencaoItensDraft.length) {
+    vazio.classList.remove("hidden");
+    wrap.classList.add("hidden");
+    body.innerHTML = "";
+    return;
+  }
+
+  vazio.classList.add("hidden");
+  wrap.classList.remove("hidden");
+  body.innerHTML = manutencaoItensDraft.map((item, index) => `
+    <tr>
+      <td>${_escHtml(String(index + 1))}</td>
+      <td><input class="manut-item-desc" value="${_escAttr(item.nome_produto || "")}" placeholder="Descricao" oninput="atualizarItemManutencaoCampo(${index}, 'nome_produto', this.value)"></td>
+      <td><input value="${_escAttr(item.codigo_produto_nfe || item.codigo_barras || "")}" placeholder="Codigo" oninput="atualizarItemManutencaoCampo(${index}, 'codigo_produto_nfe', this.value)"></td>
+      <td><input type="number" step="0.001" value="${_escAttr(String(item.quantidade || 0))}" oninput="atualizarItemManutencaoCampo(${index}, 'quantidade', this.value)"></td>
+      <td><input type="number" step="0.01" value="${_escAttr(String(item.valor_unitario || 0))}" oninput="atualizarItemManutencaoCampo(${index}, 'valor_unitario', this.value)"></td>
+      <td><input type="number" step="0.01" value="${_escAttr(String(item.valor_total || 0))}" oninput="atualizarItemManutencaoCampo(${index}, 'valor_total', this.value)"></td>
+      <td><input class="manut-item-obs" value="${_escAttr(item.observacao || "")}" placeholder="Observacao" oninput="atualizarItemManutencaoCampo(${index}, 'observacao', this.value)"></td>
+      <td><button type="button" class="btn-secondary manutencao-item-remove" onclick="removerItemManutencao(${index})">Remover</button></td>
+    </tr>
+  `).join("");
+}
+
+function adicionarItemManutencao(item = {}){
+  manutencaoItensDraft = _normalizarItensManutencao([
+    ...manutencaoItensDraft,
+    _normalizarItemManutencao({ ...item, _manual: true }, manutencaoItensDraft.length),
+  ], true);
+  _renderItensManutencaoEditor();
+}
+
+function removerItemManutencao(index){
+  manutencaoItensDraft = manutencaoItensDraft.filter((_, itemIndex) => itemIndex !== Number(index));
+  _renderItensManutencaoEditor();
+}
+
+function atualizarItemManutencaoCampo(index, campo, valor){
+  const pos = Number(index);
+  if (!(pos >= 0) || !manutencaoItensDraft[pos]) return;
+  const atual = { ...manutencaoItensDraft[pos] };
+  if (campo === "quantidade" || campo === "valor_unitario" || campo === "valor_total") {
+    const numero = Number(valor);
+    atual[campo] = Number.isFinite(numero) ? numero : 0;
+    if ((campo === "quantidade" || campo === "valor_unitario") && !(Number(atual.valor_total) > 0)) {
+      atual.valor_total = Number(atual.quantidade || 0) * Number(atual.valor_unitario || 0);
+    }
+  } else {
+    atual[campo] = String(valor || "");
+  }
+  manutencaoItensDraft[pos] = _normalizarItemManutencao(atual, pos);
+}
+
+function _renderItensManutencaoHistorico(lista = []){
+  const itens = _normalizarItensManutencao(lista);
+  if (!itens.length) return "0";
+  const linhas = itens.map((item) => {
+    const partes = [
+      item.nome_produto || item.codigo_produto_nfe || item.codigo_barras || "Item sem descricao",
+      item.quantidade > 0 ? `Qtd ${_fmtNumber(item.quantidade, 3)}` : "",
+      item.valor_total > 0 ? `Total R$ ${_fmtMoney(item.valor_total)}` : "",
+      item.observacao || "",
+    ].filter(Boolean);
+    return `<div>${_escHtml(partes.join(" | "))}</div>`;
+  }).join("");
+  return `<details class="manutencao-itens-details"><summary>${_escHtml(String(itens.length))} item(ns)</summary><div class="manutencao-itens-list">${linhas}</div></details>`;
+}
+
+function _renderPreviewOcrManutencao(){
+  const card = document.getElementById("manutOcrPreview");
+  const resumo = document.getElementById("manutOcrResumo");
+  const itensWrap = document.getElementById("manutOcrItensWrap");
+  const itensBody = document.getElementById("manutOcrItensBody");
+  const warningsEl = document.getElementById("manutOcrWarnings");
+  const status = document.getElementById("manutOcrStatus");
+  const draft = manutencaoOcrDraft;
+
+  if (!card || !resumo || !itensWrap || !itensBody || !warningsEl) return;
+  if (!draft) {
+    card.classList.add("hidden");
+    document.querySelectorAll(".estoque-import-add-btn").forEach((button) => button.classList.remove("hidden"));
+    itensWrap.classList.add("hidden");
+    warningsEl.classList.add("hidden");
+    warningsEl.textContent = "";
+    itensBody.innerHTML = "";
+    resumo.textContent = "";
+    if (status) {
+      status.textContent = "Use a camera do celular para fotografar a nota impressa. O sistema tenta extrair fornecedor, numero, valor e itens para conferencia antes do lancamento.";
+    }
+    _renderItensManutencaoEditor();
+    return;
+  }
+
+  const resumoPartes = [
+    `Arquivo: ${draft.arquivo_origem || "-"}`,
+    `Fornecedor: ${draft.emitente_nome || "-"}`,
+    `Nota: ${draft.numero_nota || "-"}`,
+    `Data: ${draft.data_documento ? _fmtDateBr(draft.data_documento) : "-"}`,
+    `Valor: ${draft.valor_total != null ? `R$ ${_fmtMoney(draft.valor_total)}` : (draft.valor_total_label || "-")}`,
+  ];
+  resumo.textContent = resumoPartes.join(" | ");
+  card.classList.remove("hidden");
+
+  if (Array.isArray(draft.itens) && draft.itens.length) {
+    itensBody.innerHTML = draft.itens.map((item, index) => `
+      <tr>
+        <td>${_escHtml(String(item?.item_seq || index + 1))}</td>
+        <td>${_escHtml(item?.codigo_produto_nfe || item?.codigo_barras || "-")}</td>
+        <td>${_escHtml(item?.nome_produto || "-")}</td>
+        <td>${_escHtml(_fmtNumber(item?.quantidade, 3))}</td>
+        <td>${_escHtml(item?.valor_unitario != null ? `R$ ${_fmtMoney(item.valor_unitario)}` : "-")}</td>
+      </tr>
+    `).join("");
+    itensWrap.classList.remove("hidden");
+  } else {
+    itensBody.innerHTML = "";
+    itensWrap.classList.add("hidden");
+  }
+
+  if (draft.warnings.length) {
+    warningsEl.textContent = draft.warnings.join(" ");
+    warningsEl.classList.remove("hidden");
+  } else {
+    warningsEl.textContent = "";
+    warningsEl.classList.add("hidden");
+  }
+
+  if (status) {
+    status.textContent = draft.itens.length
+      ? `OCR concluido. Revise os ${draft.itens.length} item(ns) antes de salvar a manutencao.`
+      : "OCR concluido. Revise os dados lidos antes de salvar a manutencao.";
+  }
+}
+
+function _aplicarPreviewOcrManutencao(preview = {}){
+  manutencaoOcrDraft = _normalizarPreviewOcrManutencao(preview);
+  manutencaoItensDraft = _normalizarItensManutencao(manutencaoOcrDraft.itens || []);
+  const campoValor = document.getElementById("manut_valor");
+  const campoNota = document.getElementById("manut_nota");
+  const campoEmitente = document.getElementById("manut_emitente");
+  const campoData = document.getElementById("manut_data_documento");
+  const campoTipo = document.getElementById("manut_tipo");
+  if (campoValor && manutencaoOcrDraft.valor_total != null) campoValor.value = String(manutencaoOcrDraft.valor_total);
+  if (campoNota && manutencaoOcrDraft.numero_nota) campoNota.value = manutencaoOcrDraft.numero_nota;
+  if (campoEmitente && manutencaoOcrDraft.emitente_nome) campoEmitente.value = manutencaoOcrDraft.emitente_nome;
+  if (campoData && manutencaoOcrDraft.data_documento) campoData.value = manutencaoOcrDraft.data_documento;
+  if (campoTipo && !campoTipo.value.trim()) campoTipo.value = _resumirItensManutencao(manutencaoItensDraft);
+  _renderItensManutencaoEditor();
+  _renderPreviewOcrManutencao();
+}
+
+function limparPreviewOcrManutencao(){
+  manutencaoOcrDraft = null;
+  manutencaoItensDraft = [];
+  manutencaoXmlPreLancamentoId = 0;
+  const campoNota = document.getElementById("manut_nota");
+  const campoEmitente = document.getElementById("manut_emitente");
+  const campoData = document.getElementById("manut_data_documento");
+  if (campoNota) campoNota.value = "";
+  if (campoEmitente) campoEmitente.value = "";
+  if (campoData) campoData.value = "";
+  _renderPreviewOcrManutencao();
+  _renderPreLancamentosManutencaoXml();
 }
 
 async function addManutencao(){
@@ -5954,19 +11238,48 @@ async function addManutencao(){
   const tipo = (document.getElementById("manut_tipo")?.value || "").trim();
   const km = Number((document.getElementById("manut_km")?.value || "").trim() || 0);
   const valor = Number((document.getElementById("manut_valor")?.value || "").trim() || 0);
+  const numero_nota = (document.getElementById("manut_nota")?.value || "").trim();
+  const emitente_nome = (document.getElementById("manut_emitente")?.value || "").trim();
+  const data_documento = (document.getElementById("manut_data_documento")?.value || "").trim();
 
   if (!veiculo_id) return alert("Selecione o veiculo.");
-  await fetch("/api/manutencoes", {
+  const payload = {
+    veiculo_id,
+    tipo,
+    km,
+    valor,
+    numero_nota,
+    emitente_nome,
+    data_documento,
+    itens_json: _normalizarItensManutencao(manutencaoItensDraft),
+    pre_lancamento_id: manutencaoXmlPreLancamentoId || 0,
+  };
+  if (!payload.tipo.trim()) payload.tipo = _resumirItensManutencao(payload.itens_json);
+  if (manutencaoOcrDraft) {
+    payload.ocr_preview = {
+      ...manutencaoOcrDraft,
+      numero_nota: numero_nota || manutencaoOcrDraft.numero_nota,
+      emitente_nome: emitente_nome || manutencaoOcrDraft.emitente_nome,
+      data_documento: data_documento || manutencaoOcrDraft.data_documento,
+    };
+  }
+
+  const resp = await apiFetch("/api/manutencoes", {
     method:"POST",
     headers:{ "Content-Type":"application/json" },
-    body: JSON.stringify({ veiculo_id, tipo, km, valor })
+    body: JSON.stringify(payload)
   });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) return alert(data?.erro || "Erro ao registrar manutencao.");
 
   // limpa
   if (document.getElementById("manut_tipo")) document.getElementById("manut_tipo").value="";
   if (document.getElementById("manut_km")) document.getElementById("manut_km").value="";
   if (document.getElementById("manut_valor")) document.getElementById("manut_valor").value="";
+  limparPreviewOcrManutencao();
 
+  await carregarManutencoesFrota();
+  await carregarPreLancamentosManutencaoXml();
   await carregarFrotaResumo();
   if (window.__dashView === "frota") await renderDashboardFrota();
 }
@@ -6068,25 +11381,6 @@ async function carregarTrocasPneu(){
       </tr>
     `;
   }).join("") : `<tr><td colspan="9">Sem trocas de pneu registradas.</td></tr>`;
-}
-
-function gerarRelatorioFrota(){
-  // Relatório simples: abre a tabela atual para imprimir
-  const tbody = document.getElementById("tabelaFrota");
-  if (!tbody) return;
-
-  const html = `
-    <html><head><title>Relatório Frota</title></head>
-    <body>
-      <h2>Relatório Frota</h2>
-      <table border="1" cellpadding="6" cellspacing="0">
-        ${tbody.parentElement?.outerHTML || ""}
-      </table>
-      <script>window.onload=()=>{window.print();}</script>
-    </body></html>
-  `;
-  const w = window.open("", "_blank");
-  if (w) { w.document.write(html); w.document.close(); }
 }
 
 function _comissaoNum(id, defaultValue = 0){
@@ -6477,8 +11771,8 @@ function imprimirRelatorioComissaoPdf(){
 //////////////////////////////////////////////////////
 // BACKUPS
 //////////////////////////////////////////////////////
-async function gerarBackup() {
-  const resp = await fetch("/api/backup");
+async function baixarBackup(url, nomePadrao, extensao) {
+  const resp = await fetch(url);
 
   if (!resp.ok) {
     let j = null;
@@ -6488,14 +11782,22 @@ async function gerarBackup() {
   }
 
   const blob = await resp.blob();
-  const url = URL.createObjectURL(blob);
+  const objectUrl = URL.createObjectURL(blob);
   const a = document.createElement("a");
-  a.href = url;
-  a.download = `backup_${new Date().toISOString().slice(0, 19).replaceAll(":", "-")}.sql`;
+  a.href = objectUrl;
+  a.download = `${nomePadrao}_${new Date().toISOString().slice(0, 19).replaceAll(":", "-")}.${extensao}`;
   document.body.appendChild(a);
   a.click();
   a.remove();
-  URL.revokeObjectURL(url);
+  URL.revokeObjectURL(objectUrl);
+}
+
+async function gerarBackup() {
+  await baixarBackup("/api/backup", "backup", "sql");
+}
+
+async function gerarBackupCompleto() {
+  await baixarBackup("/api/backup/full", "backup_full", "tar.gz");
 }
 
 //////////////////////////////////////////////////////
@@ -6511,11 +11813,12 @@ async function carregarManutencoesFrota(){
 
   const resp = await apiFetch("/api/manutencoes");
   if (!resp.ok) {
-    body.innerHTML = `<tr><td colspan="5">Erro ao carregar manutencoes.</td></tr>`;
+    body.innerHTML = `<tr><td colspan="7">Erro ao carregar manutencoes.</td></tr>`;
     return;
   }
 
   const dados = await resp.json();
+  _renderPreviewOcrManutencao();
   body.innerHTML = (dados || []).length ? (dados || []).map((r) => `
     <tr>
       <td>${_escHtml(_fmtDateBr(r.data_registro))}</td>
@@ -6523,8 +11826,10 @@ async function carregarManutencoesFrota(){
       <td>${_escHtml(r.tipo || "-")}</td>
       <td>${_escHtml(String(r.km || 0))}</td>
       <td>R$ ${_escHtml(_fmtMoney(r.valor))}</td>
+      <td>${_escHtml([r.numero_nota || "", r.emitente_nome || ""].filter(Boolean).join(" - ") || "-")}</td>
+      <td>${_renderItensManutencaoHistorico(r.itens || [])}</td>
     </tr>
-  `).join("") : `<tr><td colspan="5">Sem manutencoes registradas.</td></tr>`;
+  `).join("") : `<tr><td colspan="7">Sem manutencoes registradas.</td></tr>`;
 }
 
 async function carregarTrocasOleoFrota(){
@@ -6609,6 +11914,7 @@ async function carregarFrotaResumo(){
   if (veiculosResp.status === "fulfilled") {
     try { veiculos = await veiculosResp.value.json(); } catch {}
   }
+  cacheCadastros.veiculos = _ordenarListaNatural(Array.isArray(veiculos) ? veiculos : []);
 
   const selManut = document.getElementById("manut_veiculo");
   const selOleo = document.getElementById("oleo_veiculo");
@@ -6621,6 +11927,7 @@ async function carregarFrotaResumo(){
   if (selPneu) selPneu.innerHTML = `<option value="">Selecione...</option>` + veiculos.map(opt).join("");
   if (selAbast) selAbast.innerHTML = `<option value="">Selecione...</option>` + veiculos.map(opt).join("");
   if (selLav) selLav.innerHTML = `<option value="">Selecione...</option>` + veiculos.map(opt).join("");
+  _bindNovoAbastecimentoKmAtual();
 
   const tbody = document.getElementById("tabelaFrota");
   if (tbody) {
@@ -6663,7 +11970,7 @@ async function abrirHistoricoFrota(veiculoId) {
   if (!(Number(veiculoId) > 0)) return;
 
   body.innerHTML = "Carregando historico...";
-  modal.classList.remove("hidden");
+  _abrirPopupBloqueante(modal);
 
   const r = await apiFetch(`/api/frota_historico/${veiculoId}`);
   if (!r.ok) {
@@ -6693,6 +12000,7 @@ async function abrirHistoricoFrota(veiculoId) {
       <td>${_escHtml(m.tipo || "-")}</td>
       <td>${_escHtml(String(m.km || 0))}</td>
       <td>R$ ${_escHtml(_fmtMoney(m.valor))}</td>
+      <td>${_renderItensManutencaoHistorico(m.itens || [])}</td>
     </tr>
   `);
 
@@ -6721,17 +12029,26 @@ async function abrirHistoricoFrota(veiculoId) {
       .filter((value, idx, arr) => value && arr.indexOf(value) === idx)
       .join(" / ") || "-";
     const nota = a.numero_nota || a.chave_acesso_nfe || "-";
+    const valorLitro = (a.valor_litro !== null && a.valor_litro !== undefined)
+      ? `R$ ${_fmtMoney(a.valor_litro)}`
+      : "-";
+    const valorTotal = (a.valor !== null && a.valor !== undefined)
+      ? `R$ ${_fmtMoney(a.valor)}`
+      : "-";
     return `
       <tr>
         <td>${_escHtml(_fmtDateBr(a.data_abastecimento || a.data_liberacao))}</td>
         <td>${_escHtml(a.status || "-")}</td>
         <td>${_escHtml(_combustivelLabel(a.combustivel_tipo))}</td>
-        <td>${_escHtml(String(a.km || 0))}</td>
+        <td>${_escHtml(_fmtKmNullable(a.km_inicial))}</td>
+        <td>${_escHtml(_fmtKmNullable(a.km_final ?? a.km_atual ?? a.km))}</td>
+        <td>${_escHtml(_fmtKmNullable(a.km_rodado))}</td>
         <td>${_escHtml(postoEmitente)}</td>
         <td>${_escHtml(nota)}</td>
         <td>${_escHtml(_fmtNumber(a.quantidade_litros, 3))}</td>
-        <td>R$ ${_escHtml(_fmtMoney(a.valor))}</td>
-        <td>${_escHtml(_fmtNumber(a.km_l, 2))}</td>
+        <td>${_escHtml(valorLitro)}</td>
+        <td>${_escHtml(valorTotal)}</td>
+        <td>${_escHtml(_fmtNumberNullable(a.km_l, 2))}</td>
       </tr>
     `;
   });
@@ -6769,7 +12086,7 @@ async function abrirHistoricoFrota(veiculoId) {
     <div class="frota-historico-grid">
       <div class="frota-historico-card">
         <h4>Manutencoes</h4>
-        ${_frotaHistoricoTable(["Data", "Tipo", "KM", "Valor"], manutRows, "Sem manutencoes registradas.")}
+        ${_frotaHistoricoTable(["Data", "Tipo", "KM", "Valor", "Itens"], manutRows, "Sem manutencoes registradas.")}
       </div>
       <div class="frota-historico-card">
         <h4>Trocas de Oleo</h4>
@@ -6781,7 +12098,7 @@ async function abrirHistoricoFrota(veiculoId) {
       </div>
       <div class="frota-historico-card">
         <h4>Abastecimentos</h4>
-        ${_frotaHistoricoTable(["Data", "Status", "Comb.", "KM", "Posto / Emitente", "NF-e", "Qtd", "Valor", "KM/L"], abastRows, "Sem abastecimentos registrados.")}
+        ${_frotaHistoricoTable(["Data", "Status", "Comb.", "KM inicial", "KM final", "KM rodado", "Posto / Emitente", "NF-e", "Qtd litros", "Valor/L", "Valor total", "Média KM/L"], abastRows, "Sem abastecimentos registrados.")}
       </div>
       <div class="frota-historico-card">
         <h4>Lavagens</h4>
@@ -6792,6 +12109,11 @@ async function abrirHistoricoFrota(veiculoId) {
 }
 
 const RELATORIO_FRETE_TIPOS_FILTRAVEIS = new Set(["escala", "historico_fretes"]);
+const RELATORIO_ABASTECIMENTO_TIPOS_FILTRAVEIS = new Set([
+  "abastecimentos",
+  "abastecimentos_criticos",
+  "abastecimentos_sem_placa",
+]);
 
 function renderFiltrosRelatorioFretes(){
   const wrap = document.getElementById("frotaRelFreteStatusChecklist");
@@ -6814,6 +12136,10 @@ function _tipoRelatorioUsaFiltroFretes(tipo = ""){
   return RELATORIO_FRETE_TIPOS_FILTRAVEIS.has(String(tipo || "").toLowerCase());
 }
 
+function _tipoRelatorioUsaFiltroAbastecimentos(tipo = ""){
+  return RELATORIO_ABASTECIMENTO_TIPOS_FILTRAVEIS.has(String(tipo || "").toLowerCase());
+}
+
 function _tipoRelatorioEscala(tipo = ""){
   return String(tipo || "").toLowerCase() === "escala";
 }
@@ -6826,6 +12152,18 @@ function _coletarFiltrosRelatorioFretes(){
     .map((input) => (input.value || "").trim())
     .filter(Boolean);
   return { dataInicio, dataFim, ordenacao, statuses };
+}
+
+function _coletarFiltrosRelatorioAbastecimentos(){
+  let dataInicio = (document.getElementById("frotaRelAbastDataInicio")?.value || "").trim();
+  let dataFim = (document.getElementById("frotaRelAbastDataFim")?.value || "").trim();
+  if (!dataInicio && !dataFim) {
+    dataInicio = (document.getElementById("frotaRelFreteDataInicio")?.value || "").trim();
+    dataFim = (document.getElementById("frotaRelFreteDataFim")?.value || "").trim();
+  }
+  if (dataInicio && !dataFim) dataFim = dataInicio;
+  if (!dataInicio && dataFim) dataInicio = dataFim;
+  return { dataInicio, dataFim };
 }
 
 function gerarRelatorioFrota(tipo = "resumo"){
@@ -6856,6 +12194,16 @@ function gerarRelatorioFrota(tipo = "resumo"){
     }
   }
 
+  if (_tipoRelatorioUsaFiltroAbastecimentos(tipo)) {
+    const { dataInicio, dataFim } = _coletarFiltrosRelatorioAbastecimentos();
+    if (dataInicio && dataFim && dataInicio > dataFim) {
+      alert("A data inicial nao pode ser maior que a data final.");
+      return;
+    }
+    if (dataInicio) params.set("data_inicio", dataInicio);
+    if (dataFim) params.set("data_fim", dataFim);
+  }
+
   window.open(`/api/frota_relatorio?${params.toString()}`, "_blank", "noopener");
 }
 
@@ -6866,6 +12214,434 @@ function _estoqueFormatQtd(v){
   return n.toLocaleString("pt-BR", { minimumFractionDigits: casas, maximumFractionDigits: 3 });
 }
 
+function _estoqueRowsPayload(payload){
+  if (Array.isArray(payload?.rows)) return payload.rows;
+  return Array.isArray(payload) ? payload : [];
+}
+
+function _estoqueMetaPayload(payload){
+  return payload && typeof payload === "object" && !Array.isArray(payload) ? (payload.meta || {}) : {};
+}
+
+const ESTOQUE_FORNECEDOR_CATEGORIAS = {
+  materia_prima: "Materia-prima",
+  pecas_auto: "Pecas auto / frota",
+  distribuidora: "Distribuidora",
+  outros: "Outros",
+};
+
+function _estoqueCategoriaFornecedorLabel(valor = ""){
+  const key = String(valor || "outros").trim().toLowerCase() || "outros";
+  return ESTOQUE_FORNECEDOR_CATEGORIAS[key] || key.replace(/_/g, " ");
+}
+
+function _estoqueFornecedorKey(fornecedor = {}){
+  return String(fornecedor?.cnpj || fornecedor?.nome || "").trim();
+}
+
+function _estoqueFornecedoresItem(item = {}){
+  if (Array.isArray(item.fornecedores)) return item.fornecedores.filter(Boolean);
+  if (item.fornecedor && typeof item.fornecedor === "object") return [item.fornecedor];
+  if (item.fornecedor_nome || item.fornecedor_categoria) {
+    return [{
+      cnpj: item.fornecedor_cnpj || "",
+      nome: item.fornecedor_nome || "",
+      categoria: item.fornecedor_categoria || "outros",
+    }];
+  }
+  return [];
+}
+
+function _estoqueFornecedorResumo(item = {}){
+  const fornecedores = _estoqueFornecedoresItem(item);
+  if (!fornecedores.length) return "Sem fornecedor";
+  return fornecedores.map((f) => f.nome || f.cnpj || "Fornecedor").filter(Boolean).join(" | ");
+}
+
+function _estoqueCategoriaFornecedorResumo(item = {}){
+  const categorias = Array.isArray(item.fornecedor_categorias)
+    ? item.fornecedor_categorias
+    : _estoqueFornecedoresItem(item).map((f) => f.categoria || "outros");
+  const unicas = [...new Set(categorias.filter(Boolean).map((cat) => String(cat).toLowerCase()))];
+  return unicas.length ? unicas.map(_estoqueCategoriaFornecedorLabel).join(" | ") : "Sem categoria";
+}
+
+function _estoqueTextoBusca(valor = ""){
+  return String(valor || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase();
+}
+
+function _estoqueValoresSelecionados(id){
+  const el = document.getElementById(id);
+  if (!el) return [];
+  if (el.multiple) {
+    return Array.from(el.selectedOptions || []).map((opt) => String(opt.value || "").trim()).filter(Boolean);
+  }
+  const value = String(el.value || "").trim();
+  return value ? [value] : [];
+}
+
+function _estoqueFiltroValor(id){
+  return String(document.getElementById(id)?.value || "").trim();
+}
+
+function _estoqueFiltrosEscopo(escopo){
+  return {
+    categoria: _estoqueFiltroValor(`estoqueFiltroCategoria${escopo}`),
+    fornecedores: _estoqueValoresSelecionados(`estoqueFiltroFornecedor${escopo}`),
+    produtos: _estoqueValoresSelecionados(`estoqueFiltroProduto${escopo}`),
+    produtoTexto: _estoqueFiltroValor("estoqueFiltroProdutoLancar"),
+    termo: _estoqueFiltroValor("estoqueFiltroNotaRastreio"),
+  };
+}
+
+function _estoqueItemCombinaFiltros(item = {}, filtros = {}){
+  const fornecedores = _estoqueFornecedoresItem(item);
+  const categorias = new Set(
+    fornecedores.map((f) => String(f.categoria || "outros").toLowerCase())
+  );
+  if (Array.isArray(item.fornecedor_categorias)) {
+    item.fornecedor_categorias.forEach((cat) => categorias.add(String(cat || "outros").toLowerCase()));
+  }
+  if (filtros.categoria && !categorias.has(String(filtros.categoria).toLowerCase())) return false;
+
+  if (filtros.fornecedores?.length) {
+    const keys = new Set(fornecedores.map(_estoqueFornecedorKey).filter(Boolean));
+    if (![...keys].some((key) => filtros.fornecedores.includes(key))) return false;
+  }
+
+  if (filtros.produtos?.length) {
+    const produtoKey = _estoqueProdutoBaseKey(item);
+    if (!filtros.produtos.includes(produtoKey)) return false;
+  }
+
+  const termo = _estoqueTextoBusca(filtros.termo || "");
+  if (termo) {
+    const haystack = _estoqueTextoBusca([
+      item.numero_nota,
+      item.codigo_produto_nfe,
+      item.codigo_barras,
+      item.nome_produto,
+      item.produto_base_nome,
+      _estoqueFornecedorResumo(item),
+      _estoqueCategoriaFornecedorResumo(item),
+    ].join(" "));
+    if (!haystack.includes(termo)) return false;
+  }
+  return true;
+}
+
+function _estoqueLinhaPosicaoDoProduto(produto = {}){
+  const rows = Array.isArray(estoqueState.posicaoRows) ? estoqueState.posicaoRows : [];
+  const produtoKey = _estoqueProdutoBaseKey(produto);
+  const codigoBarras = _digitsOnly(produto.codigo_barras || "");
+  const codigoNfe = _estoqueCodigoNormalizadoComparacao(produto.codigo_produto_nfe || "");
+  const nome = _estoqueTextoBusca(produto.produto_base_nome || produto.nome_produto || "");
+  return rows.find((row) => {
+    if (produtoKey && _estoqueProdutoBaseKey(row) === produtoKey) return true;
+    if (codigoBarras && _digitsOnly(row.codigo_barras || "") === codigoBarras) return true;
+    if (codigoNfe && _estoqueCodigoNormalizadoComparacao(row.codigo_produto_nfe || "") === codigoNfe) return true;
+    return nome && _estoqueTextoBusca(row.produto_base_nome || row.nome_produto || "") === nome;
+  }) || null;
+}
+
+function _estoqueProdutoLancamentoCombinaFiltros(produto = {}){
+  const filtros = _estoqueFiltrosEscopo("Lancar");
+  const texto = _estoqueTextoBusca(filtros.produtoTexto || "");
+  if (texto) {
+    const haystack = _estoqueTextoBusca([
+      produto.nome_produto,
+      produto.produto_base_nome,
+      produto.codigo_barras,
+      produto.codigo_produto_nfe,
+      produto.grupo_estoque,
+    ].join(" "));
+    if (!haystack.includes(texto)) return false;
+  }
+  if (!filtros.categoria && !filtros.fornecedores.length) return true;
+  const row = _estoqueLinhaPosicaoDoProduto(produto);
+  return row ? _estoqueItemCombinaFiltros(row, filtros) : false;
+}
+
+const ESTOQUE_GRUPOS_ORDEM = { GFA: 0, PET: 1, AGUA: 2, OUTROS: 3 };
+
+function _estoqueGrupoNormalizado(valor = ""){
+  const raw = String(valor || "").trim().toUpperCase();
+  if (!raw) return "";
+  const aliases = {
+    GF: "GFA",
+    GFA: "GFA",
+    GRF: "GFA",
+    GARRAFA: "GFA",
+    RETORNAVEL: "GFA",
+    RETORNAVEIS: "GFA",
+    VIDRO: "GFA",
+    PET: "PET",
+    DESCARTAVEL: "PET",
+    DESCARTAVEIS: "PET",
+    AGUA: "AGUA",
+    "ÁGUA": "AGUA",
+    OUTRO: "OUTROS",
+    OUTROS: "OUTROS",
+  };
+  return aliases[raw] || (Object.prototype.hasOwnProperty.call(ESTOQUE_GRUPOS_ORDEM, raw) ? raw : "");
+}
+
+function _estoqueGrupoInferido(item = {}){
+  const explicito = _estoqueGrupoNormalizado(item.grupo_estoque || item.grupo || "");
+  if (explicito) return explicito;
+  const texto = `${item.nome_produto || ""} ${item.codigo_produto_nfe || ""} ${item.codigo_barras || ""}`.toUpperCase();
+  if (/\bAGUA\b/.test(texto)) return "AGUA";
+  if (/\bPREFORMA\b/.test(texto) || /\bPRE\s*-?\s*FORMA\b/.test(texto)) return "OUTROS";
+  if (/\bPET\b/.test(texto) || /\bDESCART/.test(texto)) return "PET";
+  if (/\bGFA\b/.test(texto) || /\bGRF\b/.test(texto) || /\bGARRAFA\b/.test(texto) || /\bVIDRO\b/.test(texto)) return "GFA";
+  return "OUTROS";
+}
+
+function _estoqueGrupoLabel(valor = ""){
+  const grupo = _estoqueGrupoNormalizado(valor) || "OUTROS";
+  return grupo === "OUTROS" ? "Outros" : grupo;
+}
+
+function _estoqueGrupoOrdem(valor = ""){
+  const grupo = _estoqueGrupoNormalizado(valor) || "OUTROS";
+  return Object.prototype.hasOwnProperty.call(ESTOQUE_GRUPOS_ORDEM, grupo) ? ESTOQUE_GRUPOS_ORDEM[grupo] : 99;
+}
+
+function _estoqueOrdenarPorGrupo(rows = []){
+  return [...(Array.isArray(rows) ? rows : [])].sort((a, b) => {
+    const grupoA = _estoqueGrupoOrdem(a?.grupo_estoque);
+    const grupoB = _estoqueGrupoOrdem(b?.grupo_estoque);
+    if (grupoA !== grupoB) return grupoA - grupoB;
+    const nomeA = String(a?.produto_base_nome || a?.nome_produto || "").toUpperCase();
+    const nomeB = String(b?.produto_base_nome || b?.nome_produto || "").toUpperCase();
+    const porNome = nomeA.localeCompare(nomeB, "pt-BR");
+    if (porNome) return porNome;
+    const fatorA = Number(a?.fator_embalagem_padrao || a?.fator_embalagem || 0) || 0;
+    const fatorB = Number(b?.fator_embalagem_padrao || b?.fator_embalagem || 0) || 0;
+    if (fatorA !== fatorB) return fatorA - fatorB;
+    const codigoA = String(a?.codigo_produto_nfe || a?.codigo_barras || "").toUpperCase();
+    const codigoB = String(b?.codigo_produto_nfe || b?.codigo_barras || "").toUpperCase();
+    return codigoA.localeCompare(codigoB, "pt-BR");
+  });
+}
+
+function _estoqueLinhasAgrupadas(rows = [], rowRenderer, colspan = 1){
+  let grupoAtual = "";
+  return _estoqueOrdenarPorGrupo(rows).map((row) => {
+    const grupo = _estoqueGrupoNormalizado(row?.grupo_estoque) || "OUTROS";
+    const partes = [];
+    if (grupo !== grupoAtual) {
+      grupoAtual = grupo;
+      partes.push(`<tr class="estoque-group-row"><td colspan="${Number(colspan || 1)}">${_escHtml(_estoqueGrupoLabel(grupo))}</td></tr>`);
+    }
+    partes.push(rowRenderer(row));
+    return partes.join("");
+  }).join("");
+}
+
+function _estoqueBaseNomeInferido(item = {}){
+  const explicito = String(item.produto_base_nome || item.produto_base || "").trim();
+  if (explicito) return explicito;
+  const grupo = _estoqueGrupoInferido(item);
+  const texto = String(item.nome_produto || "").toUpperCase();
+  if (grupo === "PET") {
+    if (/\b2\s*L(T)?\b|\b2LT\b/.test(texto)) return "PET 2L";
+    if (/\b600\s*ML\b|\bPET\s*600\b/.test(texto)) return "PET 600ML";
+    if (/\b200\s*ML\b|\bPET\s*200\b/.test(texto)) return "PET 200ML";
+  }
+  if (grupo === "GFA") {
+    if (/\b600\s*ML\b|\bGFA\s*600\b|\bGRF\s*600\b/.test(texto)) return "GFA 600ML";
+    if (/\b200\s*ML\b|\bGFA\s*200\b|\bGRF\s*200\b/.test(texto)) return "GFA 200ML";
+  }
+  if (grupo === "AGUA") {
+    if (/\b510\s*ML\b/.test(texto)) return "AGUA 510ML";
+    return "AGUA";
+  }
+  const tokens = String(item.nome_produto || "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, " ")
+    .split(/\s+/)
+    .filter(Boolean)
+    .filter((tok) => !["UN", "UND", "UNIDADE", "UNIDADES", "DZ", "DUZIA", "DUZIAS", "CX", "CX24", "CX48", "CAIXA", "CAIXAS", "PCT", "PAC", "PACOTE", "PACOTES", "FD", "FARDO", "FARDOS", "PAL", "PALLET", "PALLETS", "9", "12", "24", "35", "48", "80"].includes(tok));
+  return tokens.join(" ") || String(item.nome_produto || "").trim() || "PRODUTO";
+}
+
+function _estoqueTextoChave(valor = ""){
+  return String(valor || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, " ")
+    .trim();
+}
+
+function _estoqueProdutoBaseKey(item = {}){
+  const existente = String(item.produto_base_key || "").trim();
+  if (existente) return existente;
+  const grupo = _estoqueGrupoNormalizado(item.grupo_estoque || item.grupo || "") || _estoqueGrupoInferido(item) || "OUTROS";
+  const base = _estoqueTextoChave(item.produto_base_nome || item.produto_base || _estoqueBaseNomeInferido(item) || item.nome_produto || "");
+  const codigo = _estoqueCodigoNormalizadoComparacao(item.codigo_produto_nfe || "") || _digitsOnly(item.codigo_barras || "");
+  return `${grupo}:${base || codigo || "PRODUTO"}`;
+}
+
+function _estoqueApresentacaoNormalizada(...valores){
+  const texto = valores.map((valor) => String(valor || "").trim().toUpperCase()).filter(Boolean).join(" ");
+  if (!texto) return "UN";
+  if (texto.includes("PALLET") || /\bPAL\b/.test(texto)) return "PALLET";
+  if (texto.includes("DUZIA") || texto.includes("DUZIAS") || /\bDZ\b/.test(texto)) return "DZ";
+  if (texto.includes("CX48")) return "CX48";
+  if (texto.includes("CX24")) return "CX24";
+  if (texto.includes("CAIXA") || texto.includes("CAIXAS") || /\bCX\b/.test(texto)) return "CX";
+  if (texto.includes("PACOTE") || texto.includes("PACOTES") || /\bPCT\b/.test(texto) || /\bPAC\b/.test(texto)) return "PCT";
+  if (texto.includes("FARDO") || texto.includes("FARDOS") || /\bFD\b/.test(texto)) return "FD";
+  if (texto.includes("UNIDADE") || texto.includes("UNIDADES") || /\bUND\b/.test(texto) || /\bUN\b/.test(texto)) return "UN";
+  return _estoqueEmbalagemPadrao(texto);
+}
+
+function _estoqueExtrairMultiplicador(...valores){
+  const texto = valores.map((valor) => String(valor || "").trim().toUpperCase()).filter(Boolean).join(" ");
+  if (!texto) return 0;
+  const patterns = [
+    /\b(?:C\/|COM|X)\s*0*([1-9]\d{0,2})\b/,
+    /\b(?:PCT|PAC|PACOTE|PACOTES|FD|FARDO|FARDOS|CX|CAIXA|CAIXAS)\s*0*([1-9]\d{0,2})\b/,
+    /\b0*([1-9]\d{0,2})\s*(?:UN|UND|UNIDADES|GARRAFAS|PACOTES|CAIXAS)\b/,
+  ];
+  for (const pattern of patterns) {
+    const match = texto.match(pattern);
+    if (match) return Number(match[1] || 0) || 0;
+  }
+  return 0;
+}
+
+function _estoqueResolverFatorProduto(item = {}, cadastro = null){
+  const produto = cadastro || _buscarProdutoCadastroEstoque(item) || null;
+  const combinado = {
+    ...produto,
+    ...item,
+    nome_produto: item.nome_produto || produto?.nome_produto || "",
+    grupo_estoque: item.grupo_estoque || produto?.grupo_estoque || "",
+    produto_base_nome: item.produto_base_nome || produto?.produto_base_nome || "",
+  };
+  const grupo = _estoqueGrupoNormalizado(combinado.grupo_estoque) || _estoqueGrupoInferido(combinado) || "OUTROS";
+  const produtoBaseNome = String(combinado.produto_base_nome || _estoqueBaseNomeInferido({ ...combinado, grupo_estoque: grupo }) || combinado.nome_produto || "").trim();
+  const apresentacao = _estoqueApresentacaoNormalizada(
+    item.embalagem_tipo || item.unidade || "",
+    produto?.embalagem_tipo_padrao || produto?.unidade || "",
+    combinado.nome_produto || ""
+  );
+  const fatorInformado = Number(item.fator_embalagem || produto?.fator_embalagem_padrao || 0) || 0;
+  const cadastroExplicitado = !!(produto && Number(produto.id || 0) > 0 && Number(produto.cadastro_explicitado || 0) === 1 && Number(produto.fator_embalagem_padrao || 0) > 0);
+  const texto = [
+    item.embalagem_tipo,
+    item.unidade,
+    item.nome_produto,
+    produto?.nome_produto,
+    produto?.embalagem_tipo_padrao,
+    produtoBaseNome,
+  ].map((valor) => String(valor || "").trim().toUpperCase()).filter(Boolean).join(" ");
+  const multiplicador = _estoqueExtrairMultiplicador(texto);
+  const pacotePet = /\b9\b/.test(texto) ? 9 : (/\b12\b/.test(texto) ? 12 : 0);
+  let fator = fatorInformado;
+  let fatorInferido = false;
+  let motivoConfirmacao = "";
+
+  if (!(fator > 0)) {
+    if (apresentacao === "UN") {
+      fator = 1;
+    } else if (grupo === "GFA") {
+      if (apresentacao === "DZ") {
+        fator = 12;
+      } else if (apresentacao === "PALLET") {
+        fator = multiplicador > 100 ? multiplicador : 35 * 24;
+        motivoConfirmacao = "Pallet de GFA assumido no padrao 35 caixas x 24 garrafas.";
+      } else if (["CX", "CX24", "CX48"].includes(apresentacao)) {
+        fator = multiplicador > 0 ? multiplicador : 24;
+        motivoConfirmacao = multiplicador > 0 ? "Caixa de GFA inferida pelo texto da embalagem." : "Caixa de GFA assumida no padrao de 24 garrafas.";
+      } else {
+        fator = 12;
+        motivoConfirmacao = "Apresentacao de GFA assumida como duzia (12 garrafas).";
+      }
+      fatorInferido = true;
+    } else if (grupo === "PET") {
+      const pacotePadrao = pacotePet || 12;
+      if (apresentacao === "PALLET") {
+        fator = pacotePadrao * 80;
+        motivoConfirmacao = pacotePet
+          ? `Pallet PET calculado com 80 pacotes de ${pacotePadrao}.`
+          : "Pallet PET assumido no padrao 80 pacotes de 12 unidades.";
+      } else if (["PCT", "FD", "CX", "CX24", "CX48"].includes(apresentacao)) {
+        fator = multiplicador > 0 ? multiplicador : pacotePadrao;
+        motivoConfirmacao = pacotePet
+          ? `PET inferido com pacote de ${fator} unidades.`
+          : "PET assumido no padrao de 12 unidades por pacote.";
+      } else {
+        fator = 1;
+      }
+      fatorInferido = fator > 1;
+    } else if (grupo === "AGUA") {
+      if (multiplicador > 0) {
+        fator = multiplicador;
+        fatorInferido = true;
+        motivoConfirmacao = "Agua inferida pelo multiplicador encontrado na descricao.";
+      } else if (apresentacao === "UN") {
+        fator = 1;
+      } else {
+        fator = 0;
+        motivoConfirmacao = "Produto de agua sem fator explicito. Revise o cadastro antes de lancar.";
+      }
+    } else {
+      if (multiplicador > 0) {
+        fator = multiplicador;
+        fatorInferido = true;
+        motivoConfirmacao = "Fator inferido pelo texto da embalagem.";
+      } else if (apresentacao === "UN") {
+        fator = 1;
+      } else {
+        fator = 0;
+        motivoConfirmacao = "Produto sem fator explicito para esta apresentacao.";
+      }
+    }
+  }
+
+  const confirmacaoPendente = !cadastroExplicitado || fatorInferido;
+  if (!motivoConfirmacao && !cadastroExplicitado) {
+    motivoConfirmacao = "Cadastro do produto ainda sem grupo/base/fator explicitados.";
+  }
+  return {
+    produto,
+    grupo_estoque: grupo,
+    produto_base_nome: produtoBaseNome || combinado.nome_produto || "Produto",
+    produto_base_key: _estoqueProdutoBaseKey({
+      ...combinado,
+      grupo_estoque: grupo,
+      produto_base_nome: produtoBaseNome,
+    }),
+    embalagem_tipo: apresentacao || "UN",
+    fator_embalagem: Number(fator || 0) || 0,
+    fator_inferido: !!fatorInferido,
+    cadastro_explicitado: cadastroExplicitado ? 1 : 0,
+    confirmacao_pendente: !!confirmacaoPendente,
+    motivo_confirmacao: motivoConfirmacao,
+    bloqueado: !(Number(fator || 0) > 0),
+  };
+}
+
+function _estoqueConfirmacaoLancamentoTexto(item = {}, resolvido = null){
+  const meta = resolvido || _estoqueResolverFatorProduto(item);
+  const qtdEmb = Number(item.quantidade_embalagem ?? item.quantidade ?? 0) || 0;
+  const totalBase = Number(item.quantidade_unidades ?? (qtdEmb * (Number(meta.fator_embalagem || 0) || 0))) || 0;
+  const produto = item.nome_produto || meta.produto_base_nome || "Produto";
+  const embalagem = meta.embalagem_tipo || "UN";
+  const motivo = meta.motivo_confirmacao ? `\nMotivo: ${meta.motivo_confirmacao}` : "";
+  return `${produto}\nGrupo: ${_estoqueGrupoLabel(meta.grupo_estoque)}\nLancamento: ${_estoqueFormatQtd(qtdEmb)} ${embalagem}${Number(meta.fator_embalagem || 0) > 1 ? ` x ${_estoqueFormatQtd(meta.fator_embalagem)}` : ""}\nTotal em estoque: ${_estoqueFormatQtd(totalBase)} unidade(s).${motivo}`;
+}
+
+function _estoqueCodigoReferencia(item = {}){
+  return item?.codigo_produto_nfe || item?.codigo_barras || "-";
+}
+
 function sincronizarNumeroNotaPorCodigo(){
   const codigo = document.getElementById("estoqueCodigoBarras");
   const nota = document.getElementById("estoqueNumeroNota");
@@ -6873,125 +12649,53 @@ function sincronizarNumeroNotaPorCodigo(){
   if (!nota.value.trim()) nota.value = (codigo.value || "").trim();
 }
 
-function bindEstoqueScannerInput(){
-  const codigo = document.getElementById("estoqueCodigoBarras");
-  const nota = document.getElementById("estoqueNumeroNota");
-  const nome = document.getElementById("estoqueNomeProduto");
-  if (!codigo || codigo.dataset.bound === "1") return;
-  codigo.dataset.bound = "1";
-  codigo.addEventListener("input", () => sincronizarNumeroNotaPorCodigo());
-  codigo.addEventListener("keydown", (ev) => {
-    if (ev.key === "Enter") {
-      ev.preventDefault();
-      sincronizarNumeroNotaPorCodigo();
-      if (nota && !nota.value.trim()) nota.value = (codigo.value || "").trim();
-      if (nome) nome.focus();
-    }
-  });
-}
-
-async function carregarSaldoEstoque(){
-  const body = document.getElementById("estoqueSaldoBody");
-  if (!body) return;
-  const resp = await apiFetch("/api/estoque/saldo");
-  if (!resp.ok) {
-    body.innerHTML = `<tr><td colspan="5">Erro ao carregar saldo do estoque.</td></tr>`;
-    return;
-  }
-  const dados = await resp.json();
-  body.innerHTML = (dados || []).length ? (dados || []).map((r) => `
-    <tr>
-      <td>${_escHtml(r.nome_produto || "-")}</td>
-      <td>${_escHtml(r.codigo_barras || "-")}</td>
-      <td>${_escHtml(_estoqueFormatQtd(r.quantidade_atual))}</td>
-      <td>R$ ${_escHtml(_fmtMoney(r.ultimo_valor))}</td>
-      <td>${_escHtml(_fmtDateBr(r.ultima_movimentacao))}</td>
-    </tr>
-  `).join("") : `<tr><td colspan="5">Sem itens no estoque.</td></tr>`;
-}
-
-async function carregarMovimentosEstoque(){
-  const body = document.getElementById("estoqueMovimentosBody");
-  if (!body) return;
-  const resp = await apiFetch("/api/estoque");
-  if (!resp.ok) {
-    body.innerHTML = `<tr><td colspan="7">Erro ao carregar histórico do estoque.</td></tr>`;
-    return;
-  }
-  const dados = await resp.json();
-  body.innerHTML = (dados || []).length ? (dados || []).map((r) => `
-    <tr>
-      <td>${_escHtml(_fmtDateBr(r.data_registro))}</td>
-      <td>${_escHtml(r.numero_nota || "-")}</td>
-      <td>${_escHtml(r.codigo_barras || "-")}</td>
-      <td>${_escHtml(r.nome_produto || "-")}</td>
-      <td>${_escHtml(r.tipo_movimento || "entrada")}</td>
-      <td>${_escHtml(_estoqueFormatQtd(r.quantidade))}</td>
-      <td>R$ ${_escHtml(_fmtMoney(r.valor_unitario))}</td>
-    </tr>
-  `).join("") : `<tr><td colspan="7">Sem lançamentos de estoque.</td></tr>`;
-}
-
-async function carregarEstoque(){
-  await Promise.all([
-    carregarSaldoEstoque(),
-    carregarMovimentosEstoque()
-  ]);
-}
-
-async function salvarMovimentoEstoque(){
-  const codigo_barras = (document.getElementById("estoqueCodigoBarras")?.value || "").trim();
-  const numero_nota = ((document.getElementById("estoqueNumeroNota")?.value || "").trim() || codigo_barras);
-  const nome_produto = (document.getElementById("estoqueNomeProduto")?.value || "").trim();
-  const quantidade = Number((document.getElementById("estoqueQuantidade")?.value || "").trim() || 0);
-  const valor_unitario = Number((document.getElementById("estoqueValor")?.value || "").trim() || 0);
-
-  if (!nome_produto) return alert("Informe o nome do produto.");
-  if (!(quantidade > 0)) return alert("Informe uma quantidade válida.");
-
-  const resp = await fetch("/api/estoque", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      codigo_barras,
-      numero_nota,
-      nome_produto,
-      quantidade,
-      valor_unitario,
-      tipo_movimento: "entrada",
-    }),
-  });
-  const data = await resp.json().catch(() => ({}));
-  if (!resp.ok) return alert(data?.erro || "Erro ao registrar item no estoque.");
-
-  ["estoqueCodigoBarras", "estoqueNumeroNota", "estoqueNomeProduto", "estoqueQuantidade", "estoqueValor"].forEach((id) => {
-    const el = document.getElementById(id);
-    if (el) el.value = "";
-  });
-
-  await carregarEstoque();
-  if (window.__dashView === "estoque") await renderDashboardEstoque();
-  document.getElementById("estoqueCodigoBarras")?.focus();
-}
-
 async function renderDashboardEstoque(){
-  const body = document.getElementById("dashEstoqueBody");
-  if (!body) return;
+  const bodyPrevisao = document.getElementById("dashEstoquePrevisaoBody");
+  const bodySaldo = document.getElementById("dashEstoqueSaldoBody");
+  const resumo = document.getElementById("dashEstoqueResumo");
+  if (!bodyPrevisao || !bodySaldo) return;
   const resp = await apiFetch("/api/dashboard_estoque");
   if (!resp.ok) {
-    body.innerHTML = `<tr><td colspan="5">Erro ao carregar dashboard do estoque.</td></tr>`;
+    bodyPrevisao.innerHTML = `<tr><td colspan="7">Erro ao carregar previsao do estoque.</td></tr>`;
+    bodySaldo.innerHTML = `<tr><td colspan="7">Erro ao carregar saldo do estoque.</td></tr>`;
+    if (resumo) resumo.textContent = "Nao foi possivel carregar o saldo comprometido do estoque.";
     return;
   }
-  const dados = await resp.json();
-  body.innerHTML = (dados || []).length ? (dados || []).map((r) => `
+  const payload = await resp.json();
+  const dados = _estoqueRowsPayload(payload);
+  const meta = _estoqueMetaPayload(payload);
+  if (resumo) {
+    resumo.textContent = [
+      `Referencia: ${_fmtDataCurtaBr(meta.data_referencia || "")}`,
+      `Cargas importadas: ${meta.cargas_importadas || 0}`,
+      `Pendentes: ${meta.cargas_pendentes || 0}`,
+      `Baixadas: ${meta.cargas_baixadas || 0}`,
+      `Vendas dia: ${_estoqueFormatQtd(meta.vendas_dia_total || 0)}`,
+      `Saidas dia: ${_estoqueFormatQtd(meta.saidas_dia_total || 0)}`,
+    ].join(" | ");
+  }
+  bodyPrevisao.innerHTML = dados.length ? _estoqueLinhasAgrupadas(dados, (r) => `
     <tr>
-      <td>${_escHtml(r.nome_produto || "-")}</td>
-      <td>${_escHtml(r.codigo_barras || "-")}</td>
+      <td>${_escHtml(r.produto_base_nome || r.nome_produto || "-")}</td>
+      <td>${_escHtml(_estoqueCodigoReferencia(r))}</td>
       <td>${_escHtml(_estoqueFormatQtd(r.quantidade_atual))}</td>
+      <td>${_escHtml(_estoqueFormatQtd(r.vendas_dia))}</td>
+      <td>${_escHtml(_estoqueFormatQtd(r.saidas_dia))}</td>
+      <td>${_escHtml(_estoqueFormatQtd(r.quantidade_comprometida))}</td>
+      <td><span style="font-weight:700;color:${Number(r.saldo_previsto_dia || 0) < 0 ? "#b91c1c" : "#166534"};">${_escHtml(_estoqueFormatQtd(r.saldo_previsto_dia))}</span></td>
+    </tr>
+  `, 7) : `<tr><td colspan="7">Sem itens cadastrados no estoque.</td></tr>`;
+  bodySaldo.innerHTML = dados.length ? _estoqueLinhasAgrupadas(dados, (r) => `
+    <tr>
+      <td>${_escHtml(r.produto_base_nome || r.nome_produto || "-")}</td>
+      <td>${_escHtml(_estoqueCodigoReferencia(r))}</td>
+      <td>${_escHtml(_estoqueFormatQtd(r.quantidade_atual))}</td>
+      <td>${_escHtml(_estoqueFormatQtd(r.quantidade_comprometida))}</td>
+      <td><span style="font-weight:700;color:${Number(r.saldo_remanescente || 0) < 0 ? "#b91c1c" : "#166534"};">${_escHtml(_estoqueFormatQtd(r.saldo_remanescente))}</span></td>
       <td>R$ ${_escHtml(_fmtMoney(r.ultimo_valor))}</td>
       <td>${_escHtml(_fmtDateBr(r.ultima_movimentacao))}</td>
     </tr>
-  `).join("") : `<tr><td colspan="5">Sem itens cadastrados no estoque.</td></tr>`;
+  `, 7) : `<tr><td colspan="7">Sem itens cadastrados no estoque.</td></tr>`;
 }
 
 function _estoqueResumoFluxo(item){
@@ -7003,16 +12707,22 @@ function _estoqueResumoFluxo(item){
 
 function _novoItemImportacaoEstoque(seq = 1){
   return {
+    xml_item_id: 0,
     item_seq: String(seq || 1),
+    produto_id: "",
     codigo_produto_nfe: "",
     codigo_barras: "",
     nome_produto: "",
+    grupo_estoque: "",
+    produto_base_nome: "",
     unidade: "",
     quantidade: "",
     quantidade_embalagem: "",
     embalagem_tipo: "",
     fator_embalagem: "",
     fator_inferido: false,
+    confirmacao_pendente: false,
+    motivo_confirmacao: "",
     quantidade_unidades: "",
     valor_unitario: "",
   };
@@ -7021,9 +12731,12 @@ function _novoItemImportacaoEstoque(seq = 1){
 function _estoqueEmbalagemPadrao(valor = ""){
   const raw = String(valor || "").trim().toUpperCase();
   if (!raw) return "UN";
+  if (raw.includes("PALLET") || /\bPAL\b/.test(raw)) return "PALLET";
+  if (raw.includes("DUZIA") || raw.includes("DUZIAS") || /\bDZ\b/.test(raw)) return "DZ";
   if (raw.includes("CX48")) return "CX48";
   if (raw.includes("CX24")) return "CX24";
   if (/^CX\b/.test(raw) || raw.includes("CAIXA")) return "CX";
+  if (raw.includes("FARDO") || /\bFD\b/.test(raw)) return "FD";
   if (raw.includes("PCT") || raw.includes("PAC")) return "PCT";
   if (raw.includes("UN") || raw.includes("UND") || raw.includes("PC")) return "UN";
   return raw;
@@ -7038,22 +12751,35 @@ function _estoqueAjustarEmbalagemPorFator(embalagem, fator){
 }
 
 function _estoqueProdutoCadastroNormalizado(item = {}){
-  return {
+  const grupo = _estoqueGrupoNormalizado(item.grupo_estoque || item.grupo || "") || _estoqueGrupoInferido(item) || "OUTROS";
+  const produtoBaseNome = String(item.produto_base_nome || item.produto_base || "").trim() || _estoqueBaseNomeInferido({ ...item, grupo_estoque: grupo });
+  const produto = {
     id: Number(item.id || 0) || 0,
     codigo_barras: _digitsOnly(item.codigo_barras || ""),
     codigo_produto_nfe: String(item.codigo_produto_nfe || "").trim(),
     nome_produto: String(item.nome_produto || "").trim(),
+    grupo_estoque: grupo,
+    produto_base_nome: produtoBaseNome,
     unidade: String(item.unidade || "").trim(),
     embalagem_tipo_padrao: _estoqueEmbalagemPadrao(item.embalagem_tipo_padrao || item.embalagem_tipo || item.unidade || ""),
     fator_embalagem_padrao: Number(item.fator_embalagem_padrao || item.fator_embalagem || 0) || 0,
+    cadastro_explicitado: Number(item.cadastro_explicitado || 0) === 1 ? 1 : 0,
   };
+  produto.produto_base_key = String(item.produto_base_key || "").trim() || _estoqueProdutoBaseKey(produto);
+  return produto;
 }
 
 function _buscarProdutoCadastroEstoque(item = {}){
+  const produtoId = Number(item.produto_id || item.id || 0) || 0;
   const codigoBarras = _digitsOnly(item.codigo_barras || "");
   const codigoNfe = String(item.codigo_produto_nfe || "").trim().toUpperCase();
   const nome = String(item.nome_produto || "").trim().toUpperCase();
+  const baseKey = _estoqueProdutoBaseKey(item);
   const lista = Array.isArray(estoqueState.cadastroProdutos) ? estoqueState.cadastroProdutos : [];
+  if (produtoId > 0) {
+    const porId = lista.find((prod) => Number(prod.id || 0) === produtoId);
+    if (porId) return porId;
+  }
   if (codigoBarras) {
     const porBarras = lista.find((prod) => _digitsOnly(prod.codigo_barras || "") === codigoBarras);
     if (porBarras) return porBarras;
@@ -7066,32 +12792,15 @@ function _buscarProdutoCadastroEstoque(item = {}){
     const porNome = lista.find((prod) => String(prod.nome_produto || "").trim().toUpperCase() === nome);
     if (porNome) return porNome;
   }
+  if (baseKey) {
+    const porBase = lista.find((prod) => _estoqueProdutoBaseKey(prod) === baseKey);
+    if (porBase) return porBase;
+  }
   return null;
 }
 
 function _estoqueInferirFatorEmbalagem(item = {}){
-  const embalagem = _estoqueEmbalagemPadrao(item.embalagem_tipo || item.unidade || "");
-  const nome = String(item.nome_produto || "").toUpperCase();
-  const unidade = String(item.unidade || "").toUpperCase();
-  const candidatos = [embalagem, unidade, nome];
-  for (const texto of candidatos) {
-    const mCx = texto.match(/CX\s*0*48|CX48|C\/48|\b48\s*UN\b/);
-    if (mCx) return 48;
-    const mCx24 = texto.match(/CX\s*0*24|CX24|C\/24|\b24\s*UN\b/);
-    if (mCx24) return 24;
-  }
-  for (const texto of candidatos) {
-    const mPct = texto.match(/(?:PCT|PAC|PCT|C\/|COM|X)\s*0*([1-9]\d{0,2})/);
-    if (mPct) return Number(mPct[1] || 0) || 1;
-  }
-  const fatorInformado = Number(item.fator_embalagem || 0);
-  if (fatorInformado > 0) return fatorInformado;
-  if (embalagem === "CX48") return 48;
-  if (embalagem === "CX24") return 24;
-  if (embalagem === "UN") return 1;
-  const fallbackValor = Number(item.valor_unitario || 0);
-  if (embalagem === "PCT" && fallbackValor > 0 && fallbackValor <= 200) return fallbackValor;
-  return 1;
+  return Number(_estoqueResolverFatorProduto(item).fator_embalagem || 0) || 0;
 }
 
 function _enriquecerItemImportacaoEstoque(item = {}){
@@ -7101,23 +12810,35 @@ function _enriquecerItemImportacaoEstoque(item = {}){
     unidadeRaw = "";
   }
   const embalagemInicial = item.embalagem_tipo || cadastro?.embalagem_tipo_padrao || unidadeRaw || "";
-  const embalagemBase = _estoqueEmbalagemPadrao(embalagemInicial);
+  const embalagemBase = _estoqueApresentacaoNormalizada(embalagemInicial, unidadeRaw, item.nome_produto || cadastro?.nome_produto || "");
   const quantidade_embalagem = Number(item.quantidade_embalagem ?? item.quantidade ?? 0) || 0;
-  const fatorInformado = Number(item.fator_embalagem || cadastro?.fator_embalagem_padrao || 0) || 0;
-  const fator_embalagem = fatorInformado > 0
-    ? fatorInformado
-    : _estoqueInferirFatorEmbalagem({ ...item, unidade: unidadeRaw, embalagem_tipo: embalagemBase });
-  const embalagem_tipo = _estoqueAjustarEmbalagemPorFator(embalagemBase, fator_embalagem);
-  const quantidade_unidades = Number(item.quantidade_unidades ?? 0) || (quantidade_embalagem * (fator_embalagem > 0 ? fator_embalagem : 1));
+  const resolvido = _estoqueResolverFatorProduto({
+    ...item,
+    unidade: unidadeRaw,
+    embalagem_tipo: embalagemBase,
+    quantidade_embalagem,
+  }, cadastro);
+  const fator_embalagem = Number(resolvido.fator_embalagem || 0) || 0;
+  const embalagem_tipo = _estoqueAjustarEmbalagemPorFator(resolvido.embalagem_tipo || embalagemBase, fator_embalagem);
+  const quantidade_unidades = fator_embalagem > 0
+    ? (Number(item.quantidade_unidades ?? 0) || (quantidade_embalagem * fator_embalagem))
+    : 0;
   const fator_inferido = item.fator_inferido === true || item.fator_inferido === 1 || item.fator_inferido === "1"
     ? true
-    : (fatorInformado <= 0 && fator_embalagem > 1 && embalagem_tipo !== "UN");
+    : !!resolvido.fator_inferido;
   return {
     ...item,
+    produto_id: Number(item.produto_id || cadastro?.id || 0) || 0,
+    grupo_estoque: resolvido.grupo_estoque,
+    produto_base_nome: resolvido.produto_base_nome,
+    produto_base_key: resolvido.produto_base_key,
+    cadastro_explicitado: resolvido.cadastro_explicitado ? 1 : 0,
+    confirmacao_pendente: resolvido.confirmacao_pendente ? 1 : 0,
+    motivo_confirmacao: resolvido.motivo_confirmacao || "",
     unidade: unidadeRaw,
     embalagem_tipo,
     quantidade_embalagem,
-    fator_embalagem: fator_embalagem > 0 ? fator_embalagem : 1,
+    fator_embalagem: fator_embalagem > 0 ? fator_embalagem : 0,
     fator_inferido,
     quantidade_unidades,
   };
@@ -7126,25 +12847,72 @@ function _enriquecerItemImportacaoEstoque(item = {}){
 function _normalizarDraftImportacaoEstoque(draft){
   const base = draft || {};
   const itens = Array.isArray(base.itens) ? base.itens.map((item, idx) => ({
+    xml_item_id: Number(item?.xml_item_id || 0) || 0,
     item_seq: String(item?.item_seq || (idx + 1)).trim() || String(idx + 1),
+    produto_id: item?.produto_id ?? "",
     codigo_produto_nfe: (item?.codigo_produto_nfe || "").trim(),
     codigo_barras: (item?.codigo_barras || "").trim(),
     nome_produto: (item?.nome_produto || "").trim(),
+    grupo_estoque: (item?.grupo_estoque || "").trim(),
+    produto_base_nome: (item?.produto_base_nome || "").trim(),
     unidade: (item?.unidade || "").trim(),
     quantidade: item?.quantidade ?? "",
     quantidade_embalagem: item?.quantidade_embalagem ?? item?.quantidade ?? "",
     embalagem_tipo: (item?.embalagem_tipo || "").trim(),
     fator_embalagem: item?.fator_embalagem ?? "",
     fator_inferido: item?.fator_inferido === true || item?.fator_inferido === 1 || item?.fator_inferido === "1",
+    confirmacao_pendente: item?.confirmacao_pendente === true || item?.confirmacao_pendente === 1 || item?.confirmacao_pendente === "1",
+    motivo_confirmacao: (item?.motivo_confirmacao || "").trim(),
     quantidade_unidades: item?.quantidade_unidades ?? "",
     valor_unitario: item?.valor_unitario ?? "",
   })).map((item) => _enriquecerItemImportacaoEstoque(item)).filter((item) => (
     item.nome_produto || item.codigo_produto_nfe || item.codigo_barras || String(item.quantidade || "").trim() || String(item.valor_unitario || "").trim()
   )) : [];
   const sourceType = String(base.source_type || "xml").toLowerCase();
+  const transporteXml = base.transporte_xml && typeof base.transporte_xml === "object"
+    ? base.transporte_xml
+    : {};
+  const freteSugestao = base.frete_sugestao && typeof base.frete_sugestao === "object"
+    ? base.frete_sugestao
+    : {};
+  const preVinculoFrete = base.pre_vinculo_frete && typeof base.pre_vinculo_frete === "object"
+    ? base.pre_vinculo_frete
+    : {};
+  const decisaoLogistica = base.decisao_logistica && typeof base.decisao_logistica === "object"
+    ? base.decisao_logistica
+    : {};
 
   return {
-    source_type: sourceType === "pdf" || sourceType === "dfe" || sourceType === "portal" || sourceType === "ocr" || sourceType === "manual" ? sourceType : "xml",
+    source_type: sourceType === "pdf" || sourceType === "dfe" || sourceType === "portal" || sourceType === "ocr" || sourceType === "manual" || sourceType === "xml_fabrica" || sourceType === "importar_xml" ? sourceType : "xml",
+    importar_xml_chave: String(base.importar_xml_chave || "").trim(),
+    frete_id: Number(base.frete_id || 0) || 0,
+    veiculo_id: Number(base.veiculo_id || 0) || 0,
+    dispensa_frete: base.dispensa_frete === true || base.dispensa_frete === 1 || base.dispensa_frete === "1",
+    tipo_transporte: String(base.tipo_transporte || "").trim(),
+    decisao_logistica: {
+      origem: String(decisaoLogistica.origem || "").trim(),
+      motivo: String(decisaoLogistica.motivo || "").trim(),
+    },
+    pre_vinculo_frete: {
+      origem_veiculo: String(preVinculoFrete.origem_veiculo || "").trim(),
+      origem_frete: String(preVinculoFrete.origem_frete || "").trim(),
+      status: String(preVinculoFrete.status || "").trim(),
+    },
+    transporte_xml: {
+      placa: String(transporteXml.placa || "").trim(),
+      uf_placa: String(transporteXml.uf_placa || "").trim(),
+      mapa: String(transporteXml.mapa || "").trim(),
+      numero_caminhao: String(transporteXml.numero_caminhao || "").trim(),
+      modalidade_frete: String(transporteXml.modalidade_frete || "").trim(),
+      arquivo_xml: String(transporteXml.arquivo_xml || "").trim(),
+    },
+    frete_sugestao: {
+      frete_id: Number(freteSugestao.frete_id || 0) || 0,
+      confianca: String(freteSugestao.confianca || "").trim(),
+      motivo: String(freteSugestao.motivo || "").trim(),
+      candidatos_total: Number(freteSugestao.candidatos_total || 0) || 0,
+    },
+    tipo_movimento: String(base.tipo_movimento || "entrada").trim().toLowerCase() === "saida" ? "saida" : "entrada",
     preview_tipo: String(base.preview_tipo || "completo").toLowerCase() === "parcial" ? "parcial" : "completo",
     limitation_message: (base.limitation_message || "").trim(),
     arquivo_origem: (base.arquivo_origem || "").trim(),
@@ -7167,20 +12935,28 @@ function _coletarDraftImportacaoEstoqueForm(){
   if (!estoqueState.importDraft) return null;
   const body = document.getElementById("estoqueImportPreviewItemsBody");
   const itens = body
-    ? Array.from(body.querySelectorAll("tr[data-item-index]")).map((row, idx) => ({
-        item_seq: row.querySelector(".estoque-import-item-seq")?.value || String(idx + 1),
-        codigo_produto_nfe: row.querySelector(".estoque-import-item-codnfe")?.value || "",
-        codigo_barras: row.querySelector(".estoque-import-item-codbar")?.value || "",
-        nome_produto: row.querySelector(".estoque-import-item-nome")?.value || "",
-        unidade: row.querySelector(".estoque-import-item-und")?.value || "",
-        embalagem_tipo: row.querySelector(".estoque-import-item-und")?.value || "",
-        quantidade: row.querySelector(".estoque-import-item-qtd")?.value || "",
-        quantidade_embalagem: row.querySelector(".estoque-import-item-qtd")?.value || "",
-        fator_embalagem: row.querySelector(".estoque-import-item-fator")?.value || "",
-        fator_inferido: row.querySelector(".estoque-import-item-total-un")?.dataset.inferred === "1",
-        quantidade_unidades: row.querySelector(".estoque-import-item-total-un")?.dataset.value || "",
-        valor_unitario: row.querySelector(".estoque-import-item-valor")?.value || "",
-      }))
+    ? Array.from(body.querySelectorAll("tr[data-item-index]")).map((row, idx) => {
+        const select = row.querySelector(".estoque-import-item-nome");
+        const selected = select?.selectedOptions?.[0];
+        return {
+          xml_item_id: Number(row.dataset.xmlItemId || 0) || 0,
+          item_seq: row.querySelector(".estoque-import-item-seq")?.value || String(idx + 1),
+          produto_id: selected?.dataset.produtoId || "",
+          codigo_produto_nfe: row.querySelector(".estoque-import-item-codnfe")?.value || "",
+          codigo_barras: row.querySelector(".estoque-import-item-codbar")?.value || "",
+          nome_produto: selected?.dataset.nome || select?.value || "",
+          grupo_estoque: selected?.dataset.grupo || "",
+          produto_base_nome: selected?.dataset.base || "",
+          unidade: row.querySelector(".estoque-import-item-und")?.value || "",
+          embalagem_tipo: row.querySelector(".estoque-import-item-und")?.value || "",
+          quantidade: row.querySelector(".estoque-import-item-qtd")?.value || "",
+          quantidade_embalagem: row.querySelector(".estoque-import-item-qtd")?.value || "",
+          fator_embalagem: row.querySelector(".estoque-import-item-fator")?.value || "",
+          fator_inferido: row.querySelector(".estoque-import-item-total-un")?.dataset.inferred === "1",
+          quantidade_unidades: row.querySelector(".estoque-import-item-total-un")?.dataset.value || "",
+          valor_unitario: row.querySelector(".estoque-import-item-valor")?.value || "",
+        };
+      })
     : [];
 
   return _normalizarDraftImportacaoEstoque({
@@ -7193,8 +12969,131 @@ function _coletarDraftImportacaoEstoqueForm(){
     emitente_cnpj: document.getElementById("estoquePreviewEmitenteCnpj")?.value || "",
     destinatario_nome: document.getElementById("estoquePreviewDestinatarioNome")?.value || "",
     destinatario_cnpj: document.getElementById("estoquePreviewDestinatarioCnpj")?.value || "",
+    frete_id: Number(document.getElementById("estoqueXmlFreteSelect")?.value || 0) || 0,
     itens,
   });
+}
+
+function _freteImportacaoXmlPorId(freteId){
+  return (estoqueState.fretesImportacaoXml || []).find(
+    (frete) => Number(frete.id || 0) === Number(freteId || 0)
+  ) || null;
+}
+
+function _rotuloFreteImportacaoXml(frete){
+  if (!frete) return "";
+  const nome = _rotuloFreteExibicao(frete);
+  const rota = String(frete.carga_rota || frete.carga_cidades || frete.cidade || "").trim();
+  const status = _freteStatusLabel(String(frete.status || ""));
+  return [nome, rota ? `Rota ${rota}` : "", status].filter(Boolean).join(" | ");
+}
+
+function _atualizarHintFreteImportacaoXml(){
+  const select = document.getElementById("estoqueXmlFreteSelect");
+  const hint = document.getElementById("estoqueXmlFreteHint");
+  if (!select || !hint) return;
+  const frete = _freteImportacaoXmlPorId(select.value);
+  const draft = estoqueState.importDraft || {};
+  const transporte = draft.transporte_xml || {};
+  const sugestao = draft.frete_sugestao || {};
+  if (draft.dispensa_frete) {
+    hint.textContent = draft.decisao_logistica?.motivo
+      || "A baixa sera confirmada sem vinculo com frete, rota ou veiculo da empresa.";
+    return;
+  }
+  const identificadores = [
+    transporte.numero_caminhao ? `caminhao ${transporte.numero_caminhao}` : "",
+    transporte.placa ? `placa ${transporte.placa}` : "",
+    transporte.mapa ? `mapa ${transporte.mapa}` : "",
+  ].filter(Boolean).join(" | ");
+  if (frete) {
+    const automatico = Number(frete.id || 0) === Number(sugestao.frete_id || 0);
+    const origem = automatico
+      ? `Sugestao automatica${sugestao.confianca ? ` (${sugestao.confianca})` : ""}`
+      : "Vinculo alterado manualmente";
+    hint.textContent = [
+      identificadores ? `XML: ${identificadores}` : "",
+      `${origem}: ${_rotuloFreteImportacaoXml(frete)}`,
+      automatico ? sugestao.motivo : "",
+    ].filter(Boolean).join(". ");
+    return;
+  }
+  hint.textContent = [
+    identificadores ? `XML: ${identificadores}` : "",
+    sugestao.motivo || "Selecione um frete ativo antes de confirmar a saida.",
+  ].filter(Boolean).join(". ");
+}
+
+function selecionarFreteImportacaoXml(){
+  if (!estoqueState.importDraft) return;
+  const select = document.getElementById("estoqueXmlFreteSelect");
+  estoqueState.importDraft.frete_id = Number(select?.value || 0) || 0;
+  estoqueState.importDraftDirty = true;
+  _atualizarHintFreteImportacaoXml();
+}
+
+async function alterarDispensaFreteImportacaoXml(){
+  const checkbox = document.getElementById("estoqueXmlDispensaFrete");
+  const draftAtual = _coletarDraftImportacaoEstoqueForm();
+  if (!checkbox || !draftAtual?.importar_xml_chave) return;
+  const dispensaFrete = !!checkbox.checked;
+  const mensagem = dispensaFrete
+    ? "Confirmar que o transporte desta saida foi realizado pelo cliente? O card automatico ainda nao utilizado sera arquivado."
+    : "Confirmar que esta saida exige frete da empresa? O sistema preparara um card para vinculacao.";
+  if (!confirm(mensagem)) {
+    checkbox.checked = !dispensaFrete;
+    return;
+  }
+  checkbox.disabled = true;
+  try {
+    const resp = await apiFetch("/api/estoque/importacoes-xml/logistica", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chave: draftAtual.importar_xml_chave,
+        dispensa_frete: dispensaFrete,
+      }),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data?.erro || "Falha ao alterar a logistica da nota.");
+    const atualizado = _normalizarDraftImportacaoEstoque(data.preview || {});
+    estoqueState.importDraft = _normalizarDraftImportacaoEstoque({
+      ...atualizado,
+      numero_nota: draftAtual.numero_nota,
+      serie: draftAtual.serie,
+      chave_acesso: draftAtual.chave_acesso,
+      data_emissao: draftAtual.data_emissao,
+      emitente_nome: draftAtual.emitente_nome,
+      emitente_cnpj: draftAtual.emitente_cnpj,
+      destinatario_nome: draftAtual.destinatario_nome,
+      destinatario_cnpj: draftAtual.destinatario_cnpj,
+      itens: draftAtual.itens,
+    });
+    if (!estoqueState.importDraft.dispensa_frete) {
+      await carregarFretesImportacaoXml(true);
+    }
+    estoqueState.importDraftDirty = true;
+    renderEstoqueImportPreview();
+    await carregarImportacoesXmlEstoque();
+  } catch (err) {
+    checkbox.checked = !dispensaFrete;
+    alert(err?.message || "Falha ao alterar a logistica da nota.");
+  } finally {
+    checkbox.disabled = false;
+  }
+}
+
+async function carregarFretesImportacaoXml(force = false){
+  if (!force && Array.isArray(estoqueState.fretesImportacaoXml) && estoqueState.fretesImportacaoXml.length) {
+    return estoqueState.fretesImportacaoXml;
+  }
+  const resp = await apiFetch("/api/estoque/importacoes-xml/fretes");
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    throw new Error(data?.erro || "Falha ao carregar fretes ativos.");
+  }
+  estoqueState.fretesImportacaoXml = Array.isArray(data?.fretes) ? data.fretes : [];
+  return estoqueState.fretesImportacaoXml;
 }
 
 function renderEstoqueImportPreview(){
@@ -7205,6 +13104,10 @@ function renderEstoqueImportPreview(){
   const fotoPanel = document.getElementById("estoqueManualFotoPanel");
   const fotoImg = document.getElementById("estoqueManualFotoImg");
   const fotoNome = document.getElementById("estoqueManualFotoNome");
+  const fretePanel = document.getElementById("estoqueXmlFretePanel");
+  const freteSelect = document.getElementById("estoqueXmlFreteSelect");
+  const dispensaFreteInput = document.getElementById("estoqueXmlDispensaFrete");
+  const freteVinculo = document.getElementById("estoqueXmlFreteVinculo");
   if (!card || !fonte || !status || !body) return;
 
   const draft = estoqueState.importDraft ? _normalizarDraftImportacaoEstoque(estoqueState.importDraft) : null;
@@ -7212,6 +13115,7 @@ function renderEstoqueImportPreview(){
     card.classList.add("hidden");
     body.innerHTML = `<tr><td colspan="10">Nenhum item carregado.</td></tr>`;
     if (fotoPanel) fotoPanel.classList.add("hidden");
+    if (fretePanel) fretePanel.classList.add("hidden");
     if (fotoImg) fotoImg.removeAttribute("src");
     if (fotoNome) fotoNome.textContent = "Nenhuma foto carregada.";
     return;
@@ -7219,10 +13123,30 @@ function renderEstoqueImportPreview(){
 
   estoqueState.importDraft = draft;
   card.classList.remove("hidden");
-  fonte.textContent = `Arquivo: ${draft.arquivo_origem || "-"} | Origem: ${_nfeImportSourceLabel(draft.source_type)}${draft.preview_tipo === "parcial" ? " (preview parcial)" : ""}`;
+  const movimentoLabel = draft.source_type === "importar_xml"
+    ? ` | Movimento reconhecido: ${draft.tipo_movimento === "saida" ? "SAIDA" : "ENTRADA"}`
+    : "";
+  fonte.textContent = `Arquivo: ${draft.arquivo_origem || "-"} | Origem: ${_nfeImportSourceLabel(draft.source_type)}${draft.preview_tipo === "parcial" ? " (preview parcial)" : ""}${movimentoLabel}`;
   status.textContent = draft.warnings.length
     ? draft.warnings.join(" | ")
     : "Revise os dados abaixo e confirme a importacao quando estiver tudo certo.";
+  document.querySelectorAll(".estoque-import-add-btn").forEach((button) => {
+    button.classList.toggle("hidden", draft.source_type === "importar_xml");
+  });
+  const exigeFrete = draft.source_type === "importar_xml" && draft.tipo_movimento === "saida";
+  if (fretePanel) fretePanel.classList.toggle("hidden", !exigeFrete);
+  if (dispensaFreteInput) dispensaFreteInput.checked = !!draft.dispensa_frete;
+  if (freteVinculo) freteVinculo.classList.toggle("hidden", !exigeFrete || draft.dispensa_frete);
+  if (freteSelect && exigeFrete && !draft.dispensa_frete) {
+    freteSelect.innerHTML = `
+      <option value="">Selecione o frete/rota</option>
+      ${(estoqueState.fretesImportacaoXml || []).map((frete) => `
+        <option value="${Number(frete.id || 0)}">${_escHtml(_rotuloFreteImportacaoXml(frete))}</option>
+      `).join("")}
+    `;
+    freteSelect.value = draft.frete_id ? String(draft.frete_id) : "";
+    _atualizarHintFreteImportacaoXml();
+  }
 
   const itens = draft.itens.length ? draft.itens : [_novoItemImportacaoEstoque(1)];
   document.getElementById("estoquePreviewNumeroNota").value = draft.numero_nota || "";
@@ -7239,7 +13163,7 @@ function renderEstoqueImportPreview(){
   if (fotoNome) fotoNome.textContent = estoqueState.manualPhotoName || "Nenhuma foto carregada.";
 
   body.innerHTML = itens.map((item, idx) => `
-    <tr data-item-index="${idx}">
+    <tr data-item-index="${idx}" data-xml-item-id="${Number(item.xml_item_id || 0)}">
       <td><input type="text" class="estoque-import-item-seq" value="${_escAttr(String(item.item_seq || idx + 1))}" oninput="estoqueState.importDraftDirty = true"></td>
       <td><input type="text" class="estoque-import-item-codnfe" value="${_escAttr(item.codigo_produto_nfe || "")}" oninput="estoqueState.importDraftDirty = true"></td>
       <td><input type="text" class="estoque-import-item-codbar" value="${_escAttr(item.codigo_barras || "")}" oninput="estoqueState.importDraftDirty = true"></td>
@@ -7250,15 +13174,15 @@ function renderEstoqueImportPreview(){
       </td>
       <td><input type="text" class="estoque-import-item-und" value="${_escAttr(item.embalagem_tipo || "")}" oninput="atualizarTotaisImportacaoEstoque()" readonly></td>
       <td><input type="number" class="estoque-import-item-qtd" min="0" step="0.001" value="${_escAttr(String(item.quantidade_embalagem ?? item.quantidade ?? ""))}" oninput="atualizarTotaisImportacaoEstoque(); estoqueState.importDraftDirty = true;"></td>
-      <td><input type="number" class="estoque-import-item-fator" min="1" step="1" value="${_escAttr(String(item.fator_embalagem ?? 1))}" oninput="atualizarTotaisImportacaoEstoque()"></td>
+      <td><input type="number" class="estoque-import-item-fator" min="0.001" step="0.001" value="${Number(item.fator_embalagem || 0) > 0 ? _escAttr(String(item.fator_embalagem)) : ""}" placeholder="Informe" title="Unidades de estoque existentes em cada embalagem" oninput="atualizarTotaisImportacaoEstoque()"></td>
       <td>
         <div class="estoque-total-un-cell">
           <span class="estoque-import-item-total-un${item.fator_inferido ? " is-inferred" : ""}" data-value="${_escAttr(String(item.quantidade_unidades ?? 0))}" data-inferred="${item.fator_inferido ? "1" : "0"}">${_escHtml(_estoqueFormatQtd(item.quantidade_unidades ?? 0))}</span>
-          ${item.fator_inferido ? '<span class="estoque-pack-hint">inferido</span>' : ""}
+          ${item.confirmacao_pendente ? `<span class="estoque-pack-hint">${_escHtml(item.fator_inferido ? "inferido" : "confirmar")}</span>` : ""}
         </div>
       </td>
       <td><input type="number" class="estoque-import-item-valor" min="0" step="0.01" value="${_escAttr(String(item.valor_unitario ?? ""))}"></td>
-      <td class="estoque-item-action"><button type="button" onclick="removerItemImportacaoEstoque(${idx})">Remover</button></td>
+      <td class="estoque-item-action">${draft.source_type === "importar_xml" ? '<span class="hint-chip">Obrigatorio</span>' : `<button type="button" onclick="removerItemImportacaoEstoque(${idx})">Remover</button>`}</td>
     </tr>
   `).join("");
   atualizarTotaisImportacaoEstoque(false);
@@ -7266,12 +13190,22 @@ function renderEstoqueImportPreview(){
 
 function atualizarTotaisImportacaoEstoque(markDirty = true){
   document.querySelectorAll("#estoqueImportPreviewItemsBody tr[data-item-index]").forEach((row) => {
+    const select = row.querySelector(".estoque-import-item-nome");
+    const selected = select?.selectedOptions?.[0];
+    const codBarEl = row.querySelector(".estoque-import-item-codbar");
+    const codNfeEl = row.querySelector(".estoque-import-item-codnfe");
     const undEl = row.querySelector(".estoque-import-item-und");
     const qtdEl = row.querySelector(".estoque-import-item-qtd");
     const fatorEl = row.querySelector(".estoque-import-item-fator");
     const totalEl = row.querySelector(".estoque-import-item-total-un");
     if (!totalEl) return;
     const item = _enriquecerItemImportacaoEstoque({
+      produto_id: selected?.dataset.produtoId || "",
+      codigo_barras: codBarEl?.value || "",
+      codigo_produto_nfe: codNfeEl?.value || "",
+      nome_produto: selected?.dataset.nome || select?.value || "",
+      grupo_estoque: selected?.dataset.grupo || "",
+      produto_base_nome: selected?.dataset.base || "",
       unidade: undEl?.value || "",
       embalagem_tipo: undEl?.value || "",
       quantidade: qtdEl?.value || "",
@@ -7280,7 +13214,7 @@ function atualizarTotaisImportacaoEstoque(markDirty = true){
       fator_inferido: totalEl?.dataset.inferred === "1",
     });
     if (fatorEl && (!String(fatorEl.value || "").trim() || Number(fatorEl.value || 0) <= 0)) {
-      fatorEl.value = String(item.fator_embalagem || 1);
+      fatorEl.value = Number(item.fator_embalagem || 0) > 0 ? String(item.fator_embalagem) : "";
     }
     totalEl.dataset.value = String(item.quantidade_unidades || 0);
     totalEl.dataset.inferred = item.fator_inferido ? "1" : "0";
@@ -7289,13 +13223,13 @@ function atualizarTotaisImportacaoEstoque(markDirty = true){
     const cell = totalEl.closest(".estoque-total-un-cell");
     if (cell) {
       let hint = cell.querySelector(".estoque-pack-hint");
-      if (item.fator_inferido) {
+      if (item.confirmacao_pendente) {
         if (!hint) {
           hint = document.createElement("span");
           hint.className = "estoque-pack-hint";
-          hint.textContent = "inferido";
           cell.appendChild(hint);
         }
+        hint.textContent = item.fator_inferido ? "inferido" : "confirmar";
       } else if (hint) {
         hint.remove();
       }
@@ -7306,6 +13240,10 @@ function atualizarTotaisImportacaoEstoque(markDirty = true){
 
 function adicionarItemImportacaoEstoque(){
   const draftAtual = _coletarDraftImportacaoEstoqueForm() || _normalizarDraftImportacaoEstoque(estoqueState.importDraft || {});
+  if (draftAtual.source_type === "importar_xml") {
+    alert("A revisao do Importar XML deve manter exatamente os itens reconhecidos na NF-e.");
+    return;
+  }
   const itens = Array.isArray(draftAtual.itens) ? [...draftAtual.itens] : [];
   itens.push(_novoItemImportacaoEstoque(itens.length + 1));
   estoqueState.importDraft = { ...draftAtual, itens };
@@ -7316,10 +13254,473 @@ function adicionarItemImportacaoEstoque(){
 function removerItemImportacaoEstoque(index){
   const draftAtual = _coletarDraftImportacaoEstoqueForm();
   if (!draftAtual) return;
+  if (draftAtual.source_type === "importar_xml") {
+    alert("Itens reconhecidos pelo Importar XML nao podem ser removidos. Cancele a revisao se nao quiser confirmar esta nota.");
+    return;
+  }
   const itens = (draftAtual.itens || []).filter((_, idx) => idx !== Number(index));
   estoqueState.importDraft = { ...draftAtual, itens };
   estoqueState.importDraftDirty = true;
   renderEstoqueImportPreview();
+}
+
+function renderImportacoesXmlEstoque(){
+  const body = document.getElementById("estoqueXmlPendentesBody");
+  const resumo = document.getElementById("estoqueXmlPendentesResumo");
+  if (!body || !resumo) return;
+  const tipo = String(document.getElementById("estoqueXmlPendentesTipo")?.value || "");
+  const rows = (estoqueState.importacoesXml || []).filter((row) => !tipo || row.tipo_movimento === tipo);
+  const chavesDisponiveis = new Set(
+    (estoqueState.importacoesXml || []).map((row) => String(row.nota_key || "")).filter(Boolean)
+  );
+  estoqueState.importacoesXmlSelecionadas = (estoqueState.importacoesXmlSelecionadas || []).filter(
+    (chave) => chavesDisponiveis.has(String(chave))
+  );
+  const selecionadas = new Set(estoqueState.importacoesXmlSelecionadas || []);
+  const entradas = rows.filter((row) => row.tipo_movimento === "entrada").length;
+  const saidas = rows.filter((row) => row.tipo_movimento === "saida").length;
+  const itens = rows.reduce((total, row) => total + Number(row.itens_pendentes || 0), 0);
+  resumo.textContent = `${rows.length} nota(s) pendente(s): ${entradas} entrada(s), ${saidas} saida(s), ${itens} item(ns). ${selecionadas.size} selecionada(s).`;
+  body.innerHTML = rows.length ? rows.map((row) => {
+    const duplicatas = Math.max(0, Number(row.arquivos_repetidos || 0) - 1);
+    const fluxo = [row.emitente_nome, row.destinatario_nome].filter(Boolean).join(" -> ") || "-";
+    const notaKey = String(row.nota_key || "");
+    const selecionada = selecionadas.has(notaKey);
+    return `
+      <tr class="${selecionada ? "is-selected" : ""}">
+        <td class="estoque-xml-selecao-col">
+          <input type="checkbox" class="estoque-xml-selecao" aria-label="Selecionar nota ${_escAttr(row.numero_nota || notaKey)}" ${selecionada ? "checked" : ""} onchange="selecionarImportacaoXmlEstoque('${_escJsString(notaKey)}', this.checked)">
+        </td>
+        <td>${_escHtml(_fmtDateBr(row.data_emissao) || row.data_emissao || "-")}</td>
+        <td>${_escHtml(row.numero_nota || row.chave_nfe || "-")}</td>
+        <td><span class="estoque-movimento-badge is-${row.tipo_movimento === "saida" ? "saida" : "entrada"}">${row.tipo_movimento === "saida" ? "SAIDA" : "ENTRADA"}</span></td>
+        <td>${_escHtml(fluxo)}</td>
+        <td>${_escHtml(String(row.itens_pendentes || 0))}</td>
+        <td>${_escHtml(String(duplicatas))}</td>
+        <td><button type="button" onclick="abrirImportacaoXmlEstoque('${_escJsString(notaKey)}')">Abrir</button></td>
+      </tr>
+    `;
+  }).join("") : `<tr><td colspan="8">Nenhuma importacao XML pendente para este filtro.</td></tr>`;
+  _atualizarControlesLoteImportacoesXml(rows);
+}
+
+function _atualizarControlesLoteImportacoesXml(rowsVisiveis = null){
+  const tipo = String(document.getElementById("estoqueXmlPendentesTipo")?.value || "");
+  const rows = Array.isArray(rowsVisiveis)
+    ? rowsVisiveis
+    : (estoqueState.importacoesXml || []).filter((row) => !tipo || row.tipo_movimento === tipo);
+  const selecionadas = new Set(estoqueState.importacoesXmlSelecionadas || []);
+  const visiveisSelecionadas = rows.filter((row) => selecionadas.has(String(row.nota_key || ""))).length;
+  const selecionarTodas = document.getElementById("estoqueXmlSelecionarTodas");
+  if (selecionarTodas) {
+    selecionarTodas.checked = rows.length > 0 && visiveisSelecionadas === rows.length;
+    selecionarTodas.indeterminate = visiveisSelecionadas > 0 && visiveisSelecionadas < rows.length;
+    selecionarTodas.disabled = !rows.length || estoqueState.importacoesXmlLoteExecutando;
+  }
+  const botao = document.getElementById("estoqueXmlImportarLoteBtn");
+  if (botao) {
+    const progresso = estoqueState.importacoesXmlLoteProgresso || {};
+    botao.textContent = estoqueState.importacoesXmlLoteExecutando
+      ? `Importando lote ${Number(progresso.loteAtual || 1)}/${Number(progresso.totalLotes || 1)}`
+      : `Importar selecionadas (${selecionadas.size})`;
+    botao.disabled = !selecionadas.size || estoqueState.importacoesXmlLoteExecutando;
+  }
+}
+
+function _dividirImportacoesXmlEmLotes(chaves, tamanhoLote){
+  const tamanho = Math.max(1, Number(tamanhoLote || 500));
+  const lotes = [];
+  for (let inicio = 0; inicio < chaves.length; inicio += tamanho) {
+    lotes.push(chaves.slice(inicio, inicio + tamanho));
+  }
+  return lotes;
+}
+
+function _atualizarProgressoLoteImportacoesXml({
+  fase = "importando",
+  loteAtual = 1,
+  totalLotes = 1,
+  processadas = 0,
+  total = 0,
+  tamanhoLote = 0,
+  mensagem = "",
+} = {}){
+  const painel = document.getElementById("estoqueXmlLoteProgresso");
+  const texto = document.getElementById("estoqueXmlLoteProgressoTexto");
+  const fill = document.getElementById("estoqueXmlLoteProgressoFill");
+  const barra = painel?.querySelector('[role="progressbar"]');
+  const percentual = total > 0
+    ? Math.max(0, Math.min(100, Math.round((Number(processadas || 0) / total) * 100)))
+    : 0;
+  estoqueState.importacoesXmlLoteProgresso = {
+    fase,
+    loteAtual,
+    totalLotes,
+    processadas,
+    total,
+    tamanhoLote,
+    percentual,
+  };
+  if (painel) painel.classList.remove("hidden");
+  if (texto) {
+    texto.textContent = mensagem || (
+      `${fase === "preparando" ? "Preparando" : "Importando"} `
+      + `${processadas} / ${total} notas - lote ${loteAtual} de ${totalLotes}`
+      + `${tamanhoLote ? ` (${tamanhoLote} notas neste lote)` : ""}`
+    );
+  }
+  if (fill) fill.style.width = `${percentual}%`;
+  if (barra) barra.setAttribute("aria-valuenow", String(percentual));
+  _atualizarControlesLoteImportacoesXml();
+}
+
+function selecionarImportacaoXmlEstoque(notaKey, selecionada){
+  const chaves = new Set(estoqueState.importacoesXmlSelecionadas || []);
+  if (selecionada) chaves.add(String(notaKey || ""));
+  else chaves.delete(String(notaKey || ""));
+  chaves.delete("");
+  estoqueState.importacoesXmlSelecionadas = Array.from(chaves);
+  renderImportacoesXmlEstoque();
+}
+
+function selecionarTodasImportacoesXmlEstoque(selecionar){
+  const tipo = String(document.getElementById("estoqueXmlPendentesTipo")?.value || "");
+  const rows = (estoqueState.importacoesXml || []).filter((row) => !tipo || row.tipo_movimento === tipo);
+  const chaves = new Set(estoqueState.importacoesXmlSelecionadas || []);
+  rows.forEach((row) => {
+    const chave = String(row.nota_key || "");
+    if (!chave) return;
+    if (selecionar) chaves.add(chave);
+    else chaves.delete(chave);
+  });
+  estoqueState.importacoesXmlSelecionadas = Array.from(chaves);
+  renderImportacoesXmlEstoque();
+}
+
+async function carregarImportacoesXmlEstoque(){
+  const body = document.getElementById("estoqueXmlPendentesBody");
+  if (body) body.innerHTML = `<tr><td colspan="8">Carregando importacoes XML...</td></tr>`;
+  const resp = await apiFetch("/api/estoque/importacoes-xml?status=pendente");
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    if (body) body.innerHTML = `<tr><td colspan="8">${_escHtml(data?.erro || "Falha ao carregar importacoes XML.")}</td></tr>`;
+    return;
+  }
+  estoqueState.importacoesXml = Array.isArray(data?.rows) ? data.rows : [];
+  estoqueState.importacoesXmlMeta = data?.meta || {};
+  renderImportacoesXmlEstoque();
+}
+
+async function importarSelecionadasXmlEstoque(){
+  if (estoqueState.importacoesXmlLoteExecutando) return;
+  const chaves = Array.from(new Set(estoqueState.importacoesXmlSelecionadas || [])).filter(Boolean);
+  if (!chaves.length) {
+    alert("Selecione ao menos uma NF-e para importar.");
+    return;
+  }
+  if (estoqueState.importDraftDirty) {
+    if (!confirm("Existe uma nota aberta com alteracoes em revisao. Deseja manter o lote e descartar essa revisao?")) {
+      return;
+    }
+    estoqueState.importDraft = null;
+    estoqueState.importDraftDirty = false;
+    renderEstoqueImportPreview();
+  }
+
+  estoqueState.importacoesXmlLoteExecutando = true;
+  const tamanhoLote = Math.max(1, Number(estoqueState.importacoesXmlMeta?.lote_maximo || 500));
+  const lotesChaves = _dividirImportacoesXmlEmLotes(chaves, tamanhoLote);
+  const totalLotes = lotesChaves.length;
+  _atualizarControlesLoteImportacoesXml();
+  const resumoEl = document.getElementById("estoqueXmlPendentesResumo");
+  _atualizarProgressoLoteImportacoesXml({
+    fase: "preparando",
+    loteAtual: 1,
+    totalLotes,
+    processadas: 0,
+    total: chaves.length,
+    tamanhoLote: lotesChaves[0]?.length || 0,
+  });
+  if (resumoEl) {
+    resumoEl.textContent = `Preparando ${chaves.length} nota(s) em ${totalLotes} lote(s) de ate ${tamanhoLote}.`;
+  }
+  try {
+    try { await ensureProdutosEstoqueCache(); } catch {}
+    const lotesPreparados = [];
+    const errosPreparo = [];
+    let preparadas = 0;
+    for (let loteIndex = 0; loteIndex < lotesChaves.length; loteIndex += 1) {
+      const chavesLote = lotesChaves[loteIndex];
+      _atualizarProgressoLoteImportacoesXml({
+        fase: "preparando",
+        loteAtual: loteIndex + 1,
+        totalLotes,
+        processadas: preparadas,
+        total: chaves.length,
+        tamanhoLote: chavesLote.length,
+      });
+      const respPreparo = await apiFetch("/api/estoque/importacoes-xml/lote/preparar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chaves: chavesLote }),
+      });
+      const dataPreparo = await respPreparo.json().catch(() => ({}));
+      if (!respPreparo.ok) {
+        throw new Error(
+          dataPreparo?.erro
+          || `Falha ao preparar o lote ${loteIndex + 1} de ${totalLotes}.`
+        );
+      }
+      (Array.isArray(dataPreparo?.erros) ? dataPreparo.erros : []).forEach((item) => {
+        errosPreparo.push({ ...item, lote: loteIndex + 1 });
+      });
+      lotesPreparados.push(
+        (dataPreparo?.previews || []).map((preview) => {
+          const draft = _normalizarDraftImportacaoEstoque(preview);
+          draft.itens = draft.itens.map((item) => _enriquecerItemImportacaoEstoque({
+            ...item,
+            quantidade_unidades: 0,
+          }));
+          return draft;
+        })
+      );
+      preparadas += chavesLote.length;
+      _atualizarProgressoLoteImportacoesXml({
+        fase: "preparando",
+        loteAtual: loteIndex + 1,
+        totalLotes,
+        processadas: preparadas,
+        total: chaves.length,
+        tamanhoLote: chavesLote.length,
+      });
+    }
+    if (errosPreparo.length) {
+      const detalhes = errosPreparo.slice(0, 12).map(
+        (item) => `- Lote ${item.lote}: ${item.numero_nota || item.chave || "-"}: ${item.erro}`
+      ).join("\n");
+      const restante = errosPreparo.length > 12 ? `\n... e mais ${errosPreparo.length - 12} nota(s).` : "";
+      _atualizarProgressoLoteImportacoesXml({
+        ...(estoqueState.importacoesXmlLoteProgresso || {}),
+        fase: "pendente",
+        mensagem: (
+          `Importacao nao iniciada: ${errosPreparo.length} nota(s) precisam `
+          + "de revisao antes de processar os lotes."
+        ),
+      });
+      alert(`O lote nao foi iniciado porque existem notas que precisam ser revisadas:\n${detalhes}${restante}`);
+      return;
+    }
+
+    const drafts = lotesPreparados.flat();
+    const bloqueios = [];
+    let totalItens = 0;
+    const conversoesParaConfirmar = [];
+    drafts.forEach((draft) => {
+      totalItens += draft.itens.length;
+      const semFator = draft.itens.filter((item) => !(Number(item.fator_embalagem || 0) > 0));
+      draft.itens.filter((item) => item.confirmacao_pendente).forEach((item) => {
+        conversoesParaConfirmar.push({
+          nota: draft.numero_nota || draft.chave_acesso || "-",
+          item,
+        });
+      });
+      if (!draft.itens.length) bloqueios.push(`${draft.numero_nota || draft.chave_acesso}: sem itens pendentes`);
+      if (semFator.length) bloqueios.push(`${draft.numero_nota || draft.chave_acesso}: ${semFator.length} item(ns) sem fator de conversao`);
+      if (draft.tipo_movimento === "saida" && !draft.dispensa_frete && !(Number(draft.frete_id || 0) > 0)) {
+        bloqueios.push(`${draft.numero_nota || draft.chave_acesso}: saida sem frete/rota definido`);
+      }
+    });
+    if (bloqueios.length) {
+      _atualizarProgressoLoteImportacoesXml({
+        ...(estoqueState.importacoesXmlLoteProgresso || {}),
+        fase: "pendente",
+        mensagem: (
+          `Importacao nao iniciada: ${bloqueios.length} nota(s) precisam `
+          + "de revisao de produto, conversao ou frete."
+        ),
+      });
+      alert(`O lote nao foi iniciado. Abra e revise estas notas:\n- ${bloqueios.slice(0, 12).join("\n- ")}`);
+      return;
+    }
+    if (!drafts.length) {
+      _atualizarProgressoLoteImportacoesXml({
+        ...(estoqueState.importacoesXmlLoteProgresso || {}),
+        fase: "pendente",
+        mensagem: "Nenhuma nota selecionada esta pronta para importacao.",
+      });
+      alert("Nenhuma nota selecionada esta pronta para importacao.");
+      return;
+    }
+
+    const entradas = drafts.filter((draft) => draft.tipo_movimento === "entrada").length;
+    const saidas = drafts.length - entradas;
+    const detalhesConversao = conversoesParaConfirmar.slice(0, 8).map(({ nota, item }) => (
+      `- NF-e ${nota}: ${_estoqueConfirmacaoLancamentoTexto(item).replace(/\n/g, " | ")}`
+    )).join("\n");
+    const restanteConversao = conversoesParaConfirmar.length > 8
+      ? `\n... e mais ${conversoesParaConfirmar.length - 8} item(ns).`
+      : "";
+    const avisoConversao = conversoesParaConfirmar.length
+      ? `\n${conversoesParaConfirmar.length} item(ns) usam conversao inferida ou cadastro ainda nao explicitado:\n${detalhesConversao}${restanteConversao}`
+      : "";
+    if (!confirm(
+      `Confirmar importacao em massa de ${drafts.length} NF-e(s)?\n`
+      + `${entradas} entrada(s), ${saidas} saida(s), ${totalItens} item(ns).`
+      + `${avisoConversao}\nCada nota sera protegida contra duplicidade antes de contabilizar o saldo.`
+    )) {
+      _atualizarProgressoLoteImportacoesXml({
+        fase: "cancelado",
+        loteAtual: 1,
+        totalLotes,
+        processadas: 0,
+        total: drafts.length,
+        tamanhoLote: lotesPreparados[0]?.length || 0,
+        mensagem: `Importacao cancelada antes de processar ${drafts.length} nota(s).`,
+      });
+      return;
+    }
+
+    const sucessos = [];
+    const falhas = [];
+    let processadas = 0;
+    for (let loteIndex = 0; loteIndex < lotesPreparados.length; loteIndex += 1) {
+      const draftsLote = lotesPreparados[loteIndex];
+      for (const draft of draftsLote) {
+        const numeroNota = draft.numero_nota || draft.chave_acesso || "-";
+        _atualizarProgressoLoteImportacoesXml({
+          fase: "importando",
+          loteAtual: loteIndex + 1,
+          totalLotes,
+          processadas,
+          total: drafts.length,
+          tamanhoLote: draftsLote.length,
+          mensagem: (
+            `Importando ${processadas + 1} / ${drafts.length} notas - `
+            + `lote ${loteIndex + 1} de ${totalLotes} `
+            + `(${draftsLote.length} notas neste lote) - NF-e ${numeroNota}`
+          ),
+        });
+        if (resumoEl) {
+          resumoEl.textContent = (
+            `Importando ${processadas + 1} de ${drafts.length}: `
+            + `lote ${loteIndex + 1} de ${totalLotes}, NF-e ${numeroNota}`
+          );
+        }
+        const itens = draft.itens.map((item) => {
+          const normalizado = _enriquecerItemImportacaoEstoque(item);
+          return {
+            xml_item_id: Number(normalizado.xml_item_id || 0),
+            produto_id: Number(normalizado.produto_id || 0),
+            codigo_barras: normalizado.codigo_barras || "",
+            quantidade: Number(normalizado.quantidade_unidades || normalizado.quantidade || 0),
+            valor_unitario: Number(normalizado.valor_unitario || 0),
+            embalagem_tipo: normalizado.embalagem_tipo || normalizado.unidade || "",
+            fator_embalagem: Number(normalizado.fator_embalagem || 0),
+            grupo_estoque: normalizado.grupo_estoque || "",
+            produto_base_nome: normalizado.produto_base_nome || "",
+          };
+        });
+        try {
+          const resp = await apiFetch("/api/estoque/importacoes-xml/confirmar", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              chave: draft.importar_xml_chave || draft.chave_acesso,
+              frete_id: Number(draft.frete_id || 0) || null,
+              itens,
+            }),
+          });
+          const data = await resp.json().catch(() => ({}));
+          if (!resp.ok) throw new Error(data?.erro || "Falha ao confirmar a nota.");
+          sucessos.push({
+            chave: draft.importar_xml_chave,
+            numero_nota: draft.numero_nota,
+            movimentos: Number(data?.movimentos_criados || 0),
+          });
+        } catch (err) {
+          falhas.push({
+            chave: draft.importar_xml_chave,
+            numero_nota: draft.numero_nota,
+            erro: err?.message || "Falha desconhecida.",
+          });
+        }
+        processadas += 1;
+        _atualizarProgressoLoteImportacoesXml({
+          fase: "importando",
+          loteAtual: loteIndex + 1,
+          totalLotes,
+          processadas,
+          total: drafts.length,
+          tamanhoLote: draftsLote.length,
+        });
+      }
+    }
+
+    const chavesComSucesso = new Set(sucessos.map((item) => String(item.chave || "")));
+    estoqueState.importacoesXmlSelecionadas = chaves.filter((chave) => !chavesComSucesso.has(String(chave)));
+    estoqueState.importDraft = null;
+    estoqueState.importDraftDirty = false;
+    renderEstoqueImportPreview();
+    await carregarEstoque();
+    await carregarImportacoesXmlEstoque();
+    const movimentos = sucessos.reduce((total, item) => total + item.movimentos, 0);
+    const mensagemFalhas = falhas.length
+      ? `\n${falhas.length} nota(s) ficaram pendentes:\n${falhas.slice(0, 10).map((item) => `- ${item.numero_nota || item.chave}: ${item.erro}`).join("\n")}`
+      : "";
+    _atualizarProgressoLoteImportacoesXml({
+      fase: "concluido",
+      loteAtual: totalLotes,
+      totalLotes,
+      processadas: drafts.length,
+      total: drafts.length,
+      mensagem: (
+        `Importacao concluida: ${sucessos.length} de ${drafts.length} nota(s) importada(s) `
+        + `em ${totalLotes} lote(s). ${falhas.length} pendente(s).`
+      ),
+    });
+    alert(`${sucessos.length} nota(s) importada(s), com ${movimentos} movimento(s) contabilizado(s).${mensagemFalhas}`);
+  } catch (err) {
+    _atualizarProgressoLoteImportacoesXml({
+      ...(estoqueState.importacoesXmlLoteProgresso || {}),
+      fase: "erro",
+      mensagem: `Importacao interrompida: ${err?.message || "falha desconhecida."}`,
+    });
+    alert(err?.message || "Falha ao executar a importacao em massa.");
+  } finally {
+    estoqueState.importacoesXmlLoteExecutando = false;
+    _atualizarControlesLoteImportacoesXml();
+    renderImportacoesXmlEstoque();
+  }
+}
+
+async function abrirImportacaoXmlEstoque(notaKey){
+  if (!notaKey) return;
+  if (estoqueState.importDraftDirty && !confirm("Existe outra importacao com alteracoes em revisao. Deseja descarta-la e abrir esta nota?")) {
+    return;
+  }
+  const resumo = document.getElementById("estoqueXmlPendentesResumo");
+  if (resumo) resumo.textContent = "Abrindo importacao XML para revisao...";
+  try { await ensureProdutosEstoqueCache(); } catch {}
+  const resp = await apiFetch(`/api/estoque/importacoes-xml/detalhe?chave=${encodeURIComponent(notaKey)}`);
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    alert(data?.erro || "Falha ao abrir a importacao XML.");
+    await carregarImportacoesXmlEstoque();
+    return;
+  }
+  estoqueState.importDraft = _normalizarDraftImportacaoEstoque(data.preview || {});
+  if (estoqueState.importDraft.tipo_movimento === "saida" && !estoqueState.importDraft.dispensa_frete) {
+    try {
+      await carregarFretesImportacaoXml(true);
+    } catch (err) {
+      alert(err?.message || "Falha ao carregar os fretes ativos.");
+    }
+  }
+  estoqueState.importDraftDirty = false;
+  setEstoqueView("lancar");
+  renderEstoqueImportPreview();
+  document.getElementById("estoqueImportPreviewCard")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  renderImportacoesXmlEstoque();
 }
 
 function cancelarImportacaoNfeEstoque(){
@@ -7355,10 +13756,82 @@ async function confirmarImportacaoNfeEstoque(){
     alert("Nenhuma NF-e em revisao.");
     return;
   }
+  const itensInvalidos = (draft.itens || []).filter((item) => !(Number(item.fator_embalagem || 0) > 0));
+  if (itensInvalidos.length) {
+    alert(`Existem ${itensInvalidos.length} item(ns) sem fator de conversao valido. Revise o cadastro ou a embalagem antes de lancar a NF-e.`);
+    return;
+  }
+  const itensPendentes = (draft.itens || []).filter((item) => item.confirmacao_pendente);
+  if (itensPendentes.length) {
+    const resumo = itensPendentes.slice(0, 4).map((item) => `- ${_estoqueConfirmacaoLancamentoTexto(item).replace(/\n/g, " | ")}`).join("\n");
+    const restante = itensPendentes.length > 4 ? `\n... e mais ${itensPendentes.length - 4} item(ns).` : "";
+    if (!confirm(`Ha itens com conversao inferida ou cadastro ainda nao explicitado.\nConfirme antes de lancar:\n${resumo}${restante}`)) {
+      return;
+    }
+  }
 
   const status = document.getElementById("estoqueImportPreviewStatus");
+  if (draft.source_type === "importar_xml") {
+    const tipoLabel = draft.tipo_movimento === "saida" ? "SAIDA" : "ENTRADA";
+    const freteSelecionado = draft.tipo_movimento === "saida" && !draft.dispensa_frete
+      ? _freteImportacaoXmlPorId(draft.frete_id)
+      : null;
+    if (draft.tipo_movimento === "saida" && !draft.dispensa_frete && !freteSelecionado) {
+      alert("Selecione o frete/rota da nota de saida antes de confirmar.");
+      document.getElementById("estoqueXmlFreteSelect")?.focus();
+      return;
+    }
+    const vinculoTexto = freteSelecionado
+      ? `\nFrete/rota: ${_rotuloFreteImportacaoXml(freteSelecionado)}`
+      : (draft.dispensa_frete ? "\nLogistica: retirada/transporte pelo cliente, sem frete da empresa." : "");
+    if (!confirm(`Confirmar ${tipoLabel} da nota ${draft.numero_nota || draft.chave_acesso || "-"} com ${draft.itens.length} item(ns)?${vinculoTexto}\nO saldo e o vinculo serao registrados somente agora.`)) {
+      return;
+    }
+    if (status) status.textContent = `Confirmando ${tipoLabel.toLowerCase()} reconhecida pelo Importar XML...`;
+    const respXml = await apiFetch("/api/estoque/importacoes-xml/confirmar", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chave: draft.importar_xml_chave || draft.chave_acesso,
+        frete_id: Number(draft.frete_id || 0) || null,
+        itens: (draft.itens || []).map((item) => ({
+          xml_item_id: Number(item.xml_item_id || 0),
+          produto_id: Number(item.produto_id || 0),
+          codigo_barras: item.codigo_barras || "",
+          quantidade: Number(item.quantidade || 0),
+          valor_unitario: Number(item.valor_unitario || 0),
+          embalagem_tipo: item.embalagem_tipo || item.unidade || "",
+          fator_embalagem: Number(item.fator_embalagem || 0),
+          grupo_estoque: item.grupo_estoque || "",
+          produto_base_nome: item.produto_base_nome || "",
+        })),
+      }),
+    });
+    const dataXml = await respXml.json().catch(() => ({}));
+    if (!respXml.ok) {
+      if (status) status.textContent = dataXml?.erro || "Falha ao confirmar a importacao XML.";
+      alert(dataXml?.erro || "Falha ao confirmar a importacao XML.");
+      return;
+    }
+
+    estoqueState.importDraft = null;
+    estoqueState.importDraftDirty = false;
+    renderEstoqueImportPreview();
+    const statusLancar = document.getElementById("estoqueNfeImportStatus");
+    if (statusLancar) {
+      const freteInfo = dataXml?.frete
+        ? ` Vinculada ao frete ${dataXml.frete.nome || `#${dataXml.frete.id}`}${dataXml.frete.rota ? `, rota ${dataXml.frete.rota}` : ""}.`
+        : (dataXml?.retirada_cliente ? " Transporte registrado como realizado pelo cliente, sem frete da empresa." : "");
+      statusLancar.textContent = `${tipoLabel} confirmada: ${dataXml.movimentos_criados || 0} movimento(s) contabilizado(s), sem duplicar os dados do XML.${freteInfo}`;
+    }
+    await carregarEstoque();
+    setEstoqueView("posicao");
+    if (window.__dashView === "estoque") await renderDashboardEstoque();
+    return;
+  }
+
   if (status) status.textContent = "Confirmando importacao da NF-e...";
-  const resp = await apiFetch("/api/estoque/nfe/import", {
+  const respImport = await apiFetch("/api/estoque/nfe/import", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -7366,10 +13839,28 @@ async function confirmarImportacaoNfeEstoque(){
       chave_acesso_esperada: _digitsOnly(document.getElementById("estoqueChaveAcesso")?.value || ""),
     }),
   });
-  const data = await resp.json().catch(() => ({}));
-  if (!resp.ok) {
-    if (status) status.textContent = data?.erro || "Falha ao confirmar a importacao da NF-e.";
-    alert(data?.erro || "Falha ao confirmar a importacao da NF-e.");
+  const dataImport = await respImport.json().catch(() => ({}));
+  if (!respImport.ok) {
+    if (status) status.textContent = dataImport?.erro || "Falha ao confirmar a importacao da NF-e.";
+    alert(dataImport?.erro || "Falha ao confirmar a importacao da NF-e.");
+    return;
+  }
+
+  const conferenciaId = Number(dataImport?.conferencia?.id || 0);
+  if (status) status.textContent = "Lancando itens da NF-e no estoque...";
+  const respConfirm = conferenciaId > 0 ? await apiFetch(`/api/estoque/conferencias/${conferenciaId}/confirmar`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      origem_setor: "Fabrica",
+      destino_setor: "Almoxarifado",
+      itens: [],
+    }),
+  }) : null;
+  const dataConfirm = respConfirm ? await respConfirm.json().catch(() => ({})) : {};
+  if (respConfirm && !respConfirm.ok) {
+    if (status) status.textContent = dataConfirm?.erro || "A NF-e foi importada, mas a consolidacao automatica falhou.";
+    alert(dataConfirm?.erro || "A NF-e foi importada, mas a consolidacao automatica falhou.");
     return;
   }
 
@@ -7384,45 +13875,61 @@ async function confirmarImportacaoNfeEstoque(){
   if (input) input.value = "";
   if (campoChave) campoChave.value = "";
   if (statusLancar) {
-    const conferenciaId = data?.conferencia?.id ? `Conferencia #${data.conferencia.id}` : "conferencia criada";
-    statusLancar.textContent = `NF-e importada com sucesso. ${data?.produtos_criados || 0} item(ns) cadastrados automaticamente. ${conferenciaId}.`;
+    statusLancar.textContent = `NF-e lancada no estoque com sucesso. ${dataImport?.produtos_criados || 0} item(ns) cadastrados automaticamente.`;
   }
 
-  setEstoqueView("conferir");
-  await carregarConferenciasEstoque(data?.conferencia?.id || null);
-  if (data?.conferencia?.id) {
-    await selecionarConferenciaEstoque(data.conferencia.id);
-  }
+  await carregarEstoque();
+  setEstoqueView("posicao");
+  if (window.__dashView === "estoque") await renderDashboardEstoque();
 }
 
 function setEstoqueView(view){
-  const nextView = view === "conferir" ? "conferir" : (view === "cadastrar" ? "cadastrar" : "lancar");
+  const nextView = view === "posicao"
+    ? "posicao"
+    : (view === "cadastrar" ? "cadastrar" : (view === "rastreio" ? "rastreio" : "lancar"));
   estoqueState.view = nextView;
   window.__estoqueView = nextView;
 
   const viewLancar = document.getElementById("estoqueViewLancar");
   const viewConferir = document.getElementById("estoqueViewConferir");
   const viewCadastrar = document.getElementById("estoqueViewCadastrar");
+  const viewRastreio = document.getElementById("estoqueViewRastreio");
   const btnLancar = document.getElementById("estoqueViewBtnLancar");
   const btnConferir = document.getElementById("estoqueViewBtnConferir");
   const btnCadastrar = document.getElementById("estoqueViewBtnCadastrar");
+  const btnRastreio = document.getElementById("estoqueViewBtnRastreio");
 
   if (viewLancar) viewLancar.classList.toggle("hidden", nextView !== "lancar");
-  if (viewConferir) viewConferir.classList.toggle("hidden", nextView !== "conferir");
+  if (viewConferir) viewConferir.classList.toggle("hidden", nextView !== "posicao");
   if (viewCadastrar) viewCadastrar.classList.toggle("hidden", nextView !== "cadastrar");
+  if (viewRastreio) viewRastreio.classList.toggle("hidden", nextView !== "rastreio");
   if (btnLancar) btnLancar.classList.toggle("active", nextView === "lancar");
-  if (btnConferir) btnConferir.classList.toggle("active", nextView === "conferir");
+  if (btnConferir) btnConferir.classList.toggle("active", nextView === "posicao");
   if (btnCadastrar) btnCadastrar.classList.toggle("active", nextView === "cadastrar");
+  if (btnRastreio) btnRastreio.classList.toggle("active", nextView === "rastreio");
 
   renderEstoqueImportPreview();
   atualizarStatusCodbarSistema();
-  if (nextView === "conferir") {
-    carregarConferenciasEstoque(estoqueState.conferenciaAtual?.conferencia?.id || null).catch((e) => {
-      console.warn("conferencias estoque erro:", e);
+  if (nextView === "cadastrar") {
+    carregarSaldoEstoque().catch((e) => {
+      console.warn("saldo estoque erro:", e);
     });
-  } else if (nextView === "cadastrar") {
     carregarProdutosEstoqueCadastro().catch((e) => {
       console.warn("cadastro estoque erro:", e);
+    });
+  } else if (nextView === "posicao") {
+    carregarSaldoEstoque().catch((e) => {
+      console.warn("posicao estoque erro:", e);
+    });
+    carregarMovimentosEstoque().catch((e) => {
+      console.warn("movimentos estoque erro:", e);
+    });
+  } else if (nextView === "rastreio") {
+    carregarSaldoEstoque().catch((e) => {
+      console.warn("rastreio saldo erro:", e);
+    });
+    carregarMovimentosEstoque().catch((e) => {
+      console.warn("rastreio movimentos erro:", e);
     });
   }
 }
@@ -7433,15 +13940,23 @@ function limparProdutoEstoqueCadastro(){
     "estoqueCadastroCodigoBarras",
     "estoqueCadastroCodigoNfe",
     "estoqueCadastroNomeProduto",
+    "estoqueCadastroGrupo",
+    "estoqueCadastroBaseNome",
     "estoqueCadastroEmbalagem",
     "estoqueCadastroFator",
+    "estoqueCadastroAjusteQuantidade",
+    "estoqueCadastroAjusteMotivo",
   ];
   ids.forEach((id) => {
     const el = document.getElementById(id);
     if (el) el.value = "";
   });
+  const ajusteBox = document.getElementById("estoqueCadastroAjusteBox");
+  const ajusteBtn = document.getElementById("estoqueCadastroAjusteBtn");
+  if (ajusteBox) ajusteBox.classList.add("hidden");
+  if (ajusteBtn) ajusteBtn.classList.add("hidden");
   const status = document.getElementById("estoqueCadastroStatus");
-  if (status) status.textContent = "Cadastre o produto e o fator da embalagem para automatizar a conversao da NF-e.";
+  if (status) status.textContent = "Cadastre o produto e o fator da embalagem para automatizar a conversao da NF-e. Ao editar, voce pode lancar um ajuste para corrigir a quantidade em estoque.";
 }
 
 async function carregarProdutosEstoqueCadastro(){
@@ -7450,13 +13965,16 @@ async function carregarProdutosEstoqueCadastro(){
   try {
     await ensureProdutosEstoqueCache();
   } catch (err) {
-    body.innerHTML = `<tr><td colspan="5">Falha ao carregar cadastros.</td></tr>`;
+    body.innerHTML = `<tr><td colspan="8">Falha ao carregar cadastros.</td></tr>`;
     return;
   }
-  body.innerHTML = estoqueState.cadastroProdutos.length ? estoqueState.cadastroProdutos.map((item) => `
+  body.innerHTML = estoqueState.cadastroProdutos.length ? _estoqueLinhasAgrupadas(estoqueState.cadastroProdutos, (item) => `
     <tr class="estoque-cadastro-row${Number(estoqueState.cadastroProdutoEditId || 0) === Number(item.id || 0) ? " is-editing" : ""}">
-      <td>${_escHtml(item.nome_produto || "-")}</td>
+      <td>${_escHtml(_estoqueGrupoLabel(item.grupo_estoque))}</td>
+      <td>${_escHtml(item.nome_produto || "-")}${item.cadastro_explicitado ? "" : ' <span class="estoque-pack-hint">confirmar</span>'}</td>
+      <td>${_escHtml(item.produto_base_nome || "-")}</td>
       <td>${_escHtml(item.codigo_barras || item.codigo_produto_nfe || "-")}</td>
+      <td>${_escHtml(_estoqueFormatQtd(_saldoProdutoCadastroAtual(item)))}</td>
       <td>${_escHtml(item.embalagem_tipo_padrao || item.unidade || "UN")}</td>
       <td>${_escHtml(_estoqueFormatQtd(item.fator_embalagem_padrao || 0))}</td>
       <td>
@@ -7464,11 +13982,12 @@ async function carregarProdutosEstoqueCadastro(){
         <button type="button" onclick="excluirProdutoEstoqueCadastro(${Number(item.id || 0)})">Excluir</button>
       </td>
     </tr>
-  `).join("") : `<tr><td colspan="5">Nenhum produto cadastrado.</td></tr>`;
+  `, 8) : `<tr><td colspan="8">Nenhum produto cadastrado.</td></tr>`;
 }
 
 async function ensureProdutosEstoqueCache(force = false){
   if (!force && Array.isArray(estoqueState.cadastroProdutos) && estoqueState.cadastroProdutos.length) {
+    renderProdutosLancamentoEstoqueSelect();
     return estoqueState.cadastroProdutos;
   }
   const resp = await apiFetch("/api/estoque/produtos");
@@ -7476,11 +13995,193 @@ async function ensureProdutosEstoqueCache(force = false){
     throw new Error("Falha ao carregar produtos do estoque.");
   }
   const dados = await resp.json().catch(() => ([]));
-  estoqueState.cadastroProdutos = _ordenarListaNatural(
-    Array.isArray(dados) ? dados.map(_estoqueProdutoCadastroNormalizado) : [],
-    (item) => item?.nome_produto || item?.codigo_barras || item?.codigo_produto_nfe || ""
+  estoqueState.cadastroProdutos = _estoqueOrdenarPorGrupo(
+    Array.isArray(dados) ? dados.map(_estoqueProdutoCadastroNormalizado) : []
   );
+  renderProdutosLancamentoEstoqueSelect();
   return estoqueState.cadastroProdutos;
+}
+
+function _estoqueCodigoNormalizadoComparacao(valor = ""){
+  const texto = String(valor || "").trim().toUpperCase();
+  if (!texto) return "";
+  if (/^\d+$/.test(texto)) return texto.replace(/^0+/, "") || "0";
+  return texto.replace(/\s+/g, "");
+}
+
+function _saldoProdutoCadastroAtual(item = {}){
+  const codigoBarras = _digitsOnly(item.codigo_barras || "");
+  const codigoNfe = _estoqueCodigoNormalizadoComparacao(item.codigo_produto_nfe || "");
+  const baseKey = _estoqueProdutoBaseKey(item);
+  const nome = String(item.produto_base_nome || item.nome_produto || "").trim().toUpperCase();
+  const rows = Array.isArray(estoqueState.posicaoRows) ? estoqueState.posicaoRows : [];
+  const encontrado = rows.find((row) => {
+    const rowCodigoBarras = _digitsOnly(row.codigo_barras || "");
+    const rowCodigoNfe = _estoqueCodigoNormalizadoComparacao(row.codigo_produto_nfe || "");
+    const rowNome = String(row.produto_base_nome || row.nome_produto || "").trim().toUpperCase();
+    const rowBaseKey = _estoqueProdutoBaseKey(row);
+    if (baseKey && rowBaseKey === baseKey) return true;
+    return (codigoBarras && rowCodigoBarras === codigoBarras)
+      || (codigoNfe && rowCodigoNfe === codigoNfe)
+      || (nome && rowNome === nome);
+  });
+  return Number(encontrado?.quantidade_atual || 0) || 0;
+}
+
+function renderProdutosLancamentoEstoqueSelect(){
+  const select = document.getElementById("estoqueProdutoSelect");
+  if (!select) return;
+  const valorAtual = String(select.value || "");
+  const opcoes = ['<option value="">Selecione um produto cadastrado</option>'];
+  let grupoAtual = "";
+  _estoqueOrdenarPorGrupo(estoqueState.cadastroProdutos || [])
+    .filter(_estoqueProdutoLancamentoCombinaFiltros)
+    .forEach((item) => {
+    const grupo = _estoqueGrupoNormalizado(item.grupo_estoque) || "OUTROS";
+    if (grupo !== grupoAtual) {
+      if (grupoAtual) opcoes.push("</optgroup>");
+      grupoAtual = grupo;
+      opcoes.push(`<optgroup label="${_escAttr(_estoqueGrupoLabel(grupo))}">`);
+    }
+    const saldoAtual = _estoqueFormatQtd(_saldoProdutoCadastroAtual(item));
+    const embalagem = item.embalagem_tipo_padrao || item.unidade || "UN";
+    const rotulo = `${item.produto_base_nome || item.nome_produto || item.codigo_barras || item.codigo_produto_nfe || `Produto ${item.id || ""}`} | ${embalagem} x ${_estoqueFormatQtd(item.fator_embalagem_padrao || 1)} | Saldo ${saldoAtual}`;
+    opcoes.push(
+      `<option value="${_escAttr(String(item.id || ""))}" data-codbarras="${_escAttr(item.codigo_barras || "")}" data-codnfe="${_escAttr(item.codigo_produto_nfe || "")}" data-nome="${_escAttr(item.nome_produto || "")}" data-base="${_escAttr(item.produto_base_nome || "")}" data-grupo="${_escAttr(item.grupo_estoque || "")}" data-emb="${_escAttr(embalagem)}" data-fator="${_escAttr(String(item.fator_embalagem_padrao || ""))}" data-explicito="${item.cadastro_explicitado ? "1" : "0"}" ${String(item.id || "") === valorAtual ? "selected" : ""}>${_escHtml(rotulo)}</option>`
+    );
+  });
+  if (grupoAtual) opcoes.push("</optgroup>");
+  select.innerHTML = opcoes.join("");
+}
+
+function _estoqueSetSelectOptions(id, options = [], placeholder = "", multiple = false){
+  const el = document.getElementById(id);
+  if (!el) return;
+  if (String(el.tagName || "").toUpperCase() !== "SELECT") return;
+  const selecionados = new Set(_estoqueValoresSelecionados(id));
+  const html = [];
+  if (!multiple) {
+    html.push(`<option value="">${_escHtml(placeholder || "Todos")}</option>`);
+  }
+  options.forEach((opt) => {
+    const value = String(opt.value || "").trim();
+    if (!value) return;
+    html.push(`<option value="${_escAttr(value)}" ${selecionados.has(value) ? "selected" : ""}>${_escHtml(opt.label || value)}</option>`);
+  });
+  if (multiple && !options.length) {
+    html.push(`<option value="" disabled>Sem opcoes</option>`);
+  }
+  el.innerHTML = html.join("");
+  if (!multiple && selecionados.size && !options.some((opt) => selecionados.has(String(opt.value || "")))) {
+    el.value = "";
+  }
+}
+
+function renderFiltrosEstoque(){
+  const meta = estoqueState.posicaoMeta || {};
+  const fornecedoresMap = new Map();
+  const categorias = new Set(Array.isArray(meta.categorias_fornecedor) ? meta.categorias_fornecedor : []);
+  (Array.isArray(meta.fornecedores) ? meta.fornecedores : []).forEach((fornecedor) => {
+    const key = _estoqueFornecedorKey(fornecedor);
+    if (!key) return;
+    fornecedoresMap.set(key, fornecedor);
+    if (fornecedor.categoria) categorias.add(String(fornecedor.categoria).toLowerCase());
+  });
+  (Array.isArray(estoqueState.movimentos) ? estoqueState.movimentos : []).forEach((mov) => {
+    _estoqueFornecedoresItem(mov).forEach((fornecedor) => {
+      const key = _estoqueFornecedorKey(fornecedor);
+      if (!key) return;
+      fornecedoresMap.set(key, fornecedor);
+      if (fornecedor.categoria) categorias.add(String(fornecedor.categoria).toLowerCase());
+    });
+  });
+  const categoriasOptions = [...categorias].sort().map((cat) => ({
+    value: cat,
+    label: _estoqueCategoriaFornecedorLabel(cat),
+  }));
+  const fornecedoresOptions = [...fornecedoresMap.values()]
+    .sort((a, b) => `${_estoqueCategoriaFornecedorLabel(a.categoria)} ${a.nome || ""}`.localeCompare(`${_estoqueCategoriaFornecedorLabel(b.categoria)} ${b.nome || ""}`, "pt-BR"))
+    .map((fornecedor) => ({
+      value: _estoqueFornecedorKey(fornecedor),
+      label: `${fornecedor.nome || fornecedor.cnpj || "Fornecedor"} (${_estoqueCategoriaFornecedorLabel(fornecedor.categoria)})`,
+    }));
+  const produtosOptions = _estoqueOrdenarPorGrupo(estoqueState.posicaoRows || []).map((row) => ({
+    value: _estoqueProdutoBaseKey(row),
+    label: `${row.produto_base_nome || row.nome_produto || "Produto"} | ${_estoqueCodigoReferencia(row)}`,
+  }));
+
+  ["Lancar", "Posicao", "Movimentos", "Rastreio"].forEach((escopo) => {
+    _estoqueSetSelectOptions(`estoqueFiltroCategoria${escopo}`, categoriasOptions, "Todas as categorias de fornecedor");
+    _estoqueSetSelectOptions(`estoqueFiltroFornecedor${escopo}`, fornecedoresOptions, "", true);
+    _estoqueSetSelectOptions(`estoqueFiltroProduto${escopo}`, produtosOptions, "", true);
+  });
+}
+
+function aplicarFiltrosEstoque(){
+  renderProdutosLancamentoEstoqueSelect();
+  renderSaldoEstoqueFiltrado();
+  renderMovimentosEstoqueFiltrado();
+  renderRastreioLotesEstoque();
+}
+
+function limparFiltrosEstoque(){
+  [
+    "estoqueFiltroCategoriaLancar",
+    "estoqueFiltroCategoriaPosicao",
+    "estoqueFiltroCategoriaMovimentos",
+    "estoqueFiltroCategoriaRastreio",
+    "estoqueFiltroProdutoLancar",
+    "estoqueFiltroNotaRastreio",
+  ].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.value = "";
+  });
+  [
+    "estoqueFiltroFornecedorLancar",
+    "estoqueFiltroFornecedorPosicao",
+    "estoqueFiltroFornecedorMovimentos",
+    "estoqueFiltroFornecedorRastreio",
+    "estoqueFiltroProdutoPosicao",
+    "estoqueFiltroProdutoMovimentos",
+    "estoqueFiltroProdutoRastreio",
+  ].forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    Array.from(el.options || []).forEach((opt) => { opt.selected = false; });
+  });
+  aplicarFiltrosEstoque();
+}
+
+function selecionarProdutoLancamentoEstoque(){
+  const select = document.getElementById("estoqueProdutoSelect");
+  const selected = select?.selectedOptions?.[0];
+  if (!selected || !selected.value) {
+    const codigoNfe = document.getElementById("estoqueCodigoProdutoNfe");
+    if (codigoNfe) codigoNfe.value = "";
+    const quantidade = document.getElementById("estoqueQuantidade");
+    if (quantidade) {
+      quantidade.placeholder = "Quantidade";
+      quantidade.title = "";
+    }
+    return;
+  }
+  const codigoBarras = document.getElementById("estoqueCodigoBarras");
+  const codigoNfe = document.getElementById("estoqueCodigoProdutoNfe");
+  const nome = document.getElementById("estoqueNomeProduto");
+  const nota = document.getElementById("estoqueNumeroNota");
+  const quantidade = document.getElementById("estoqueQuantidade");
+  if (codigoBarras) codigoBarras.value = selected.dataset.codbarras || "";
+  if (codigoNfe) codigoNfe.value = selected.dataset.codnfe || "";
+  if (nome) nome.value = selected.dataset.base || selected.dataset.nome || "";
+  if (nota && !String(nota.value || "").trim()) nota.value = selected.dataset.codnfe || selected.dataset.codbarras || "";
+  if (quantidade) {
+    const emb = selected.dataset.emb || "UN";
+    const fator = Number(selected.dataset.fator || 0) || 1;
+    quantidade.placeholder = `Quantidade em ${emb}`;
+    quantidade.title = `Este lancamento converte ${emb} em ${_estoqueFormatQtd(fator)} unidade(s) no estoque.`;
+  }
+  sincronizarNumeroNotaPorCodigo();
+  document.getElementById("estoqueQuantidade")?.focus();
 }
 
 function _optionsProdutosEstoqueConferencia(selectedId, itemAtual = {}){
@@ -7497,21 +14198,30 @@ function _optionsProdutosEstoqueConferencia(selectedId, itemAtual = {}){
 }
 
 function _optionsProdutosEstoqueImport(itemAtual = {}){
-  const atualLabel = String(itemAtual.nome_produto || itemAtual.codigo_barras || itemAtual.codigo_produto_nfe || "").trim();
+  const atual = _buscarProdutoCadastroEstoque(itemAtual);
+  const atualLabel = String(atual?.nome_produto || itemAtual.nome_produto || itemAtual.codigo_barras || itemAtual.codigo_produto_nfe || "").trim();
   const opcoes = [];
-  if (atualLabel) {
+  if (atualLabel && !atual) {
     opcoes.push(`<option value="${_escAttr(atualLabel)}" selected>Atual: ${_escHtml(atualLabel)}</option>`);
   } else {
-    opcoes.push(`<option value="" selected>Selecione um produto</option>`);
+    opcoes.push(`<option value="" ${atual ? "" : "selected"}>Selecione um produto</option>`);
   }
-  (estoqueState.cadastroProdutos || []).forEach((prod) => {
-    const rotuloBase = String(prod.nome_produto || "").trim() || prod.codigo_barras || prod.codigo_produto_nfe || `Produto ${prod.id || ""}`;
-    const emb = prod.embalagem_tipo_padrao ? ` | ${prod.embalagem_tipo_padrao}${prod.fator_embalagem_padrao ? ` ${_estoqueFormatQtd(prod.fator_embalagem_padrao)}` : ""}` : "";
-    const selected = rotuloBase === atualLabel ? "selected" : "";
+  let grupoAtual = "";
+  _estoqueOrdenarPorGrupo(estoqueState.cadastroProdutos || []).forEach((prod) => {
+    const grupo = _estoqueGrupoNormalizado(prod.grupo_estoque) || "OUTROS";
+    if (grupo !== grupoAtual) {
+      if (grupoAtual) opcoes.push("</optgroup>");
+      grupoAtual = grupo;
+      opcoes.push(`<optgroup label="${_escAttr(_estoqueGrupoLabel(grupo))}">`);
+    }
+    const rotuloBase = String(prod.produto_base_nome || prod.nome_produto || "").trim() || prod.codigo_barras || prod.codigo_produto_nfe || `Produto ${prod.id || ""}`;
+    const emb = prod.embalagem_tipo_padrao ? ` | ${prod.embalagem_tipo_padrao} x ${_estoqueFormatQtd(prod.fator_embalagem_padrao || 1)}` : "";
+    const selected = atual && Number(atual.id || 0) === Number(prod.id || 0) ? "selected" : "";
     opcoes.push(
-      `<option value="${_escAttr(rotuloBase)}" data-produto-id="${_escAttr(String(prod.id || ""))}" data-codbarras="${_escAttr(prod.codigo_barras || "")}" data-codnfe="${_escAttr(prod.codigo_produto_nfe || "")}" data-emb="${_escAttr(prod.embalagem_tipo_padrao || "")}" data-fator="${_escAttr(String(prod.fator_embalagem_padrao || ""))}" ${selected}>${_escHtml(rotuloBase + emb)}</option>`
+      `<option value="${_escAttr(rotuloBase)}" data-produto-id="${_escAttr(String(prod.id || ""))}" data-codbarras="${_escAttr(prod.codigo_barras || "")}" data-codnfe="${_escAttr(prod.codigo_produto_nfe || "")}" data-nome="${_escAttr(prod.nome_produto || rotuloBase)}" data-base="${_escAttr(prod.produto_base_nome || "")}" data-grupo="${_escAttr(prod.grupo_estoque || "")}" data-emb="${_escAttr(prod.embalagem_tipo_padrao || "")}" data-fator="${_escAttr(String(prod.fator_embalagem_padrao || ""))}" data-explicito="${prod.cadastro_explicitado ? "1" : "0"}" ${selected}>${_escHtml(rotuloBase + emb)}</option>`
     );
   });
+  if (grupoAtual) opcoes.push("</optgroup>");
   return opcoes.join("");
 }
 
@@ -7525,10 +14235,11 @@ function sincronizarProdutoImportacaoEstoque(index){
   const codNfeEl = row.querySelector(".estoque-import-item-codnfe");
   const embEl = row.querySelector(".estoque-import-item-und");
   const fatorEl = row.querySelector(".estoque-import-item-fator");
-  if (codBarEl && selected.dataset.codbarras) codBarEl.value = selected.dataset.codbarras;
-  if (codNfeEl && selected.dataset.codnfe) codNfeEl.value = selected.dataset.codnfe;
-  if (embEl && selected.dataset.emb) embEl.value = selected.dataset.emb;
-  if (fatorEl && selected.dataset.fator) fatorEl.value = selected.dataset.fator;
+  const limpar = !String(selected.value || "").trim();
+  if (codBarEl) codBarEl.value = limpar ? "" : (selected.dataset.codbarras || codBarEl.value || "");
+  if (codNfeEl) codNfeEl.value = limpar ? "" : (selected.dataset.codnfe || codNfeEl.value || "");
+  if (embEl) embEl.value = limpar ? "" : (selected.dataset.emb || embEl.value || "");
+  if (fatorEl) fatorEl.value = limpar ? "" : (selected.dataset.fator || fatorEl.value || "");
   estoqueState.importDraftDirty = true;
   atualizarTotaisImportacaoEstoque();
 }
@@ -7541,15 +14252,25 @@ function editarProdutoEstoqueCadastro(id){
     estoqueCadastroCodigoBarras: item.codigo_barras || "",
     estoqueCadastroCodigoNfe: item.codigo_produto_nfe || "",
     estoqueCadastroNomeProduto: item.nome_produto || "",
+    estoqueCadastroGrupo: item.grupo_estoque || "",
+    estoqueCadastroBaseNome: item.produto_base_nome || "",
     estoqueCadastroEmbalagem: item.embalagem_tipo_padrao || item.unidade || "",
     estoqueCadastroFator: item.fator_embalagem_padrao || "",
+    estoqueCadastroAjusteQuantidade: "",
+    estoqueCadastroAjusteMotivo: "",
   };
   Object.entries(map).forEach(([idCampo, valor]) => {
     const el = document.getElementById(idCampo);
     if (el) el.value = valor;
   });
+  const ajusteBox = document.getElementById("estoqueCadastroAjusteBox");
+  const ajusteBtn = document.getElementById("estoqueCadastroAjusteBtn");
+  if (ajusteBox) ajusteBox.classList.remove("hidden");
+  if (ajusteBtn) ajusteBtn.classList.remove("hidden");
   const status = document.getElementById("estoqueCadastroStatus");
-  if (status) status.textContent = `Editando cadastro de embalagem: ${item.nome_produto || item.codigo_barras || item.codigo_produto_nfe || item.id}`;
+  if (status) {
+    status.textContent = `Editando cadastro de embalagem: ${item.nome_produto || item.codigo_barras || item.codigo_produto_nfe || item.id} | Saldo atual: ${_estoqueFormatQtd(_saldoProdutoCadastroAtual(item))}`;
+  }
 }
 
 async function salvarProdutoEstoqueCadastro(){
@@ -7557,6 +14278,8 @@ async function salvarProdutoEstoqueCadastro(){
     codigo_barras: _digitsOnly(document.getElementById("estoqueCadastroCodigoBarras")?.value || ""),
     codigo_produto_nfe: (document.getElementById("estoqueCadastroCodigoNfe")?.value || "").trim(),
     nome_produto: (document.getElementById("estoqueCadastroNomeProduto")?.value || "").trim(),
+    grupo_estoque: (document.getElementById("estoqueCadastroGrupo")?.value || "").trim(),
+    produto_base_nome: (document.getElementById("estoqueCadastroBaseNome")?.value || "").trim(),
     embalagem_tipo_padrao: (document.getElementById("estoqueCadastroEmbalagem")?.value || "").trim(),
     fator_embalagem_padrao: Number((document.getElementById("estoqueCadastroFator")?.value || "").trim() || 0),
   };
@@ -7587,7 +14310,47 @@ async function salvarProdutoEstoqueCadastro(){
   }
   limparProdutoEstoqueCadastro();
   if (status) status.textContent = "Cadastro de embalagem salvo com sucesso.";
-  await carregarProdutosEstoqueCadastro();
+  await carregarEstoque();
+  if (window.__dashView === "estoque") await renderDashboardEstoque();
+}
+
+async function aplicarAjusteProdutoEstoqueCadastro(){
+  const editId = Number(estoqueState.cadastroProdutoEditId || 0);
+  const quantidade_ajuste = Number((document.getElementById("estoqueCadastroAjusteQuantidade")?.value || "").trim() || 0);
+  const motivo_ajuste = (document.getElementById("estoqueCadastroAjusteMotivo")?.value || "").trim();
+  const status = document.getElementById("estoqueCadastroStatus");
+  if (!(editId > 0)) {
+    alert("Selecione um produto cadastrado para aplicar o ajuste.");
+    return;
+  }
+  if (!quantidade_ajuste) {
+    alert("Informe uma quantidade de ajuste diferente de zero.");
+    return;
+  }
+
+  const resp = await apiFetch(`/api/estoque/produtos/${editId}/ajuste`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ quantidade_ajuste, motivo_ajuste }),
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    if (status) status.textContent = data?.erro || "Falha ao aplicar ajuste de estoque.";
+    alert(data?.erro || "Falha ao aplicar ajuste de estoque.");
+    return;
+  }
+
+  const produtoLabel = data?.produto?.nome_produto || data?.produto?.codigo_barras || data?.produto?.codigo_produto_nfe || editId;
+  if (status) {
+    status.textContent = `Ajuste aplicado em ${produtoLabel}. Saldo: ${_estoqueFormatQtd(data?.saldo_antes)} -> ${_estoqueFormatQtd(data?.saldo_depois)}.`;
+  }
+  const qtdEl = document.getElementById("estoqueCadastroAjusteQuantidade");
+  const motivoEl = document.getElementById("estoqueCadastroAjusteMotivo");
+  if (qtdEl) qtdEl.value = "";
+  if (motivoEl) motivoEl.value = "";
+  await carregarEstoque();
+  if (window.__dashView === "estoque") await renderDashboardEstoque();
+  editarProdutoEstoqueCadastro(editId);
 }
 
 async function excluirProdutoEstoqueCadastro(id){
@@ -7606,7 +14369,8 @@ async function excluirProdutoEstoqueCadastro(id){
     limparProdutoEstoqueCadastro();
   }
   if (status) status.textContent = "Cadastro excluido com sucesso.";
-  await carregarProdutosEstoqueCadastro();
+  await carregarEstoque();
+  if (window.__dashView === "estoque") await renderDashboardEstoque();
 }
 
 function _pararCameraEstoque(){
@@ -7629,21 +14393,41 @@ function _pararCameraEstoque(){
   estoqueState.cameraTargetFieldId = "";
 }
 
+async function _executarAcaoPosLeituraCameraEstoque(valor = ""){
+  const action = estoqueState.cameraAfterScanAction;
+  estoqueState.cameraAfterScanAction = null;
+  if (!action || typeof action !== "object") return;
+  if (action.type === "buscar_dfe_abastecimento" && action.id) {
+    const chave = _digitsOnly(valor || document.getElementById(`abast_chave_${action.id}`)?.value || "");
+    if (chave.length === 44) {
+      await buscarNfeAbastecimento(action.id, { chave, origem: "camera" });
+    }
+  }
+}
+
 function _aplicarCodigoEscaneadoEstoque(codigo){
   const valor = String(codigo || "").trim();
-  if (!valor) return;
+  if (!valor) return { aplicado: false, mensagem: "Nenhum codigo foi identificado." };
   const digits = _digitsOnly(valor);
   const targetFieldId = estoqueState.cameraTargetFieldId || "";
   if (targetFieldId) {
     const campoAlvo = document.getElementById(targetFieldId);
     if (campoAlvo) {
+      const targetLower = String(targetFieldId || "").toLowerCase();
+      const esperaChaveNfe = targetLower.includes("chave") || targetLower.includes("acesso");
+      if (esperaChaveNfe && digits.length !== 44) {
+        return {
+          aplicado: false,
+          mensagem: "Codigo detectado, mas nao eh uma chave NF-e completa de 44 digitos. Tente Foto OCR.",
+        };
+      }
       campoAlvo.value = digits.length === 44 ? digits : valor;
       campoAlvo.dispatchEvent(new Event("input", { bubbles: true }));
       if (digits.length === 44) {
-        normalizarChaveNfeCampo(campoAlvo, true);
+        normalizarChaveNfeCampo(campoAlvo, !targetLower.startsWith("abast_"));
       }
       campoAlvo.focus();
-      return;
+      return { aplicado: true, valor: campoAlvo.value };
     }
   }
   const campoCodigo = document.getElementById("estoqueCodigoBarras");
@@ -7653,16 +14437,49 @@ function _aplicarCodigoEscaneadoEstoque(codigo){
     campoChave.value = digits;
     campoChave.dispatchEvent(new Event("input", { bubbles: true }));
     normalizarChaveNfeCampo(campoChave, true);
-    return;
+    return { aplicado: true, valor: digits };
   }
   if (campoCodigo) campoCodigo.value = valor;
   if (campoNota && !campoNota.value.trim()) campoNota.value = valor;
   sincronizarNumeroNotaPorCodigo();
   document.getElementById("estoqueNomeProduto")?.focus();
+  return { aplicado: true, valor };
+}
+
+function _resolverContextoFallbackCameraOcr(targetFieldId = ""){
+  const target = String(targetFieldId || "").trim();
+  const matchAbastecimento = target.match(/^abast_chave_(\d+)$/);
+  if (matchAbastecimento) {
+    return {
+      tipo: "abastecimento_barcode",
+      id: Number(matchAbastecimento[1] || 0),
+    };
+  }
+  if (!target || target === "estoqueChaveAcesso") {
+    return { tipo: "estoque" };
+  }
+  return null;
+}
+
+function _acionarFallbackCameraOcr(targetFieldId = ""){
+  const context = _resolverContextoFallbackCameraOcr(targetFieldId);
+  if (!context) return false;
+  const modal = document.getElementById("estoqueCameraModal");
+  _fecharPopupBloqueante(modal);
+  _pararCameraEstoque();
+  selecionarImagemNfeOcr(context);
+  return true;
+}
+
+function usarFotoCameraEstoque(){
+  const targetFieldId = String(estoqueState.cameraTargetFieldId || "").trim();
+  if (_acionarFallbackCameraOcr(targetFieldId)) return;
+  alert("Captura por foto indisponivel para este campo.");
 }
 
 async function abrirCameraEstoque(targetFieldId = ""){
   if (!navigator.mediaDevices?.getUserMedia) {
+    if (_acionarFallbackCameraOcr(targetFieldId)) return;
     alert("Camera/webcam indisponivel neste navegador.");
     return;
   }
@@ -7674,7 +14491,13 @@ async function abrirCameraEstoque(targetFieldId = ""){
 
   _pararCameraEstoque();
   estoqueState.cameraTargetFieldId = String(targetFieldId || "").trim();
-  modal.classList.remove("hidden");
+  _abrirPopupBloqueante(modal);
+  if (!window.BarcodeDetector) {
+    status.textContent = "Este navegador nao suporta leitura continua por webcam. Abrindo captura de foto.";
+    if (_acionarFallbackCameraOcr(targetFieldId)) return;
+    status.textContent = "Camera aberta, mas este navegador nao suporta leitura automatica por webcam.";
+    return;
+  }
   status.textContent = "Iniciando camera/webcam...";
 
   try {
@@ -7695,11 +14518,6 @@ async function abrirCameraEstoque(targetFieldId = ""){
     return;
   }
 
-  if (!window.BarcodeDetector) {
-    status.textContent = "Camera aberta, mas este navegador nao suporta leitura automatica por webcam.";
-    return;
-  }
-
   let detector;
   try {
     const supported = BarcodeDetector.getSupportedFormats ? await BarcodeDetector.getSupportedFormats() : [];
@@ -7708,11 +14526,12 @@ async function abrirCameraEstoque(targetFieldId = ""){
     detector = formats.length ? new BarcodeDetector({ formats }) : new BarcodeDetector();
   } catch (err) {
     console.warn("barcode detector erro:", err);
+    if (_acionarFallbackCameraOcr(targetFieldId)) return;
     status.textContent = "Camera aberta, mas a leitura automatica nao esta disponivel agora.";
     return;
   }
 
-  status.textContent = "Aponte a camera para o codigo de barras da nota.";
+  status.textContent = "Aponte a camera para o codigo de barras da nota ou use Foto.";
   estoqueState.cameraTimer = setInterval(async () => {
     if (estoqueState.scanningCamera || !detector || !video.srcObject) return;
     estoqueState.scanningCamera = true;
@@ -7720,9 +14539,14 @@ async function abrirCameraEstoque(targetFieldId = ""){
       const codes = await detector.detect(video);
       const code = (codes || []).find((item) => (item?.rawValue || "").trim());
       if (code?.rawValue) {
-        _aplicarCodigoEscaneadoEstoque(code.rawValue);
-        status.textContent = `Codigo lido: ${code.rawValue}`;
-        fecharCameraEstoque();
+        const leitura = _aplicarCodigoEscaneadoEstoque(code.rawValue);
+        if (leitura?.aplicado) {
+          status.textContent = `Codigo lido: ${leitura.valor || code.rawValue}`;
+          _executarAcaoPosLeituraCameraEstoque(leitura.valor || code.rawValue).catch(() => {});
+          fecharCameraEstoque();
+        } else if (leitura?.mensagem) {
+          status.textContent = leitura.mensagem;
+        }
       }
     } catch (err) {
       console.warn("scan camera estoque erro:", err);
@@ -7735,7 +14559,10 @@ async function abrirCameraEstoque(targetFieldId = ""){
 function fecharCameraEstoque(ev){
   if (ev && ev.target && ev.currentTarget && ev.target !== ev.currentTarget) return;
   const modal = document.getElementById("estoqueCameraModal");
-  if (modal) modal.classList.add("hidden");
+  if (String(estoqueState.cameraTargetFieldId || "").toLowerCase().startsWith("abast_chave_")) {
+    estoqueState.cameraAfterScanAction = null;
+  }
+  _fecharPopupBloqueante(modal);
   _pararCameraEstoque();
 }
 
@@ -7804,7 +14631,7 @@ function _aplicarPreviewItensOcrEstoque(preview){
   const statusOcr = document.getElementById("estoqueNfeOcrStatus");
   if (status) status.textContent = `Itens da nota lidos por OCR. ${draft.itens.length} item(ns) carregado(s) para revisao.`;
   if (statusOcr) statusOcr.textContent = `Itens reconhecidos por OCR: ${draft.itens.length}. Revise codigo, descricao, quantidade e valor antes de confirmar.`;
-  setEstoqueView("conferir");
+  setEstoqueView("lancar");
   renderEstoqueImportPreview();
 }
 
@@ -7854,7 +14681,7 @@ function processarFotoManualItensEstoqueInput(ev){
   const statusFoto = document.getElementById("estoqueNfeOcrStatus");
   if (status) status.textContent = "Foto dos itens carregada. Complete a grade manualmente e confirme a importacao.";
   if (statusFoto) statusFoto.textContent = "Foto pronta para apoio visual. Digite codigo, descricao, quantidade e valor na grade abaixo.";
-  setEstoqueView("conferir");
+  setEstoqueView("lancar");
   renderEstoqueImportPreview();
   document.querySelector("#estoqueImportPreviewItemsBody .estoque-import-item-codnfe")?.focus();
   if (input) input.value = "";
@@ -7874,28 +14701,102 @@ function limparFotoManualItensEstoque(){
   renderEstoqueImportPreview();
 }
 
-function _aplicarResultadoOcrAbastecimento(id, ocr){
+function _aplicarResumoNfeAbastecimento(id, nfe){
+  const dados = nfe && typeof nfe === "object" ? nfe : {};
   const campoChave = document.getElementById(`abast_chave_${id}`);
   const campoNota = document.getElementById(`abast_nota_${id}`);
   const campoEmitente = document.getElementById(`abast_emitente_${id}`);
   const campoValor = document.getElementById(`abast_valor_${id}`);
+  const campoQtd = document.getElementById(`abast_qtd_${id}`);
+  const campoCombustivel = document.getElementById(`abast_combustivel_${id}`);
 
-  if (campoChave && ocr?.chave_acesso) {
-    campoChave.value = ocr.chave_acesso;
+  const chave = _digitsOnly(dados.chave_acesso_nfe || dados.chave_acesso || "");
+  if (campoChave && chave) {
+    campoChave.value = chave;
     campoChave.dispatchEvent(new Event("input", { bubbles: true }));
-    normalizarChaveNfeCampo(campoChave, true);
+    normalizarChaveNfeCampo(campoChave, false);
   }
-  if (campoNota && ocr?.numero_nota) campoNota.value = ocr.numero_nota;
-  if (campoEmitente && ocr?.emitente_nome) campoEmitente.value = ocr.emitente_nome;
-  if (campoValor && ocr?.valor_total != null && ocr?.valor_total !== "") {
-    campoValor.value = String(ocr.valor_total);
+  if (campoNota && dados.numero_nota) campoNota.value = String(dados.numero_nota);
+  if (campoEmitente && dados.emitente_nome) campoEmitente.value = String(dados.emitente_nome);
+  if (campoValor && dados.valor != null && dados.valor !== "") campoValor.value = String(dados.valor);
+  if (campoQtd && dados.quantidade_litros != null && dados.quantidade_litros !== "") campoQtd.value = String(dados.quantidade_litros);
+  if (campoCombustivel && dados.combustivel_tipo) campoCombustivel.value = _normalizarCombustivelTipo(dados.combustivel_tipo);
+  _capturarDraftAbastecimentoDom(id);
+}
+
+function _aplicarResultadoOcrAbastecimento(id, ocr){
+  const dados = ocr && typeof ocr === "object" ? ocr : {};
+  _aplicarResumoNfeAbastecimento(id, {
+    ...dados,
+    chave_acesso_nfe: dados.chave_acesso_nfe || dados.chave_acesso || "",
+    valor: dados.valor,
+  });
+  const resumo = _resumoNfeAbastecimentoFeedback(dados).replace(/^DF-e localizou\s*/i, "OCR localizou ");
+  _setAbastecimentoFeedback(
+    id,
+    resumo || "OCR leu a nota. Revise os campos antes de concluir o abastecimento.",
+    dados.quantidade_litros != null && dados.quantidade_litros !== "" ? "success" : "warning"
+  );
+  alert(`Foto lida com OCR. ${resumo || _formatarResumoOcrNfe(dados)}`);
+}
+
+function _aplicarResultadoBarcodeAbastecimento(id, ocr){
+  estoqueState.cameraAfterScanAction = null;
+  const dados = ocr && typeof ocr === "object" ? ocr : {};
+  _aplicarResumoNfeAbastecimento(id, dados);
+  const chave = _digitsOnly(dados.chave_acesso_nfe || dados.chave_acesso || "");
+  const partes = [];
+  if (chave) partes.push(`chave ${chave}`);
+  if (dados.numero_nota) partes.push(`nota ${dados.numero_nota}`);
+  if (dados.emitente_nome) partes.push(`emitente ${dados.emitente_nome}`);
+  const completo = dados.quantidade_litros != null && dados.quantidade_litros !== "" && dados.valor != null && dados.valor !== "";
+  if (completo) {
+    partes.push(`qtd ${_fmtNumber(dados.quantidade_litros, 3)}`);
+    partes.push(`valor R$ ${_fmtMoney(dados.valor)}`);
+  }
+  const resumo = partes.length
+    ? `Chave/QR localizou ${partes.join(" | ")}.`
+    : "Chave/QR lido. Revise os campos antes de concluir o abastecimento.";
+  _setAbastecimentoFeedback(
+    id,
+    completo ? resumo : `${resumo} Se litros e valor nao vierem, use Foto OCR.`,
+    completo ? "success" : "info"
+  );
+  alert(completo ? resumo : `${resumo} Se a NF-e vier parcial, use Foto OCR para completar litros e valor.`);
+}
+
+function _statusElementoOcr(context){
+  if (context.tipo === "manutencao") return document.getElementById("manutOcrStatus");
+  if (context.tipo === "estoque" || context.tipo === "estoque_itens" || context.tipo === "estoque_azure") {
+    return document.getElementById("estoqueNfeOcrStatus");
+  }
+  return null;
+}
+
+function _setStatusProgressoOcr(context, { title = "", message = "", detail = "", tone = "info", progress = null, indeterminate = false } = {}){
+  const status = _statusElementoOcr(context);
+  if (status) {
+    const hasProgress = progress != null || indeterminate;
+    status.innerHTML = `<div class="ocr-status-card" data-tone="${_escAttr(tone)}">
+      ${title ? `<div class="ocr-status-title">${_escHtml(title)}</div>` : ""}
+      ${message ? `<div class="ocr-status-message">${_escHtml(message)}</div>` : ""}
+      ${detail ? `<div class="ocr-status-detail">${_escHtml(detail)}</div>` : ""}
+      ${hasProgress ? `
+        <div class="ocr-status-progress" aria-hidden="true">
+          <span class="ocr-status-progress-fill${indeterminate ? " is-indeterminate" : ""}" style="${indeterminate ? "" : `width:${_escAttr(String(progress || 0))}%`}"></span>
+        </div>
+      ` : ""}
+    </div>`;
   }
 
-  alert(
-    ocr?.chave_acesso
-      ? `Foto lida com OCR. ${_formatarResumoOcrNfe(ocr)}`
-      : `Foto lida com OCR. ${_formatarResumoOcrNfe(ocr)}`
-  );
+  if ((context.tipo === "abastecimento" || context.tipo === "abastecimento_barcode") && context.id) {
+    _setAbastecimentoFeedback(context.id, message || title, tone, {
+      title,
+      detail,
+      progress,
+      indeterminate,
+    });
+  }
 }
 
 function selecionarImagemNfeOcr(context = { tipo: "estoque" }){
@@ -7959,64 +14860,157 @@ async function processarImagemNfeOcrInput(ev){
   estoqueState.ocrContext = null;
   if (!file) return;
 
-  const status = document.getElementById("estoqueNfeOcrStatus");
-  if ((context.tipo === "estoque" || context.tipo === "estoque_itens" || context.tipo === "estoque_azure") && status) {
-    status.textContent = context.tipo === "estoque_itens"
-      ? "Enviando foto da grade de itens para OCR..."
-      : context.tipo === "estoque_azure"
-        ? "Enviando foto para o Azure Document Intelligence..."
-      : "Enviando foto da nota para leitura OCR...";
-  }
+  _setStatusProgressoOcr(context, {
+    title: context.tipo === "abastecimento_barcode"
+      ? "Preparando leitura da chave"
+      : context.tipo === "abastecimento"
+        ? "Preparando OCR do abastecimento"
+        : context.tipo === "estoque_itens"
+          ? "Preparando OCR dos itens"
+          : context.tipo === "estoque_azure"
+            ? "Preparando Azure Document Intelligence"
+            : context.tipo === "manutencao"
+              ? "Preparando OCR da manutencao"
+              : "Preparando OCR da nota",
+    message: "Validando a foto selecionada.",
+    detail: file?.name ? `Arquivo: ${file.name}` : "",
+    tone: "info",
+    progress: 5,
+  });
 
   let arquivoOcr = file;
   try {
+    _setStatusProgressoOcr(context, {
+      title: "Compactando imagem",
+      message: "Ajustando a foto para acelerar o OCR.",
+      detail: "Se a imagem ja estiver leve, esta etapa termina quase na hora.",
+      tone: "info",
+      progress: 12,
+    });
     arquivoOcr = await _compactarImagemParaOcr(file);
   } catch {}
-  if ((context.tipo === "estoque" || context.tipo === "estoque_itens" || context.tipo === "estoque_azure") && status && arquivoOcr !== file) {
-    status.textContent = context.tipo === "estoque_itens"
-      ? "Foto compactada. Enviando grade de itens para OCR..."
-      : context.tipo === "estoque_azure"
-        ? "Foto compactada. Enviando itens para o Azure..."
-      : "Foto compactada. Enviando nota para OCR...";
-  }
+  _setStatusProgressoOcr(context, {
+    title: "Enviando foto",
+    message: arquivoOcr !== file ? "Foto compactada. Iniciando upload para leitura." : "Iniciando upload da foto para leitura.",
+    detail: arquivoOcr !== file ? `Tamanho enviado: ${_formatBytesProgress(arquivoOcr.size)}` : "",
+    tone: "info",
+    progress: 18,
+  });
 
   const formData = new FormData();
   formData.append("arquivo", arquivoOcr);
-  const controller = new AbortController();
-  const timeoutMs = (context.tipo === "estoque_itens" || context.tipo === "estoque_azure") ? 180000 : 90000;
-  const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs);
+  if ((context.tipo === "abastecimento" || context.tipo === "abastecimento_barcode") && context.id) {
+    const combustivelTipo = (document.getElementById(`abast_combustivel_${context.id}`)?.value || "").trim();
+    if (combustivelTipo) formData.append("combustivel_tipo", combustivelTipo);
+  }
+  const timeoutMs = (context.tipo === "estoque_itens" || context.tipo === "estoque_azure")
+    ? 180000
+    : context.tipo === "abastecimento_barcode"
+      ? 45000
+      : context.tipo === "abastecimento"
+        ? 180000
+      : 90000;
   let resp;
   let data = {};
   const url = context.tipo === "estoque_itens"
-    ? "/api/estoque/nfe/ocr_itens"
-    : context.tipo === "estoque_azure"
-      ? "/api/estoque/nfe/azure_itens"
-      : "/api/estoque/nfe/ocr";
+      ? "/api/estoque/nfe/ocr_itens"
+      : context.tipo === "estoque_azure"
+        ? "/api/estoque/nfe/azure_itens"
+        : context.tipo === "abastecimento_barcode"
+          ? "/api/abastecimentos/barcode_preview"
+        : context.tipo === "abastecimento"
+          ? "/api/abastecimentos/ocr_preview"
+        : context.tipo === "manutencao"
+          ? "/api/manutencoes/ocr_preview"
+          : "/api/estoque/nfe/ocr";
   try {
-    resp = await apiFetch(url, {
+    resp = await apiUploadWithProgress(url, {
       method: "POST",
       body: formData,
-      signal: controller.signal,
+      timeoutMs,
+      onProgress: (event) => {
+        if (!event?.lengthComputable || !(event.total > 0)) return;
+        const percent = Math.max(1, Math.min(100, Math.round((event.loaded / event.total) * 100)));
+        _setStatusProgressoOcr(context, {
+          title: "Enviando foto",
+          message: `${percent}% do upload concluido.`,
+          detail: `${_formatBytesProgress(event.loaded)} de ${_formatBytesProgress(event.total)} enviados.`,
+          tone: "info",
+          progress: Math.min(80, 18 + Math.round(percent * 0.62)),
+        });
+      },
+      onUploadComplete: () => {
+        _setStatusProgressoOcr(context, {
+          title: context.tipo === "abastecimento_barcode"
+            ? "Lendo chave da imagem"
+            : context.tipo === "abastecimento"
+              ? "Processando Quantidade e V.Total"
+              : context.tipo === "estoque_itens"
+                ? "Processando itens da nota"
+                : context.tipo === "estoque_azure"
+                  ? "Processando no Azure"
+                  : context.tipo === "manutencao"
+                    ? "Processando OCR da manutencao"
+                    : "Processando OCR da nota",
+          message: context.tipo === "abastecimento"
+            ? "A imagem foi enviada. Agora o sistema esta procurando apenas Quantidade e V.Total."
+            : "A imagem foi enviada. Aguarde a leitura da nota.",
+          detail: context.tipo === "abastecimento"
+            ? "A extracao prioriza a secao DADOS DOS PRODUTOS para reduzir variacao."
+            : "",
+          tone: "info",
+          progress: 90,
+          indeterminate: true,
+        });
+      },
     });
     data = await resp.json().catch(() => ({}));
   } catch (err) {
-    clearTimeout(timeoutHandle);
     const mensagem = err?.name === "AbortError"
       ? (context.tipo === "estoque_itens"
           ? "A leitura OCR dos itens demorou demais. Na primeira execucao o motor novo pode levar mais tempo; tente novamente com 5 a 10 linhas da tabela por vez."
           : context.tipo === "estoque_azure"
             ? "O Azure demorou demais para responder. Confira a configuracao em Config > NF-e ou tente outra foto."
-            : "A leitura OCR demorou demais para responder. Tente uma foto mais aproximada, reta e focada na grade dos itens.")
-      : "Falha ao enviar a foto da nota para OCR.";
-    if ((context.tipo === "estoque" || context.tipo === "estoque_itens" || context.tipo === "estoque_azure") && status) status.textContent = mensagem;
+            : context.tipo === "abastecimento_barcode"
+              ? "A leitura do codigo de barras/QR demorou demais. Tente aproximar mais a imagem da chave."
+            : context.tipo === "abastecimento"
+              ? "A leitura OCR do abastecimento demorou demais. Tente uma foto mais focada so na secao DADOS DOS PRODUTOS."
+            : context.tipo === "manutencao"
+              ? "A leitura OCR da manutencao demorou demais. Tente uma foto mais reta e bem iluminada."
+              : "A leitura OCR demorou demais para responder. Tente uma foto mais aproximada, reta e focada na grade dos itens.")
+      : context.tipo === "abastecimento_barcode"
+        ? "Falha ao enviar a imagem do codigo de barras/QR da nota."
+      : context.tipo === "abastecimento"
+        ? "Falha ao enviar a foto do OCR do abastecimento."
+      : context.tipo === "manutencao"
+        ? "Falha ao enviar a foto da nota de manutencao para OCR."
+        : "Falha ao enviar a foto da nota para OCR.";
+    _setStatusProgressoOcr(context, {
+      title: "Falha no OCR",
+      message: mensagem,
+      tone: "error",
+    });
+    if (context.tipo === "abastecimento_barcode") estoqueState.cameraAfterScanAction = null;
     alert(mensagem);
     if (input) input.value = "";
     return;
   }
-  clearTimeout(timeoutHandle);
   if (!resp.ok) {
-    const mensagem = data?.erro || "Falha ao ler a foto da nota.";
-    if ((context.tipo === "estoque" || context.tipo === "estoque_itens" || context.tipo === "estoque_azure") && status) status.textContent = mensagem;
+    const mensagem = data?.erro || (
+      context.tipo === "abastecimento_barcode"
+        ? "Falha ao ler o codigo de barras/QR da nota."
+        : context.tipo === "abastecimento"
+          ? "Falha ao ler a foto do OCR do abastecimento."
+        : context.tipo === "manutencao"
+          ? "Falha ao ler a foto da nota de manutencao."
+          : "Falha ao ler a foto da nota."
+    );
+    _setStatusProgressoOcr(context, {
+      title: "Falha no OCR",
+      message: mensagem,
+      tone: "error",
+    });
+    if (context.tipo === "abastecimento_barcode") estoqueState.cameraAfterScanAction = null;
     alert(mensagem);
     if (input) input.value = "";
     return;
@@ -8024,6 +15018,10 @@ async function processarImagemNfeOcrInput(ev){
 
   if (context.tipo === "estoque_itens" || context.tipo === "estoque_azure") {
     _aplicarPreviewItensOcrEstoque(data?.preview || {});
+  } else if (context.tipo === "manutencao") {
+    _aplicarPreviewOcrManutencao(data?.preview || {});
+  } else if (context.tipo === "abastecimento_barcode" && context.id) {
+    _aplicarResultadoBarcodeAbastecimento(context.id, data?.ocr || {});
   } else if (context.tipo === "abastecimento" && context.id) {
     _aplicarResultadoOcrAbastecimento(context.id, data?.ocr || {});
   } else {
@@ -8032,13 +15030,37 @@ async function processarImagemNfeOcrInput(ev){
 
   if (Array.isArray(data?.warnings) && data.warnings.length) {
     const aviso = data.warnings.join(" ");
-    if ((context.tipo === "estoque" || context.tipo === "estoque_itens" || context.tipo === "estoque_azure") && status) {
-      status.textContent = context.tipo === "estoque_itens"
-        ? `Itens lidos por OCR. Avisos: ${aviso}`
-        : context.tipo === "estoque_azure"
-          ? `Itens lidos via Azure. Avisos: ${aviso}`
-        : `${_formatarResumoOcrNfe(data?.ocr || {})} Avisos: ${aviso}`;
-    }
+    _setStatusProgressoOcr(context, {
+      title: "OCR concluido",
+      message: context.tipo === "abastecimento"
+        ? `Leitura concluida. ${aviso}`
+        : context.tipo === "abastecimento_barcode"
+          ? `Leitura da chave concluida. ${aviso}`
+          : context.tipo === "estoque_itens"
+            ? `Itens lidos por OCR. ${aviso}`
+            : context.tipo === "estoque_azure"
+              ? `Itens lidos via Azure. ${aviso}`
+              : context.tipo === "manutencao"
+                ? `Nota de manutencao lida por OCR. ${aviso}`
+                : `${_formatarResumoOcrNfe(data?.ocr || {})} Avisos: ${aviso}`,
+      tone: "warning",
+    });
+  } else {
+    _setStatusProgressoOcr(context, {
+      title: "OCR concluido",
+      message: context.tipo === "abastecimento"
+        ? "Leitura concluida. Revise Quantidade e V.Total antes de confirmar."
+        : context.tipo === "abastecimento_barcode"
+          ? "Leitura da chave concluida."
+          : context.tipo === "estoque_itens"
+            ? "Itens lidos por OCR."
+            : context.tipo === "estoque_azure"
+              ? "Itens lidos via Azure."
+              : context.tipo === "manutencao"
+                ? "Nota de manutencao lida por OCR."
+                : _formatarResumoOcrNfe(data?.ocr || {}),
+      tone: "success",
+    });
   }
 
   if (input) input.value = "";
@@ -8148,7 +15170,53 @@ async function importarNfeEstoque(){
       ? "Arquivo recebido. A chave foi usada para buscar o XML oficial via DF-e; revise os dados na confirmacao antes de importar."
       : "Arquivo lido. Revise os dados na confirmacao antes de importar.";
   }
-  setEstoqueView("conferir");
+  setEstoqueView("lancar");
+  renderEstoqueImportPreview();
+  document.getElementById("estoquePreviewNumeroNota")?.focus();
+}
+
+async function importarXmlFabricaEstoque(){
+  const input = document.getElementById("estoqueXmlFabricaArquivo");
+  const status = document.getElementById("estoqueNfeImportStatus");
+  const origemSetor = document.getElementById("estoqueOrigemSetor");
+  const destinoSetor = document.getElementById("estoqueDestinoSetor");
+  const file = input?.files?.[0] || null;
+
+  if (estoqueState.importDraft && !confirm("Ja existe uma importacao em revisao. Deseja substituir pelos dados do XML da fabrica?")) {
+    return;
+  }
+
+  const formData = new FormData();
+  if (file) formData.append("arquivo", file, file.name || "transferencia.xml");
+  if (status) {
+    status.textContent = file
+      ? "Lendo XML da fabrica..."
+      : "Buscando o XML mais recente da fabrica para transferencia...";
+  }
+
+  const resp = await apiFetch("/api/estoque/nfe/preview_fabrica", {
+    method: "POST",
+    body: formData,
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    if (status) status.textContent = data?.erro || "Falha ao ler o XML da fabrica.";
+    alert(data?.erro || "Falha ao ler o XML da fabrica.");
+    return;
+  }
+
+  const draft = _normalizarDraftImportacaoEstoque(data?.preview || {});
+  if (!draft.itens.length) draft.itens = [_novoItemImportacaoEstoque(1)];
+  estoqueState.importDraft = draft;
+  estoqueState.importDraftDirty = false;
+  estoqueState.lastPortalPreviewSignature = "";
+  if (input) input.value = "";
+  if (origemSetor) origemSetor.value = "Fabrica";
+  if (destinoSetor) destinoSetor.value = "Central";
+  if (status) {
+    status.textContent = "XML da fabrica carregado. Revise a transferencia para a central antes de confirmar a conferencia.";
+  }
+  setEstoqueView("lancar");
   renderEstoqueImportPreview();
   document.getElementById("estoquePreviewNumeroNota")?.focus();
 }
@@ -8219,7 +15287,7 @@ async function importarHtmlPortalClipboardEstoque(){
       ? "HTML da consulta publica importado. Os itens foram carregados para revisao."
       : "HTML da consulta publica importado. Revise os dados; os itens nao vieram completos.";
   }
-  setEstoqueView("conferir");
+  setEstoqueView("lancar");
   renderEstoqueImportPreview();
   document.getElementById("estoquePreviewNumeroNota")?.focus();
 }
@@ -8243,7 +15311,7 @@ function _aplicarPreviewPortalNfeEstoque(preview, statusMensagem = "") {
         ? "Consulta publica recebida do portal. Os itens foram carregados para revisao."
         : "Consulta publica recebida do portal. Revise os dados e complete os itens se necessario.");
   }
-  setEstoqueView("conferir");
+  setEstoqueView("lancar");
   renderEstoqueImportPreview();
   document.getElementById("estoquePreviewNumeroNota")?.focus();
 }
@@ -8322,7 +15390,7 @@ async function buscarNfeEstoquePorChave(options = {}) {
         : `XML oficial carregado pelo DF-e.${motivo} Revise os dados na confirmacao antes de importar.${limiteResumo}`;
     }
   }
-  setEstoqueView("conferir");
+  setEstoqueView("lancar");
   renderEstoqueImportPreview();
   document.getElementById("estoquePreviewNumeroNota")?.focus();
 }
@@ -8473,50 +15541,126 @@ async function confirmarConferenciaEstoque(){
 
 async function carregarSaldoEstoque(){
   const body = document.getElementById("estoqueSaldoBody");
+  const resumo = document.getElementById("estoqueConferenciaResumo");
   if (!body) return;
-  const resp = await apiFetch("/api/estoque/saldo");
+  const resp = await apiFetch("/api/estoque/posicao");
   if (!resp.ok) {
-    body.innerHTML = `<tr><td colspan="5">Erro ao carregar saldo do estoque.</td></tr>`;
+    body.innerHTML = `<tr><td colspan="9">Erro ao carregar posicao do estoque.</td></tr>`;
+    if (resumo) resumo.textContent = "Nao foi possivel carregar a posicao atual do estoque.";
     return;
   }
-  const dados = await resp.json();
-  body.innerHTML = (dados || []).length ? (dados || []).map((r) => `
+  const payload = await resp.json();
+  const dados = _estoqueRowsPayload(payload);
+  const meta = _estoqueMetaPayload(payload);
+  estoqueState.posicaoRows = dados;
+  estoqueState.posicaoMeta = meta;
+  renderFiltrosEstoque();
+  renderProdutosLancamentoEstoqueSelect();
+  if (resumo) {
+    resumo.textContent = [
+      `Referencia: ${_fmtDataCurtaBr(meta.data_referencia || "")}`,
+      `Pendentes: ${meta.cargas_pendentes || 0}`,
+      `Baixadas: ${meta.cargas_baixadas || 0}`,
+      `Vendas dia: ${_estoqueFormatQtd(meta.vendas_dia_total || 0)}`,
+      `Saidas dia: ${_estoqueFormatQtd(meta.saidas_dia_total || 0)}`,
+    ].join(" | ");
+  }
+  renderSaldoEstoqueFiltrado();
+}
+
+function renderSaldoEstoqueFiltrado(){
+  const body = document.getElementById("estoqueSaldoBody");
+  if (!body) return;
+  const dados = Array.isArray(estoqueState.posicaoRows) ? estoqueState.posicaoRows : [];
+  const filtros = _estoqueFiltrosEscopo("Posicao");
+  const filtrados = dados.filter((row) => _estoqueItemCombinaFiltros(row, filtros));
+  body.innerHTML = filtrados.length ? _estoqueLinhasAgrupadas(filtrados, (r) => `
     <tr>
-      <td>${_escHtml(r.nome_produto || "-")}</td>
-      <td>${_escHtml(r.codigo_barras || "-")}</td>
+      <td>${_escHtml(r.produto_base_nome || r.nome_produto || "-")}</td>
+      <td>${_escHtml(_estoqueCodigoReferencia(r))}</td>
+      <td>${_escHtml(_estoqueFornecedorResumo(r))}</td>
+      <td>${_escHtml(_estoqueCategoriaFornecedorResumo(r))}</td>
+      <td>${_escHtml(_estoqueFormatQtd(r.entradas_total))}</td>
+      <td>${_escHtml(_estoqueFormatQtd(r.saidas_total))}</td>
       <td>${_escHtml(_estoqueFormatQtd(r.quantidade_atual))}</td>
       <td>R$ ${_escHtml(_fmtMoney(r.ultimo_valor))}</td>
       <td>${_escHtml(_fmtDateBr(r.ultima_movimentacao))}</td>
     </tr>
-  `).join("") : `<tr><td colspan="5">Sem itens no estoque.</td></tr>`;
+  `, 9) : `<tr><td colspan="9">Sem itens no estoque para os filtros selecionados.</td></tr>`;
 }
 
 async function carregarMovimentosEstoque(){
   const body = document.getElementById("estoqueMovimentosBody");
   if (!body) return;
-  const resp = await apiFetch("/api/estoque");
+  const resp = await apiFetch("/api/estoque?limit=2000");
   if (!resp.ok) {
-    body.innerHTML = `<tr><td colspan="10">Erro ao carregar historico do estoque.</td></tr>`;
+    body.innerHTML = `<tr><td colspan="12">Erro ao carregar historico do estoque.</td></tr>`;
     return;
   }
   const dados = await resp.json();
-  body.innerHTML = (dados || []).length ? (dados || []).map((r) => `
+  estoqueState.movimentos = Array.isArray(dados) ? dados : [];
+  renderFiltrosEstoque();
+  renderMovimentosEstoqueFiltrado();
+  renderRastreioLotesEstoque();
+}
+
+function renderMovimentosEstoqueFiltrado(){
+  const body = document.getElementById("estoqueMovimentosBody");
+  if (!body) return;
+  const filtros = _estoqueFiltrosEscopo("Movimentos");
+  const dados = (Array.isArray(estoqueState.movimentos) ? estoqueState.movimentos : [])
+    .filter((row) => _estoqueItemCombinaFiltros(row, filtros));
+  body.innerHTML = dados.length ? dados.map((r) => `
     <tr>
       <td>${_escHtml(_fmtDateBr(r.data_registro))}</td>
       <td>${_escHtml(r.numero_nota || "-")}</td>
-      <td>${_escHtml(r.codigo_barras || "-")}</td>
-      <td>${_escHtml(r.nome_produto || "-")}</td>
+      <td>${_escHtml(_estoqueCodigoReferencia(r))}</td>
+      <td>${_escHtml(r.produto_base_nome || r.nome_produto || "-")}</td>
+      <td>${_escHtml(_estoqueFornecedorResumo(r))}</td>
+      <td>${_escHtml(_estoqueCategoriaFornecedorResumo(r))}</td>
       <td>${_escHtml(r.tipo_movimento || "entrada")}</td>
       <td>${_escHtml(_estoqueFormatQtd(r.quantidade))}</td>
       <td>R$ ${_escHtml(_fmtMoney(r.valor_unitario))}</td>
       <td>${_escHtml(_estoqueResumoFluxo(r))}</td>
       <td>${_escHtml(r.usuario_registro || "-")}</td>
       <td>
-        <button type="button" onclick="editarMovimentoEstoque(${Number(r.id || 0)})">Editar</button>
-        <button type="button" onclick="excluirMovimentoEstoque(${Number(r.id || 0)})">Excluir</button>
+        ${r.referencia_tipo
+          ? `<span class="hint-chip">${r.referencia_tipo === "importar_xml" ? "Confirmado via XML" : "Lancamento vinculado"}</span>`
+          : `<button type="button" onclick="editarMovimentoEstoque(${Number(r.id || 0)})">Editar</button>
+             <button type="button" onclick="excluirMovimentoEstoque(${Number(r.id || 0)})">Excluir</button>`}
       </td>
     </tr>
-  `).join("") : `<tr><td colspan="10">Sem lancamentos de estoque.</td></tr>`;
+  `).join("") : `<tr><td colspan="12">Sem lancamentos de estoque para os filtros selecionados.</td></tr>`;
+}
+
+function renderRastreioLotesEstoque(){
+  const body = document.getElementById("estoqueRastreioBody");
+  const resumo = document.getElementById("estoqueRastreioResumo");
+  if (!body) return;
+  const filtros = _estoqueFiltrosEscopo("Rastreio");
+  const dados = (Array.isArray(estoqueState.movimentos) ? estoqueState.movimentos : [])
+    .filter((row) => _estoqueItemCombinaFiltros(row, filtros));
+  const entradas = dados.filter((row) => String(row.tipo_movimento || "entrada").toLowerCase() === "entrada")
+    .reduce((total, row) => total + (Number(row.quantidade || 0) || 0), 0);
+  const saidas = dados.filter((row) => String(row.tipo_movimento || "entrada").toLowerCase() === "saida")
+    .reduce((total, row) => total + (Number(row.quantidade || 0) || 0), 0);
+  if (resumo) {
+    resumo.textContent = `${dados.length} lancamento(s) rastreados | Entradas ${_estoqueFormatQtd(entradas)} | Saidas ${_estoqueFormatQtd(saidas)}`;
+  }
+  body.innerHTML = dados.length ? dados.map((r) => `
+    <tr>
+      <td>${_escHtml(_fmtDateBr(r.data_registro))}</td>
+      <td>${_escHtml(r.numero_nota || "-")}</td>
+      <td>${_escHtml(r.produto_base_nome || r.nome_produto || "-")}</td>
+      <td>${_escHtml(_estoqueCodigoReferencia(r))}</td>
+      <td>${_escHtml(_estoqueFornecedorResumo(r))}</td>
+      <td>${_escHtml(_estoqueCategoriaFornecedorResumo(r))}</td>
+      <td>${_escHtml(r.tipo_movimento || "entrada")}</td>
+      <td>${_escHtml(_estoqueFormatQtd(r.quantidade))}</td>
+      <td>R$ ${_escHtml(_fmtMoney(r.valor_unitario))}</td>
+      <td>${_escHtml(_estoqueResumoFluxo(r))}</td>
+    </tr>
+  `).join("") : `<tr><td colspan="10">Sem lotes para os filtros selecionados.</td></tr>`;
 }
 
 async function editarMovimentoEstoque(id){
@@ -8528,8 +15672,8 @@ async function editarMovimentoEstoque(id){
 
   const numero_nota = prompt("Numero da nota:", item.numero_nota || "");
   if (numero_nota == null) return;
-  const codigo_barras = prompt("Codigo:", item.codigo_barras || "");
-  if (codigo_barras == null) return;
+  const codigoReferencia = prompt("Codigo:", item.codigo_produto_nfe || item.codigo_barras || "");
+  if (codigoReferencia == null) return;
   const nome_produto = prompt("Produto:", item.nome_produto || "");
   if (nome_produto == null) return;
   const quantidadeTxt = prompt("Quantidade:", String(item.quantidade || 0));
@@ -8542,7 +15686,8 @@ async function editarMovimentoEstoque(id){
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       numero_nota,
-      codigo_barras,
+      codigo_barras: item.codigo_barras ? codigoReferencia : "",
+      codigo_produto_nfe: item.codigo_produto_nfe || !item.codigo_barras ? codigoReferencia : "",
       nome_produto,
       quantidade: Number(String(quantidadeTxt).replace(",", ".")),
       valor_unitario: Number(String(valorTxt).replace(",", ".")),
@@ -8554,6 +15699,7 @@ async function editarMovimentoEstoque(id){
   const data = await up.json().catch(() => ({}));
   if (!up.ok) return alert(data?.erro || "Erro ao editar lancamento.");
   await carregarEstoque();
+  if (window.__dashView === "estoque") await renderDashboardEstoque();
 }
 
 async function excluirMovimentoEstoque(id){
@@ -8562,48 +15708,86 @@ async function excluirMovimentoEstoque(id){
   const data = await resp.json().catch(() => ({}));
   if (!resp.ok) return alert(data?.erro || "Erro ao excluir lancamento.");
   await carregarEstoque();
+  if (window.__dashView === "estoque") await renderDashboardEstoque();
 }
 
 async function carregarEstoque(){
   renderEstoqueImportPreview();
   atualizarStatusCodbarSistema();
-  const tarefas = [
+  await Promise.all([
     carregarSaldoEstoque(),
     carregarMovimentosEstoque(),
-    carregarProdutosEstoqueCadastro(),
-  ];
-  if ((window.__estoqueView || estoqueState.view) === "conferir") {
-    tarefas.push(carregarConferenciasEstoque(estoqueState.conferenciaAtual?.conferencia?.id || null));
-  }
-  await Promise.all(tarefas);
+    ensureProdutosEstoqueCache(),
+    carregarImportacoesXmlEstoque(),
+  ]);
+  renderProdutosLancamentoEstoqueSelect();
+  await carregarProdutosEstoqueCadastro();
 }
 
 async function salvarMovimentoEstoque(){
+  const produtoId = Number(document.getElementById("estoqueProdutoSelect")?.value || 0);
   const codigo_barras = (document.getElementById("estoqueCodigoBarras")?.value || "").trim();
-  const numero_nota = ((document.getElementById("estoqueNumeroNota")?.value || "").trim() || codigo_barras);
+  const codigo_produto_nfe = (document.getElementById("estoqueCodigoProdutoNfe")?.value || "").trim();
+  const numero_nota = ((document.getElementById("estoqueNumeroNota")?.value || "").trim() || codigo_produto_nfe || codigo_barras);
   const nome_produto = (document.getElementById("estoqueNomeProduto")?.value || "").trim();
-  const quantidade = Number((document.getElementById("estoqueQuantidade")?.value || "").trim() || 0);
+  const tipo_movimento = (document.getElementById("estoqueTipoMovimento")?.value || "entrada").trim().toLowerCase() === "saida" ? "saida" : "entrada";
+  const quantidadeDigitada = Number((document.getElementById("estoqueQuantidade")?.value || "").trim() || 0);
   const valor_unitario = Number((document.getElementById("estoqueValor")?.value || "").trim() || 0);
   const codigoDigits = _digitsOnly(codigo_barras);
+  const produtoSelecionado = produtoId > 0
+    ? (estoqueState.cadastroProdutos || []).find((item) => Number(item.id || 0) === produtoId) || null
+    : null;
+  const metaLancamento = _estoqueResolverFatorProduto({
+    produto_id: produtoId,
+    codigo_barras,
+    codigo_produto_nfe,
+    nome_produto,
+  }, produtoSelecionado);
+  const quantidade = produtoSelecionado
+    ? Number((quantidadeDigitada * (Number(metaLancamento.fator_embalagem || 0) || 0)).toFixed(3))
+    : quantidadeDigitada;
 
   if (codigoDigits.length === 44) {
     return alert("Esse codigo parece ser a chave da NF-e. Use o campo de importacao do XML para lancar a nota completa.");
   }
   if (!nome_produto) return alert("Informe o nome do produto.");
-  if (!(quantidade > 0)) return alert("Informe uma quantidade valida.");
+  if (!(quantidadeDigitada > 0)) return alert("Informe uma quantidade valida.");
+  if (produtoSelecionado && metaLancamento.bloqueado) {
+    return alert("Esse produto ainda nao tem um fator explicito para a apresentacao selecionada. Revise o cadastro antes de lancar.");
+  }
+  if (produtoSelecionado && metaLancamento.confirmacao_pendente) {
+    if (!confirm(`${tipo_movimento === "saida" ? "Confirmar a saida" : "Confirmar a entrada"} deste produto?\n${_estoqueConfirmacaoLancamentoTexto({
+      nome_produto,
+      quantidade_embalagem: quantidadeDigitada,
+      quantidade_unidades: quantidade,
+      embalagem_tipo: metaLancamento.embalagem_tipo,
+      fator_embalagem: metaLancamento.fator_embalagem,
+      motivo_confirmacao: metaLancamento.motivo_confirmacao,
+      grupo_estoque: metaLancamento.grupo_estoque,
+      produto_base_nome: metaLancamento.produto_base_nome,
+    }, metaLancamento)}`)) {
+      return;
+    }
+  } else if (!produtoSelecionado) {
+    if (!confirm(`Produto sem cadastro explicito selecionado.\nO sistema vai lancar ${_estoqueFormatQtd(quantidadeDigitada)} unidade(s) exatamente como informado.\nConfirma o lancamento?`)) {
+      return;
+    }
+  }
 
   const resp = await apiFetch("/api/estoque", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
+      produto_id: produtoId || null,
       codigo_barras,
+      codigo_produto_nfe,
       numero_nota,
       nome_produto,
       quantidade,
       valor_unitario,
-      tipo_movimento: "entrada",
-      origem_setor: "Fabrica",
-      destino_setor: "Almoxarifado",
+      tipo_movimento,
+      origem_setor: tipo_movimento === "saida" ? "Almoxarifado" : "Fabrica",
+      destino_setor: tipo_movimento === "saida" ? "Saida" : "Almoxarifado",
     }),
   });
   const data = await resp.json().catch(() => ({}));
@@ -8614,205 +15798,24 @@ async function salvarMovimentoEstoque(){
     importStatus.textContent = `Produto "${nome_produto}" cadastrado automaticamente no estoque.`;
   }
 
-  ["estoqueCodigoBarras", "estoqueNomeProduto", "estoqueQuantidade", "estoqueValor"].forEach((id) => {
-    const el = document.getElementById(id);
-    if (el) el.value = "";
-  });
+  const numeroNotaEl = document.getElementById("estoqueNumeroNota");
+  const quantidadeEl = document.getElementById("estoqueQuantidade");
+  const valorEl = document.getElementById("estoqueValor");
+  if (numeroNotaEl) numeroNotaEl.value = "";
+  if (quantidadeEl) quantidadeEl.value = "";
+  if (valorEl) valorEl.value = "";
+  if (produtoId > 0) {
+    selecionarProdutoLancamentoEstoque();
+  } else {
+    ["estoqueCodigoBarras", "estoqueCodigoProdutoNfe", "estoqueNomeProduto"].forEach((id) => {
+      const el = document.getElementById(id);
+      if (el) el.value = "";
+    });
+  }
 
   await carregarEstoque();
   if (window.__dashView === "estoque") await renderDashboardEstoque();
-  document.getElementById("estoqueCodigoBarras")?.focus();
-}
-
-function openDashboardView(ev, view){
-  if (ev){ ev.preventDefault(); ev.stopPropagation(); }
-  const dashMenu = document.querySelector('.menu-item.has-submenu[data-tab="dashboard"]');
-  showTab("dashboard", dashMenu);
-
-  document.querySelectorAll("#submenuDashboard .submenu-item").forEach(x=>x.classList.remove("active"));
-  const map = { resumo: 0, frota: 1, estoque: 2 };
-  const target = map[view] ?? 0;
-  const items = document.querySelectorAll("#submenuDashboard .submenu-item");
-  if (items && items[target]) items[target].classList.add("active");
-
-  setDashboardView(view);
-
-  const isMobile = window.matchMedia && window.matchMedia("(max-width: 768px)").matches;
-  if (isMobile && dashMenu) dashMenu.classList.remove("open");
-  try{ toggleMenuMobile(false); }catch{}
-}
-
-function setDashboardView(view){
-  window.__dashView = view;
-  const vResumo = document.getElementById("dashViewResumo");
-  const vFrota = document.getElementById("dashViewFrota");
-  const vEstoque = document.getElementById("dashViewEstoque");
-  if (vResumo) vResumo.classList.toggle("hidden", view !== "resumo");
-  if (vFrota) vFrota.classList.toggle("hidden", view !== "frota");
-  if (vEstoque) vEstoque.classList.toggle("hidden", view !== "estoque");
-
-  if (view === "frota") {
-    renderDashboardFrota().catch(e=>console.warn("dash frota erro:", e));
-  } else if (view === "estoque") {
-    renderDashboardEstoque().catch(e=>console.warn("dash estoque erro:", e));
-  } else {
-    atualizarDash().catch(()=>{});
-  }
-}
-
-async function renderFretes() {
-  await ensureCadastrosCache();
-
-  const colunas = {
-    chegada: document.getElementById("col-chegada"),
-    descarregado: document.getElementById("col-descarregado"),
-    liberado: document.getElementById("col-liberado"),
-    carregando: document.getElementById("col-carregando"),
-    carregado: document.getElementById("col-carregado"),
-    entregando: document.getElementById("col-entregando"),
-    retornando: document.getElementById("col-retornando"),
-    paradoVasio: document.getElementById("col-paradoVasio"),
-    paradoCarregado: document.getElementById("col-paradoCarregado"),
-  };
-
-  Object.values(colunas).forEach((col) => col && (col.innerHTML = ""));
-
-  fretes.forEach((f) => {
-    const col = colunas[f.status];
-    if (!col) return;
-
-    const card = document.createElement("div");
-    card.className = "card";
-    card.dataset.freteId = String(f.id);
-
-    const header = document.createElement("div");
-    header.className = "card-header";
-    header.draggable = true;
-    header.dataset.freteId = String(f.id);
-    header.ondragstart = (e) => e.dataTransfer.setData("id", f.id);
-    header.innerText = f.nome || "(sem nome)";
-
-    const body = document.createElement("div");
-    body.className = "card-body";
-
-    const nomeVal = (f.nome || "").toString();
-    const obsVal = (f.observacao || "").toString();
-    const kmAtualVal = Number(f.km_atual || 0);
-    const pesoVal = Number(f.peso || 0);
-    const qtdEntregasVal = Number(f.qtd_entregas || 0);
-
-    body.innerHTML = `
-      <div class="crud-row">
-        <label>Nome</label>
-        <input type="text" class="frete-nome" value="${nomeVal.replaceAll('"', "&quot;")}">
-      </div>
-
-      <div class="crud-row-line1">
-        <div class="crud-field">
-          <span>Veiculo</span>
-          <select class="frete-veiculo">
-            ${optionsFrom(cacheCadastros.veiculos, f.veiculo_id)}
-          </select>
-        </div>
-
-        <div class="crud-field">
-          <span>Motorista</span>
-          <select class="frete-motorista">
-            ${optionsFrom(cacheCadastros.motoristas, f.motorista_id)}
-          </select>
-        </div>
-
-        <div class="crud-field">
-          <span>Entregador</span>
-          <select class="frete-entregador">
-            ${optionsFrom(cacheCadastros.motoristas, f.entregador_id || f.motorista_id)}
-          </select>
-        </div>
-      </div>
-
-      <div class="crud-row-line2">
-        <div class="crud-field">
-          <span>KM atual</span>
-          <input type="number" class="frete-km-atual" min="0" value="${_escHtml(String(kmAtualVal))}">
-        </div>
-
-        <div class="crud-field">
-          <span>Peso</span>
-          <input type="number" class="frete-peso" min="0" step="0.001" value="${_escHtml(String(pesoVal))}">
-        </div>
-
-        <div class="crud-field">
-          <span>Qtd. entregas</span>
-          <input type="number" class="frete-qtd-entregas" min="0" value="${_escHtml(String(qtdEntregasVal))}">
-        </div>
-
-        <div class="crud-field">
-          <span>Carga</span>
-          <select class="frete-carga">
-            ${optionsFrom(cacheCadastros.cargas, f.carga_id)}
-          </select>
-        </div>
-      </div>
-
-      <div class="crud-row">
-        <label>Observacao</label>
-        <textarea class="frete-obs" rows="2" placeholder="Digite uma observacao...">${obsVal}</textarea>
-      </div>
-
-      <div class="crud-actions">
-        <button class="btn-mover-mobile">Mover</button>
-        <button class="btn-salvar">Salvar</button>
-        <button class="btn-excluir">Excluir</button>
-      </div>
-    `;
-
-    const inpNome = body.querySelector(".frete-nome");
-    const selVeiculo = body.querySelector(".frete-veiculo");
-    const selMotorista = body.querySelector(".frete-motorista");
-    const selEntregador = body.querySelector(".frete-entregador");
-    const selCarga = body.querySelector(".frete-carga");
-    const inpKmAtual = body.querySelector(".frete-km-atual");
-    const inpPeso = body.querySelector(".frete-peso");
-    const inpQtdEntregas = body.querySelector(".frete-qtd-entregas");
-    const txtObs = body.querySelector(".frete-obs");
-    const btnMoverMobile = body.querySelector(".btn-mover-mobile");
-
-    if (btnMoverMobile) {
-      btnMoverMobile.onclick = async () => {
-        await moverFreteMobile(f);
-      };
-      btnMoverMobile.style.display = window.matchMedia("(max-width: 768px)").matches ? "" : "none";
-    }
-
-    body.querySelector(".btn-salvar").onclick = async () => {
-      const payload = {
-        nome: (inpNome.value || "").trim(),
-        status: f.status,
-        veiculo_id: selVeiculo.value ? Number(selVeiculo.value) : null,
-        motorista_id: selMotorista.value ? Number(selMotorista.value) : null,
-        entregador_id: selEntregador.value ? Number(selEntregador.value) : (selMotorista.value ? Number(selMotorista.value) : null),
-        carga_id: selCarga.value ? Number(selCarga.value) : null,
-        km_atual: inpKmAtual.value.trim() === "" ? 0 : Number(inpKmAtual.value),
-        peso: inpPeso.value.trim() === "" ? 0 : Number(inpPeso.value),
-        qtd_entregas: inpQtdEntregas.value.trim() === "" ? 0 : Number(inpQtdEntregas.value),
-        observacao: (txtObs.value || "").trim(),
-      };
-
-      if (!payload.nome) return alert("Nome do frete e obrigatorio.");
-      await atualizarFreteCompleto(f.id, payload);
-    };
-
-    body.querySelector(".btn-excluir").onclick = async () => {
-      await excluirFrete(f.id);
-    };
-
-    card.appendChild(header);
-    card.appendChild(body);
-    col.appendChild(card);
-  });
-
-  ativarDragDrop();
-  ativarDragDropMobile();
+  document.getElementById("estoqueQuantidade")?.focus();
 }
 
 async function renderFretes() {
@@ -8820,6 +15823,7 @@ async function renderFretes() {
 
   const presentes = new Set();
   fretes.forEach((f) => {
+    if (_freteOcultoNoKanban(f)) return;
     if (!_freteCombinaBusca(f, freteKanbanFiltro)) return;
     presentes.add(String(f.id));
     _renderOrUpdateFreteCard(f);
@@ -8843,7 +15847,12 @@ async function carregarFretes() {
   const r = await apiFetch("/api/fretes");
   if (!r.ok) throw new Error("Erro ao carregar fretes.");
   fretes = await r.json();
+  // Arquivar automaticamente cards elegíveis
+  await _arquivarFretesAutomaticamente();
   await renderFretes();
+  if (window.__cargasView === "escala") {
+    await renderEscala();
+  }
 }
 
 window.onload = async () => {
@@ -8868,7 +15877,7 @@ window.onload = async () => {
     document.querySelectorAll(".foto-modal").forEach((m) => m.classList.add("hidden"));
     document.body.classList.remove("menu-open");
   } catch {}
-  bindLoginSubmitOnEnter();
+  _syncBlockingPopupState();
   bindEstoqueScannerInput();
   alternarModoNovaCameraConfig();
   verificarRetornoPortalNfePendente();
@@ -8879,12 +15888,26 @@ window.onload = async () => {
   verificarStatus();
   setInterval(verificarStatus, 5000);
 
-  // 3) Carregar dados EM PARALELO (não sequencial)
+  // 3) Sessão antes dos demais fetches, para o usuário logado aparecer imediatamente.
+  let okSessao = false;
+  try { okSessao = await restaurarSessaoLogin(); } catch {}
+  if (LOGIN_BYPASS) {
+    fecharLoginModal();
+    atualizarUsuarioLogadoUI();
+  } else if (!okSessao) {
+    abrirLoginModal();
+  } else {
+    fecharLoginModal();
+    atualizarUsuarioLogadoUI();
+  }
+
+  // 4) Carregar dados EM PARALELO (não sequencial)
   Promise.allSettled([
     carregarSelectsNovoFrete(),
     carregarFretes(),
     carregarEstoque(),
     renderCadastros(),
+    carregarPontosVenda(),
     carregarDevolucoes(),
     atualizarDash(),
     carregarComissaoLancamentos(),
@@ -8896,24 +15919,8 @@ window.onload = async () => {
     try { initChatInterno(); } catch {}
   });
 
-  let okSessao = false;
-  try { okSessao = await restaurarSessaoLogin(); } catch {}
-  if (LOGIN_BYPASS) {
-    fecharLoginModal();
-    atualizarUsuarioLogadoUI();
-  } else if (!okSessao) {
-    abrirLoginModal();
-  } else {
-    fecharLoginModal();
-    try {
-      await carregarUsuariosChat(false);
-      await carregarNaoLidasChat();
-      atualizarUsuarioLogadoUI();
-    } catch {}
-  }
-
   ensureCadastrosCache().catch(()=>{});
-  // 4) Auto-atualização (não precisa esperar o resto)
+  // 5) Auto-atualização (não precisa esperar o resto)
   setInterval(async () => {
     try {
       const tarefas = [carregarFretes(), atualizarDash()];

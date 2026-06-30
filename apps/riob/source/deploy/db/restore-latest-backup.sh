@@ -8,28 +8,31 @@ log() {
 DB_HOST="${MARIADB_HOST:-db}"
 DB_PORT="${MARIADB_PORT:-3306}"
 DB_NAME="${MARIADB_DATABASE:-riobranco}"
+DB_APP_USER="${MARIADB_USER:-riobranco}"
+DB_APP_PASSWORD="${MARIADB_PASSWORD:-riobranco123}"
 DB_ROOT_PASSWORD="${MARIADB_ROOT_PASSWORD:-}"
 BACKUP_DIR="${RB_DB_BACKUP_DIR:-/backups}"
 RESTORE_FORCE="${RB_DB_RESTORE_FORCE:-0}"
+DB_CLI_USER=""
+DB_CLI_PASSWORD=""
+DB_CLI_MODE=""
 
-if [ -z "$DB_ROOT_PASSWORD" ]; then
-  log "MARIADB_ROOT_PASSWORD nao definido; abortando restore."
-  exit 1
-fi
-
-mysql_query() {
+db_exec() {
   mariadb \
     -h "$DB_HOST" \
     -P "$DB_PORT" \
-    -uroot \
-    "-p$DB_ROOT_PASSWORD" \
-    "$DB_NAME" \
-    -Nse "$1"
+    -u"$DB_CLI_USER" \
+    "-p$DB_CLI_PASSWORD" \
+    "$@"
+}
+
+mysql_query() {
+  db_exec "$DB_NAME" -Nse "$1"
 }
 
 wait_for_db() {
   tries=0
-  until mariadb-admin ping -h "$DB_HOST" -P "$DB_PORT" -uroot "-p$DB_ROOT_PASSWORD" --silent >/dev/null 2>&1; do
+  until mariadb-admin ping -h "$DB_HOST" -P "$DB_PORT" --silent >/dev/null 2>&1; do
     tries=$((tries + 1))
     if [ "$tries" -ge 60 ]; then
       log "Banco nao ficou pronto a tempo."
@@ -37,6 +40,34 @@ wait_for_db() {
     fi
     sleep 2
   done
+}
+
+select_db_credentials() {
+  tries=0
+  while [ "$tries" -lt 60 ]; do
+    if [ -n "$DB_ROOT_PASSWORD" ] \
+      && mariadb -h "$DB_HOST" -P "$DB_PORT" -uroot "-p$DB_ROOT_PASSWORD" -e "SELECT 1" >/dev/null 2>&1; then
+      DB_CLI_USER="root"
+      DB_CLI_PASSWORD="$DB_ROOT_PASSWORD"
+      DB_CLI_MODE="root"
+      log "Credencial MariaDB root validada para restore."
+      return 0
+    fi
+
+    if mariadb -h "$DB_HOST" -P "$DB_PORT" -u"$DB_APP_USER" "-p$DB_APP_PASSWORD" "$DB_NAME" -e "SELECT 1" >/dev/null 2>&1; then
+      DB_CLI_USER="$DB_APP_USER"
+      DB_CLI_PASSWORD="$DB_APP_PASSWORD"
+      DB_CLI_MODE="app"
+      log "MARIADB_ROOT_PASSWORD nao autenticou; usando usuario do banco da aplicacao para restore."
+      return 0
+    fi
+
+    tries=$((tries + 1))
+    sleep 2
+  done
+
+  log "Nao foi possivel autenticar no MariaDB com root nem com MARIADB_USER."
+  exit 1
 }
 
 latest_backup() {
@@ -82,15 +113,29 @@ db_is_empty() {
 restore_backup() {
   backup_file="$1"
   log "Restaurando backup: $backup_file"
+  sed_script='
+    s/CONSTRAINT `[^`]+` FOREIGN KEY/FOREIGN KEY/g
+  '
+  if [ "$DB_CLI_MODE" = "app" ]; then
+    log "Restaurando com usuario restrito no banco $DB_NAME; comandos globais de database serao ignorados."
+    sed_script='
+      s/CONSTRAINT `[^`]+` FOREIGN KEY/FOREIGN KEY/g
+      /^\/\*!40000 DROP DATABASE IF EXISTS `[^`]+`\*\//d
+      /^DROP DATABASE IF EXISTS /d
+      /^CREATE DATABASE /d
+      /^USE `[^`]+`;/d
+    '
+  fi
+
   case "$backup_file" in
     *.sql.gz)
       gzip -cd "$backup_file" \
-        | sed -E 's/CONSTRAINT `[^`]+` FOREIGN KEY/FOREIGN KEY/g' \
-        | mariadb -h "$DB_HOST" -P "$DB_PORT" -uroot "-p$DB_ROOT_PASSWORD" "$DB_NAME"
+        | sed -E "$sed_script" \
+        | db_exec "$DB_NAME"
       ;;
     *.sql)
-      sed -E 's/CONSTRAINT `[^`]+` FOREIGN KEY/FOREIGN KEY/g' "$backup_file" \
-        | mariadb -h "$DB_HOST" -P "$DB_PORT" -uroot "-p$DB_ROOT_PASSWORD" "$DB_NAME"
+      sed -E "$sed_script" "$backup_file" \
+        | db_exec "$DB_NAME"
       ;;
     *)
       log "Formato de backup nao suportado: $backup_file"
@@ -100,6 +145,7 @@ restore_backup() {
 }
 
 wait_for_db
+select_db_credentials
 
 if [ ! -d "$BACKUP_DIR" ]; then
   log "Diretorio de backup nao encontrado: $BACKUP_DIR. Nenhuma restauracao executada."
