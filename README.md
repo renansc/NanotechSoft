@@ -42,8 +42,10 @@ O app carrega as variaveis nesta ordem:
 - `.env`, se existir.
 - `.env_local`, se nao existir `.env`.
 
-Use `.env_local` para a maquina local. Esse arquivo fica ignorado pelo Git para
-evitar vazamento de senha.
+No Git ficam as configuracoes versionadas: `.env.example`/`docker-compose.yml`
+para uso local e `render.yaml` para o Render. Use `.env_local` apenas para
+valores reais da sua maquina; esse arquivo fica ignorado pelo Git para evitar
+vazamento de senha.
 
 Para rodar local explicitamente:
 
@@ -56,15 +58,14 @@ necessarias no web service.
 
 ## Deploy no Render
 
-Use o branch `deploy/onrender` para o ambiente externo. Ele tem um `render.yaml`
-com dois servicos:
+A branch `main` contem tambem a configuracao externa. O `render.yaml` define
+dois servicos:
 
 - `nanotechsoft`: web service Docker do portal.
 - `nanotechsoft-mysql`: MySQL 8 como private service com disco persistente em
   `/var/lib/mysql`.
 
-O branch `main` continua sendo a versao local com `docker compose` e MySQL local.
-No Render, importe o Blueprint a partir do branch `deploy/onrender`.
+No Render, importe o Blueprint a partir da branch `main`.
 
 O Render nao oferece MySQL gerenciado nativo como oferece Postgres; este projeto
 usa MySQL em private service com Render Disk. Para producao, faca backups
