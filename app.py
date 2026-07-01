@@ -304,7 +304,7 @@ def ensure_database():
 
 @app.before_request
 def bootstrap_request():
-    if request.path.startswith("/static/"):
+    if request.path.startswith("/static/") or request.path == "/healthz":
         return
     ensure_database()
 
@@ -316,6 +316,11 @@ def add_no_cache_headers(resp):
         resp.headers["Pragma"] = "no-cache"
         resp.headers["Expires"] = "0"
     return resp
+
+
+@app.route("/healthz")
+def healthz():
+    return jsonify({"ok": True})
 
 
 # ---------------------------------------------------------------------------
@@ -3391,6 +3396,6 @@ def db_error(exc):
 if __name__ == "__main__":
     app.run(
         host=os.environ.get("NS_HOST", "0.0.0.0"),
-        port=int(os.environ.get("NS_PORT", "5600")),
+        port=int(os.environ.get("NS_PORT") or os.environ.get("PORT", "5600")),
         debug=as_bool(os.environ.get("NS_DEBUG"), True),
     )

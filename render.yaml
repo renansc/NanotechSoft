@@ -1,0 +1,84 @@
+services:
+  - type: pserv
+    name: nanotechsoft-mysql
+    runtime: image
+    plan: standard
+    image:
+      url: docker.io/mysql:8.0
+    autoDeployTrigger: off
+    disk:
+      name: mysql-data
+      mountPath: /var/lib/mysql
+      sizeGB: 10
+    envVars:
+      - fromGroup: nanotechsoft-mysql
+
+  - type: web
+    name: nanotechsoft
+    runtime: docker
+    plan: starter
+    autoDeployTrigger: commit
+    healthCheckPath: /healthz
+    envVars:
+      - key: FLASK_SECRET
+        generateValue: true
+      - key: NS_DB_HOST
+        fromService:
+          name: nanotechsoft-mysql
+          type: pserv
+          property: host
+      - key: NS_DB_PORT
+        value: "3306"
+      - key: NS_DB_USER
+        value: root
+      - key: NS_DB_PASSWORD
+        fromService:
+          name: nanotechsoft-mysql
+          type: pserv
+          envVarKey: MYSQL_ROOT_PASSWORD
+      - key: NS_DB_NAME
+        value: notechsoft
+      - key: NS_HOST
+        value: 0.0.0.0
+      - key: NS_DEBUG
+        value: "0"
+      - key: WEB_CONCURRENCY
+        value: "2"
+      - key: GUNICORN_THREADS
+        value: "4"
+      - key: GUNICORN_TIMEOUT
+        value: "120"
+      - key: AUTOMACAO_APP_DIR
+        value: /app/apps/automacao/source
+      - key: NANOPONTO_APP_DIR
+        value: /app/apps/nanoponto/source
+      - key: ZAP_APP_DIR
+        value: /app/apps/zap/source
+      - key: NANOSTORE_APP_DIR
+        value: /app/apps/nanostore/source
+      - key: GPSMUSICAL_APP_DIR
+        value: /app/apps/gpsmusical/source
+      - key: BPA_APP_DIR
+        value: /app/apps/bpa/source
+      - key: TATOO_APP_DIR
+        value: /app/apps/tatoo/source
+      - key: NANOTECH_SHARED_DIR
+        value: /app/apps/shared
+      - key: RIOB_BASE_URL
+        value: http://127.0.0.1:8898
+      - key: RIOB_SSL_VERIFY
+        value: "0"
+
+envVarGroups:
+  - name: nanotechsoft-mysql
+    envVars:
+      - key: MYSQL_DATABASE
+        value: notechsoft
+      - key: MYSQL_USER
+        value: notechsoft
+      - key: MYSQL_PASSWORD
+        generateValue: true
+      - key: MYSQL_ROOT_PASSWORD
+        generateValue: true
+      - key: MYSQL_ROOT_HOST
+        value: "%"

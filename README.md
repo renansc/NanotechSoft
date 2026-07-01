@@ -34,6 +34,35 @@ Esse compose publica o banco na porta `3307` por padrao para nao conflitar com o
 
 Com o banco do compose, mantenha `NS_DB_PORT=3307` no `.env`.
 
+## Deploy no Render
+
+Use o branch `deploy/onrender` para o ambiente externo. Ele tem um `render.yaml`
+com dois servicos:
+
+- `nanotechsoft`: web service Docker do portal.
+- `nanotechsoft-mysql`: MySQL 8 como private service com disco persistente em
+  `/var/lib/mysql`.
+
+O branch `main` continua sendo a versao local com `docker compose` e MySQL local.
+No Render, importe o Blueprint a partir do branch `deploy/onrender`.
+
+O Render nao oferece MySQL gerenciado nativo como oferece Postgres; este projeto
+usa MySQL em private service com Render Disk. Para producao, faca backups
+periodicos com `mysqldump`, porque snapshot de disco nao substitui backup logico
+de banco.
+
+Se preferir usar um MySQL externo, remova ou ignore o servico
+`nanotechsoft-mysql` no Render e configure estas variaveis no web service:
+
+- `NS_DB_HOST`
+- `NS_DB_PORT`
+- `NS_DB_USER`
+- `NS_DB_PASSWORD`
+- `NS_DB_NAME`
+
+Nao use SQLite para o portal principal sem uma refatoracao: o app usa
+`mysql.connector`, tipos/DDL de MySQL e tabelas com JSON/AUTO_INCREMENT.
+
 ## Scripts operacionais
 
 Os atalhos da raiz podem ser usados com ou sem `.sh`:

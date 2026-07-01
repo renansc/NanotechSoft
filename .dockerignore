@@ -11,6 +11,7 @@ deploy/tmp/
 *.gdb
 *.GDB
 *.sql
+!sql/schema.sql
 *.gz
 *.tar.gz
 *.pfx
