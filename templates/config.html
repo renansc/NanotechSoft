@@ -30,6 +30,24 @@
       <div id="themeMsg" class="form-msg"></div>
     </section>
 
+    {% if usuario and usuario.perfil == 'admin' %}
+      <section class="config-panel backup-panel">
+        <div>
+          <h3>Backup do portal</h3>
+          <p>Exporta e restaura as tabelas principais do NanotechSoft em JSON.</p>
+        </div>
+        <div class="backup-actions">
+          <button type="button" data-backup-export>Exportar JSON</button>
+          <label for="portalBackupFile">
+            Arquivo de backup
+            <input type="file" id="portalBackupFile" accept=".json,application/json">
+          </label>
+          <button type="button" class="danger-button" data-backup-import>Importar JSON</button>
+        </div>
+        <div id="backupMsg" class="form-msg"></div>
+      </section>
+    {% endif %}
+
     <section class="theme-list">
       {% if menu.config %}
         <article class="theme-row">

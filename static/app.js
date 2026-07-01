@@ -22,6 +22,11 @@ async function postJson(url, payload) {
   return data;
 }
 
+function filenameFromDisposition(value, fallback) {
+  const match = String(value || "").match(/filename="?([^"]+)"?/i);
+  return match ? match[1] : fallback;
+}
+
 function bindLogin() {
   const form = qs("#loginForm");
   if (!form) return;
@@ -245,6 +250,58 @@ function setActiveThemeOptions(tema) {
   });
 }
 
+function bindPortalBackup() {
+  const exportButton = qs("[data-backup-export]");
+  const importButton = qs("[data-backup-import]");
+  const fileInput = qs("#portalBackupFile");
+
+  exportButton?.addEventListener("click", async () => {
+    setMessage("#backupMsg", "Gerando backup...", "");
+    try {
+      const resp = await fetch("/api/backup/export", { headers: { Accept: "application/json" } });
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        throw new Error(data.erro || "Falha ao exportar backup");
+      }
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filenameFromDisposition(
+        resp.headers.get("Content-Disposition"),
+        `nanotechsoft-backup_${new Date().toISOString().slice(0, 10)}.json`
+      );
+      link.click();
+      URL.revokeObjectURL(url);
+      setMessage("#backupMsg", "Backup exportado.", "ok");
+    } catch (err) {
+      setMessage("#backupMsg", err.message, "error");
+    }
+  });
+
+  importButton?.addEventListener("click", async () => {
+    const file = fileInput?.files?.[0];
+    if (!file) {
+      setMessage("#backupMsg", "Selecione um arquivo JSON.", "error");
+      return;
+    }
+    if (!confirm("Importar este backup vai substituir os dados atuais. Continuar?")) return;
+
+    setMessage("#backupMsg", "Importando backup...", "");
+    try {
+      const form = new FormData();
+      form.append("backup", file);
+      const resp = await fetch("/api/backup/import", { method: "POST", body: form });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(data.erro || "Falha ao importar backup");
+      const total = Object.values(data.restored || {}).reduce((sum, value) => sum + Number(value || 0), 0);
+      setMessage("#backupMsg", `Backup importado. ${total} registros restaurados.`, "ok");
+    } catch (err) {
+      setMessage("#backupMsg", err.message, "error");
+    }
+  });
+}
+
 function bindKanban() {
   const board = qs("[data-kanban-board]");
   if (!board) return;
@@ -430,6 +487,7 @@ bindLogin();
 bindLogout();
 bindMenu();
 bindTheme();
+bindPortalBackup();
 bindKanban();
 syncMenuSection();
 window.addEventListener("hashchange", syncMenuSection);

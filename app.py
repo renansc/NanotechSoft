@@ -1,4 +1,7 @@
 from functools import wraps
+import base64
+import datetime as dt
+from decimal import Decimal
 import html as html_lib
 import json
 import os
@@ -21,6 +24,9 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 
 BASE_DIR = Path(__file__).resolve().parent
+BACKUP_FORMAT = "nanotechsoft.portal.backup"
+BACKUP_VERSION = 1
+MAX_BACKUP_BYTES = int(os.environ.get("NS_BACKUP_MAX_BYTES", str(25 * 1024 * 1024)))
 
 
 def load_env_file(path):
@@ -844,6 +850,194 @@ def config_page():
         "config.html",
         **portal_context(),
     )
+
+
+def quoted_identifier(name):
+    name = str(name or "")
+    if not re.fullmatch(r"[A-Za-z0-9_]+", name):
+        raise ValueError(f"identificador invalido: {name}")
+    return f"`{name}`"
+
+
+def json_safe_value(value):
+    if isinstance(value, (dt.datetime, dt.date, dt.time)):
+        return value.isoformat()
+    if isinstance(value, Decimal):
+        return str(value)
+    if isinstance(value, bytes):
+        return {"__bytes_b64": base64.b64encode(value).decode("ascii")}
+    return value
+
+
+def restore_value(value):
+    if isinstance(value, dict) and set(value.keys()) == {"__bytes_b64"}:
+        return base64.b64decode(value["__bytes_b64"])
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False)
+    return value
+
+
+def current_database_tables(cur):
+    cur.execute(
+        """
+        SELECT TABLE_NAME
+        FROM information_schema.TABLES
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_TYPE = 'BASE TABLE'
+        ORDER BY TABLE_NAME
+        """
+    )
+    return [row["TABLE_NAME"] if isinstance(row, dict) else row[0] for row in cur.fetchall()]
+
+
+def table_columns(cur, table):
+    cur.execute(
+        """
+        SELECT COLUMN_NAME
+        FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = %s
+        ORDER BY ORDINAL_POSITION
+        """,
+        (table,),
+    )
+    return [row["COLUMN_NAME"] if isinstance(row, dict) else row[0] for row in cur.fetchall()]
+
+
+def export_portal_backup():
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    tables = current_database_tables(cur)
+    backup_tables = {}
+    counts = {}
+    for table in tables:
+        cur.execute(f"SELECT * FROM {quoted_identifier(table)}")
+        rows = []
+        for row in cur.fetchall():
+            rows.append({key: json_safe_value(value) for key, value in row.items()})
+        backup_tables[table] = rows
+        counts[table] = len(rows)
+    cur.close()
+    conn.close()
+    return {
+        "format": BACKUP_FORMAT,
+        "version": BACKUP_VERSION,
+        "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "database": DB_CONFIG["database"],
+        "tables": backup_tables,
+        "counts": counts,
+    }
+
+
+def restore_portal_backup(payload):
+    if not isinstance(payload, dict):
+        raise ValueError("backup invalido")
+    if payload.get("format") != BACKUP_FORMAT:
+        raise ValueError("arquivo nao e um backup do portal NanotechSoft")
+    if int(payload.get("version") or 0) != BACKUP_VERSION:
+        raise ValueError("versao de backup nao suportada")
+    backup_tables = payload.get("tables")
+    if not isinstance(backup_tables, dict):
+        raise ValueError("backup sem tabelas")
+
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    restored = {}
+    try:
+        current_tables = current_database_tables(cur)
+        target_tables = [table for table in current_tables if table in backup_tables]
+        if not target_tables:
+            raise ValueError("backup nao contem tabelas compativeis com o banco atual")
+
+        cur.execute("SET FOREIGN_KEY_CHECKS=0")
+        for table in reversed(target_tables):
+            cur.execute(f"DELETE FROM {quoted_identifier(table)}")
+
+        for table in target_tables:
+            rows = backup_tables.get(table)
+            if not isinstance(rows, list):
+                raise ValueError(f"tabela {table} invalida no backup")
+            columns = table_columns(cur, table)
+            count = 0
+            for row in rows:
+                if not isinstance(row, dict):
+                    raise ValueError(f"linha invalida na tabela {table}")
+                values = {column: restore_value(row[column]) for column in columns if column in row}
+                if not values:
+                    continue
+                cols_sql = ", ".join(quoted_identifier(column) for column in values)
+                placeholders = ", ".join(["%s"] * len(values))
+                cur.execute(
+                    f"INSERT INTO {quoted_identifier(table)} ({cols_sql}) VALUES ({placeholders})",
+                    tuple(values.values()),
+                )
+                count += 1
+            restored[table] = count
+
+        cur.execute("SET FOREIGN_KEY_CHECKS=1")
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        try:
+            cur.execute("SET FOREIGN_KEY_CHECKS=1")
+        except Exception:
+            pass
+        raise
+    finally:
+        cur.close()
+        conn.close()
+    return restored
+
+
+def current_admin_or_json_error():
+    usuario = current_user_or_logout()
+    if not usuario:
+        return None, (jsonify({"erro": "login necessario"}), 401)
+    if not user_is_admin(usuario):
+        return None, (jsonify({"erro": "somente administradores podem usar backup"}), 403)
+    return usuario, None
+
+
+@app.route("/api/backup/export")
+@login_required
+def api_backup_export():
+    _, error = current_admin_or_json_error()
+    if error:
+        return error
+    backup = export_portal_backup()
+    body = json.dumps(backup, ensure_ascii=False, indent=2)
+    timestamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d-%H%M%S")
+    filename = f"nanotechsoft-backup_{timestamp}.json"
+    return Response(
+        body,
+        mimetype="application/json; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.route("/api/backup/import", methods=["POST"])
+@login_required
+def api_backup_import():
+    _, error = current_admin_or_json_error()
+    if error:
+        return error
+    try:
+        if request.is_json:
+            payload = request.get_json(silent=False)
+        else:
+            file = request.files.get("backup")
+            if not file:
+                return jsonify({"erro": "envie um arquivo de backup"}), 400
+            raw = file.read(MAX_BACKUP_BYTES + 1)
+            if len(raw) > MAX_BACKUP_BYTES:
+                return jsonify({"erro": "arquivo de backup muito grande"}), 413
+            payload = json.loads(raw.decode("utf-8-sig"))
+        restored = restore_portal_backup(payload)
+        return jsonify({"ok": True, "restored": restored})
+    except json.JSONDecodeError:
+        return jsonify({"erro": "JSON invalido"}), 400
+    except ValueError as exc:
+        return jsonify({"erro": str(exc)}), 400
 
 
 @app.route("/workflow/<app_key>")

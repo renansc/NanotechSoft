@@ -86,6 +86,18 @@ Se preferir usar um MySQL externo, remova ou ignore o servico
 Nao use SQLite para o portal principal sem uma refatoracao: o app usa
 `mysql.connector`, tipos/DDL de MySQL e tabelas com JSON/AUTO_INCREMENT.
 
+### Backup JSON pelo navegador
+
+A tela `Config` possui um painel `Backup do portal` para administradores. Ele
+exporta todas as tabelas do banco principal para um arquivo JSON e permite
+importar esse JSON de volta para o MySQL atual.
+
+Esse recurso serve como metodologia simples para ambiente inicial/free: baixe o
+backup antes de redeploys ou trocas de banco, guarde o arquivo em um local
+externo como Google Drive e importe quando precisar reconstruir os dados.
+Ele nao substitui o MySQL em tempo de execucao; a aplicacao ainda precisa estar
+conectada a um banco MySQL/MariaDB para abrir e para restaurar o arquivo.
+
 ## Scripts operacionais
 
 Os atalhos da raiz podem ser usados com ou sem `.sh`:
