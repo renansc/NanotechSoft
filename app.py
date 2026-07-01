@@ -113,6 +113,7 @@ FINANCEIRO_ACTIVE_PAGES = {
 }
 AUTOMACAO_PORT = int(os.environ.get("AUTOMACAO_PORT", "8890"))
 AUTOMACAO_BASE_URL = f"http://127.0.0.1:{AUTOMACAO_PORT}"
+AUTOMACAO_STARTUP_WAIT = float(os.environ.get("AUTOMACAO_STARTUP_WAIT", "60"))
 NANOPONTO_PORT = int(os.environ.get("NANOPONTO_PORT", "8891"))
 NANOPONTO_BASE_URL = f"http://127.0.0.1:{NANOPONTO_PORT}"
 ZAP_PORT = int(os.environ.get("ZAP_PORT", "8892"))
@@ -1577,6 +1578,7 @@ def ensure_automacao_app():
             "APP_DEBUG": "0",
             "DATABASE_PATH": str(AUTOMACAO_DIR / "homologacao.db"),
             "DRIVER_MONITOR_ENABLED": env.get("DRIVER_MONITOR_ENABLED", "1"),
+            "PYTHONUNBUFFERED": "1",
         })
         try:
             log_file = (BASE_DIR / "automacao.log").open("ab")
@@ -1590,12 +1592,24 @@ def ensure_automacao_app():
         except Exception as exc:
             log_app_startup_error("automacao", exc)
             return False
-        for _ in range(30):
+        attempts = max(1, int(AUTOMACAO_STARTUP_WAIT / 0.25))
+        for _ in range(attempts):
             if tcp_open("127.0.0.1", AUTOMACAO_PORT):
                 _app_startup_errors.pop("automacao", None)
                 return True
-            time.sleep(0.2)
-        log_app_startup_error("automacao", f"processo iniciou, mas a porta 127.0.0.1:{AUTOMACAO_PORT} nao respondeu")
+            if _automacao_proc.poll() is not None:
+                log_app_startup_error(
+                    "automacao",
+                    f"processo encerrou antes de abrir a porta 127.0.0.1:{AUTOMACAO_PORT} "
+                    f"com codigo {_automacao_proc.returncode}",
+                )
+                return False
+            time.sleep(0.25)
+        log_app_startup_error(
+            "automacao",
+            f"processo iniciou, mas a porta 127.0.0.1:{AUTOMACAO_PORT} nao respondeu "
+            f"em {AUTOMACAO_STARTUP_WAIT:.0f}s",
+        )
     return False
 
 

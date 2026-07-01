@@ -132,6 +132,9 @@ Esta plataforma nao deve depender de codigo em outros diretorios do servidor. O 
 - RioB e modulos locais: `apps/riob/source`, `apps/riob-cameras/source`, `apps/riob-email/source`, `apps/riob-esxi/source` e `apps/riob-xml/source`
 
 Arquivos operacionais gerados em uso, como bancos SQLite, anexos, XMLs enviados, uploads e streams `.m3u8`, ficam ignorados pelo Git.
+Schemas SQL necessarios para boot dos apps embarcados, como
+`apps/automacao/source/schema.sql`, fazem parte do codigo e devem permanecer
+versionados.
 
 Os manifests podem separar atalhos em `dashboards`, `cadastros`, `workflow`, `compras`, `financeiro`, `relatorios` e `import_export`; configuracoes especificas entram em `config_groups`.
 

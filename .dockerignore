@@ -13,6 +13,7 @@ deploy/tmp/
 *.GDB
 *.sql
 !sql/schema.sql
+!apps/automacao/source/schema.sql
 *.gz
 *.tar.gz
 *.pfx

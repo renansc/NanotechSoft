@@ -10,6 +10,8 @@ __pycache__/
 *.gdb
 *.GDB
 *.sql
+!sql/schema.sql
+!apps/automacao/source/schema.sql
 *.gz
 *.tar.gz
 *.pfx
