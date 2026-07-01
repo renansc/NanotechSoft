@@ -42,9 +42,8 @@ O app carrega as variaveis nesta ordem:
 - `.env`, se existir.
 - `.env_local`, se nao existir `.env`.
 
-Use `.env_local` para a maquina local e `.env_render` como referencia das
-variaveis do Render. Esses arquivos ficam ignorados pelo Git para evitar
-vazamento de senha.
+Use `.env_local` para a maquina local. Esse arquivo fica ignorado pelo Git para
+evitar vazamento de senha.
 
 Para rodar local explicitamente:
 
@@ -52,9 +51,8 @@ Para rodar local explicitamente:
 NANOTECH_ENV_FILE=.env_local python app.py
 ```
 
-No Render, prefira as variaveis do Blueprint/painel. O arquivo `.env_render`
-serve como cola de configuracao: copie os valores para as env vars do servico
-quando fizer deploy manual.
+No Render, use o `render.yaml`; ele cria o MySQL privado e injeta as variaveis
+necessarias no web service.
 
 ## Deploy no Render
 
