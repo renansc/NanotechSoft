@@ -65,7 +65,9 @@ dois servicos:
 - `nanotechsoft-mysql`: MySQL 8 como private service com disco persistente em
   `/var/lib/mysql`.
 
-No Render, importe o Blueprint a partir da branch `main`.
+No Render, importe o Blueprint a partir da branch `main`. Criar apenas um
+Web Service manual nao aplica as variaveis do `render.yaml`; nesse caso o app
+cai no padrao local `127.0.0.1:3307` e nao encontra o MySQL.
 
 O Render nao oferece MySQL gerenciado nativo como oferece Postgres; este projeto
 usa MySQL em private service com Render Disk. Para producao, faca backups

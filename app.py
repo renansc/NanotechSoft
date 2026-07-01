@@ -226,6 +226,15 @@ DB_CONFIG = {
     "collation": "utf8mb4_unicode_ci",
 }
 
+
+def render_db_env_missing():
+    return (
+        os.environ.get("RENDER") == "true"
+        and not os.environ.get("NS_DB_HOST")
+        and DB_CONFIG["host"] == "127.0.0.1"
+        and DB_CONFIG["port"] == 3307
+    )
+
 THEMES = [
     {
         "key": "rio_branco",
@@ -3410,6 +3419,13 @@ def db_error(exc):
     detail = str(exc)
     if getattr(exc, "errno", None) == errorcode.ER_ACCESS_DENIED_ERROR:
         detail = "Acesso negado ao MySQL. Confira NS_DB_USER e NS_DB_PASSWORD."
+    elif render_db_env_missing():
+        detail = (
+            "O app esta rodando no Render, mas as variaveis NS_DB_HOST/NS_DB_PORT "
+            "nao foram aplicadas. Crie ou sincronize o Blueprint render.yaml na "
+            "branch main, ou configure manualmente NS_DB_HOST, NS_DB_PORT, "
+            "NS_DB_USER, NS_DB_PASSWORD e NS_DB_NAME no web service."
+        )
     return render_template("db_error.html", detalhe=detail), status
 
 
