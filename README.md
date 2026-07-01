@@ -34,6 +34,28 @@ Esse compose publica o banco na porta `3307` por padrao para nao conflitar com o
 
 Com o banco do compose, mantenha `NS_DB_PORT=3307` no `.env`.
 
+## Arquivos de ambiente
+
+O app carrega as variaveis nesta ordem:
+
+- `NANOTECH_ENV_FILE`, quando essa variavel aponta para um arquivo.
+- `.env`, se existir.
+- `.env_local`, se nao existir `.env`.
+
+Use `.env_local` para a maquina local e `.env_render` como referencia das
+variaveis do Render. Esses arquivos ficam ignorados pelo Git para evitar
+vazamento de senha.
+
+Para rodar local explicitamente:
+
+```bash
+NANOTECH_ENV_FILE=.env_local python app.py
+```
+
+No Render, prefira as variaveis do Blueprint/painel. O arquivo `.env_render`
+serve como cola de configuracao: copie os valores para as env vars do servico
+quando fizer deploy manual.
+
 ## Deploy no Render
 
 Use o branch `deploy/onrender` para o ambiente externo. Ele tem um `render.yaml`

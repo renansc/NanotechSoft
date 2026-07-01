@@ -37,7 +37,27 @@ def load_env_file(path):
             os.environ[key] = value
 
 
-load_env_file(BASE_DIR / ".env")
+def resolve_env_file(value):
+    path = Path(value)
+    if not path.is_absolute():
+        path = BASE_DIR / path
+    return path
+
+
+def load_runtime_env():
+    configured = os.environ.get("NANOTECH_ENV_FILE")
+    if configured:
+        load_env_file(resolve_env_file(configured))
+        return
+
+    for filename in (".env", ".env_local"):
+        path = BASE_DIR / filename
+        if path.exists():
+            load_env_file(path)
+            return
+
+
+load_runtime_env()
 
 APPS_DIR = BASE_DIR / "apps"
 ALLOWED_APPS_FILE = BASE_DIR / "apps_liberados.txt"
