@@ -31,7 +31,8 @@ O script:
   - adiciona somente arquivos seguros
   - valida Python, manifests dos apps e docker compose
   - opcionalmente builda e testa o container app
-  - commita e envia a branch atual para origin
+  - commita quando houver alteracoes seguras
+  - envia a branch atual para origin quando houver commits pendentes
 EOF
 }
 
@@ -39,6 +40,7 @@ is_risky_path() {
   local path="${1//\\//}"
   [[ "$path" == ".env" ]] && return 0
   [[ "$path" == .env.* && "$path" != ".env.example" ]] && return 0
+  [[ "$path" == .env_* ]] && return 0
   [[ "$path" == ".venv/"* ]] && return 0
   [[ "$path" == "__pycache__/"* ]] && return 0
   [[ "$path" == *.log ]] && return 0
@@ -57,6 +59,54 @@ confirm() {
     s|sim|y|yes) return 0 ;;
     *) return 1 ;;
   esac
+}
+
+pending_commit_count() {
+  if git rev-parse --verify --quiet "origin/$BRANCH" >/dev/null; then
+    git rev-list --count "origin/$BRANCH..HEAD"
+  else
+    git rev-list --count HEAD
+  fi
+}
+
+run_validations() {
+  log "rodando validacoes"
+  git diff --check
+  git diff --cached --check
+  PYTHON_CMD="$(python_cmd)" || die "python nao encontrado"
+  "$PYTHON_CMD" -m py_compile app.py
+  validate_app_sources
+  validate_portal_integrations
+  if [[ "$SKIP_COMPOSE" != "1" ]]; then
+    compose config >/tmp/nanotechsoft-compose-config.yml
+  else
+    log "validacao Docker Compose pulada por --skip-compose"
+  fi
+
+  if [[ "$SKIP_BUILD" != "1" ]]; then
+    log "validando build da imagem app"
+    compose build "$APP_SERVICE"
+  fi
+
+  if [[ "$SKIP_HEALTH" != "1" ]]; then
+    log "subindo app para checagem local"
+    compose up -d "$DB_SERVICE" "$APP_SERVICE"
+    if ! wait_for_app 45 2; then
+      compose logs --tail=120 "$APP_SERVICE" >&2 || true
+      die "falha ao consultar o app dentro do container"
+    fi
+  fi
+}
+
+push_branch() {
+  if [[ "$NO_PUSH" == "1" ]]; then
+    log "push pulado por --no-push"
+    exit 0
+  fi
+
+  git remote get-url origin >/dev/null 2>&1 || die "remote origin nao configurado"
+  git push origin "$BRANCH"
+  log "enviado para origin/$BRANCH"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -106,15 +156,6 @@ fi
 
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "nao estou dentro de um repositorio Git"
 
-if [[ -z "$MESSAGE" ]]; then
-  if [[ "$YES" == "1" ]]; then
-    MESSAGE="Atualizacao operacional $(date '+%Y-%m-%d %H:%M')"
-  else
-    read -r -p "Mensagem do commit: " MESSAGE
-  fi
-fi
-[[ -n "$MESSAGE" ]] || die "mensagem do commit vazia"
-
 BRANCH="$(git branch --show-current)"
 [[ -n "$BRANCH" && "$BRANCH" != "HEAD" ]] || die "nao foi possivel identificar a branch atual"
 
@@ -154,7 +195,16 @@ fi
 
 mapfile -t FINAL_STAGED < <(git diff --cached --name-only)
 if [[ "${#FINAL_STAGED[@]}" -eq 0 ]]; then
-  log "nenhuma alteracao segura para commitar"
+  PENDING_COMMITS="$(pending_commit_count)"
+  if [[ "$PENDING_COMMITS" -gt 0 ]]; then
+    log "nenhuma alteracao segura para commitar; $PENDING_COMMITS commit(s) pendente(s) para enviar"
+    run_validations
+    if ! confirm "Confirmar envio dos commits pendentes para Git?"; then
+      die "operacao cancelada"
+    fi
+    push_branch
+  fi
+  log "nenhuma alteracao segura para commitar e nenhum commit pendente para enviar"
   exit 0
 fi
 
@@ -167,31 +217,16 @@ done
 log "resumo do commit"
 git diff --cached --stat
 
-log "rodando validacoes"
-git diff --check
-PYTHON_CMD="$(python_cmd)" || die "python nao encontrado"
-"$PYTHON_CMD" -m py_compile app.py
-validate_app_sources
-validate_portal_integrations
-if [[ "$SKIP_COMPOSE" != "1" ]]; then
-  compose config >/tmp/nanotechsoft-compose-config.yml
-else
-  log "validacao Docker Compose pulada por --skip-compose"
-fi
+run_validations
 
-if [[ "$SKIP_BUILD" != "1" ]]; then
-  log "validando build da imagem app"
-  compose build "$APP_SERVICE"
-fi
-
-if [[ "$SKIP_HEALTH" != "1" ]]; then
-  log "subindo app para checagem local"
-  compose up -d "$DB_SERVICE" "$APP_SERVICE"
-  if ! wait_for_app 45 2; then
-    compose logs --tail=120 "$APP_SERVICE" >&2 || true
-    die "falha ao consultar o app dentro do container"
+if [[ -z "$MESSAGE" ]]; then
+  if [[ "$YES" == "1" ]]; then
+    MESSAGE="Atualizacao operacional $(date '+%Y-%m-%d %H:%M')"
+  else
+    read -r -p "Mensagem do commit: " MESSAGE
   fi
 fi
+[[ -n "$MESSAGE" ]] || die "mensagem do commit vazia"
 
 if ! confirm "Confirmar commit e envio para Git?"; then
   die "operacao cancelada"
@@ -199,11 +234,4 @@ fi
 
 git commit -m "$MESSAGE"
 
-if [[ "$NO_PUSH" == "1" ]]; then
-  log "push pulado por --no-push"
-  exit 0
-fi
-
-git remote get-url origin >/dev/null 2>&1 || die "remote origin nao configurado"
-git push origin "$BRANCH"
-log "enviado para origin/$BRANCH"
+push_branch
