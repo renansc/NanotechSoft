@@ -302,6 +302,200 @@ function bindPortalBackup() {
   });
 }
 
+function slugify(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function bindClientAdmin() {
+  const root = qs("[data-client-admin]");
+  if (!root) return;
+
+  const seed = qs("#clientContractsSeed");
+  const list = qs("[data-client-list]");
+  const form = qs("[data-client-form]");
+  const modulePicker = qs("[data-module-picker]");
+  const deleteButton = qs("[data-client-delete]");
+  const newButton = qs("[data-client-new]");
+  let state = { clients: [], catalog: [], activeClientId: "" };
+  let selectedId = "";
+  let draft = null;
+
+  function loadSeed() {
+    try {
+      state = JSON.parse(seed?.textContent || "{}");
+    } catch {
+      state = { clients: [], catalog: [], activeClientId: "" };
+    }
+    selectedId = state.activeClientId || state.clients?.[0]?.id || "";
+  }
+
+  function clientsForRender() {
+    return draft ? [...(state.clients || []), draft] : (state.clients || []);
+  }
+
+  function renderList() {
+    if (!list) return;
+    list.innerHTML = clientsForRender().map((client) => {
+      const active = client.id === selectedId;
+      const modules = client.allModules ? "Todos apps" : `${client.modules?.length || 0} modulo(s)`;
+      const deploy = state.activeClientId === client.id && state.selectedByEnv ? " / Deploy" : "";
+      return `
+        <button type="button" class="${active ? "active" : ""}" data-client-id="${client.id}">
+          <span>${client.status || "ativo"}${deploy}</span>
+          <strong>${client.nome}</strong>
+          <small>${modules}</small>
+        </button>
+      `;
+    }).join("");
+  }
+
+  function renderModules(client) {
+    if (!modulePicker) return;
+    const selected = new Set((client.modules || []).map((item) => item.slug));
+    modulePicker.innerHTML = (state.catalog || []).map((module) => {
+      const checked = client.allModules || selected.has(module.slug);
+      return `
+        <label class="module-choice">
+          <input type="checkbox" value="${module.slug}" data-client-module ${checked ? "checked" : ""}>
+          <span>
+            <strong>${module.nome}</strong>
+            <small>${module.slug}</small>
+          </span>
+        </label>
+      `;
+    }).join("");
+  }
+
+  function selectedClient() {
+    return clientsForRender().find((client) => client.id === selectedId) || clientsForRender()[0] || null;
+  }
+
+  function fillForm(client) {
+    if (!form || !client) return;
+    form.elements.nome.value = client.nome || "";
+    form.elements.id.value = client.id || "";
+    form.elements.status.value = client.status || "ativo";
+    form.elements.databaseKey.value = client.databaseKey || "";
+    form.elements.observacao.value = client.observacao || "";
+    form.elements.allModules.checked = Boolean(client.allModules);
+    deleteButton.disabled = Boolean(client.isDraft);
+    renderModules(client);
+  }
+
+  function render() {
+    renderList();
+    fillForm(selectedClient());
+  }
+
+  function payloadFromForm() {
+    const data = new FormData(form);
+    const catalog = new Map((state.catalog || []).map((module) => [module.slug, module]));
+    const allModules = form.elements.allModules.checked;
+    const modules = [...form.querySelectorAll("[data-client-module]:checked")]
+      .map((input) => catalog.get(input.value))
+      .filter(Boolean)
+      .map((module) => ({
+        slug: module.slug,
+        nome: module.nome,
+        descricao: module.descricao || "",
+        href: module.href || "",
+        status: module.status === "importar" ? "importar" : "contratado",
+      }));
+    return {
+      nome: String(data.get("nome") || "").trim(),
+      id: slugify(data.get("id") || data.get("nome")),
+      status: String(data.get("status") || "ativo"),
+      databaseKey: String(data.get("databaseKey") || "").trim(),
+      observacao: String(data.get("observacao") || "").trim(),
+      allModules,
+      modules: allModules ? [] : modules,
+    };
+  }
+
+  async function requestClient(url, options) {
+    const resp = await fetch(url, {
+      cache: "no-store",
+      headers: { Accept: "application/json", "Content-Type": "application/json" },
+      ...options,
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data.erro || "Falha ao salvar cliente");
+    state = data;
+    draft = null;
+    return data;
+  }
+
+  list?.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-client-id]");
+    if (!button) return;
+    selectedId = button.dataset.clientId;
+    setMessage("#clientAdminMsg", "", "");
+    render();
+  });
+
+  newButton?.addEventListener("click", () => {
+    draft = {
+      id: "novo-cliente",
+      nome: "Novo cliente",
+      status: "ativo",
+      databaseKey: "",
+      observacao: "",
+      allModules: false,
+      modules: [],
+      isDraft: true,
+    };
+    selectedId = draft.id;
+    setMessage("#clientAdminMsg", "", "");
+    render();
+  });
+
+  form?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const payload = payloadFromForm();
+    if (!payload.nome || !payload.id) {
+      setMessage("#clientAdminMsg", "Informe nome e ID.", "error");
+      return;
+    }
+    const isDraft = draft && selectedId === draft.id;
+    const url = isDraft ? "/api/clientes-modulos/clientes" : `/api/clientes-modulos/clientes/${encodeURIComponent(selectedId)}`;
+    try {
+      await requestClient(url, { method: isDraft ? "POST" : "PUT", body: JSON.stringify(payload) });
+      selectedId = payload.id;
+      setMessage("#clientAdminMsg", "Cliente salvo no JSON.", "ok");
+      render();
+    } catch (err) {
+      setMessage("#clientAdminMsg", err.message, "error");
+    }
+  });
+
+  deleteButton?.addEventListener("click", async () => {
+    if (draft && selectedId === draft.id) {
+      draft = null;
+      selectedId = state.clients?.[0]?.id || "";
+      render();
+      return;
+    }
+    const client = selectedClient();
+    if (!client || !confirm(`Excluir ${client.nome}?`)) return;
+    try {
+      await requestClient(`/api/clientes-modulos/clientes/${encodeURIComponent(client.id)}`, { method: "DELETE" });
+      selectedId = state.activeClientId || state.clients?.[0]?.id || "";
+      setMessage("#clientAdminMsg", "Cliente excluido do JSON.", "ok");
+      render();
+    } catch (err) {
+      setMessage("#clientAdminMsg", err.message, "error");
+    }
+  });
+
+  loadSeed();
+  render();
+}
+
 function bindKanban() {
   const board = qs("[data-kanban-board]");
   if (!board) return;
@@ -488,6 +682,7 @@ bindLogout();
 bindMenu();
 bindTheme();
 bindPortalBackup();
+bindClientAdmin();
 bindKanban();
 syncMenuSection();
 window.addEventListener("hashchange", syncMenuSection);

@@ -110,17 +110,27 @@ Os atalhos da raiz podem ser usados com ou sem `.sh`:
 
 - `./up` sobe ou recria `mysql` e `app`, valida os manifests dos apps e espera `/login` responder.
 - `./down` para somente o container `app`, preservando o banco e o volume MySQL.
-- `./git-safe` bloqueia arquivos sensiveis/runtime, valida Python, valida `source_dir` dos apps, executa `docker compose config`, opcionalmente builda/testa o container e envia a branch atual para `origin`.
+- `./git-safe` bloqueia arquivos sensiveis/runtime, valida Python, valida `source_dir` dos apps, valida `clientes-modulos.json`, executa Docker Compose quando disponivel, opcionalmente builda/testa o container e envia a branch atual para `origin`.
 
 Os scripts detectam `docker compose`, `docker-compose` ou `podman compose`. Se o Docker CLI nao estiver disponivel no terminal atual, execute os scripts fora de sandboxes que nao exponham Docker, como alguns ambientes Flatpak, ou instale o plugin Compose.
 
-Em um ambiente sem Docker CLI, `./git-safe --skip-compose -m "mensagem"` permite commitar/enviar depois das validacoes de Python e manifests, pulando build e healthcheck do container explicitamente.
+Em um ambiente sem Docker CLI, o `./git-safe` pula Compose/build/health automaticamente e ainda roda as validacoes de Python, manifests e clientes. Use `--skip-compose` quando quiser deixar esse pulo explicito. Use `--skip-whitespace` somente quando precisar ignorar `git diff --check`; por padrao, vendors minificados e binarios ja sao excluidos dessa checagem. Se faltarem dependencias Python locais, a validacao que importa `app.py` vira aviso; instale `requirements.txt` para checar tambem rotas e temas fora do container.
 
 ## Apps dinamicos
 
 Os apps ficam dentro de `apps/`. Cada subpasta pode ter um `app.json`; tambem existe a tabela `installed_apps` para cadastro via banco.
 
-O arquivo `apps_liberados.txt` define quais apps aparecem no portal e devem ser carregados no deploy do cliente. Nesta etapa, os apps liberados sao `automacao` e `financeiro`.
+O arquivo `clientes-modulos.json` define os clientes e quais modulos cada um possui. No deploy, configure `CLIENTE_DEPLOY_ID` com o ID do cliente, por exemplo `rio-branco`. Cada ambiente continua usando seu proprio banco via `NS_DB_NAME`/credenciais, sem misturar dados entre clientes.
+
+Se `CLIENTE_DEPLOY_ID` nao estiver configurado, o portal usa `apps_liberados.txt` como fallback local/legado.
+
+Administradores tambem podem editar esse arquivo pela tela `Config`, ou pelas rotas:
+
+- `GET /api/clientes-modulos`
+- `GET /api/clientes-modulos/ativo`
+- `POST /api/clientes-modulos/clientes`
+- `PUT /api/clientes-modulos/clientes/<id>`
+- `DELETE /api/clientes-modulos/clientes/<id>`
 
 ## Codigo dos apps
 

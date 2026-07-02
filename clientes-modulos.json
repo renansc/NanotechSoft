@@ -1,0 +1,50 @@
+{
+  "clients": [
+    {
+      "id": "rio-branco",
+      "nome": "Rio Branco",
+      "status": "ativo",
+      "databaseKey": "riobranco",
+      "observacao": "Cliente com acesso somente ao App RioB e ao App Ponto.",
+      "allModules": false,
+      "modules": [
+        {
+          "slug": "riob",
+          "nome": "App RioB",
+          "status": "contratado"
+        },
+        {
+          "slug": "nanoponto",
+          "nome": "App Ponto",
+          "status": "contratado"
+        }
+      ]
+    },
+    {
+      "id": "nanotech",
+      "nome": "Nanotech",
+      "status": "interno",
+      "databaseKey": "nanotech",
+      "observacao": "Cliente interno com acesso a todos os apps publicados.",
+      "allModules": true,
+      "modules": []
+    },
+    {
+      "id": "laboratorio-santa-terezinha",
+      "nome": "Laboratorio Santa Terezinha",
+      "status": "implantacao",
+      "databaseKey": "santa-terezinha",
+      "observacao": "Cliente usando o RaioxPacs importado para o portal NanotechSoft.",
+      "allModules": false,
+      "modules": [
+        {
+          "slug": "pacs",
+          "nome": "RaioxPacs",
+          "descricao": "RIS/PACS do Laboratorio Santa Terezinha com worklist, viewer, laudos e compartilhamento de imagens.",
+          "href": "/apps/pacs",
+          "status": "contratado"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{{ app_name }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='viewer.css') }}" />
+  </head>
+  <body
+    class="viewer-body"
+    data-viewer-mode="{{ viewer_mode }}"
+    data-exam-id="{{ exam_id }}"
+    data-share-slug="{{ share_slug }}"
+  >
+    <div class="viewer-shell">
+      <aside class="viewer-left">
+        <div class="viewer-brand">
+          <p class="viewer-kicker">{{ "Compartilhamento Seguro" if viewer_mode == "share" else "Laudos e Imagens" }}</p>
+          <h1>{{ app_name }}</h1>
+          <p class="viewer-muted">
+            {{ "Acesso somente as imagens autorizadas para este exame ou paciente." if viewer_mode == "share" else "Viewer web para laudo medico, navegacao por series e compartilhamento seguro." }}
+          </p>
+        </div>
+
+        <div id="viewerExamPickerWrap" class="viewer-card hidden">
+          <div class="card-head">
+            <h2>Exames Liberados</h2>
+          </div>
+          <label class="field">
+            <span>Escolha o exame</span>
+            <select id="viewerExamPicker"></select>
+          </label>
+        </div>
+
+        <div class="viewer-card">
+          <div class="card-head">
+            <h2>Resumo do Estudo</h2>
+          </div>
+          <div id="viewerStudyMeta" class="meta-grid"></div>
+        </div>
+
+        <div class="viewer-card grow">
+          <div class="card-head">
+            <h2>Series e Anexos</h2>
+          </div>
+          <div id="viewerSeriesRail" class="series-rail"></div>
+        </div>
+      </aside>
+
+      <main class="viewer-main">
+        <header class="viewer-header">
+          <div>
+            <p class="viewer-kicker">Diagnostico por imagem</p>
+            <h2 id="viewerTitle">Carregando exame...</h2>
+            <p id="viewerSubtitle" class="viewer-muted">Aguarde a montagem do estudo.</p>
+          </div>
+          <div class="header-actions">
+            <a href="/" class="ghost" {% if viewer_mode == "share" %}style="display:none"{% endif %}>Cockpit</a>
+            {% if viewer_mode == "share" %}
+            <form method="post" action="{{ url_for('share_logout', slug=share_slug) }}">
+              <button class="ghost danger" type="submit">Sair</button>
+            </form>
+            {% endif %}
+            <button id="viewerRefresh" class="primary" type="button">Atualizar</button>
+          </div>
+        </header>
+
+        {% if viewer_mode == "share" and share %}
+        <section class="viewer-banner">
+          <strong>Compartilhamento {{ share.scope_type }}</strong>
+          <span>Usuario: {{ share.username }}</span>
+          <span>{{ share.note or "Visualizacao protegida somente das imagens autorizadas." }}</span>
+        </section>
+        {% endif %}
+
+        <section class="viewer-toolbar">
+          <div class="tool-group">
+            <button id="zoomOutBtn" class="ghost mini" type="button">-</button>
+            <button id="zoomResetBtn" class="ghost mini" type="button">100%</button>
+            <button id="zoomInBtn" class="ghost mini" type="button">+</button>
+            <button id="fitBtn" class="ghost mini" type="button">Ajustar</button>
+          </div>
+          <div class="tool-group">
+            <button id="invertBtn" class="ghost mini" type="button">Inverter</button>
+            <a id="dicomDownloadLink" class="ghost mini hidden" href="#" target="_blank" rel="noreferrer">Baixar DICOM</a>
+          </div>
+          <div class="slider-group">
+            <label>
+              <span>Window Center</span>
+              <input id="wcSlider" type="range" min="-1024" max="3072" step="1" />
+              <strong id="wcValue">-</strong>
+            </label>
+            <label>
+              <span>Window Width</span>
+              <input id="wwSlider" type="range" min="1" max="4096" step="1" />
+              <strong id="wwValue">-</strong>
+            </label>
+          </div>
+        </section>
+
+        <section class="viewer-stage-wrap">
+          <div id="viewerStage" class="viewer-stage">
+            <div id="viewerCanvas" class="viewer-canvas">
+              <img id="viewerImage" alt="Imagem do exame" draggable="false" />
+            </div>
+            <div id="viewerStageEmpty" class="viewer-empty">
+              <strong>Nenhuma imagem disponivel</strong>
+              <span>Envie um DICOM ou um anexo de imagem para este exame.</span>
+            </div>
+          </div>
+          <div id="viewerStatusLine" class="status-line">Preparando viewer...</div>
+        </section>
+
+        <section class="viewer-filmstrip-wrap">
+          <div class="card-head">
+            <h2>Imagens do Estudo</h2>
+          </div>
+          <div id="viewerFilmstrip" class="filmstrip"></div>
+        </section>
+      </main>
+
+      <aside class="viewer-right">
+        {% if viewer_mode == "internal" %}
+        <section class="viewer-card">
+          <div class="card-head">
+            <h2>Laudo Medico</h2>
+          </div>
+          <p class="viewer-muted">Ao salvar com achados e impressao preenchidos, o exame sobe para Finalizado automaticamente no kanban.</p>
+          <form id="viewerReportForm" class="card-form">
+            <input type="hidden" name="exam_id" />
+            <label class="field">
+              <span>Medico laudante</span>
+              <input name="doctor_name" />
+            </label>
+            <label class="field">
+              <span>Status</span>
+              <select name="status">
+                <option value="draft">Rascunho</option>
+                <option value="assigned">Em laudo</option>
+                <option value="preliminary">Preliminar</option>
+                <option value="final">Final</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Titulo</span>
+              <input name="title" />
+            </label>
+            <label class="field">
+              <span>Achados</span>
+              <textarea name="body" rows="9"></textarea>
+            </label>
+            <label class="field">
+              <span>Impressao diagnostica</span>
+              <textarea name="impression" rows="6"></textarea>
+            </label>
+            <div class="card-actions">
+              <button class="primary" type="submit">Salvar laudo</button>
+            </div>
+          </form>
+        </section>
+
+        <section class="viewer-card">
+          <div class="card-head">
+            <h2>Anexar Imagem</h2>
+          </div>
+          <form id="viewerUploadForm" class="card-form">
+            <input type="hidden" name="exam_id" />
+            <label class="field">
+              <span>Arquivo</span>
+              <input type="file" name="file" accept="image/*,.dcm,application/dicom" />
+            </label>
+            <div class="card-actions">
+              <button class="ghost" type="submit">Inserir no exame</button>
+            </div>
+          </form>
+          <div id="viewerAttachmentList" class="stack-list"></div>
+        </section>
+
+        <section id="viewerShareCard" class="viewer-card">
+          <div class="card-head">
+            <h2>Compartilhar Imagens com o Paciente</h2>
+          </div>
+          <p class="viewer-muted">O sistema sugere o usuario com o CPF do paciente e cria uma senha baseada no nome, pronta para envio externo.</p>
+          <form id="viewerShareForm" class="card-form">
+            <input type="hidden" name="exam_id" />
+            <input type="hidden" name="patient_id" />
+            <label class="field">
+              <span>Escopo</span>
+              <select name="scope_type">
+                <option value="exam">Somente este exame</option>
+                <option value="patient">Todos os exames do paciente</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Usuario</span>
+              <input name="username" required />
+            </label>
+            <label class="field">
+              <span>Senha</span>
+              <input name="password" type="password" required />
+            </label>
+            <label class="field">
+              <span>Expira em</span>
+              <input name="expires_at" type="datetime-local" />
+            </label>
+            <label class="field">
+              <span>Observacao</span>
+              <textarea name="note" rows="3"></textarea>
+            </label>
+            <div class="card-actions">
+              <button class="primary" type="submit">Gerar acesso</button>
+            </div>
+          </form>
+          <div id="viewerShareCreated" class="share-created hidden"></div>
+          <div id="viewerShareList" class="share-list"></div>
+        </section>
+        {% else %}
+        <section class="viewer-card">
+          <div class="card-head">
+            <h2>Acesso Compartilhado</h2>
+          </div>
+          <div id="viewerShareInfo" class="meta-grid"></div>
+          <div class="stack-list">
+            <div class="list-row">
+              <strong>Modo somente leitura</strong>
+              <span>As imagens podem ser visualizadas, mas o laudo e os arquivos ficam protegidos.</span>
+            </div>
+          </div>
+        </section>
+        {% endif %}
+      </aside>
+    </div>
+
+    <div id="viewerToast" class="viewer-toast hidden"></div>
+    <script src="{{ url_for('static', filename='viewer.js') }}"></script>
+  </body>
+</html>

@@ -1,0 +1,86 @@
+services:
+  - type: web
+    name: raioxpacs-web
+    runtime: python
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn -b 0.0.0.0:${PORT:-10000} app:app
+    healthCheckPath: /api/ping
+    autoDeploy: false
+    disk:
+      name: runtime
+      mountPath: /opt/render/project/src/runtime
+      sizeGB: 10
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.8
+      - key: PORT
+        value: "10000"
+      - key: APP_DEBUG
+        value: "0"
+      - key: APP_HOST
+        value: 0.0.0.0
+      - key: APP_PORT
+        value: "10000"
+      - key: AUTO_BOOTSTRAP_SCHEMA
+        value: "1"
+      - key: RUNTIME_ROOT
+        value: /opt/render/project/src/runtime
+      - key: PACS_IMAGEBOX_PATH
+        value: /opt/render/project/src/runtime/imagebox
+      - key: DATABASE_URL
+        value: sqlite:////opt/render/project/src/runtime/app.d
+      - key: APP_SECRET_KEY
+        value: St123456!
+      - key: PACS_WEB_URL
+        value: ""
+      - key: PACS_AET
+        value: PACSrenan
+      - key: DICOM_BIND_HOST
+        value: 0.0.0.0
+      - key: DICOM_PORT
+        value: "11112"
+      - key: DICOM_STATUS_HOST
+        value: 0.0.0.0
+      - key: PACS_STATION_AET
+        value: PACSrenan
+      - key: PACS_INSTITUTION_NAME
+        value: Clinica de Radiologia
+      - key: RAD_UID_ROOT
+        value: "2.25"
+      - key: WORKLIST_BIND_HOST
+        value: 0.0.0.0
+      - key: WORKLIST_PORT
+        value: "11115"
+      - key: WORKLIST_STATUS_HOST
+        value: 0.0.0.0
+      - key: WORKLIST_AE_TITLE
+        value: RAIOXMWL
+      - key: DICOM_MOVE_DESTINATIONS
+        value: "{}"
+      - key: SIP_ENABLED
+        value: "0"
+      - key: SIP_MODE_ACTIVE
+        value: freepbx
+      - key: SIP_FREEPBX_WS_URL
+        value: ""
+      - key: SIP_FREEPBX_DOMAIN
+        value: ""
+      - key: SIP_FREEPBX_REGISTRAR_SERVER
+        value: ""
+      - key: SIP_OUTBOUND_PROXY
+        value: ""
+      - key: SIP_PREFIX
+        value: ""
+      - key: SIP_CALLER_ID_TEMPLATE
+        value: "{nome} raioXPacs"
+      - key: SIP_AUTO_REGISTER
+        value: "1"
+      - key: PANEL_TITLE
+        value: Painel de Chamadas
+      - key: PANEL_SUBTITLE
+        value: Clinica de Radiologia
+      - key: PANEL_VIDEO_URL
+        value: ""
+      - key: PANEL_DESTINATIONS
+        value: '["Recepcao","Sala de Raios-X","Tomografia","Ultrassom","Entrega de Exames"]'

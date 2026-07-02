@@ -42,3 +42,4 @@ apps/riob/source/sync-backups/
 apps/riob/source/sync-import/
 apps/riob-email/source/anexos/
 apps/riob-xml/source/uploads_xml_homologacao/
+apps/pacs/source/runtime/

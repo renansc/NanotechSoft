@@ -1,0 +1,79 @@
+requested_procedure_id,procedure_name,modality,aws_mapping_key,notes
+TE-002,ABDOMEN,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-003,ACROMIO,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-004,ADENOIDE,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-005,ANTE-PE,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-006,ANTEBRAÇO,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-007,ARCOS COSTAIS,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-008,ARCOS ZIGOMÁTICOS,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-009,ARTICULAÇÃO ACROMIOCLAVICULAR,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-010,ARTICULAÇÃO ACROMIOCLAVICULAR,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-011,ARTICULAÇÃO COXOFEMORAL,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-012,ARTICULAÇÃO ESCAPULO-UMERAL,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-013,ARTICULAÇÃO ESTERNOCLAVICULAR,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-014,ARTICULAÇÃO SACROILÍACA,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-015,ATM,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-016,BACIA,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-017,BACIA PARA IDADE ÓSSEA,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-018,BRAÇO,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-019,CALCÃNEO,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-020,CAVUM,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-021,CLAVÍCULA,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-022,CÓCCIX,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-023,COLUNA CERVICAL,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-024,COLUNA CERVICO-TORACO-LOMBAR,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-025,COLUNA CERVICOTORÁCICA,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-026,COLUNA DORSAL,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-027,COLUNA DORSO-LOMBAR,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-028,COLUNA LOMBAR,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-029,COLUNA LOMBO-SACRA,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-030,COLUNA SACRO,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-031,COLUNA SACRO-CÓCCIX,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-032,COLUNA TORÁCICA,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-033,COLUNA TORACOLOMBAR,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-034,COLUNA TOTAL,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-035,CORAÇÃO E VASOS DA BASE,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-036,COSTELAS,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-037,COTOVELO,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-038,COXA,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-039,COXOFEMORAL,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-040,CRÂNIO,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-041,DEDOS DA MÃO,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-042,DEDOS DO PÉ,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-043,DEGLUTOGRAMA,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-044,ESCÁPULA,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-045,ESTERNO,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-046,ESTERNOCLAVICULAR,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-047,FACE,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-048,FÊMUR,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-049,FIBULA,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-050,JOELHO,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-051,MANDÍBULA,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-052,MÃO,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-053,MÃOS E PUNHOS,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-054,MÃOS E PUNHOS PARA IDADE ÓSSEA,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-055,MASTOIDE,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-056,MAXILAR INFERIOR,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-057,OMBRO,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-058,ÓRBITAS,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-059,OSSO NASAL,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-060,OSSOS DA FACE,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-061,OSSOS LONGOS,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-062,PATELA,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-063,PÉ,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-064,PELVE,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-065,PERNA,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-066,PESCOÇO,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-067,PULSO,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-068,PUNHO,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-069,QUADRIL,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-070,RÁDIO,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-071,SEIOS DA FACE,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-072,SELA,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-073,SELA TURCICA,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-074,TÍBIA,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-075,TORACO-ABDOMINAL,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-076,TÓRAX,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-077,TÓRAX OIT,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-078,TORNOZELO,DR,Requested Procedure ID,Mapear body part/procedure no AWS
+TE-079,ÚMERO,DR,Requested Procedure ID,Mapear body part/procedure no AWS

@@ -1,0 +1,529 @@
+:root {
+  --bg: #f7f1f3;
+  --surface: #fffaf9;
+  --surface-strong: #ffffff;
+  --ink: #2d1820;
+  --muted: #6f5961;
+  --accent: #8c1d40;
+  --accent-strong: #6f0f30;
+  --accent-soft: #f4dbe4;
+  --line: #e8cfd7;
+  --shadow: 0 20px 50px rgba(88, 14, 41, 0.12);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: "Segoe UI", "Trebuchet MS", sans-serif;
+  color: var(--ink);
+  background:
+    radial-gradient(circle at top left, rgba(140, 29, 64, 0.12), transparent 32%),
+    linear-gradient(180deg, #fff8fa 0%, var(--bg) 100%);
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+.viewer-body {
+  padding: 18px;
+}
+
+.viewer-shell {
+  display: grid;
+  grid-template-columns: minmax(300px, 340px) minmax(0, 1fr) minmax(320px, 380px);
+  gap: 18px;
+  min-height: calc(100vh - 36px);
+  align-items: start;
+}
+
+.viewer-left,
+.viewer-right,
+.viewer-main {
+  min-height: 0;
+  min-width: 0;
+}
+
+.viewer-left,
+.viewer-right {
+  display: grid;
+  gap: 18px;
+  align-content: start;
+}
+
+.viewer-brand,
+.viewer-card,
+.viewer-header,
+.viewer-toolbar,
+.viewer-stage-wrap,
+.viewer-filmstrip-wrap,
+.login-card {
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(140, 29, 64, 0.12);
+  border-radius: 28px;
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(14px);
+}
+
+.viewer-brand,
+.viewer-card,
+.login-card,
+.viewer-header,
+.viewer-toolbar,
+.viewer-filmstrip-wrap {
+  padding: 20px;
+}
+
+.grow {
+  min-height: 320px;
+}
+
+.viewer-main {
+  display: grid;
+  gap: 18px;
+  min-height: 0;
+}
+
+.viewer-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.header-actions,
+.tool-group,
+.card-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.viewer-kicker {
+  margin: 0 0 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  font-size: 0.74rem;
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.viewer-brand h1,
+.viewer-header h2,
+.login-card h1 {
+  margin: 0;
+  line-height: 1.08;
+}
+
+.viewer-header h2 {
+  font-size: 1.8rem;
+}
+
+.viewer-muted {
+  color: var(--muted);
+  margin: 8px 0 0;
+}
+
+.viewer-banner {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 12px 16px;
+  border-radius: 18px;
+  background: linear-gradient(135deg, rgba(140, 29, 64, 0.12), rgba(140, 29, 64, 0.04));
+  border: 1px solid rgba(140, 29, 64, 0.12);
+}
+
+.viewer-banner.compact {
+  margin: 18px 0;
+}
+
+.card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.card-head h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.meta-grid {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.meta-item,
+.list-row,
+.series-button,
+.thumb-card,
+.share-row {
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.meta-item,
+.list-row {
+  padding: 12px 14px;
+  min-width: 0;
+}
+
+.meta-item span,
+.field span,
+.thumb-caption small,
+.series-button small,
+.status-line {
+  color: var(--muted);
+}
+
+.meta-item strong,
+.list-row strong,
+.thumb-caption strong,
+.series-button strong,
+.share-row strong {
+  display: block;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.meta-item span,
+.list-row span,
+.share-row span,
+.thumb-caption small,
+.series-button small {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.field {
+  display: grid;
+  gap: 8px;
+}
+
+.card-form {
+  display: grid;
+  gap: 14px;
+}
+
+.field input,
+.field select,
+.field textarea {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 12px 14px;
+  background: var(--surface-strong);
+  color: var(--ink);
+}
+
+.field textarea {
+  resize: vertical;
+}
+
+.primary,
+.ghost,
+.danger,
+.mini {
+  border-radius: 14px;
+  border: 1px solid transparent;
+  padding: 11px 15px;
+  cursor: pointer;
+  transition: 0.18s ease;
+}
+
+.ghost,
+.mini,
+.danger {
+  background: var(--surface);
+  border-color: var(--line);
+  color: var(--ink);
+}
+
+.primary {
+  color: #fff;
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-strong) 100%);
+}
+
+.danger {
+  color: var(--accent);
+}
+
+.ghost:hover,
+.mini:hover,
+.danger:hover {
+  background: #fff0f4;
+}
+
+.primary:hover {
+  filter: brightness(1.05);
+}
+
+.hidden {
+  display: none !important;
+}
+
+.viewer-toolbar {
+  display: grid;
+  gap: 16px;
+}
+
+.slider-group {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.slider-group label {
+  display: grid;
+  gap: 8px;
+}
+
+.slider-group input[type="range"] {
+  width: 100%;
+}
+
+.viewer-stage-wrap {
+  padding: 16px;
+  min-height: 0;
+  display: grid;
+  gap: 12px;
+}
+
+.viewer-stage {
+  position: relative;
+  min-height: 56vh;
+  border-radius: 24px;
+  overflow: hidden;
+  border: 1px solid rgba(140, 29, 64, 0.12);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0)),
+    radial-gradient(circle at center, rgba(255, 255, 255, 0.04), transparent 44%),
+    #111216;
+}
+
+.viewer-canvas {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  cursor: grab;
+}
+
+.viewer-canvas.dragging {
+  cursor: grabbing;
+}
+
+.viewer-canvas img {
+  max-width: none;
+  max-height: none;
+  user-select: none;
+  pointer-events: none;
+  transform-origin: center center;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.45);
+}
+
+.viewer-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  gap: 8px;
+  text-align: center;
+  color: #f7edf1;
+  padding: 24px;
+}
+
+.status-line {
+  min-height: 24px;
+  font-size: 0.92rem;
+}
+
+.status-line.error {
+  color: #b42342;
+}
+
+.viewer-filmstrip-wrap {
+  min-height: 0;
+  display: grid;
+  gap: 14px;
+}
+
+.filmstrip {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(138px, 1fr));
+  gap: 12px;
+}
+
+.thumb-card {
+  padding: 10px;
+  display: grid;
+  gap: 10px;
+  cursor: pointer;
+  transition: 0.18s ease;
+}
+
+.thumb-card.active {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+  background: #fff2f5;
+}
+
+.thumb-card img {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+  border-radius: 14px;
+  background: #151515;
+}
+
+.thumb-placeholder {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  border-radius: 14px;
+  display: grid;
+  place-content: center;
+  gap: 6px;
+  text-align: center;
+  color: #f5edf0;
+  background:
+    radial-gradient(circle at top, rgba(255, 255, 255, 0.1), transparent 45%),
+    linear-gradient(160deg, #2f131c, #15161c);
+}
+
+.thumb-placeholder strong {
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  font-size: 0.8rem;
+}
+
+.thumb-placeholder span {
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 0.78rem;
+}
+
+.thumb-caption {
+  display: grid;
+  gap: 2px;
+}
+
+.series-rail {
+  display: grid;
+  gap: 10px;
+}
+
+.series-button {
+  width: 100%;
+  padding: 12px 14px;
+  text-align: left;
+  cursor: pointer;
+  transition: 0.18s ease;
+}
+
+.series-button.active {
+  border-color: var(--accent);
+  background: #fff0f4;
+}
+
+.stack-list,
+.share-created,
+.share-list {
+  display: grid;
+  gap: 10px;
+}
+
+.share-row {
+  padding: 12px 14px;
+  display: grid;
+  gap: 8px;
+}
+
+.share-row code {
+  padding: 4px 6px;
+  border-radius: 8px;
+  background: #f8edf1;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.share-row .share-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.viewer-toast {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  max-width: 320px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  color: #fff;
+  background: rgba(45, 24, 32, 0.94);
+  box-shadow: var(--shadow);
+  z-index: 20;
+}
+
+.login-body {
+  display: grid;
+  place-items: center;
+}
+
+.login-shell {
+  width: min(100%, 520px);
+}
+
+.login-card {
+  padding: 28px;
+}
+
+@media (max-width: 1320px) {
+  .viewer-shell {
+    grid-template-columns: minmax(280px, 320px) minmax(0, 1fr);
+  }
+
+  .viewer-right {
+    grid-column: 1 / -1;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  }
+}
+
+@media (max-width: 920px) {
+  .viewer-body {
+    padding: 12px;
+  }
+
+  .viewer-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .viewer-header {
+    flex-direction: column;
+  }
+
+  .slider-group {
+    grid-template-columns: 1fr;
+  }
+
+  .viewer-stage {
+    min-height: 48vh;
+  }
+}

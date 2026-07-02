@@ -276,6 +276,102 @@ body.theme-zapgreen {
   align-items: end;
 }
 
+.client-admin-panel {
+  max-width: 980px;
+}
+
+.client-admin-head,
+.client-admin-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.client-admin-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.35fr) minmax(0, 1fr);
+  gap: 14px;
+}
+
+.client-admin-list {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+}
+
+.client-admin-list button {
+  min-height: 76px;
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  background: var(--surface);
+  text-align: left;
+}
+
+.client-admin-list button.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.client-admin-list span,
+.client-admin-list small,
+.module-choice small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.client-admin-form {
+  display: grid;
+  gap: 12px;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.inline-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.inline-check input {
+  width: auto;
+}
+
+.module-picker {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.module-choice {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.module-choice input {
+  width: auto;
+}
+
+.module-choice strong,
+.module-choice small {
+  display: block;
+}
+
 .danger-button {
   background: var(--danger);
 }
@@ -291,12 +387,18 @@ label {
 }
 
 input,
-select {
+select,
+textarea {
   width: 100%;
   border: 1px solid var(--line);
   border-radius: 4px;
   padding: 10px;
   background: #fff;
+  font: inherit;
+}
+
+textarea {
+  resize: vertical;
 }
 
 input[type="file"] {
@@ -1265,6 +1367,12 @@ body.theme-zapgreen .financeiro-app .diagLabel {
   }
 
   .backup-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .client-admin-grid,
+  .form-grid,
+  .module-picker {
     grid-template-columns: 1fr;
   }
 }

@@ -10,6 +10,7 @@ NO_PUSH=0
 SKIP_BUILD=0
 SKIP_HEALTH=0
 SKIP_COMPOSE=0
+SKIP_WHITESPACE=0
 YES=0
 
 usage() {
@@ -24,12 +25,14 @@ Opcoes:
   --skip-build          Pular docker compose build app
   --skip-health         Pular checagem local do app
   --skip-compose        Pular validacao/build/health com Docker Compose
+                        Se Docker Compose nao existir, o script faz este pulo automaticamente
+  --skip-whitespace     Pular git diff --check
   -h, --help            Mostrar ajuda
 
 O script:
   - bloqueia arquivos sensiveis/runtime do stage
   - adiciona somente arquivos seguros
-  - valida Python, manifests dos apps e docker compose
+  - valida Python, manifests dos apps, clientes e docker compose
   - opcionalmente builda e testa o container app
   - commita quando houver alteracoes seguras
   - envia a branch atual para origin quando houver commits pendentes
@@ -69,13 +72,36 @@ pending_commit_count() {
   fi
 }
 
+run_whitespace_check() {
+  if [[ "$SKIP_WHITESPACE" == "1" ]]; then
+    log "checagem de whitespace pulada por --skip-whitespace"
+    return 0
+  fi
+
+  local pathspecs=(
+    .
+    ":(exclude)**/*.min.js"
+    ":(exclude)**/*.pdf"
+    ":(exclude)**/*.png"
+    ":(exclude)**/*.jpg"
+    ":(exclude)**/*.jpeg"
+    ":(exclude)**/*.gif"
+    ":(exclude)**/*.webp"
+    ":(exclude)apps/**/static/vendor/**"
+    ":(exclude)apps/**/docs/vendor/**"
+  )
+
+  git diff --check -- "${pathspecs[@]}"
+  git diff --cached --check -- "${pathspecs[@]}"
+}
+
 run_validations() {
   log "rodando validacoes"
-  git diff --check
-  git diff --cached --check
+  run_whitespace_check
   PYTHON_CMD="$(python_cmd)" || die "python nao encontrado"
   "$PYTHON_CMD" -m py_compile app.py
   validate_app_sources
+  validate_client_contracts
   validate_portal_integrations
   if [[ "$SKIP_COMPOSE" != "1" ]]; then
     compose config >/tmp/nanotechsoft-compose-config.yml
@@ -138,6 +164,10 @@ while [[ $# -gt 0 ]]; do
       SKIP_HEALTH=1
       shift
       ;;
+    --skip-whitespace)
+      SKIP_WHITESPACE=1
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -151,7 +181,12 @@ done
 ensure_command git
 cd_project
 if [[ "$SKIP_COMPOSE" != "1" ]]; then
-  require_compose
+  if ! detect_compose; then
+    log "Docker Compose nao encontrado; pulando compose/build/health automaticamente"
+    SKIP_COMPOSE=1
+    SKIP_BUILD=1
+    SKIP_HEALTH=1
+  fi
 fi
 
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "nao estou dentro de um repositorio Git"

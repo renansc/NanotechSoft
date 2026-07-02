@@ -1,0 +1,162 @@
+name: ${COMPOSE_PROJECT_NAME:-raioxpacs}
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: raioxpacs-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-raioxpacs}
+      TZ: ${TZ:-America/Sao_Paulo}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - raiox_pgdata:/var/lib/postgresql/data
+      - ./docker/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build: .
+    container_name: raioxpacs-app
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      APP_DEBUG: 0
+      APP_PORT: 5020
+      TZ: ${TZ:-America/Sao_Paulo}
+      PGHOST: ${PGHOST:-db}
+      PGPORT: ${PGPORT:-5432}
+      PGUSER: ${PGUSER:-postgres}
+      PGPASSWORD: ${PGPASSWORD:-postgres}
+      PGDATABASE: ${PGDATABASE:-raioxpacs}
+      PGSSLMODE: ${PGSSLMODE:-prefer}
+      PACS_AET: ${PACS_AET:-RAIOXPACS}
+      DICOM_BIND_HOST: 0.0.0.0
+      DICOM_PORT: ${DICOM_PORT:-11112}
+      DICOM_STATUS_HOST: ${DICOM_STATUS_HOST:-dicom}
+      PACS_STATION_AET: ${PACS_STATION_AET:-RAIOXPACS}
+      PACS_INSTITUTION_NAME: ${PACS_INSTITUTION_NAME:-Clinica de Radiologia}
+      PACS_IMAGEBOX_PATH: /var/lib/raiox/storage/imagebox
+      PACS_WEB_URL: http://localhost:${APP_PORT:-5020}
+      RAD_UID_ROOT: ${RAD_UID_ROOT:-2.25}
+      WORKLIST_BIND_HOST: 0.0.0.0
+      WORKLIST_PORT: ${WORKLIST_PORT:-11115}
+      WORKLIST_STATUS_HOST: ${WORKLIST_STATUS_HOST:-worklist}
+      WORKLIST_AE_TITLE: ${WORKLIST_AE_TITLE:-RAIOXMWL}
+      AUTO_BOOTSTRAP_SCHEMA: ${AUTO_BOOTSTRAP_SCHEMA:-1}
+    ports:
+      - "${APP_PORT:-5020}:5020"
+    volumes:
+      - ./runtime/imagebox:/var/lib/raiox/storage/imagebox
+      - ./runtime/backups:/app/runtime/backups
+      - ./runtime/exam_attachments:/app/runtime/exam_attachments
+      - ./runtime/cameras:/app/runtime/cameras
+    command: ["web"]
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python3 -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:5020/api/ping', timeout=5)\"",
+        ]
+      interval: 20s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  worklist:
+    build: .
+    container_name: raioxpacs-worklist
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      APP_DEBUG: 0
+      TZ: ${TZ:-America/Sao_Paulo}
+      PGHOST: db
+      PGPORT: 5432
+      PGUSER: ${POSTGRES_USER:-postgres}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      PGDATABASE: ${PGDATABASE:-raioxpacs}
+      PGSSLMODE: ${PGSSLMODE:-prefer}
+      PACS_AET: ${PACS_AET:-RAIOXPACS}
+      DICOM_BIND_HOST: 0.0.0.0
+      DICOM_PORT: ${DICOM_PORT:-11112}
+      PACS_STATION_AET: ${PACS_STATION_AET:-RAIOXPACS}
+      PACS_INSTITUTION_NAME: ${PACS_INSTITUTION_NAME:-Clinica de Radiologia}
+      PACS_IMAGEBOX_PATH: /var/lib/raiox/storage/imagebox
+      PACS_WEB_URL: http://app:5020
+      RAD_UID_ROOT: ${RAD_UID_ROOT:-2.25}
+      WORKLIST_BIND_HOST: 0.0.0.0
+      WORKLIST_PORT: ${WORKLIST_PORT:-11115}
+      WORKLIST_AE_TITLE: ${WORKLIST_AE_TITLE:-RAIOXMWL}
+      AUTO_BOOTSTRAP_SCHEMA: ${AUTO_BOOTSTRAP_SCHEMA:-1}
+    ports:
+      - "${WORKLIST_PORT:-11115}:11115"
+    command: ["worklist"]
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python3 -c \"import socket; s=socket.create_connection(('127.0.0.1', 11115), 5); s.close()\"",
+        ]
+      interval: 20s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  dicom:
+    build: .
+    container_name: raioxpacs-dicom
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      APP_DEBUG: 0
+      TZ: ${TZ:-America/Sao_Paulo}
+      PGHOST: db
+      PGPORT: 5432
+      PGUSER: ${POSTGRES_USER:-postgres}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      PGDATABASE: ${PGDATABASE:-raioxpacs}
+      PGSSLMODE: ${PGSSLMODE:-prefer}
+      PACS_AET: ${PACS_AET:-RAIOXPACS}
+      DICOM_BIND_HOST: 0.0.0.0
+      DICOM_PORT: ${DICOM_PORT:-11112}
+      PACS_STATION_AET: ${PACS_STATION_AET:-RAIOXPACS}
+      PACS_INSTITUTION_NAME: ${PACS_INSTITUTION_NAME:-Clinica de Radiologia}
+      PACS_IMAGEBOX_PATH: /var/lib/raiox/storage/imagebox
+      PACS_WEB_URL: http://app:5020
+      RAD_UID_ROOT: ${RAD_UID_ROOT:-2.25}
+      WORKLIST_BIND_HOST: 0.0.0.0
+      WORKLIST_PORT: ${WORKLIST_PORT:-11115}
+      WORKLIST_AE_TITLE: ${WORKLIST_AE_TITLE:-RAIOXMWL}
+      DICOM_MOVE_DESTINATIONS: ${DICOM_MOVE_DESTINATIONS:-{}}
+      AUTO_BOOTSTRAP_SCHEMA: ${AUTO_BOOTSTRAP_SCHEMA:-1}
+    ports:
+      - "${DICOM_PORT:-11112}:11112"
+    volumes:
+      - ./runtime/imagebox:/var/lib/raiox/storage/imagebox
+    command: ["dicom"]
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python3 -c \"import socket; s=socket.create_connection(('127.0.0.1', 11112), 5); s.close()\"",
+        ]
+      interval: 20s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+volumes:
+  raiox_pgdata:

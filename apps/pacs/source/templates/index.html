@@ -1,0 +1,847 @@
+﻿<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{{ browser_title or app_name }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v={{ asset_version }}" />
+  </head>
+  <body class="nav-group-cadastros-collapsed" data-user-role="{{ user_role }}">
+    <div class="shell">
+      <aside class="sidebar">
+        <div class="sidebar-controls">
+          <button class="sidebar-toggle" type="button" data-sidebar-toggle aria-label="Minimizar menu">
+            <span class="sidebar-toggle-icon sidebar-toggle-collapse" aria-hidden="true">&#9664;</span>
+            <span class="sidebar-toggle-icon sidebar-toggle-expand" aria-hidden="true">&#9776;</span>
+          </button>
+          <a class="sidebar-logout" href="{{ url_for('logout') }}">Deslogar</a>
+        </div>
+        <div class="brand-block">
+          <p class="eyebrow">Nanotech dev</p>
+          <h1>
+            <span class="brand-line">{{ menu_brand_line_1 or app_name }}</span>
+            <span class="brand-line">{{ menu_brand_line_2 or "" }}</span>
+          </h1>
+          <p class="muted">Sistema de Gestao</p>
+        </div>
+
+        <nav class="nav">
+          <button class="nav-link active" data-section="kanban">Fluxo de Trabalho</button>
+          <button class="nav-link" data-section="dashboard">Dashboard</button>
+          <button class="nav-link" data-section="orcamento">Orçamento</button>
+          <button class="nav-link nav-group-toggle" type="button" data-nav-toggle="cadastros" aria-expanded="false">Cadastros</button>
+          <div class="nav-subgroup" data-nav-group="cadastros">
+            <button class="nav-link nav-sub" data-section="patients">Pacientes</button>
+            {% if user_role == "admin" %}
+              <button class="nav-link nav-sub" data-section="exams" data-exams-focus="lookup">Exames</button>
+            {% endif %}
+          </div>
+          {% if user_role == "admin" %}
+            <button class="nav-link" data-section="reports">Relatorio</button>
+            <button class="nav-link" data-section="reporting">Laudos & Viewer</button>
+            <button class="nav-link" data-section="finance">Financeiro</button>
+            <button class="nav-link" data-section="communication">Comunicacao</button>
+            <button class="nav-link" data-section="panel">Painel</button>
+            <button class="nav-link" data-section="worklist">Worklist</button>
+            <button class="nav-link" data-section="storage">Storage</button>
+            <button class="nav-link" data-section="config">Config</button>
+          {% else %}
+            <button class="nav-link" data-section="reports">Relatorio</button>
+            <button class="nav-link" data-section="panel">Painel</button>
+            <button class="nav-link" data-section="finance">Financeiro</button>
+            <button class="nav-link" data-section="communication">Comunicacao</button>
+            <button class="nav-link" data-section="reporting">Laudos & Viewer</button>
+          {% endif %}
+          <button class="nav-link" type="button" data-docs-link="true">Docs</button>
+        </nav>
+
+      </aside>
+
+      <main class="content">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Unidade - Mandaguaçu</p>
+            <h2>{{ app_name }}</h2>
+          </div>
+          <div class="topbar-actions">
+            <span class="session-badge">Departamento: {{ current_department_name }}</span>
+            <a id="logoutButton" class="ghost" href="{{ url_for('logout') }}">Trocar departamento</a>
+            <button id="refreshAll" class="ghost">Atualizar tudo</button>
+            <button id="syncPacs" class="primary">Sincronizar PACS</button>
+          </div>
+        </header>
+
+        <section id="flash" class="flash hidden" role="alert" aria-live="polite" aria-atomic="true"></section>
+
+        <section class="section" data-section="dashboard">
+          <div id="dashboardCards" class="cards"></div>
+          <div class="dashboard-grid">
+            <article class="panel">
+              <div class="panel-head"><h3>Pipeline operacional</h3></div>
+              <div id="workflowCounters" class="metric-list"></div>
+            </article>
+            <article class="panel">
+              <div class="panel-head"><h3>Ultimos exames</h3></div>
+              <div id="latestExams" class="stack-list"></div>
+            </article>
+            <article class="panel">
+              <div class="panel-head"><h3>Mensagens recentes</h3></div>
+              <div id="latestMessages" class="stack-list"></div>
+            </article>
+            <article class="panel">
+              <div class="panel-head"><h3>Departamentos</h3></div>
+              <div id="departmentsSummary" class="metric-list"></div>
+            </article>
+            <article class="panel">
+              <div class="panel-head"><h3>Financeiro resumido</h3></div>
+              <div id="dashboardFinanceCards" class="cards compact"></div>
+            </article>
+          </div>
+        </section>
+
+        <section class="section active" data-section="kanban">
+          <article class="panel">
+            <div class="panel-head kanban-panel-head">
+              <button class="primary" type="button" data-open-exam-dialog="new">Criar um novo</button>
+              <div class="kanban-panel-copy">
+                <h3>Fluxo de Trabalho</h3>
+                <p class="muted">Arraste os exames entre as colunas e acompanhe a sincronizacao automatica com worklist e PACS.</p>
+              </div>
+            </div>
+            <div id="kanbanBoard" class="kanban-board"></div>
+          </article>
+        </section>
+
+        <section class="section" data-section="orcamento">
+          <div class="split-layout budget-layout">
+            <article class="panel">
+              <div class="panel-head">
+                <div>
+                  <h3>Orçamento</h3>
+                  <p class="muted">Monte uma ordem com múltiplos exames para o mesmo paciente.</p>
+                </div>
+              </div>
+              <form id="budgetForm" class="form-grid">
+                <input type="hidden" name="patient_id" id="budgetPatientId" />
+                <label><span>Paciente</span><input name="patient_name" id="budgetPatientName" list="budgetPatientSuggestions" placeholder="Digite o nome do paciente" required autocomplete="off" /><datalist id="budgetPatientSuggestions"></datalist></label>
+                <label><span>Convênio</span><select name="convenio_code" id="budgetConvenio" required></select></label>
+                <label><span>Referência</span><input name="reference" placeholder="Opcional" /></label>
+                <label><span>Desconto</span><input type="text" name="discount" id="budgetDiscount" inputmode="numeric" placeholder="R$ 0,00" autocomplete="off" /></label>
+                <label class="span-2"><span>Observações</span><textarea name="notes" rows="2"></textarea></label>
+                <div class="actions span-2">
+                  <button class="primary" type="submit">Gerar orçamento</button>
+                  <button class="ghost" type="button" data-reset-budget="true">Limpar</button>
+                </div>
+              </form>
+            </article>
+
+            <article class="panel">
+              <div class="panel-head budget-panel-head">
+                <div>
+                  <h3>Exames do orçamento</h3>
+                  <p class="muted">Adicione quantos procedimentos forem necessários antes de gerar a ordem.</p>
+                </div>
+                <button class="primary" type="button" data-add-budget-item="true">Adicionar exame</button>
+              </div>
+              <div id="budgetItems" class="budget-items"></div>
+              <div id="budgetSummary" class="metric-list"></div>
+            </article>
+          </div>
+        </section>
+
+        <section class="section" data-section="patients">
+          <div class="split-layout">
+            <article class="panel">
+              <div class="panel-head"><h3>Paciente</h3></div>
+              <form id="patientForm" class="form-grid">
+                <input type="hidden" name="id" />
+                <label><span>Nome completo</span><input name="full_name" required /></label>
+                <label><span>Data de nascimento</span><input type="date" name="birth_date" /></label>
+                <label><span>Sexo</span>
+                  <select name="sex">
+                    <option value="">Selecione</option>
+                    <option value="M">Masculino</option>
+                    <option value="F">Feminino</option>
+                    <option value="O">Outro</option>
+                  </select>
+                </label>
+                <label><span>CPF</span><input name="cpf" /></label>
+                <label><span>Telefone</span><input name="phone" /></label>
+                <label><span>Email</span><input name="email" /></label>
+                <label class="span-2"><span>Observacoes</span><textarea name="notes" rows="3"></textarea></label>
+                <div class="actions span-2">
+                  <button class="primary" type="submit">Salvar paciente</button>
+                  <button class="ghost" type="button" data-reset-form="patientForm">Limpar</button>
+                </div>
+              </form>
+            </article>
+            <article class="panel">
+              <div class="panel-head"><h3>Pacientes cadastrados</h3></div>
+              <div id="patientsTable" class="table-wrap"></div>
+            </article>
+          </div>
+        </section>
+
+        <section class="section" data-section="exams">
+            <div class="exam-workbench">
+              <aside class="exam-local-nav">
+                <button class="exam-local-nav-btn primary" type="button" data-exam-workbench-target="form">Cadastro</button>
+                <button class="exam-local-nav-btn ghost" type="button" data-exam-workbench-target="values">Valores</button>
+                <div class="config-note">
+                  <strong>Procedimentos</strong>
+                  Cadastre ou edite um procedimento sem sair do fluxo.
+                </div>
+              </aside>
+            <div class="exam-workbench-panels">
+            <article class="panel exam-workbench-panel" data-exam-workbench-panel="form">
+              <div class="panel-head"><h3>Procedimento</h3></div>
+              <form id="procedureForm" class="form-grid">
+                <input type="hidden" name="id" />
+                <label><span>Descricao</span><input name="name" required /></label>
+                <label><span>Modalidade</span>
+                  <select name="modality">
+                    <option value="DR">DR</option>
+                    <option value="US">US</option>
+                  </select>
+                </label>
+                <label><span>Duracao (min)</span><input type="number" min="5" name="duration_minutes" value="20" /></label>
+                <label><span>Ativo</span>
+                  <select name="active">
+                    <option value="true">Sim</option>
+                    <option value="false">Nao</option>
+                  </select>
+                </label>
+                <div class="actions span-2">
+                  <button class="primary" type="submit">Salvar procedimento</button>
+                  <button class="ghost" type="button" data-reset-form="procedureForm">Limpar</button>
+                </div>
+              </form>
+              <div id="proceduresTable" class="table-wrap compact-table"></div>
+            </article>
+
+            <article class="panel exam-workbench-panel" data-exam-workbench-panel="values">
+              <div class="panel-head">
+                <div>
+                  <h3>Manutencao de procedimentos</h3>
+                  <p class="muted">Filtre por convênios, tipo e nome para editar rapidamente um procedimento cadastrado.</p>
+                </div>
+                <div class="inline-field exam-filter-bar">
+                  <label>
+                    <span>Convenio</span>
+                    <select id="examListConvenioFilter">
+                      <option value="PARTICULAR">Particular</option>
+                      <option value="CONVENIOS">Convenios</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>Tipo</span>
+                    <select id="examListTypeFilter">
+                      <option value="ALL">Todos</option>
+                      <option value="DR">DR</option>
+                      <option value="US">US</option>
+                    </select>
+                  </label>
+                  <label class="span-2">
+                    <span>Busca rapida</span>
+                    <input id="examLookupSearch" type="search" placeholder="Digite o nome do procedimento" list="examLookupSuggestions" />
+                    <datalist id="examLookupSuggestions"></datalist>
+                    <select id="examLookupSelect" size="8"></select>
+                  </label>
+                </div>
+              </div>
+              <div class="config-note">
+                <strong>Particular</strong>
+                O valor exibido segue o convênio selecionado. Ajustes individuais de 1, 2 e 3 incidências podem ser salvos para Particular e Convênios.
+              </div>
+              <div id="examsTable" class="table-wrap"></div>
+              <div id="examLookupResults" class="table-wrap compact-table"></div>
+            </article>
+            </div>
+          </div>
+        </section>
+
+        <section class="section" data-section="finance">
+          <div class="dashboard-grid">
+            <article class="panel">
+              <div class="panel-head"><h3>Resumo financeiro</h3></div>
+              <div id="financeCards" class="cards compact"></div>
+            </article>
+            <article class="panel">
+              <div class="panel-head"><h3>Faturas</h3></div>
+              <div id="invoiceTable" class="table-wrap"></div>
+            </article>
+          </div>
+        </section>
+
+        <section class="section" data-section="reports">
+          <div class="reports-layout">
+            <article class="panel">
+              <div class="panel-head">
+                <h3>Lista de relatórios</h3>
+                <p class="muted">Escolha um modelo, aplique os filtros e abra o PDF em nova aba.</p>
+              </div>
+              <div id="reportCatalog" class="report-catalog"></div>
+            </article>
+
+            <article class="panel">
+              <div class="panel-head">
+                <h3>Filtros do relatório</h3>
+                <p class="muted">O relatório usa a data do exame e pode ser filtrado por dia, mês, convênio e paciente.</p>
+              </div>
+              <form id="reportFilterForm" class="form-grid">
+                <input type="hidden" name="report_type" value="financeiro" />
+                <label>
+                  <span>Tipo de período</span>
+                  <select name="period_mode" id="reportPeriodMode">
+                    <option value="month">Mensal</option>
+                    <option value="day">Diário</option>
+                  </select>
+                </label>
+                <label data-report-period="day" class="hidden">
+                  <span>Data</span>
+                  <input type="date" name="period_date" />
+                </label>
+                <label data-report-period="month">
+                  <span>Mês</span>
+                  <input type="month" name="period_month" />
+                </label>
+                <label>
+                  <span>Convênio</span>
+                  <select name="convenio_code" id="reportConvenio">
+                    <option value="">Todos</option>
+                  </select>
+                </label>
+                <label>
+                  <span>Paciente</span>
+                  <select name="patient_id" id="reportPatient">
+                    <option value="">Todos</option>
+                  </select>
+                </label>
+                <div class="actions span-2">
+                  <button class="primary" type="submit">Gerar PDF</button>
+                  <button class="ghost" type="button" data-report-reset="true">Limpar filtros</button>
+                </div>
+              </form>
+              <div id="reportDescription" class="config-note"></div>
+              <div id="reportSummary" class="metric-list"></div>
+              <div id="reportBreakdown" class="table-wrap"></div>
+              <div id="reportDetails" class="table-wrap"></div>
+            </article>
+          </div>
+        </section>
+
+        <section class="section" data-section="reporting">
+          <div class="reporting-layout">
+            <article class="panel">
+              <div class="panel-head">
+                <h3>Fila de exames</h3>
+                <p class="muted">Abra o workspace para laudo e use o botao Viewer / Compartilhar para liberar o acesso externo do paciente.</p>
+              </div>
+              <div id="reportingQueue" class="table-wrap"></div>
+            </article>
+
+            <article class="panel">
+              <div class="panel-head">
+                <h3>Viewer do exame</h3>
+                <p class="muted">Visualize anexos web e os objetos DICOM armazenados no PACS.</p>
+              </div>
+              <div id="reportingSummary" class="metric-list"></div>
+              <div id="reportingViewerStage" class="viewer-stage"></div>
+              <div id="reportingThumbs" class="viewer-thumbs"></div>
+              <div id="reportingDicomObjects" class="table-wrap compact-table"></div>
+            </article>
+
+            <article class="panel">
+              <div class="panel-head">
+                <h3>Laudo e anexos</h3>
+                <p class="muted">Use para laudar e anexar imagens; com achados e impressao preenchidos o exame vai para Finalizado automaticamente.</p>
+              </div>
+              <form id="reportForm" class="form-grid">
+                <input type="hidden" name="exam_id" />
+                <label><span>Medico laudante</span><input name="doctor_name" /></label>
+                <label><span>Status do laudo</span>
+                  <select name="status">
+                    <option value="draft">Rascunho</option>
+                    <option value="assigned">Em laudo</option>
+                    <option value="preliminary">Preliminar</option>
+                    <option value="final">Final</option>
+                  </select>
+                </label>
+                <label class="span-2"><span>Titulo</span><input name="title" placeholder="Ex.: Laudo de tomografia de cranio" /></label>
+                <label class="span-2"><span>Descricao / achados</span><textarea name="body" rows="8" placeholder="Descreva os achados radiologicos"></textarea></label>
+                <label class="span-2"><span>Impressao diagnostica</span><textarea name="impression" rows="5" placeholder="Conclusao do exame"></textarea></label>
+                <div class="actions span-2">
+                  <button class="primary" type="submit">Salvar laudo</button>
+                </div>
+              </form>
+
+              <form id="attachmentForm" class="form-grid upload-form">
+                <input type="hidden" name="exam_id" />
+                <label class="span-2">
+                  <span>Imagem ou DICOM</span>
+                  <input type="file" name="file" accept="image/*,.dcm,application/dicom" />
+                </label>
+                <div class="actions span-2">
+                  <button class="ghost" type="submit">Inserir imagem no exame</button>
+                </div>
+              </form>
+
+              <div id="reportingAttachments" class="stack-list"></div>
+            </article>
+          </div>
+        </section>
+
+        <section class="section" data-section="communication">
+          <div class="communication-grid">
+            <article class="panel">
+              <div class="panel-head">
+                <h3>Chat por setor</h3>
+                <label class="inline-field">
+                  <span>Departamento acessando</span>
+                  <strong id="currentDepartmentLabel" class="department-chip">{{ current_department_name }}</strong>
+                </label>
+              </div>
+                <div class="chat-layout">
+                <div id="chatContacts" class="chat-contacts"></div>
+                <div class="chat-main">
+                  <div id="chatMessages" class="chat-messages"></div>
+                  <form id="chatForm" class="chat-form">
+                    <textarea name="body" rows="3" placeholder="Digite a mensagem para o departamento acessando"></textarea>
+                    <div class="actions">
+                      <button class="primary" type="submit">Enviar</button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            </article>
+
+            <article class="panel">
+              <div class="panel-head"><h3>Resumo do chat</h3></div>
+              <div id="chatSummary" class="metric-list"></div>
+            </article>
+          </div>
+        </section>
+
+        <section class="section" data-section="panel">
+          <div class="dashboard-grid">
+            <article class="panel">
+              <div class="panel-head"><h3>Configuracao do painel</h3></div>
+              <form id="panelConfigForm" class="form-grid">
+                <label><span>Titulo</span><input name="title" /></label>
+                <label><span>Subtitulo</span><input name="subtitle" /></label>
+                <label class="span-2"><span>Video / streaming</span><input name="video_url" placeholder="mp4, m3u8 ou YouTube" /></label>
+                <label class="span-2"><span>Destinos (separados por virgula)</span><input name="destinations" /></label>
+                <label><span>Auto anunciar</span>
+                  <select name="auto_announce">
+                    <option value="true">Sim</option>
+                    <option value="false">Nao</option>
+                  </select>
+                </label>
+                <div class="actions span-2">
+                  <button class="primary" type="submit">Salvar painel</button>
+                  <button id="panelFullscreenBtn" class="ghost" type="button">Tela cheia</button>
+                </div>
+              </form>
+            </article>
+
+            <article class="panel">
+              <div class="panel-head"><h3>Fila e historico</h3></div>
+              <div id="panelSummary" class="cards compact"></div>
+              <div id="panelQueueTable" class="table-wrap"></div>
+              <div id="panelHistory" class="stack-list"></div>
+            </article>
+          </div>
+
+          <article id="callPanelScreen" class="panel panel-screen">
+            <div class="panel-screen-header">
+              <div>
+                <p class="eyebrow">Painel publico</p>
+                <h3 id="panelDisplayTitle">Painel de Chamadas</h3>
+                <p id="panelDisplaySubtitle" class="muted">Clinica de Radiologia</p>
+              </div>
+            </div>
+            <div id="currentCallAlert" class="call-alert">
+              <small id="currentCallAlertTime"></small>
+              <strong id="currentCallAlertTitle"></strong>
+              <span id="currentCallAlertPlace"></span>
+            </div>
+            <div class="panel-screen-grid">
+              <div class="panel-media">
+                <iframe id="panelVideoFrame" title="Video do painel" allow="autoplay; fullscreen"></iframe>
+                <video id="panelVideoLocal" autoplay muted loop playsinline controls></video>
+              </div>
+              <div class="panel-side">
+                <div class="panel-callout">
+                  <span>Ultima chamada</span>
+                  <strong id="lastCall">Nenhuma chamada realizada</strong>
+                </div>
+                <div class="panel-queue">
+                  <h4>Fila de espera</h4>
+                  <ul id="panelQueue"></ul>
+                </div>
+                <div class="panel-queue">
+                  <h4>Historico recente</h4>
+                  <ul id="calledHistory"></ul>
+                </div>
+              </div>
+            </div>
+          </article>
+        </section>
+
+        <section class="section" data-section="worklist">
+          <div class="dashboard-grid">
+            <article class="panel">
+              <div class="panel-head"><h3>Worklist local</h3></div>
+              <div id="localWorklist" class="table-wrap"></div>
+            </article>
+            <article class="panel">
+              <div class="panel-head"><h3>Espelho PACS</h3></div>
+              <div id="pacsWorklist" class="table-wrap"></div>
+            </article>
+          </div>
+        </section>
+
+        <section class="section" data-section="storage">
+          <div class="dashboard-grid">
+            <article class="panel">
+              <div class="panel-head"><h3>Uso de disco</h3></div>
+              <div id="storageCards" class="cards compact"></div>
+            </article>
+            <article class="panel">
+              <div class="panel-head"><h3>Contadores PACS</h3></div>
+              <div id="storageDetails" class="metric-list"></div>
+            </article>
+            <article class="panel">
+              <div class="panel-head">
+                <h3>Backups operacionais</h3>
+                <p class="muted">Gere pacotes do banco e das imagens antes de publicar em homologacao ou producao.</p>
+              </div>
+              <div id="backupCards" class="cards compact"></div>
+              <div id="backupDetails" class="metric-list"></div>
+              <div class="actions">
+                <button id="runDatabaseBackup" class="primary" type="button">Backup do banco</button>
+                <button id="runImagesBackup" class="ghost" type="button">Backup das imagens</button>
+              </div>
+            </article>
+            <article class="panel">
+              <div class="panel-head"><h3>Arquivos de backup</h3></div>
+              <div class="dashboard-grid">
+                <div>
+                  <h4>Banco</h4>
+                  <div id="databaseBackupList" class="stack-list"></div>
+                </div>
+                <div>
+                  <h4>Imagens</h4>
+                  <div id="imagesBackupList" class="stack-list"></div>
+                </div>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section class="section" data-section="config">
+          <div class="config-shell">
+            <aside class="config-nav">
+              <button class="config-tab-btn primary" type="button" data-config-tab="integrations">Integrações</button>
+              <button class="config-tab-btn ghost" type="button" data-config-tab="pricing">Valores</button>
+              <button class="config-tab-btn ghost" type="button" data-config-tab="status">Status do sistema</button>
+              <button class="config-tab-btn ghost" type="button" data-config-tab="deploy">Deploy</button>
+            </aside>
+
+            <div class="config-panels">
+              <article class="panel config-panel" data-config-panel="integrations">
+                <div class="panel-head">
+                  <h3>Configurar acesso externo</h3>
+                  <p class="muted">Use isso quando o cockpit web estiver separado do PACS ou da worklist.</p>
+                </div>
+                <div class="config-note">
+                  <strong>Acesso admin</strong>
+                  O admin faz login na tela inicial e depois acessa esta area ja liberado, sem senha extra no Config.
+                </div>
+                <form id="integrationConfigForm" class="form-grid">
+                  <label>
+                    <span>Modo PACS</span>
+                    <select name="pacs_mode">
+                      <option value="local">Local</option>
+                      <option value="external">Externo</option>
+                    </select>
+                  </label>
+                  <label><span>AE Title PACS</span><input name="pacs_ae_title" /></label>
+                  <label><span>IP / host PACS</span><input name="pacs_host" placeholder="192.168.0.10" /></label>
+                  <label><span>Porta PACS</span><input type="number" min="1" max="65535" name="pacs_port" /></label>
+
+                  <label>
+                    <span>Modo Worklist</span>
+                    <select name="worklist_mode">
+                      <option value="local">Local</option>
+                      <option value="external">Externo</option>
+                    </select>
+                  </label>
+                  <label><span>AE Title Worklist</span><input name="worklist_ae_title" /></label>
+                  <label><span>IP / host Worklist</span><input name="worklist_host" placeholder="192.168.0.20" /></label>
+                  <label><span>Porta Worklist</span><input type="number" min="1" max="65535" name="worklist_port" /></label>
+
+                  <label class="span-2"><span>URL publica do cockpit</span><input name="public_url" placeholder="https://seu-projeto.onrender.com" /></label>
+
+                  <div class="actions span-2">
+                    <button class="primary" type="submit">Salvar configuracao</button>
+                    <button class="ghost" type="button" data-reset-form="integrationConfigForm">Recarregar formulario</button>
+                  </div>
+                </form>
+              </article>
+
+              <article class="panel config-panel hidden" data-config-panel="pricing">
+                <div class="panel-head">
+                  <div>
+                    <h3>Valores por convênio</h3>
+                    <p class="muted">Edite os valores usados para 1, 2 e 3 incidências e a comissão fixa do técnico por exame.</p>
+                  </div>
+                  <button class="ghost" type="button" data-add-pricing-convenio="true">Novo convênio</button>
+                </div>
+                <form id="pricingConfigForm" class="form-grid">
+                  <div id="pricingConfigEditor" class="span-2 stack-list"></div>
+                  <div class="actions span-2">
+                    <button class="primary" type="submit">Salvar valores</button>
+                    <button class="ghost" type="button" data-reset-form="pricingConfigForm">Recarregar formulario</button>
+                  </div>
+                </form>
+              </article>
+
+              <article class="panel config-panel hidden" data-config-panel="status">
+                <div class="panel-head">
+                  <h3>Status do sistema</h3>
+                  <p class="muted">Os status de banco, PACS e MWL ficam concentrados aqui, sem repetir na barra lateral.</p>
+                </div>
+                <div id="configStatusCards" class="cards compact"></div>
+                <div id="configRuntimeInfo" class="metric-list"></div>
+                <div id="configConnectionInfo" class="stack-list"></div>
+                <div id="configDbInfo" class="metric-list"></div>
+              </article>
+
+              <article class="panel config-panel hidden" data-config-panel="deploy">
+                <div class="panel-head">
+                  <h3>Deploy local</h3>
+                  <p class="muted">Use o banco local do Docker/first_boot por padrao. Se quiser, depois voce aponta um PostgreSQL externo.</p>
+                </div>
+                <div id="deployReadiness" class="stack-list"></div>
+                <div id="deployHints" class="stack-list"></div>
+                <div class="config-note">
+                  <strong>Variaveis esperadas</strong>
+                  <code>PGHOST</code>, <code>PGPORT</code>, <code>PGUSER</code>, <code>PGPASSWORD</code>, <code>PGDATABASE</code>, <code>APP_SECRET_KEY</code> e <code>RUNTIME_ROOT</code>.
+                </div>
+                <div class="config-note">
+                  <strong>Observacao</strong>
+                  O banco local sobe junto com o Docker. PACS DICOM e MWL podem continuar locais ou ser apontados para hosts externos.
+                </div>
+              </article>
+            </div>
+          </div>
+        </section>
+
+        <div id="examDialog" class="exam-dialog hidden" aria-hidden="true">
+          <div class="exam-dialog-backdrop" data-close-exam-dialog="true"></div>
+          <div class="exam-dialog-sheet panel">
+            <div class="exam-dialog-header">
+              <div>
+                <p class="eyebrow">Popup de exame</p>
+                <h3 id="examDialogTitle">Novo lancamento</h3>
+                <p id="examDialogSubtitle" class="muted">Criar, editar e movimentar o exame sem sair da tela.</p>
+              </div>
+              <div class="actions">
+                <button class="ghost" type="button" data-open-exam-dialog="new">Novo exame</button>
+                <button class="ghost" type="button" data-close-exam-dialog="true">Fechar</button>
+              </div>
+            </div>
+
+            <div class="exam-dialog-layout">
+              <aside class="exam-dialog-nav">
+                <button class="exam-dialog-nav-btn primary" type="button" data-exam-dialog-tab="launch">Novo lancamento</button>
+                <button class="exam-dialog-nav-btn ghost" type="button" data-exam-dialog-tab="patient">Paciente</button>
+                <button class="exam-dialog-nav-btn ghost" type="button" data-exam-dialog-tab="reporting">Laudos e Viewer</button>
+                <button class="exam-dialog-nav-btn ghost" type="button" data-exam-dialog-tab="worklist">Worklist</button>
+                <button class="exam-dialog-nav-btn ghost" type="button" data-exam-dialog-tab="finance">Financeiro</button>
+                <button class="exam-dialog-nav-btn ghost" type="button" data-exam-dialog-tab="panel">Painel</button>
+              </aside>
+
+              <section class="exam-dialog-panels">
+                <article class="exam-dialog-panel" data-exam-dialog-panel="launch">
+                  <div id="examDialogSummary" class="cards compact"></div>
+                  <form id="examForm" class="form-grid exam-dialog-form">
+                    <input type="hidden" name="id" />
+                    <label><span>Paciente</span><select name="patient_id" id="examPatient" required></select></label>
+                    <label><span>Procedimento</span><select name="procedure_id" id="examProcedure" required></select></label>
+                    <label><span>Convenio</span><select name="convenio_code" id="examConvenio" required></select></label>
+                    <label><span>Incidencias</span>
+                      <select name="incidences_count" id="examIncidences" required>
+                        <option value="1">1 incidencia</option>
+                        <option value="2">2 incidencias</option>
+                        <option value="3">3 incidencias</option>
+                      </select>
+                    </label>
+                    <label><span>Modalidade</span>
+                      <select name="modality">
+                        <option value="DR">DR</option>
+                        <option value="US">US</option>
+                      </select>
+                    </label>
+                    <label><span>Prioridade</span>
+                      <select name="priority">
+                        <option value="ROUTINE">Rotina</option>
+                        <option value="HIGH">Alta</option>
+                        <option value="STAT">STAT</option>
+                      </select>
+                    </label>
+                    <label><span>Medico solicitante</span><input name="referring_physician" /></label>
+                    <label><span>Medico executor</span><input name="performing_physician" /></label>
+                    <label><span>Preço</span><input type="text" name="price" inputmode="numeric" placeholder="R$ 0,00" autocomplete="off" /></label>
+                    <div class="config-note span-2">
+                      <strong>Regra de preco</strong>
+                      Particular usa o valor padrao do procedimento. Os demais convenios usam a tabela de 1, 2 e 3 incidencias.
+                    </div>
+                    <label><span>Etapa do fluxo</span>
+                      <select name="workflow_stage">
+                        <option value="draft">Cadastro</option>
+                        <option value="scheduled" selected>Na worklist</option>
+                        <option value="arrived">Chegou</option>
+                        <option value="started">Em execucao</option>
+                        <option value="executed">Executado</option>
+                        <option value="reporting">Laudando</option>
+                        <option value="finalized">Finalizado</option>
+                        <option value="cancelled">Cancelado</option>
+                        <option value="removed">Removido</option>
+                      </select>
+                    </label>
+                    <label class="span-2"><span>Observacoes clinicas</span><textarea name="notes" rows="3"></textarea></label>
+                    <div class="actions span-2">
+                      <button class="primary" type="submit">Salvar exame</button>
+                      <button class="ghost" type="button" data-reset-form="examForm">Limpar</button>
+                    </div>
+                  </form>
+                </article>
+
+                <article class="exam-dialog-panel hidden" data-exam-dialog-panel="patient">
+                  <div id="examDialogPatientSummary" class="metric-list"></div>
+                  <div class="config-note">
+                    <strong>Cadastro de paciente</strong>
+                    Edite o paciente ligado ao exame sem sair do popup do kanban.
+                  </div>
+                  <form id="examDialogPatientForm" class="form-grid exam-dialog-form">
+                    <input type="hidden" name="id" />
+                    <label class="span-2"><span>Nome completo</span><input name="full_name" required /></label>
+                    <label><span>Data de nascimento</span><input type="date" name="birth_date" /></label>
+                    <label><span>Sexo</span>
+                      <select name="sex">
+                        <option value="">Selecione</option>
+                        <option value="M">Masculino</option>
+                        <option value="F">Feminino</option>
+                        <option value="O">Outro</option>
+                      </select>
+                    </label>
+                    <label><span>CPF</span><input name="cpf" /></label>
+                    <label><span>Telefone</span><input name="phone" /></label>
+                    <label><span>Email</span><input name="email" /></label>
+                    <label class="span-2"><span>Observacoes</span><textarea name="notes" rows="3"></textarea></label>
+                    <div class="actions span-2">
+                      <button class="primary" type="submit">Salvar paciente</button>
+                      <button class="ghost" type="button" data-open-selected-patient="true">Carregar do exame</button>
+                      <button class="ghost" type="button" data-exam-patient-new="true">Novo paciente</button>
+                    </div>
+                  </form>
+                </article>
+
+                <article class="exam-dialog-panel hidden" data-exam-dialog-panel="worklist">
+                  <div id="examDialogWorklistSummary" class="metric-list"></div>
+                  <div class="config-note">
+                    <strong>Worklist manual</strong>
+                    Use este painel apenas quando precisar corrigir o fluxo ou reenviar manualmente o exame.
+                  </div>
+                  <div class="actions">
+                    <button class="primary" type="button" data-exam-worklist-action="publish">Publicar na worklist</button>
+                    <button class="ghost" type="button" data-exam-worklist-action="remove">Retirar da worklist</button>
+                    <button class="ghost" type="button" data-exam-worklist-move="prev">Mover esquerda</button>
+                    <button class="ghost" type="button" data-exam-worklist-move="next">Mover direita</button>
+                  </div>
+                </article>
+
+                <article class="exam-dialog-panel hidden" data-exam-dialog-panel="reporting">
+                  <div id="examDialogReportingSummary" class="metric-list"></div>
+                  <div class="config-note">
+                    <strong>Laudos e Viewer</strong>
+                    Acesse o workspace do exame, confira os anexos e abra o viewer sem sair do card.
+                  </div>
+                  <div class="actions">
+                    <button class="primary" type="button" data-open-exam-workspace="true">Abrir workspace</button>
+                    <button class="ghost" type="button" data-open-exam-viewer="true">Abrir viewer</button>
+                  </div>
+                </article>
+
+                <article class="exam-dialog-panel hidden" data-exam-dialog-panel="panel">
+                  <div id="examDialogPanelSummary" class="metric-list"></div>
+                  <div class="config-note">
+                    <strong>Painel embutido</strong>
+                    Use este atalho para chamar o paciente sem sair do exame.
+                  </div>
+                  <label class="inline-field span-2">
+                    <span>Destino</span>
+                    <input id="examDialogPanelDestination" type="text" placeholder="Ex.: Sala 1" />
+                  </label>
+                  <div class="actions">
+                    <button class="primary" type="button" data-exam-panel-call="true">Chamar paciente</button>
+                    <button class="ghost" type="button" data-exam-panel-open="true">Abrir painel completo</button>
+                  </div>
+                </article>
+
+                <article class="exam-dialog-panel hidden" data-exam-dialog-panel="finance">
+                  <div id="examDialogFinanceSummary" class="metric-list"></div>
+                  <div class="config-note">
+                    <strong>Ordem do exame</strong>
+                    Use estes campos para aplicar desconto ao exame lançado ou incluir outro procedimento na mesma ordem.
+                  </div>
+                  <div id="examDialogOrderItems" class="table-wrap compact-table"></div>
+                  <div class="form-grid">
+                    <label><span>Desconto</span><input type="text" id="examOrderDiscount" inputmode="numeric" placeholder="R$ 0,00" autocomplete="off" /></label>
+                    <label><span>Adicionar exame</span><select id="examOrderProcedure"></select></label>
+                    <label><span>Incidências</span><select id="examOrderIncidences"><option value="1">1</option><option value="2">2</option><option value="3">3</option></select></label>
+                    <label><span>Preço</span><input type="text" id="examOrderPrice" inputmode="numeric" placeholder="R$ 0,00" autocomplete="off" /></label>
+                    <div class="actions span-2">
+                      <button class="ghost" type="button" data-exam-order-apply-discount="true">Aplicar desconto</button>
+                      <button class="primary" type="button" data-exam-order-add-item="true">Incluir exame</button>
+                    </div>
+                  </div>
+                  <div class="config-note">
+                    <strong>Financeiro do exame</strong>
+                    Marque a fatura como paga sem sair do fluxo de trabalho.
+                  </div>
+                  <label class="inline-field span-2">
+                    <span>Forma de pagamento</span>
+                    <select id="examDialogPaymentMethod">
+                      <option value="dinheiro">Dinheiro</option>
+                      <option value="pix">Pix</option>
+                      <option value="cartao">Cartao</option>
+                      <option value="cheque">Cheque</option>
+                    </select>
+                  </label>
+                  <div class="actions">
+                    <button class="primary" type="button" data-exam-finance-mark-paid="true">Marcar pago</button>
+                    <button class="ghost" type="button" data-exam-finance-undo-paid="true">Desfazer pagamento</button>
+                  </div>
+                </article>
+              </section>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+
+    <script src="{{ url_for('static', filename='vendor/hls.min.js') }}?v={{ asset_version }}"></script>
+    <script>
+      window.__APP_BOOTSTRAP__ = {
+        departmentId: {{ current_department_id | tojson }},
+        departmentName: {{ current_department_name | tojson }},
+        adminUnlocked: {{ admin_unlocked | tojson }},
+        userRole: {{ user_role | tojson }},
+      };
+    </script>
+    <script src="{{ url_for('static', filename='app.js') }}?v={{ asset_version }}"></script>
+  </body>
+</html>

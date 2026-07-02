@@ -13,6 +13,7 @@ import subprocess
 import sys
 import threading
 import time
+import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -67,6 +68,13 @@ load_runtime_env()
 
 APPS_DIR = BASE_DIR / "apps"
 ALLOWED_APPS_FILE = BASE_DIR / "apps_liberados.txt"
+CLIENT_CONTRACTS_FILE = Path(
+    os.environ.get("CLIENTES_MODULOS_FILE")
+    or os.environ.get("CLIENT_CONFIG_FILE")
+    or str(BASE_DIR / "clientes-modulos.json")
+)
+if not CLIENT_CONTRACTS_FILE.is_absolute():
+    CLIENT_CONTRACTS_FILE = BASE_DIR / CLIENT_CONTRACTS_FILE
 
 
 def app_source_dir(app_key):
@@ -85,6 +93,7 @@ NANOSTORE_DIR = Path(os.environ.get("NANOSTORE_APP_DIR", str(app_source_dir("nan
 GPSMUSICAL_DIR = Path(os.environ.get("GPSMUSICAL_APP_DIR", str(app_source_dir("gpsmusical"))))
 BPA_DIR = Path(os.environ.get("BPA_APP_DIR", str(app_source_dir("bpa"))))
 TATOO_DIR = Path(os.environ.get("TATOO_APP_DIR", str(app_source_dir("tatoo"))))
+RAIOXPACS_DIR = Path(os.environ.get("RAIOXPACS_APP_DIR", str(app_source_dir("pacs"))))
 NANOTECH_SHARED_DIR = Path(os.environ.get("NANOTECH_SHARED_DIR", str(APPS_DIR / "shared")))
 FINANCEIRO_COLLECTIONS = ("contas", "categorias", "lancamentos", "imports", "reconciliations", "titulos", "compras")
 FINANCEIRO_VIEWS = {
@@ -120,6 +129,9 @@ ZAP_PORT = int(os.environ.get("ZAP_PORT", "8892"))
 ZAP_BASE_URL = f"http://127.0.0.1:{ZAP_PORT}"
 NANOSTORE_PORT = int(os.environ.get("NANOSTORE_PORT", "8893"))
 NANOSTORE_BASE_URL = f"http://127.0.0.1:{NANOSTORE_PORT}"
+RAIOXPACS_PORT = int(os.environ.get("RAIOXPACS_PORT", "8899"))
+RAIOXPACS_BASE_URL = f"http://127.0.0.1:{RAIOXPACS_PORT}"
+RAIOXPACS_STARTUP_WAIT = float(os.environ.get("RAIOXPACS_STARTUP_WAIT", "90"))
 RIOB_BASE_URL = os.environ.get("RIOB_BASE_URL", "http://127.0.0.1:8898").rstrip("/")
 RIOB_SSL_VERIFY = str(os.environ.get("RIOB_SSL_VERIFY", "0")).strip().lower() in {"1", "true", "yes", "sim", "on"}
 RIOB_ROUTE_DEFAULTS = {
@@ -218,6 +230,8 @@ _zap_lock = threading.Lock()
 _zap_proc = None
 _nanostore_lock = threading.Lock()
 _nanostore_proc = None
+_raioxpacs_lock = threading.Lock()
+_raioxpacs_proc = None
 
 
 app = Flask(__name__)
@@ -489,6 +503,143 @@ def read_json_file(path, default):
         return default
 
 
+def slugify(value):
+    normalized = unicodedata.normalize("NFKD", str(value or "").strip().lower())
+    normalized = normalized.encode("ascii", "ignore").decode("ascii")
+    normalized = re.sub(r"[^a-z0-9]+", "-", normalized)
+    return normalized.strip("-")
+
+
+def configured_client_id():
+    for key in ("CLIENTE_DEPLOY_ID", "CLIENTE_ID", "NANOTECH_CLIENTE_ID"):
+        value = os.environ.get(key)
+        if value:
+            return slugify(value)
+    return ""
+
+
+def client_contracts_updated_at():
+    if not CLIENT_CONTRACTS_FILE.exists():
+        return None
+    return dt.datetime.fromtimestamp(CLIENT_CONTRACTS_FILE.stat().st_mtime, dt.timezone.utc).isoformat()
+
+
+def normalize_client_module(raw_module):
+    if isinstance(raw_module, str):
+        raw_module = {"slug": raw_module}
+    if not isinstance(raw_module, dict):
+        return None
+    slug = slugify(raw_module.get("slug") or raw_module.get("id") or raw_module.get("app_key") or raw_module.get("nome"))
+    if not slug:
+        return None
+    return {
+        "slug": slug,
+        "nome": str(raw_module.get("nome") or raw_module.get("name") or slug).strip(),
+        "descricao": str(raw_module.get("descricao") or raw_module.get("description") or "").strip(),
+        "href": str(raw_module.get("href") or raw_module.get("url") or "").strip(),
+        "status": str(raw_module.get("status") or "contratado").strip() or "contratado",
+    }
+
+
+def normalize_client_contract(raw_client, index=0):
+    if not isinstance(raw_client, dict):
+        return None
+    nome = str(raw_client.get("nome") or raw_client.get("name") or "").strip()
+    client_id = slugify(raw_client.get("id") or raw_client.get("slug") or nome)
+    if not nome or not client_id:
+        return None
+    modules = []
+    for raw_module in raw_client.get("modules") or raw_client.get("modulos") or []:
+        module = normalize_client_module(raw_module)
+        if module:
+            modules.append(module)
+    return {
+        "id": client_id,
+        "nome": nome,
+        "status": str(raw_client.get("status") or "ativo").strip() or "ativo",
+        "databaseKey": str(
+            raw_client.get("databaseKey")
+            or raw_client.get("database")
+            or raw_client.get("dbKey")
+            or raw_client.get("banco")
+            or ""
+        ).strip(),
+        "observacao": str(raw_client.get("observacao") or raw_client.get("notes") or "").strip(),
+        "allModules": as_bool(raw_client.get("allModules", raw_client.get("todosModulos")), False),
+        "modules": modules,
+        "ordem": int(raw_client.get("ordem") or raw_client.get("order") or index),
+    }
+
+
+def normalize_client_contracts(payload):
+    source = payload if isinstance(payload, dict) else {}
+    raw_clients = source.get("clients") or source.get("clientes") or []
+    clients = []
+    seen = set()
+    for index, raw_client in enumerate(raw_clients if isinstance(raw_clients, list) else []):
+        client = normalize_client_contract(raw_client, index)
+        if not client or client["id"] in seen:
+            continue
+        seen.add(client["id"])
+        clients.append(client)
+    clients.sort(key=lambda item: (item["ordem"], item["nome"].lower()))
+    return {"clients": clients}
+
+
+def read_client_contracts():
+    if not CLIENT_CONTRACTS_FILE.exists():
+        return {"clients": []}
+    return normalize_client_contracts(read_json_file(CLIENT_CONTRACTS_FILE, {}))
+
+
+def serialize_client_contracts(state):
+    clients = []
+    for client in state.get("clients", []):
+        item = {
+            "id": client["id"],
+            "nome": client["nome"],
+            "status": client["status"],
+            "databaseKey": client["databaseKey"],
+            "observacao": client["observacao"],
+            "allModules": client["allModules"],
+            "modules": [
+                {key: value for key, value in module.items() if value not in ("", None)}
+                for module in client["modules"]
+            ],
+        }
+        clients.append({key: value for key, value in item.items() if value not in ("", None)})
+    return {"clients": clients}
+
+
+def write_client_contracts(value):
+    state = normalize_client_contracts(value)
+    CLIENT_CONTRACTS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = CLIENT_CONTRACTS_FILE.with_name(f"{CLIENT_CONTRACTS_FILE.name}.tmp")
+    tmp_path.write_text(json.dumps(serialize_client_contracts(state), ensure_ascii=True, indent=2) + "\n", encoding="utf-8")
+    tmp_path.replace(CLIENT_CONTRACTS_FILE)
+    return state
+
+
+def active_client_contract():
+    state = read_client_contracts()
+    client_id = configured_client_id()
+    if client_id:
+        return next((client for client in state["clients"] if client["id"] == client_id), None)
+    return state["clients"][0] if state["clients"] else None
+
+
+def apps_liberados_keys():
+    if not ALLOWED_APPS_FILE.exists():
+        return None
+    keys = set()
+    for raw in ALLOWED_APPS_FILE.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        keys.add(slugify(line))
+    return keys
+
+
 def normalize_app(item, origem="filesystem"):
     key = str(item.get("app_key") or item.get("key") or "").strip()
     nome = str(item.get("nome") or item.get("name") or key).strip()
@@ -663,16 +814,17 @@ def apply_standalone_theme(document):
 
 
 def allowed_app_keys():
-    """Lê a allowlist de deploy: cada linha habilita um app no portal."""
-    if not ALLOWED_APPS_FILE.exists():
+    """Retorna os apps liberados para o deploy atual."""
+    client_id = configured_client_id()
+    if not client_id:
+        return apps_liberados_keys()
+
+    client = active_client_contract()
+    if client is None:
+        return set()
+    if client.get("allModules"):
         return None
-    keys = set()
-    for raw in ALLOWED_APPS_FILE.read_text(encoding="utf-8").splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        keys.add(line)
-    return keys
+    return {module["slug"] for module in client.get("modules") or [] if module.get("status") != "importar"}
 
 
 def filesystem_apps():
@@ -713,13 +865,141 @@ def database_apps():
         return []
 
 
-def list_apps():
-    allowed = allowed_app_keys()
+def all_portal_apps():
     merged = {}
     for item in database_apps() + filesystem_apps():
-        if item and item["ativo"] and (allowed is None or item["app_key"] in allowed):
+        if item and item["ativo"]:
             merged[item["app_key"]] = item
     return sorted(merged.values(), key=lambda x: (x["ordem"], x["nome"].lower()))
+
+
+def list_apps():
+    allowed = allowed_app_keys()
+    return [item for item in all_portal_apps() if allowed is None or item["app_key"] in allowed]
+
+
+def app_catalog():
+    catalog = {}
+    for app_item in all_portal_apps():
+        catalog[app_item["app_key"]] = {
+            "slug": app_item["app_key"],
+            "nome": app_item["nome"],
+            "descricao": app_item["descricao"],
+            "href": app_item.get("standalone_url") or app_item["url"],
+            "status": "disponivel",
+        }
+    return catalog
+
+
+def enrich_client_module(module, catalog):
+    catalog_item = catalog.get(module["slug"], {})
+    return {
+        "slug": module["slug"],
+        "nome": module["nome"] or catalog_item.get("nome") or module["slug"],
+        "descricao": module["descricao"] or catalog_item.get("descricao") or "",
+        "href": module["href"] or catalog_item.get("href") or "",
+        "status": module["status"] or "contratado",
+    }
+
+
+def client_contracts_payload():
+    state = read_client_contracts()
+    catalog = app_catalog()
+    for client in state["clients"]:
+        for module in client["modules"]:
+            if module["slug"] not in catalog:
+                catalog[module["slug"]] = {
+                    "slug": module["slug"],
+                    "nome": module["nome"] or module["slug"],
+                    "descricao": module["descricao"],
+                    "href": module["href"],
+                    "status": module["status"],
+                }
+
+    clients = []
+    for client in state["clients"]:
+        if client["allModules"]:
+            modules = [
+                {**module, "status": "contratado"}
+                for module in catalog.values()
+                if module.get("href")
+            ]
+        else:
+            modules = [enrich_client_module(module, catalog) for module in client["modules"]]
+        clients.append(
+            {
+                "id": client["id"],
+                "nome": client["nome"],
+                "status": client["status"],
+                "databaseKey": client["databaseKey"],
+                "observacao": client["observacao"],
+                "allModules": client["allModules"],
+                "modules": modules,
+            }
+        )
+
+    selected_id = configured_client_id()
+    active = next((client for client in clients if client["id"] == selected_id), None) if selected_id else (clients[0] if clients else None)
+    missing = bool(selected_id and active is None)
+    return {
+        "clients": clients,
+        "catalog": list(catalog.values()),
+        "activeClient": active,
+        "activeClientId": active["id"] if active else "",
+        "configuredClientId": selected_id,
+        "configuredClientMissing": missing,
+        "selectedByEnv": bool(selected_id),
+        "source": {"type": "file", "path": CLIENT_CONTRACTS_FILE.name},
+        "updatedAt": client_contracts_updated_at(),
+    }
+
+
+def find_client_index(state, client_id):
+    safe_id = slugify(client_id)
+    for index, client in enumerate(state["clients"]):
+        if client["id"] == safe_id:
+            return index
+    return -1
+
+
+def normalize_single_client(payload):
+    client = normalize_client_contract(payload)
+    if not client:
+        raise ValueError("informe nome e ID validos do cliente")
+    return client
+
+
+def create_client_contract(payload):
+    state = read_client_contracts()
+    client = normalize_single_client(payload)
+    if find_client_index(state, client["id"]) >= 0:
+        raise ValueError("cliente ja cadastrado")
+    state["clients"].append(client)
+    write_client_contracts(state)
+
+
+def update_client_contract(client_id, payload):
+    state = read_client_contracts()
+    index = find_client_index(state, client_id)
+    if index < 0:
+        raise LookupError("cliente nao encontrado")
+    data = payload if isinstance(payload, dict) else {}
+    data.setdefault("id", state["clients"][index]["id"])
+    client = normalize_single_client(data)
+    duplicate_index = find_client_index(state, client["id"])
+    if duplicate_index >= 0 and duplicate_index != index:
+        raise ValueError("ja existe outro cliente com este ID")
+    state["clients"][index] = client
+    write_client_contracts(state)
+
+
+def delete_client_contract(client_id):
+    state = read_client_contracts()
+    index = find_client_index(state, client_id)
+    if index < 0:
+        raise LookupError("cliente nao encontrado")
+    del state["clients"][index]
+    write_client_contracts(state)
 
 
 def app_visible_to_user(app_item, usuario):
@@ -816,12 +1096,15 @@ def portal_context(usuario=None):
     usuario = usuario or current_user_or_logout()
     apps = list_apps()
     visible_apps = [app_item for app_item in apps if app_visible_to_user(app_item, usuario)]
+    client_config = client_contracts_payload()
     return {
         "usuario": usuario,
         "apps": visible_apps,
         "menu": menu_sections(apps, usuario),
         "config": get_config(),
         "themes": THEMES,
+        "client_config": client_config,
+        "active_client": client_config["activeClient"],
     }
 
 
@@ -995,7 +1278,7 @@ def current_admin_or_json_error():
     if not usuario:
         return None, (jsonify({"erro": "login necessario"}), 401)
     if not user_is_admin(usuario):
-        return None, (jsonify({"erro": "somente administradores podem usar backup"}), 403)
+        return None, (jsonify({"erro": "somente administradores podem usar esta area"}), 403)
     return usuario, None
 
 
@@ -3068,6 +3351,351 @@ def nanostore_proxy(subpath):
 
 
 # ---------------------------------------------------------------------------
+# Integracao do app RaioxPacs
+# ---------------------------------------------------------------------------
+def prefixed_raioxpacs_env(env, key):
+    value = str(env.get(f"RAIOXPACS_{key}") or "").strip()
+    if value:
+        env[key] = value
+
+
+def ensure_raioxpacs_app():
+    """Sobe o RaioxPacs em loopback quando uma tela dele e aberta."""
+    global _raioxpacs_proc
+    if tcp_open("127.0.0.1", RAIOXPACS_PORT):
+        _app_startup_errors.pop("pacs", None)
+        return True
+
+    with _raioxpacs_lock:
+        if tcp_open("127.0.0.1", RAIOXPACS_PORT):
+            _app_startup_errors.pop("pacs", None)
+            return True
+        if _raioxpacs_proc is not None and _raioxpacs_proc.poll() is None:
+            time.sleep(0.5)
+            ok = tcp_open("127.0.0.1", RAIOXPACS_PORT)
+            if ok:
+                _app_startup_errors.pop("pacs", None)
+            return ok
+
+        if not (RAIOXPACS_DIR / "app.py").exists():
+            log_app_startup_error("pacs", f"codigo nao encontrado em {RAIOXPACS_DIR / 'app.py'}")
+            return False
+
+        python_bin = python_bin_for(RAIOXPACS_DIR / ".venv" / "bin" / "python")
+        runtime_root = RAIOXPACS_DIR / "runtime"
+        imagebox_root = Path(os.environ.get("RAIOXPACS_IMAGEBOX_PATH", str(runtime_root / "imagebox")))
+        runtime_root.mkdir(parents=True, exist_ok=True)
+        imagebox_root.mkdir(parents=True, exist_ok=True)
+
+        env = os.environ.copy()
+        env.pop("WERKZEUG_SERVER_FD", None)
+        env.pop("WERKZEUG_RUN_MAIN", None)
+        for key in ("PGHOST", "PGPORT", "PGUSER", "PGPASSWORD", "PGDATABASE", "PGSSLMODE"):
+            prefixed_raioxpacs_env(env, key)
+        database_url = (
+            configured_database_url(env, "RAIOXPACS_DATABASE_URL")
+            or configured_database_url(env, "PACS_DATABASE_URL")
+        )
+        if database_url:
+            env["DATABASE_URL"] = database_url
+        if env.get("RAIOXPACS_AUTO_BOOTSTRAP_SCHEMA"):
+            env["AUTO_BOOTSTRAP_SCHEMA"] = env["RAIOXPACS_AUTO_BOOTSTRAP_SCHEMA"]
+        env.update({
+            "FLASK_APP": "app.py",
+            "APP_HOST": "127.0.0.1",
+            "APP_PORT": str(RAIOXPACS_PORT),
+            "PORT": str(RAIOXPACS_PORT),
+            "APP_DEBUG": "0",
+            "APP_SECRET_KEY": env.get("RAIOXPACS_SECRET_KEY", env.get("APP_SECRET_KEY", "raioxpacs-dev-key")),
+            "RUNTIME_ROOT": str(runtime_root),
+            "PACS_IMAGEBOX_PATH": str(imagebox_root),
+            "PACS_WEB_URL": env.get("RAIOXPACS_PUBLIC_BASE_URL", env.get("PACS_WEB_URL", RAIOXPACS_BASE_URL)),
+            "PYTHONUNBUFFERED": "1",
+        })
+        try:
+            log_file = (BASE_DIR / "pacs.log").open("ab")
+            _raioxpacs_proc = subprocess.Popen(
+                [str(python_bin), "-m", "flask", "run", "--host", "127.0.0.1", "--port", str(RAIOXPACS_PORT)],
+                cwd=str(RAIOXPACS_DIR),
+                env=env,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+            )
+        except Exception as exc:
+            log_app_startup_error("pacs", exc)
+            return False
+        attempts = max(1, int(RAIOXPACS_STARTUP_WAIT / 0.25))
+        for _ in range(attempts):
+            if tcp_open("127.0.0.1", RAIOXPACS_PORT):
+                _app_startup_errors.pop("pacs", None)
+                return True
+            if _raioxpacs_proc.poll() is not None:
+                log_app_startup_error(
+                    "pacs",
+                    f"processo encerrou antes de abrir a porta 127.0.0.1:{RAIOXPACS_PORT} "
+                    f"com codigo {_raioxpacs_proc.returncode}",
+                )
+                return False
+            time.sleep(0.25)
+        log_app_startup_error("pacs", f"processo iniciou, mas a porta 127.0.0.1:{RAIOXPACS_PORT} nao respondeu")
+    return False
+
+
+def raioxpacs_prefix(integrated=True):
+    return "/apps/pacs" if integrated else "/apps/pacs/original"
+
+
+def rewrite_raioxpacs_location(value, prefix):
+    parsed = urllib.parse.urlparse(value)
+    if parsed.scheme and parsed.netloc:
+        if value.startswith(RAIOXPACS_BASE_URL):
+            return prefix + parsed.path + (("?" + parsed.query) if parsed.query else "")
+        return value
+    if value.startswith(prefix):
+        return value
+    if value.startswith("/"):
+        return prefix + value
+    return value
+
+
+def rewrite_raioxpacs_text(text, integrated=True):
+    prefix = raioxpacs_prefix(integrated)
+    text = text.lstrip("\ufeff")
+    replacements = {
+        'href="/': f'href="{prefix}/',
+        "href='/": f"href='{prefix}/",
+        'src="/': f'src="{prefix}/',
+        "src='/": f"src='{prefix}/",
+        'action="/': f'action="{prefix}/',
+        "action='/": f"action='{prefix}/",
+        'fetch("/': f'fetch("{prefix}/',
+        "fetch('/": f"fetch('{prefix}/",
+        "fetch(`/": f"fetch(`{prefix}/",
+        'api("/': f'api("{prefix}/',
+        "api('/": f"api('{prefix}/",
+        "api(`/": f"api(`{prefix}/",
+        'window.open("/': f'window.open("{prefix}/',
+        "window.open('/": f"window.open('{prefix}/",
+        "window.open(`/": f"window.open(`{prefix}/",
+        'window.location.href = "/': f'window.location.href = "{prefix}/',
+        "window.location.href = '/": f"window.location.href = '{prefix}/",
+        "window.location.href = `/": f"window.location.href = `{prefix}/",
+        '"/api/': f'"{prefix}/api/',
+        "'/api/": f"'{prefix}/api/",
+        "`/api/": f"`{prefix}/api/",
+        '"/media/': f'"{prefix}/media/',
+        "'/media/": f"'{prefix}/media/",
+        "`/media/": f"`{prefix}/media/",
+        '"/viewer/': f'"{prefix}/viewer/',
+        "'/viewer/": f"'{prefix}/viewer/",
+        "`/viewer/": f"`{prefix}/viewer/",
+        '"/share/': f'"{prefix}/share/',
+        "'/share/": f"'{prefix}/share/",
+        "`/share/": f"`{prefix}/share/",
+        '"/docs/': f'"{prefix}/docs/',
+        "'/docs/": f"'{prefix}/docs/",
+        "`/docs/": f"`{prefix}/docs/",
+        '"/reports/': f'"{prefix}/reports/',
+        "'/reports/": f"'{prefix}/reports/",
+        "`/reports/": f"`{prefix}/reports/",
+        '"/exam-orders/': f'"{prefix}/exam-orders/',
+        "'/exam-orders/": f"'{prefix}/exam-orders/",
+        "`/exam-orders/": f"`{prefix}/exam-orders/",
+        '"/camera-streams/': f'"{prefix}/camera-streams/',
+        "'/camera-streams/": f"'{prefix}/camera-streams/",
+        "`/camera-streams/": f"`{prefix}/camera-streams/",
+        f'"{RAIOXPACS_BASE_URL}/': f'"{prefix}/',
+        f"'{RAIOXPACS_BASE_URL}/": f"'{prefix}/",
+        f"`{RAIOXPACS_BASE_URL}/": f"`{prefix}/",
+        "${window.location.origin}/share/": f"${{window.location.origin}}{prefix}/share/",
+    }
+    for source, target in replacements.items():
+        text = text.replace(source, target)
+    return text
+
+
+def raioxpacs_navigation_bridge():
+    return """
+<script>
+(function() {
+  function applyPortalTarget() {
+    var params = new URLSearchParams(window.location.search || "");
+    var section = params.get("section") || (window.location.hash || "").replace(/^#/, "");
+    var configTab = params.get("configTab");
+    if (configTab && typeof window.setConfigTab === "function") {
+      window.setConfigTab(configTab);
+    }
+    if (section && typeof window.setActiveSection === "function") {
+      window.setActiveSection(section);
+    }
+  }
+  window.addEventListener("load", function() { window.setTimeout(applyPortalTarget, 120); });
+  window.setTimeout(applyPortalTarget, 180);
+})();
+</script>
+"""
+
+
+def rewrite_raioxpacs_body(body, content_type, subpath="", integrated=True):
+    lowered = (content_type or "").lower()
+    is_text = (
+        "text/" in lowered
+        or "javascript" in lowered
+        or "json" in lowered
+        or subpath.endswith((".js", ".css", ".html", ".htm", ".json"))
+    )
+    if not is_text:
+        return body
+    text = body.decode("utf-8", errors="replace")
+    text = rewrite_raioxpacs_text(text, integrated=integrated)
+    if "text/html" in lowered or subpath.endswith((".html", ".htm")):
+        text = inject_before_body_close(text, raioxpacs_navigation_bridge())
+    return text.encode("utf-8")
+
+
+def transform_raioxpacs_cookie_header(value):
+    if not value:
+        return value
+    parts = []
+    for chunk in value.split(";"):
+        item = chunk.strip()
+        if item.startswith("session="):
+            continue
+        if item.startswith("raioxpacs_session="):
+            item = "session=" + item.split("=", 1)[1]
+        parts.append(item)
+    return "; ".join(parts)
+
+
+def transform_raioxpacs_set_cookie(value):
+    if not value:
+        return value
+    cookie = value
+    if cookie.startswith("session="):
+        cookie = cookie.replace("session=", "raioxpacs_session=", 1)
+    cookie = re.sub(r";\s*Path=/($|;)", r"; Path=/apps/pacs\1", cookie, count=1, flags=re.I)
+    if not re.search(r";\s*Path=", cookie, flags=re.I):
+        cookie += "; Path=/apps/pacs"
+    return cookie
+
+
+def raioxpacs_unavailable(message):
+    if not session.get("usuario_id"):
+        return Response(message, status=502, content_type="text/plain; charset=utf-8")
+    return render_template(
+        "app_placeholder.html",
+        app_key="pacs",
+        erro=message,
+        **portal_context(),
+    ), 502
+
+
+def raioxpacs_proxy_response(subpath="", integrated=True):
+    if not ensure_raioxpacs_app():
+        return raioxpacs_unavailable(app_startup_message("pacs", "RaioxPacs nao iniciou."))
+
+    upstream_path = "/" + (subpath or "")
+    query = request.query_string.decode("utf-8", errors="ignore")
+    upstream_url = f"{RAIOXPACS_BASE_URL}{upstream_path}"
+    if query:
+        upstream_url += "?" + query
+
+    headers = {}
+    for key, value in request.headers.items():
+        lowered = key.lower()
+        if lowered in {"host", "content-length", "connection"}:
+            continue
+        if lowered == "cookie":
+            value = transform_raioxpacs_cookie_header(value)
+        headers[key] = value
+    data = request.get_data() if request.method in {"POST", "PUT", "PATCH", "DELETE"} else None
+    req = urllib.request.Request(upstream_url, data=data, headers=headers, method=request.method)
+
+    class NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            return None
+
+    opener = urllib.request.build_opener(NoRedirect)
+    try:
+        with opener.open(req, timeout=90) as resp:
+            body = resp.read()
+            status = resp.status
+            content_type = resp.headers.get("Content-Type", "")
+            upstream_headers = resp.headers
+    except urllib.error.HTTPError as exc:
+        body = exc.read()
+        status = exc.code
+        content_type = exc.headers.get("Content-Type", "")
+        upstream_headers = exc.headers
+    except Exception as exc:
+        return raioxpacs_unavailable(f"Nao foi possivel acessar o RaioxPacs em {RAIOXPACS_BASE_URL}: {exc}")
+
+    prefix = raioxpacs_prefix(integrated)
+    response_headers = []
+    excluded = {"content-length", "connection", "transfer-encoding", "content-encoding"}
+    for key in upstream_headers.keys():
+        values = upstream_headers.get_all(key) if hasattr(upstream_headers, "get_all") else [upstream_headers.get(key)]
+        for value in values:
+            if value is None:
+                continue
+            lowered = key.lower()
+            if lowered in excluded:
+                continue
+            if lowered == "location":
+                value = rewrite_raioxpacs_location(value, prefix)
+            if lowered == "set-cookie":
+                value = transform_raioxpacs_set_cookie(value)
+            response_headers.append((key, value))
+
+    body = rewrite_raioxpacs_body(body, content_type, subpath=subpath, integrated=integrated)
+    if (content_type or "").lower().startswith("text/") or "javascript" in (content_type or "").lower() or "json" in (content_type or "").lower():
+        response_headers = [(k, v) for k, v in response_headers if k.lower() != "content-length"]
+
+    return Response(body, status=status, headers=response_headers, content_type=content_type)
+
+
+@app.route("/apps/pacs/static/<path:subpath>", methods=["GET"])
+def raioxpacs_public_static(subpath):
+    return raioxpacs_proxy_response(f"static/{subpath}")
+
+
+@app.route("/apps/pacs/share/<path:subpath>", methods=["GET", "POST"])
+def raioxpacs_public_share(subpath):
+    return raioxpacs_proxy_response(f"share/{subpath}")
+
+
+@app.route("/apps/pacs/api/share/<path:subpath>", methods=["GET", "POST"])
+def raioxpacs_public_share_api(subpath):
+    return raioxpacs_proxy_response(f"api/share/{subpath}")
+
+
+@app.route("/apps/pacs", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
+@login_required
+def raioxpacs_proxy_root():
+    return raioxpacs_proxy_response("")
+
+
+@app.route("/apps/pacs/original", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
+@login_required
+def raioxpacs_original_root():
+    return raioxpacs_proxy_response("", integrated=False)
+
+
+@app.route("/apps/pacs/original/", defaults={"subpath": ""}, methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
+@app.route("/apps/pacs/original/<path:subpath>", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
+@login_required
+def raioxpacs_original_proxy(subpath):
+    return raioxpacs_proxy_response(subpath, integrated=False)
+
+
+@app.route("/apps/pacs/", defaults={"subpath": ""}, methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
+@app.route("/apps/pacs/<path:subpath>", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
+@login_required
+def raioxpacs_proxy(subpath):
+    return raioxpacs_proxy_response(subpath)
+
+
+# ---------------------------------------------------------------------------
 # Integracao de apps estaticos Nanotech
 # ---------------------------------------------------------------------------
 STATIC_APP_DIRS = {
@@ -3611,6 +4239,73 @@ def api_me():
 @login_required
 def api_apps():
     return jsonify({"ok": True, "apps": list_apps()})
+
+
+@app.route("/api/clientes-modulos")
+@login_required
+def api_client_contracts():
+    return jsonify({"ok": True, **client_contracts_payload()})
+
+
+@app.route("/api/clientes-modulos/ativo")
+@login_required
+def api_active_client_contract():
+    payload = client_contracts_payload()
+    if payload["configuredClientMissing"]:
+        return jsonify({"erro": "CLIENTE_DEPLOY_ID nao corresponde a nenhum cliente cadastrado"}), 404
+    if not payload["activeClient"]:
+        return jsonify({"erro": "nenhum cliente ativo encontrado"}), 404
+    return jsonify(
+        {
+            "ok": True,
+            "client": payload["activeClient"],
+            "activeClientId": payload["activeClientId"],
+            "configuredClientId": payload["configuredClientId"],
+            "selectedByEnv": payload["selectedByEnv"],
+            "updatedAt": payload["updatedAt"],
+        }
+    )
+
+
+@app.route("/api/clientes-modulos/clientes", methods=["POST"])
+@login_required
+def api_create_client_contract():
+    _, error = current_admin_or_json_error()
+    if error:
+        return error
+    try:
+        create_client_contract(request.get_json(silent=True) or {})
+        return jsonify({"ok": True, **client_contracts_payload()}), 201
+    except ValueError as exc:
+        return jsonify({"erro": str(exc)}), 400
+
+
+@app.route("/api/clientes-modulos/clientes/<client_id>", methods=["PUT"])
+@login_required
+def api_update_client_contract(client_id):
+    _, error = current_admin_or_json_error()
+    if error:
+        return error
+    try:
+        update_client_contract(client_id, request.get_json(silent=True) or {})
+        return jsonify({"ok": True, **client_contracts_payload()})
+    except LookupError as exc:
+        return jsonify({"erro": str(exc)}), 404
+    except ValueError as exc:
+        return jsonify({"erro": str(exc)}), 400
+
+
+@app.route("/api/clientes-modulos/clientes/<client_id>", methods=["DELETE"])
+@login_required
+def api_delete_client_contract(client_id):
+    _, error = current_admin_or_json_error()
+    if error:
+        return error
+    try:
+        delete_client_contract(client_id)
+        return jsonify({"ok": True, **client_contracts_payload()})
+    except LookupError as exc:
+        return jsonify({"erro": str(exc)}), 404
 
 
 @app.route("/api/config/theme", methods=["POST"])

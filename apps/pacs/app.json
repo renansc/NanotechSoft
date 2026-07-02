@@ -1,0 +1,90 @@
+{
+  "app_key": "pacs",
+  "nome": "RaioxPacs",
+  "descricao": "RIS/PACS do Laboratorio Santa Terezinha com cockpit, worklist, viewer, laudos, financeiro e compartilhamento de imagens.",
+  "url": "/apps/pacs",
+  "standalone_url": "/apps/pacs/original",
+  "icone": "health",
+  "ordem": 75,
+  "ativo": true,
+  "origem": "raioxpacs",
+  "source_dir": "apps/pacs/source",
+  "temas": ["rio_branco", "autoblue", "fin-blue", "pontobege", "zapgreen"],
+  "menu_groups": {
+    "dashboards": [
+      {
+        "nome": "Cockpit PACS",
+        "url": "/apps/pacs?section=kanban"
+      },
+      {
+        "nome": "Dashboard PACS",
+        "url": "/apps/pacs?section=dashboard"
+      }
+    ],
+    "cadastros": [
+      {
+        "nome": "Pacientes PACS",
+        "url": "/apps/pacs?section=patients",
+        "grupo": "RaioxPacs"
+      },
+      {
+        "nome": "Procedimentos PACS",
+        "url": "/apps/pacs?section=exams",
+        "grupo": "RaioxPacs"
+      }
+    ],
+    "workflow": [
+      {
+        "nome": "Fluxo PACS",
+        "url": "/apps/pacs?section=kanban"
+      },
+      {
+        "nome": "Laudos e Viewer",
+        "url": "/apps/pacs?section=reporting"
+      },
+      {
+        "nome": "Worklist PACS",
+        "url": "/apps/pacs?section=worklist"
+      }
+    ],
+    "financeiro": [
+      {
+        "nome": "Financeiro PACS",
+        "url": "/apps/pacs?section=finance"
+      }
+    ],
+    "relatorios": [
+      {
+        "nome": "Relatorios PACS",
+        "url": "/apps/pacs?section=reports"
+      }
+    ]
+  },
+  "workflow_cards": [
+    {
+      "nome": "Novo exame PACS",
+      "url": "/apps/pacs?section=kanban",
+      "tipo": "PACS"
+    }
+  ],
+  "config_groups": {
+    "pacs": [
+      {
+        "nome": "PACS - Integracoes",
+        "url": "/apps/pacs?section=config&configTab=integrations"
+      },
+      {
+        "nome": "PACS - Valores",
+        "url": "/apps/pacs?section=config&configTab=pricing"
+      },
+      {
+        "nome": "PACS - Status",
+        "url": "/apps/pacs?section=config&configTab=status"
+      },
+      {
+        "nome": "PACS - Docs",
+        "url": "/apps/pacs/docs/index.html"
+      }
+    ]
+  }
+}

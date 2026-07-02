@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{{ app_name }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='viewer.css') }}" />
+  </head>
+  <body class="viewer-body login-body">
+    <main class="login-shell">
+      <section class="login-card">
+        <p class="viewer-kicker">Compartilhamento Seguro</p>
+        <h1>{{ app_name }}</h1>
+        <p class="viewer-muted">
+          {% if share %}
+          Entre com o usuario e a senha criados para este compartilhamento.
+          {% else %}
+          O link informado nao esta disponivel ou foi removido.
+          {% endif %}
+        </p>
+
+        {% if share %}
+        <div class="viewer-banner compact">
+          <strong>Escopo {{ share.scope_type }}</strong>
+          <span>Usuario: {{ share.username }}</span>
+          <span>{{ share.note or "Visualizacao restrita das imagens autorizadas." }}</span>
+        </div>
+        {% endif %}
+
+        {% if error %}
+        <div class="status-line error">{{ error }}</div>
+        {% endif %}
+
+        {% if share %}
+        <form class="card-form" method="post" action="{{ url_for('share_login', slug=share_slug) }}">
+          <label class="field">
+            <span>Usuario</span>
+            <input name="username" value="{{ share.username }}" autocomplete="username" />
+          </label>
+          <label class="field">
+            <span>Senha</span>
+            <input name="password" type="password" autocomplete="current-password" />
+          </label>
+          <div class="card-actions">
+            <button class="primary" type="submit">Entrar</button>
+          </div>
+        </form>
+        {% endif %}
+      </section>
+    </main>
+  </body>
+</html>

@@ -31,6 +31,67 @@
     </section>
 
     {% if usuario and usuario.perfil == 'admin' %}
+      <section class="config-panel client-admin-panel" data-client-admin>
+        <div class="client-admin-head">
+          <div>
+            <h3>Clientes e modulos</h3>
+            <p>
+              Controle versionado em <code>{{ client_config.source.path }}</code>.
+              {% if client_config.selectedByEnv %}
+                Deploy ativo: <strong>{{ client_config.activeClient.nome if client_config.activeClient else client_config.configuredClientId }}</strong>.
+              {% else %}
+                Defina <code>CLIENTE_DEPLOY_ID</code> no deploy para escolher o cliente.
+              {% endif %}
+            </p>
+          </div>
+          <button type="button" data-client-new>Novo cliente</button>
+        </div>
+
+        <div class="client-admin-grid">
+          <aside class="client-admin-list" data-client-list></aside>
+          <form class="client-admin-form" data-client-form>
+            <div class="form-grid">
+              <label>
+                Nome
+                <input type="text" name="nome" required>
+              </label>
+              <label>
+                ID do deploy
+                <input type="text" name="id" required>
+              </label>
+              <label>
+                Status
+                <select name="status">
+                  <option value="ativo">Ativo</option>
+                  <option value="implantacao">Implantacao</option>
+                  <option value="interno">Interno</option>
+                  <option value="pausado">Pausado</option>
+                </select>
+              </label>
+              <label>
+                Banco
+                <input type="text" name="databaseKey" placeholder="riobranco">
+              </label>
+            </div>
+            <label>
+              Observacao
+              <textarea name="observacao" rows="3"></textarea>
+            </label>
+            <label class="inline-check">
+              <input type="checkbox" name="allModules">
+              Todos os apps publicados
+            </label>
+            <div class="module-picker" data-module-picker></div>
+            <div class="client-admin-actions">
+              <button type="submit">Salvar cliente</button>
+              <button type="button" class="danger-button" data-client-delete>Excluir</button>
+              <span id="clientAdminMsg" class="form-msg"></span>
+            </div>
+          </form>
+        </div>
+        <script id="clientContractsSeed" type="application/json">{{ client_config|tojson }}</script>
+      </section>
+
       <section class="config-panel backup-panel">
         <div>
           <h3>Backup do portal</h3>

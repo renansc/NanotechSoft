@@ -38,6 +38,8 @@ services:
           envVarKey: MYSQL_ROOT_PASSWORD
       - key: NS_DB_NAME
         value: notechsoft
+      - key: CLIENTE_DEPLOY_ID
+        sync: false
       - key: NS_HOST
         value: 0.0.0.0
       - key: NS_DEBUG

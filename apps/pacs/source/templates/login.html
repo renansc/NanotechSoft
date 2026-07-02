@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{{ browser_title or app_name }} | Login</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v={{ asset_version }}" />
+  </head>
+  <body class="login-page">
+    <main class="login-shell">
+      <section class="login-hero">
+        <p class="eyebrow">Entrada do cockpit</p>
+        <h1>{{ app_name }}</h1>
+        <p>
+          O usuario tecnico entra sem senha, apenas selecionando o departamento que esta acessando o sistema para liberar o painel principal, o chat e o fluxo operacional.
+        </p>
+        <p class="login-subcopy">
+          O perfil admin entra somente com a senha e nao precisa escolher departamento para acessar o sistema.
+        </p>
+        <div class="login-hints">
+          <span>Recepcao</span>
+          <span>Sala de Raiox</span>
+          <span>Sala de Ultrassom</span>
+        </div>
+      </section>
+
+      <section class="login-card panel">
+        <div class="panel-head">
+          <h3>Escolha o departamento</h3>
+        </div>
+        {% if error %}
+          <div class="flash error">{{ error }}</div>
+        {% endif %}
+        <form method="post" class="form-grid login-form">
+          <label class="span-2">
+            <span>Perfil</span>
+            <select name="profile" id="profileSelect">
+              <option value="technician" {{ "selected" if selected_profile != "admin" else "" }}>Tecnico</option>
+              <option value="admin" {{ "selected" if selected_profile == "admin" else "" }}>Admin</option>
+            </select>
+          </label>
+          <label class="span-2" id="departmentField">
+            <span>Departamento</span>
+            <select name="department_id" required>
+              <option value="">Selecione</option>
+              {% for item in departments %}
+                <option value="{{ item.id }}" {{ "selected" if selected_department_id|string == item.id|string else "" }}>{{ item.name }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label class="span-2" id="adminPasswordField" hidden>
+            <span>Senha admin</span>
+            <input type="password" name="password" placeholder="Senha do administrador" autocomplete="current-password" />
+          </label>
+          <div class="actions span-2">
+            <button class="primary" type="submit">Entrar no sistema</button>
+          </div>
+        </form>
+        <div class="config-note">
+          <strong>Admin Config</strong>
+          A senha admin libera o acesso ao cockpit como administrador, com a aba Config ja preparada para os submenus de integracao, valores, status e deploy.
+        </div>
+      </section>
+    </main>
+    <script>
+      const profileSelect = document.getElementById("profileSelect");
+      const adminPasswordField = document.getElementById("adminPasswordField");
+      const departmentField = document.getElementById("departmentField");
+      const syncLoginPasswordField = () => {
+        const isAdmin = profileSelect && profileSelect.value === "admin";
+        if (adminPasswordField) adminPasswordField.hidden = !isAdmin;
+        if (departmentField) departmentField.hidden = isAdmin;
+        const departmentSelect = departmentField ? departmentField.querySelector('select[name="department_id"]') : null;
+        if (departmentSelect) departmentSelect.required = !isAdmin;
+        const passwordInput = adminPasswordField ? adminPasswordField.querySelector('input[name="password"]') : null;
+        if (passwordInput) passwordInput.required = Boolean(isAdmin);
+      };
+      if (profileSelect) {
+        profileSelect.addEventListener("change", syncLoginPasswordField);
+        syncLoginPasswordField();
+      }
+    </script>
+  </body>
+</html>
