@@ -9,7 +9,7 @@
   "ativo": true,
   "origem": "nanotech",
   "source_dir": "apps/bpa/source",
-  "temas": ["rio_branco", "autoblue", "fin-blue", "pontobege", "zapgreen"],
+  "temas": ["rio_branco", "autoblue", "fin-blue", "pontobege", "zapgreen", "pacsred"],
   "menu_groups": {
     "cadastros": [
       {

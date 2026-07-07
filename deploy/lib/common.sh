@@ -6,6 +6,7 @@ PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PROJECT_NAME="nanotechsoft"
 APP_SERVICE="app"
 DB_SERVICE="mysql"
+PACS_DB_SERVICE="pacs-postgres"
 APP_URL="http://127.0.0.1:${NOTECHSOFT_APP_PORT:-5600}/login"
 COMPOSE_CMD=()
 

@@ -8,6 +8,9 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/common.sh"
 cd_project
 require_compose
 
+log "garantindo bancos antes do restart..."
+compose up -d "$DB_SERVICE" "$PACS_DB_SERVICE"
+
 log "reiniciando app..."
 compose restart "$APP_SERVICE"
 
@@ -16,4 +19,4 @@ if ! wait_for_app 45 2; then
   die "app nao respondeu apos restart"
 fi
 
-compose ps "$DB_SERVICE" "$APP_SERVICE"
+compose ps "$DB_SERVICE" "$PACS_DB_SERVICE" "$APP_SERVICE"

@@ -9,7 +9,7 @@
   "ativo": true,
   "origem": "sensoresMonitor",
   "source_dir": "apps/automacao/source",
-  "temas": ["rio_branco", "autoblue"],
+  "temas": ["rio_branco", "autoblue", "fin-blue", "pontobege", "zapgreen", "pacsred"],
   "menu_groups": {
     "dashboards": [
       {

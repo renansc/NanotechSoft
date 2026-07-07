@@ -101,6 +101,19 @@ button:hover,
   --menu-active: #128c4a;
 }
 
+.theme-pacsred {
+  --accent: #c81e3a;
+  --accent-dark: #8f1d2c;
+  --accent-soft: #fff1f2;
+  --danger: #a60000;
+  --surface: #ffffff;
+  --line: #e5d3d7;
+  --muted: #6b7280;
+  --menu: #2f3742;
+  --menu-hover: #8f1d2c;
+  --menu-active: #c81e3a;
+}
+
 body.theme-pontobege {
   background:
     radial-gradient(circle at top left, rgba(224, 139, 62, 0.20), transparent 24%),
@@ -123,6 +136,11 @@ body.theme-zapgreen {
     radial-gradient(780px 520px at 82% 8%, rgba(37, 211, 102, 0.14), transparent 58%),
     #07111f;
   color: #e5eefc;
+}
+
+body.theme-pacsred {
+  background: linear-gradient(145deg, #f7f8fb 0%, #fff1f2 48%, #eef3f6 100%);
+  color: #2d3038;
 }
 
 .theme-fin-blue .topo,
@@ -157,6 +175,39 @@ body.theme-zapgreen {
 .theme-zapgreen .theme-option {
   background: #0d1727;
   color: #e5eefc;
+}
+
+.theme-pacsred .topo,
+.theme-pacsred .app-card,
+.theme-pacsred .empty-state,
+.theme-pacsred .config-panel,
+.theme-pacsred .theme-row {
+  background: rgba(255, 255, 255, 0.94);
+  color: #2d3038;
+}
+
+.theme-pacsred .submenu,
+.theme-pacsred .submenu-item,
+.theme-pacsred .theme-menu,
+.theme-pacsred .theme-option {
+  background: #ffffff;
+  color: #2d3038;
+}
+
+.theme-pacsred .theme-dot.dot-a {
+  background: #c81e3a;
+}
+
+.theme-pacsred .theme-dot.dot-b {
+  background: #2f3742;
+}
+
+.theme-pacsred .app-icon,
+.theme-pacsred .kanban-card,
+.theme-pacsred .financeiro-app .badge,
+.theme-pacsred .financeiro-app .pill {
+  background: rgba(200, 30, 58, 0.10);
+  color: #8f1d2c;
 }
 
 .theme-zapgreen input,
@@ -1033,6 +1084,40 @@ body.theme-zapgreen .financeiro-app .subtitle,
 body.theme-zapgreen .financeiro-app .kpiLabel,
 body.theme-zapgreen .financeiro-app .diagLabel {
   color: #99a8c2;
+}
+
+body.theme-pacsred .financeiro-app .tab,
+body.theme-pacsred .financeiro-app .btn,
+body.theme-pacsred .financeiro-app .iconBtn,
+body.theme-pacsred .financeiro-app input,
+body.theme-pacsred .financeiro-app select,
+body.theme-pacsred .financeiro-app textarea {
+  background: #ffffff;
+  border-color: #e5d3d7;
+  color: #2d3038;
+}
+
+body.theme-pacsred .financeiro-app .card,
+body.theme-pacsred .financeiro-app .item,
+body.theme-pacsred .financeiro-app .kpi,
+body.theme-pacsred .financeiro-app .sectionBox,
+body.theme-pacsred .financeiro-app .previewBox,
+body.theme-pacsred .financeiro-app .statusBox,
+body.theme-pacsred .financeiro-app .diagItem,
+body.theme-pacsred .financeiro-app .modalCard,
+body.theme-pacsred .financeiro-app .modalBox {
+  background: rgba(255, 255, 255, 0.94);
+  color: #2d3038;
+}
+
+body.theme-pacsred .financeiro-app h2,
+body.theme-pacsred .financeiro-app .h3,
+body.theme-pacsred .financeiro-app .title {
+  color: #2f3742;
+}
+
+body.theme-pacsred .financeiro-app .codeBox {
+  background: #fff1f2;
 }
 
 @media (max-width: 900px) {

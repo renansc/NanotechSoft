@@ -9,7 +9,7 @@
   "ativo": true,
   "origem": "raioxpacs",
   "source_dir": "apps/pacs/source",
-  "temas": ["rio_branco", "autoblue", "fin-blue", "pontobege", "zapgreen"],
+  "temas": ["rio_branco", "autoblue", "fin-blue", "pontobege", "zapgreen", "pacsred"],
   "menu_groups": {
     "dashboards": [
       {

@@ -38,7 +38,7 @@
       <div class="grid2">
         <div class="card">
           <div class="cardhead">
-            <h2>Resumo</h2>
+            <h2>Status financeiro</h2>
             <div class="row gap">
               <select id="dashConta"></select>
               <input type="month" id="dashMes" />
@@ -47,33 +47,64 @@
           </div>
           <div class="kpis">
             <div class="kpi">
-              <div class="kpiLabel">Receitas</div>
+              <div class="kpiLabel">Receitas realizadas</div>
               <div class="kpiValue" id="kpiReceitas">R$ 0,00</div>
             </div>
             <div class="kpi">
-              <div class="kpiLabel">Despesas</div>
+              <div class="kpiLabel">Despesas realizadas</div>
               <div class="kpiValue" id="kpiDespesas">R$ 0,00</div>
             </div>
             <div class="kpi">
-              <div class="kpiLabel">Saldo do mês</div>
+              <div class="kpiLabel">Resultado realizado</div>
               <div class="kpiValue" id="kpiSaldoMes">R$ 0,00</div>
             </div>
             <div class="kpi">
-              <div class="kpiLabel">Saldo da conta</div>
+              <div class="kpiLabel">Saldo atual</div>
               <div class="kpiValue" id="kpiSaldoConta">R$ 0,00</div>
             </div>
-          </div>
-          <div class="muted" style="margin-top:10px">
-            Dica: use AP/AR para contas a pagar/receber e vincule no OFX pela Conciliação.
+            <div class="kpi">
+              <div class="kpiLabel">A pagar no mês</div>
+              <div class="kpiValue" id="kpiAPAberto">R$ 0,00</div>
+            </div>
+            <div class="kpi">
+              <div class="kpiLabel">A receber no mês</div>
+              <div class="kpiValue" id="kpiARAberto">R$ 0,00</div>
+            </div>
+            <div class="kpi">
+              <div class="kpiLabel">Resultado previsto</div>
+              <div class="kpiValue" id="kpiPrevistoMes">R$ 0,00</div>
+            </div>
+            <div class="kpi">
+              <div class="kpiLabel">Saldo previsto</div>
+              <div class="kpiValue" id="kpiSaldoPrevisto">R$ 0,00</div>
+            </div>
           </div>
         </div>
 
         <div class="card">
           <div class="cardhead">
+            <h2>Status por conta</h2>
+            <div class="muted">Saldos e títulos em aberto por conta.</div>
+          </div>
+          <div id="boxStatusContas" class="list compact accountStatusList"></div>
+        </div>
+      </div>
+
+      <div class="grid2 dashboardWide">
+        <div class="card">
+          <div class="cardhead">
             <h2>Lançamentos do mês</h2>
-            <div class="muted">Movimentos do mês selecionado no resumo.</div>
+            <div class="muted">Movimentos realizados no mês e na conta selecionados.</div>
           </div>
           <div id="boxLancamentosMes" class="list compact"></div>
+        </div>
+
+        <div class="card">
+          <div class="cardhead">
+            <h2>Títulos em aberto</h2>
+            <div class="muted">AP/AR vencendo no mês e na conta selecionados.</div>
+          </div>
+          <div id="boxTitulosMes" class="list compact"></div>
         </div>
       </div>
     </section>

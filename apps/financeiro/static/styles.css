@@ -195,7 +195,62 @@ textarea{
   padding: 12px;
 }
 .kpiLabel{ color: var(--muted); font-size: 12px; }
-.kpiValue{ font-size: 18px; font-weight: 900; margin-top: 6px; }
+.kpiValue{
+  font-size: 18px;
+  font-weight: 900;
+  margin-top: 6px;
+  overflow-wrap:anywhere;
+}
+
+.dashboardWide{
+  margin-top: 14px;
+}
+
+.accountStatusList .accountStatusItem{
+  align-items: stretch;
+  flex-direction: column;
+}
+
+.accountStatusHead{
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap: 10px;
+}
+
+.accountStatusMetrics{
+  display:grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.accountStatusMetrics div{
+  border:1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(17,26,51,.36);
+  padding: 9px;
+  min-width:0;
+}
+
+.accountStatusMetrics span{
+  display:block;
+  font-size: 11px;
+}
+
+.accountStatusMetrics b{
+  display:block;
+  margin-top: 4px;
+  overflow-wrap:anywhere;
+}
+
+@media (max-width: 700px){
+  .accountStatusMetrics{ grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 420px){
+  .accountStatusHead{ flex-direction:column; }
+  .accountStatusMetrics{ grid-template-columns: 1fr; }
+}
 
 .list{
   display:flex;

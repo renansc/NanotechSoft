@@ -287,6 +287,12 @@ THEMES = [
         "descricao": "Tema verde escuro baseado no app Zap.",
         "enabled": True,
     },
+    {
+        "key": "pacsred",
+        "nome": "PACS Red",
+        "descricao": "Tema vermelho clinico baseado no RaioxPacs.",
+        "enabled": True,
+    },
 ]
 
 _db_ready = False
@@ -724,6 +730,15 @@ body.theme-zapgreen {{
   --text: #e5eefc;
   --accent2: #25d366;
   --shadow: 0 24px 80px rgba(0, 0, 0, 0.35);
+  --radius: 8px;
+}}
+body.theme-pacsred {{
+  --bg: #f6f7f9;
+  --panel: rgba(255, 255, 255, 0.96);
+  --panel2: #fff1f2;
+  --text: #2d3038;
+  --accent2: #8f1d2c;
+  --shadow: 0 18px 42px rgba(143, 29, 44, 0.12);
   --radius: 8px;
 }}
 body[class*="theme-"] {{
@@ -1941,6 +1956,21 @@ def automacao_theme_replacements():
             "border:1px solid #ddd": "border:1px solid rgba(148,163,184,.18)",
             "color:#555": "color:#99a8c2",
         }
+    if theme == "pacsred":
+        return {
+            "#003366": "#2f3742",
+            "#004c99": "#8f1d2c",
+            "#b9d7f5": "#fff1f2",
+            "#a60000": "#c81e3a",
+            "#f4f4f4": "#f7f8fb",
+            "background:white": "background:#ffffff",
+            "background: white": "background:#ffffff",
+            "background-color:white": "background-color:#ffffff",
+            "background-color: white": "background-color:#ffffff",
+            "box-shadow:0 0 5px #ccc": "box-shadow:0 18px 42px rgba(143,29,44,.12)",
+            "border:1px solid #ddd": "border:1px solid #e5d3d7",
+            "color:#555": "color:#6b7280",
+        }
     return {
         "#003366": "#ff9800",
         "#004c99": "#e68900",
@@ -2022,6 +2052,44 @@ def extract_automacao_page(content):
 .automacao-content button,
 .automacao-content .btn {
   background: #128c4a !important;
+  color: #ffffff !important;
+}
+.automacao-content td,
+.automacao-content p,
+.automacao-content span,
+.automacao-content label {
+  color: inherit;
+}
+"""
+    if current_theme_key() == "pacsred":
+        style += """
+.automacao-page,
+.automacao-content {
+  background: transparent !important;
+  color: #2d3038;
+}
+.automacao-content .card,
+.automacao-content .panel,
+.automacao-content table,
+.automacao-content form,
+.automacao-content section,
+.automacao-content .status-card,
+.automacao-content .sensor-card {
+  background: #ffffff !important;
+  border-color: #e5d3d7 !important;
+  color: #2d3038 !important;
+}
+.automacao-content input,
+.automacao-content select,
+.automacao-content textarea {
+  background: #ffffff !important;
+  border-color: #e5d3d7 !important;
+  color: #2d3038 !important;
+}
+.automacao-content th,
+.automacao-content button,
+.automacao-content .btn {
+  background: #8f1d2c !important;
   color: #ffffff !important;
 }
 .automacao-content td,
@@ -2353,6 +2421,20 @@ body.theme-pontobege {
   --accent: #e08b3e;
   --accent-strong: #bb5b2a;
   --mint: #8fc1a9;
+  --radius: 8px;
+}
+
+body.theme-pacsred {
+  --bg: #f7f8fb;
+  --bg-deep: #fff1f2;
+  --panel: rgba(255, 255, 255, 0.94);
+  --panel-strong: #2f3742;
+  --text: #2d3038;
+  --muted: #6b7280;
+  --line: #e5d3d7;
+  --accent: #c81e3a;
+  --accent-strong: #8f1d2c;
+  --mint: #dbeafe;
   --radius: 8px;
 }
 
@@ -2812,6 +2894,19 @@ body.theme-zapgreen {
   --accent-2: #38bdf8;
   --danger: #f87171;
   --shadow: 0 24px 80px rgba(0, 0, 0, 0.35);
+}
+
+body.theme-pacsred {
+  --bg: #f7f8fb;
+  --bg-2: #fff1f2;
+  --panel: rgba(255, 255, 255, 0.94);
+  --panel-border: #e5d3d7;
+  --text: #2d3038;
+  --muted: #6b7280;
+  --accent: #c81e3a;
+  --accent-2: #8f1d2c;
+  --danger: #a60000;
+  --shadow: 0 18px 42px rgba(143, 29, 44, 0.12);
 }
 
 .notech-integrated-zap .shell {

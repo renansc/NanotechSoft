@@ -22,17 +22,29 @@ python app.py
 
 Abra `http://127.0.0.1:5600`.
 
-## MySQL com Docker
+## Bancos com Docker
 
 ```bash
 cd NanotechSoft
 cp .env.example .env
-docker compose up -d mysql
+docker compose up -d mysql pacs-postgres
 ```
 
-Esse compose publica o banco na porta `3307` por padrao para nao conflitar com outros MySQL locais.
+Esse compose publica o MySQL do portal na porta `3307` e o PostgreSQL do
+RaioxPacs na porta `5433`, para nao conflitar com bancos locais padrao.
 
-Com o banco do compose, mantenha `NS_DB_PORT=3307` no `.env`.
+Dentro da rede Docker, o portal acessa:
+
+- MySQL do portal: `mysql:3306`.
+- PostgreSQL do PACS: `pacs-postgres:5432`.
+
+De fora do Docker, use:
+
+- MySQL do portal: `127.0.0.1:3307`.
+- PostgreSQL do PACS: `127.0.0.1:5433`.
+
+Com o banco do compose, mantenha `NS_DB_PORT=3307`, `RAIOXPACS_PGHOST=pacs-postgres`
+e `RAIOXPACS_PGPORT=5432` no `.env`.
 
 ## Arquivos de ambiente
 
@@ -54,7 +66,9 @@ NANOTECH_ENV_FILE=.env_local python app.py
 ```
 
 No Render, use o `render.yaml`; ele cria o MySQL privado e injeta as variaveis
-necessarias no web service.
+necessarias no web service. Para o PACS, configure tambem as variaveis
+`RAIOXPACS_*` para apontar ao PostgreSQL publicado do servidor local ou a um
+PostgreSQL externo.
 
 ## Deploy no Render
 
@@ -73,6 +87,23 @@ O Render nao oferece MySQL gerenciado nativo como oferece Postgres; este projeto
 usa MySQL em private service com Render Disk. Para producao, faca backups
 periodicos com `mysqldump`, porque snapshot de disco nao substitui backup logico
 de banco.
+
+O RaioxPacs usa PostgreSQL separado do MySQL do portal. No deploy Docker local,
+o servico `pacs-postgres` e publicado em `RAIOXPACS_POSTGRES_PORT`, por padrao
+`5433`, e o container `app` recebe `RAIOXPACS_PGHOST=pacs-postgres`,
+`RAIOXPACS_PGPORT=5432`, `RAIOXPACS_PGUSER`, `RAIOXPACS_PGPASSWORD` e
+`RAIOXPACS_PGDATABASE`. Para o Render acessar esse banco local via
+direcionamento de portas, configure no web service:
+
+- `RAIOXPACS_PGHOST`: IP/DNS publico que chega ao servidor Docker local.
+- `RAIOXPACS_PGPORT`: porta encaminhada, por padrao `5433`.
+- `RAIOXPACS_PGUSER`: usuario do Postgres, por padrao `postgres`.
+- `RAIOXPACS_PGPASSWORD`: senha configurada no `.env`.
+- `RAIOXPACS_PGDATABASE`: banco do PACS, por padrao `raioxpacs`.
+- `RAIOXPACS_PGSSLMODE`: `prefer` para encaminhamento local comum, ou `require` se houver SSL.
+
+Tambem e possivel preencher `RAIOXPACS_DATABASE_URL` no Render; se ela existir,
+ela tem prioridade sobre as variaveis `RAIOXPACS_PG*`.
 
 Se preferir usar um MySQL externo, remova ou ignore o servico
 `nanotechsoft-mysql` no Render e configure estas variaveis no web service:
@@ -108,8 +139,8 @@ Os atalhos da raiz podem ser usados com ou sem `.sh`:
 ./git-safe -m "mensagem do commit"
 ```
 
-- `./up` sobe ou recria `mysql` e `app`, valida os manifests dos apps e espera `/login` responder.
-- `./down` para somente o container `app`, preservando o banco e o volume MySQL.
+- `./up` sobe ou recria `mysql`, `pacs-postgres` e `app`, valida os manifests dos apps e espera `/login` responder.
+- `./down` para somente o container `app`, preservando os bancos e volumes do MySQL e do PostgreSQL do PACS.
 - `./git-safe` bloqueia arquivos sensiveis/runtime, valida Python, valida `source_dir` dos apps, valida `clientes-modulos.json`, executa Docker Compose quando disponivel, opcionalmente builda/testa o container e envia a branch atual para `origin`.
 
 Os scripts detectam `docker compose`, `docker-compose` ou `podman compose`. Se o Docker CLI nao estiver disponivel no terminal atual, execute os scripts fora de sandboxes que nao exponham Docker, como alguns ambientes Flatpak, ou instale o plugin Compose.
@@ -164,4 +195,4 @@ O menu principal e as abas internas do financeiro ocultam recursos sem permissao
 
 O app financeiro fica em `apps/financeiro` e roda integrado ao shell do NanotechSoft. Os dados foram migrados do backup JSON inicial para MySQL nas tabelas `financeiro_registros` e `financeiro_config`.
 
-O tema padrao do portal continua sendo `Rio Branco`. O tema original do financeiro fica disponivel como `Fin Blue` no seletor de temas, sem ser aplicado automaticamente ao abrir o app.
+O tema padrao do portal continua sendo `Rio Branco`. O tema original do financeiro fica disponivel como `Fin Blue`, e o tema do RaioxPacs fica disponivel como `PACS Red`; nenhum deles e aplicado automaticamente ao abrir um app.

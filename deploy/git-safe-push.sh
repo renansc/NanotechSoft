@@ -116,7 +116,7 @@ run_validations() {
 
   if [[ "$SKIP_HEALTH" != "1" ]]; then
     log "subindo app para checagem local"
-    compose up -d "$DB_SERVICE" "$APP_SERVICE"
+    compose up -d "$DB_SERVICE" "$PACS_DB_SERVICE" "$APP_SERVICE"
     if ! wait_for_app 45 2; then
       compose logs --tail=120 "$APP_SERVICE" >&2 || true
       die "falha ao consultar o app dentro do container"

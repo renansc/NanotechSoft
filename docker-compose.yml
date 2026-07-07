@@ -17,6 +17,27 @@ services:
       retries: 30
       start_period: 30s
 
+  pacs-postgres:
+    image: postgres:16-alpine
+    container_name: nanotechsoft-pacs-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${RAIOXPACS_PGUSER:-postgres}
+      POSTGRES_PASSWORD: ${RAIOXPACS_PGPASSWORD:-postgres}
+      POSTGRES_DB: ${RAIOXPACS_PGDATABASE:-raioxpacs}
+      TZ: ${TZ:-America/Sao_Paulo}
+    ports:
+      - "${RAIOXPACS_POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - notechsoft_pacs_postgres:/var/lib/postgresql/data
+      - ./apps/pacs/source/docker/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
   app:
     container_name: nanotechsoft-app
     build:
@@ -25,6 +46,8 @@ services:
     restart: unless-stopped
     depends_on:
       mysql:
+        condition: service_healthy
+      pacs-postgres:
         condition: service_healthy
     environment:
       FLASK_SECRET: ${FLASK_SECRET:-notechsoft-dev-secret}
@@ -43,6 +66,14 @@ services:
       GPSMUSICAL_APP_DIR: ${GPSMUSICAL_APP_DIR:-/app/apps/gpsmusical/source}
       BPA_APP_DIR: ${BPA_APP_DIR:-/app/apps/bpa/source}
       TATOO_APP_DIR: ${TATOO_APP_DIR:-/app/apps/tatoo/source}
+      RAIOXPACS_APP_DIR: ${RAIOXPACS_APP_DIR:-/app/apps/pacs/source}
+      RAIOXPACS_PGHOST: ${RAIOXPACS_PGHOST:-pacs-postgres}
+      RAIOXPACS_PGPORT: ${RAIOXPACS_PGPORT:-5432}
+      RAIOXPACS_PGUSER: ${RAIOXPACS_PGUSER:-postgres}
+      RAIOXPACS_PGPASSWORD: ${RAIOXPACS_PGPASSWORD:-postgres}
+      RAIOXPACS_PGDATABASE: ${RAIOXPACS_PGDATABASE:-raioxpacs}
+      RAIOXPACS_PGSSLMODE: ${RAIOXPACS_PGSSLMODE:-prefer}
+      RAIOXPACS_AUTO_BOOTSTRAP_SCHEMA: ${RAIOXPACS_AUTO_BOOTSTRAP_SCHEMA:-1}
       NANOTECH_SHARED_DIR: ${NANOTECH_SHARED_DIR:-/app/apps/shared}
       RIOB_BASE_URL: ${RIOB_BASE_URL:-http://127.0.0.1:8898}
       RIOB_SSL_VERIFY: ${RIOB_SSL_VERIFY:-0}
@@ -59,3 +90,4 @@ services:
 
 volumes:
   notechsoft_mysql:
+  notechsoft_pacs_postgres:

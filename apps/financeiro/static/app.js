@@ -365,50 +365,174 @@ $("#lTipo").addEventListener("change", fillSelects);
 $("#tTipo").addEventListener("change", fillSelects);
 
 /* ---------- Dashboard ---------- */
+function isValidDateISO(value){
+  return /^\d{4}-\d{2}-\d{2}$/.test(String(value || ""));
+}
+
+function isSameMonthISO(value, year, month){
+  if(!isValidDateISO(value)) return false;
+  const [y, m] = String(value).split("-").map(Number);
+  return y === year && m === month;
+}
+
+function isTituloAberto(titulo){
+  return (titulo?.status || "ABERTO") === "ABERTO";
+}
+
+function selectedContaIds(selection){
+  if(selection && selection !== "ALL") return [selection];
+  return state.contas.map(conta => conta.id);
+}
+
+function emptyFinanceStatus(){
+  return {
+    receitasMes: 0,
+    despesasMes: 0,
+    saldoAtual: 0,
+    apAbertoMes: 0,
+    arAbertoMes: 0,
+    apAbertoTotal: 0,
+    arAbertoTotal: 0,
+    apVencido: 0,
+    arVencido: 0
+  };
+}
+
+function finishFinanceStatus(status){
+  return {
+    ...status,
+    resultadoRealizadoMes: status.receitasMes - status.despesasMes,
+    resultadoPrevistoMes: status.receitasMes + status.arAbertoMes - status.despesasMes - status.apAbertoMes,
+    saldoPrevisto: status.saldoAtual + status.arAbertoTotal - status.apAbertoTotal
+  };
+}
+
+function calcContaFinanceStatus(contaId, mes, todayISO=toISODate(new Date())){
+  const conta = state.contas.find(c => c.id === contaId);
+  const [year, month] = String(mes || "").split("-").map(Number);
+  const status = emptyFinanceStatus();
+
+  if(!conta) return finishFinanceStatus(status);
+
+  status.saldoAtual = Number(conta.saldoInicial || 0);
+
+  for(const lanc of state.lancamentos){
+    if(lanc.contaId !== contaId) continue;
+    const valor = Number(lanc.valor || 0);
+    const isReceita = lanc.tipo === "RECEITA";
+
+    if(isValidDateISO(lanc.data) && lanc.data <= todayISO){
+      status.saldoAtual += isReceita ? valor : -valor;
+    }
+
+    if(isSameMonthISO(lanc.data, year, month)){
+      if(isReceita) status.receitasMes += valor;
+      else status.despesasMes += valor;
+    }
+  }
+
+  for(const titulo of state.titulos){
+    if(titulo.contaId !== contaId || !isTituloAberto(titulo)) continue;
+    const valor = Number(titulo.valor || 0);
+    const isAP = titulo.tipo === "AP";
+
+    if(isAP) status.apAbertoTotal += valor;
+    else status.arAbertoTotal += valor;
+
+    if(isValidDateISO(titulo.vencimento) && titulo.vencimento < todayISO){
+      if(isAP) status.apVencido += valor;
+      else status.arVencido += valor;
+    }
+
+    if(isSameMonthISO(titulo.vencimento, year, month)){
+      if(isAP) status.apAbertoMes += valor;
+      else status.arAbertoMes += valor;
+    }
+  }
+
+  return finishFinanceStatus(status);
+}
+
+function aggregateFinanceStatus(statuses){
+  const total = emptyFinanceStatus();
+  for(const status of statuses){
+    total.receitasMes += status.receitasMes;
+    total.despesasMes += status.despesasMes;
+    total.saldoAtual += status.saldoAtual;
+    total.apAbertoMes += status.apAbertoMes;
+    total.arAbertoMes += status.arAbertoMes;
+    total.apAbertoTotal += status.apAbertoTotal;
+    total.arAbertoTotal += status.arAbertoTotal;
+    total.apVencido += status.apVencido;
+    total.arVencido += status.arVencido;
+  }
+  return finishFinanceStatus(total);
+}
+
 function renderDashboard(){
   const selConta = $("#dashConta").value || "ALL";
   if(!$("#dashMes").value) $("#dashMes").value = toISODate(new Date()).slice(0,7);
   const mes = $("#dashMes").value;
 
   const [y,m] = mes.split("-").map(Number);
+  const perAccount = state.contas.map(conta => ({
+    conta,
+    status: calcContaFinanceStatus(conta.id, mes)
+  }));
+  const scopeIds = new Set(selectedContaIds(selConta));
+  const scopedStatus = aggregateFinanceStatus(
+    perAccount.filter(item => scopeIds.has(item.conta.id)).map(item => item.status)
+  );
 
   const lancs = state.lancamentos.filter(l => {
     if(selConta !== "ALL" && l.contaId !== selConta) return false;
-    const dt = parseISODate(l.data);
-    return dt.getFullYear() === y && (dt.getMonth()+1) === m;
+    return isSameMonthISO(l.data, y, m);
   });
 
-  let receitas = 0, despesas = 0;
-  for(const l of lancs){
-    const v = Number(l.valor || 0);
-    if(l.tipo === "RECEITA") receitas += v;
-    else despesas += v;
-  }
-  $("#kpiReceitas").textContent = brl(receitas);
-  $("#kpiDespesas").textContent = brl(despesas);
-  $("#kpiSaldoMes").textContent = brl(receitas - despesas);
+  $("#kpiReceitas").textContent = brl(scopedStatus.receitasMes);
+  $("#kpiDespesas").textContent = brl(scopedStatus.despesasMes);
+  $("#kpiSaldoMes").textContent = brl(scopedStatus.resultadoRealizadoMes);
+  $("#kpiSaldoConta").textContent = brl(scopedStatus.saldoAtual);
+  $("#kpiAPAberto").textContent = brl(scopedStatus.apAbertoMes);
+  $("#kpiARAberto").textContent = brl(scopedStatus.arAbertoMes);
+  $("#kpiPrevistoMes").textContent = brl(scopedStatus.resultadoPrevistoMes);
+  $("#kpiSaldoPrevisto").textContent = brl(scopedStatus.saldoPrevisto);
 
-  const hoje = new Date();
-  function saldoConta(contaId){
-    const conta = state.contas.find(c => c.id === contaId);
-    if(!conta) return 0;
-    let s = Number(conta.saldoInicial || 0);
-    for(const l of state.lancamentos){
-      if(l.contaId !== contaId) continue;
-      const dt = parseISODate(l.data);
-      if(dt > hoje) continue;
-      const v = Number(l.valor || 0);
-      s += (l.tipo === "RECEITA") ? v : -v;
-    }
-    return s;
-  }
-
-  if(selConta === "ALL"){
-    const total = state.contas.reduce((acc,c)=> acc + saldoConta(c.id), 0);
-    $("#kpiSaldoConta").textContent = brl(total);
-  } else {
-    $("#kpiSaldoConta").textContent = brl(saldoConta(selConta));
-  }
+  $("#boxStatusContas").innerHTML = perAccount.length ? perAccount.map(({ conta, status })=>{
+    const selectedClass = selConta === conta.id ? " selected" : "";
+    const overdue = status.apVencido > 0
+      ? `<span class="badge bad">Vencido ${brl(status.apVencido)}</span>`
+      : `<span class="badge ok">Em dia</span>`;
+    return `
+      <div class="item accountStatusItem${selectedClass}">
+        <div class="accountStatusHead">
+          <div>
+            <b>${escapeHtml(conta.nome || "Conta")}</b>
+            <div class="muted">${escapeHtml(conta.moeda || "BRL")} · saldo inicial ${brl(conta.saldoInicial)}</div>
+          </div>
+          ${overdue}
+        </div>
+        <div class="accountStatusMetrics">
+          <div>
+            <span class="muted">Atual</span>
+            <b>${brl(status.saldoAtual)}</b>
+          </div>
+          <div>
+            <span class="muted">Previsto</span>
+            <b>${brl(status.saldoPrevisto)}</b>
+          </div>
+          <div>
+            <span class="muted">A pagar</span>
+            <b>${brl(status.apAbertoTotal)}</b>
+          </div>
+          <div>
+            <span class="muted">A receber</span>
+            <b>${brl(status.arAbertoTotal)}</b>
+          </div>
+        </div>
+      </div>
+    `;
+  }).join("") : `<div class="muted">Nenhuma conta cadastrada.</div>`;
 
   const cats = state.categorias;
   const contas = state.contas;
@@ -422,13 +546,40 @@ function renderDashboard(){
     return `
       <div class="item">
         <div>
-          <b>${escapeHtml(l.descricao || "Sem descrição")}</b>
+          <b>${escapeHtml(l.desc || "Sem descrição")}</b>
           <div class="muted">${escapeHtml(l.data || "-")} · ${escapeHtml(conta?.nome || "Conta")} · ${escapeHtml(cat?.nome || "Sem categoria")}</div>
         </div>
         <span class="badge ${valueClass}">${brl(Number(l.valor || 0))}</span>
       </div>
     `;
   }).join("") : `<div class="muted">Sem lançamentos no mês selecionado.</div>`;
+
+  const titulosMes = state.titulos
+    .filter(t => {
+      if(selConta !== "ALL" && t.contaId !== selConta) return false;
+      return isTituloAberto(t) && isSameMonthISO(t.vencimento, y, m);
+    })
+    .slice()
+    .sort((a,b)=> String(a.vencimento || "").localeCompare(String(b.vencimento || "")));
+
+  $("#boxTitulosMes").innerHTML = titulosMes.length ? titulosMes.map(t=>{
+    const conta = contas.find(c=>c.id===t.contaId);
+    const isAR = t.tipo === "AR";
+    const badgeClass = isAR ? "ok" : "bad";
+    const tipoLabel = isAR ? "AR" : "AP";
+    return `
+      <div class="item">
+        <div>
+          <b>${escapeHtml(t.desc || "Sem descrição")}</b>
+          <div class="muted">${escapeHtml(t.vencimento || "-")} · ${escapeHtml(conta?.nome || "Conta")} · ${escapeHtml(t.pessoa || "-")}</div>
+        </div>
+        <div style="text-align:right">
+          <span class="badge ${badgeClass}">${tipoLabel}</span>
+          <div><b>${brl(Number(t.valor || 0))}</b></div>
+        </div>
+      </div>
+    `;
+  }).join("") : `<div class="muted">Sem títulos em aberto no mês selecionado.</div>`;
 }
 
 $("#btnHoje").addEventListener("click", ()=>{

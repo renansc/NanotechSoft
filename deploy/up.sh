@@ -9,12 +9,12 @@ cd_project
 require_compose
 validate_app_sources
 
-log "subindo mysql e app..."
+log "subindo mysql, postgres do pacs e app..."
 if [[ "${NO_CACHE:-0}" == "1" ]]; then
   compose build --no-cache "$APP_SERVICE"
-  compose up -d "$DB_SERVICE" "$APP_SERVICE"
+  compose up -d "$DB_SERVICE" "$PACS_DB_SERVICE" "$APP_SERVICE"
 else
-  compose up -d --build "$DB_SERVICE" "$APP_SERVICE"
+  compose up -d --build "$DB_SERVICE" "$PACS_DB_SERVICE" "$APP_SERVICE"
 fi
 
 log "aguardando app responder..."
@@ -23,5 +23,5 @@ if ! wait_for_app 45 2; then
   die "app nao respondeu a tempo"
 fi
 
-compose ps "$DB_SERVICE" "$APP_SERVICE"
+compose ps "$DB_SERVICE" "$PACS_DB_SERVICE" "$APP_SERVICE"
 log "pronto em ${APP_URL}"

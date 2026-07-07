@@ -64,6 +64,26 @@ services:
         value: /app/apps/bpa/source
       - key: TATOO_APP_DIR
         value: /app/apps/tatoo/source
+      - key: RAIOXPACS_APP_DIR
+        value: /app/apps/pacs/source
+      - key: RAIOXPACS_DATABASE_URL
+        sync: false
+      - key: RAIOXPACS_PGHOST
+        sync: false
+      - key: RAIOXPACS_PGPORT
+        value: "5433"
+      - key: RAIOXPACS_PGUSER
+        value: postgres
+      - key: RAIOXPACS_PGPASSWORD
+        sync: false
+      - key: RAIOXPACS_PGDATABASE
+        value: raioxpacs
+      - key: RAIOXPACS_PGSSLMODE
+        value: prefer
+      - key: RAIOXPACS_AUTO_BOOTSTRAP_SCHEMA
+        value: "1"
+      - key: RAIOXPACS_PUBLIC_BASE_URL
+        sync: false
       - key: NANOTECH_SHARED_DIR
         value: /app/apps/shared
       - key: RIOB_BASE_URL
