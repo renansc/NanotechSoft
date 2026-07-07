@@ -14,6 +14,7 @@ const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 
 /* ---------- Estado ---------- */
 let state = loadState();
+let financeStateNeedsPersist = false;
 let financeAiDiagState = {
   loading: false,
   loaded: false,
@@ -142,6 +143,14 @@ function replaceState(nextState){
 async function loadServerState(){
   const payload = await requestJson(FINANCE_STATE_API);
   replaceState(payload?.state || seed());
+  if(financeStateNeedsPersist){
+    financeStateNeedsPersist = false;
+    try{
+      await persistServerState();
+    }catch(err){
+      console.warn("Nao foi possivel persistir a normalizacao financeira automaticamente.", err);
+    }
+  }
 }
 async function persistServerState(){
   await requestJson(FINANCE_STATE_API, {
@@ -160,7 +169,106 @@ function migrate(d){
   if(!d.titulos) d.titulos = [];
   if(!d.compras) d.compras = [];
   d.compras = Array.isArray(d.compras) ? d.compras.map(normalizeCompraRecord) : [];
+  normalizeTituloLancamentoLinks(d);
   return d;
+}
+
+function tituloLancamentoPayloadFromRecord(titulo, dataBaixaISO, existing={}){
+  const isAR = titulo.tipo === "AR";
+  return {
+    ...existing,
+    data: dataBaixaISO,
+    contaId: titulo.contaId,
+    tipo: isAR ? "RECEITA" : "DESPESA",
+    categoriaId: titulo.categoriaId,
+    desc: `${titulo.desc || ""}${titulo.pessoa ? " - " + titulo.pessoa : ""}${titulo.centroCusto ? " ["+titulo.centroCusto+"]" : ""}`,
+    valor: Math.abs(Number(titulo.valor || 0)),
+    conciliado: !!titulo.bankTxId,
+    bankTxId: titulo.bankTxId || null
+  };
+}
+
+function normalizeTituloLancamentoLinks(data){
+  if(!Array.isArray(data.titulos) || !Array.isArray(data.lancamentos)) return;
+
+  let changed = false;
+  const lancById = new Map(data.lancamentos.map(lanc => [lanc.id, lanc]));
+  const removeLancIds = new Set();
+  const contaByBankTxId = new Map();
+
+  for(const imp of data.imports || []){
+    for(const tx of imp.txs || []){
+      if(tx?.id) contaByBankTxId.set(tx.id, imp.contaId || "");
+    }
+  }
+
+  for(const titulo of data.titulos){
+    titulo.status = titulo.status || "ABERTO";
+
+    const bankContaId = titulo.bankTxId ? contaByBankTxId.get(titulo.bankTxId) : "";
+    if(bankContaId && bankContaId !== titulo.contaId){
+      titulo.bankTxId = null;
+      changed = true;
+    }
+
+    if(titulo.status !== "BAIXADO"){
+      if(titulo.lancId){
+        removeLancIds.add(titulo.lancId);
+        titulo.lancId = null;
+        changed = true;
+      }
+      if(titulo.baixadoEm){
+        titulo.baixadoEm = null;
+        changed = true;
+      }
+      continue;
+    }
+
+    const hadBaixadoEm = !!titulo.baixadoEm;
+    const dataBaixa = titulo.baixadoEm || toISODate(new Date());
+    let lanc = titulo.lancId ? lancById.get(titulo.lancId) : null;
+    if(!lanc){
+      lanc = { id: titulo.lancId || uid("lanc") };
+      titulo.lancId = lanc.id;
+      data.lancamentos.unshift(lanc);
+      lancById.set(lanc.id, lanc);
+      changed = true;
+    }
+
+    const nextLanc = tituloLancamentoPayloadFromRecord(titulo, dataBaixa, { id: lanc.id });
+    const before = JSON.stringify(lanc);
+    Object.assign(lanc, nextLanc);
+    titulo.baixadoEm = dataBaixa;
+    if(!hadBaixadoEm) changed = true;
+    if(before !== JSON.stringify(lanc)) changed = true;
+  }
+
+  if(removeLancIds.size){
+    data.lancamentos = data.lancamentos.filter(lanc => !removeLancIds.has(lanc.id));
+    data.reconciliations = (data.reconciliations || []).filter(r => !removeLancIds.has(r.lancId));
+    changed = true;
+  }
+
+  const validLancIds = new Set(data.lancamentos.map(lanc => lanc.id));
+  const reconciliationsBefore = (data.reconciliations || []).length;
+  data.reconciliations = (data.reconciliations || []).filter(r => validLancIds.has(r.lancId));
+  if(data.reconciliations.length !== reconciliationsBefore) changed = true;
+
+  for(const titulo of data.titulos){
+    if(titulo.status !== "BAIXADO" || !titulo.lancId || !titulo.bankTxId) continue;
+    const hasExact = data.reconciliations.some(r => r.lancId === titulo.lancId && r.bankTxId === titulo.bankTxId);
+    const hasConflict = data.reconciliations.some(r =>
+      (r.lancId === titulo.lancId || r.bankTxId === titulo.bankTxId) &&
+      !(r.lancId === titulo.lancId && r.bankTxId === titulo.bankTxId)
+    );
+    if(!hasExact || hasConflict){
+      data.reconciliations = data.reconciliations.filter(r => r.lancId !== titulo.lancId && r.bankTxId !== titulo.bankTxId);
+      data.reconciliations.push({ bankTxId: titulo.bankTxId, lancId: titulo.lancId });
+      changed = true;
+    }
+  }
+
+  if(changed) financeStateNeedsPersist = true;
 }
 function seed(){
   const contaId = uid("conta");
@@ -650,6 +758,7 @@ $("#tbLanc").addEventListener("click", (e)=>{
       for(const t of state.titulos){
         if(t.lancId === id){
           t.lancId = null;
+          t.baixadoEm = null;
           if(t.status === "BAIXADO") t.status = "ABERTO";
         }
       }
@@ -711,6 +820,7 @@ $("#btnSalvarLanc").addEventListener("click", ()=>{
     if(idx >= 0){
       const old = state.lancamentos[idx];
       state.lancamentos[idx] = { ...old, data, contaId, tipo, categoriaId, desc, valor, conciliado };
+      syncTituloFromLancamento(state.lancamentos[idx]);
     }
   } else {
     state.lancamentos.unshift({ id: uid("lanc"), data, contaId, tipo, categoriaId, desc, valor, conciliado });
@@ -1392,33 +1502,129 @@ function novoTitulo({tipo, pessoa, desc, categoriaId, contaId, valor, vencimento
   };
 }
 
+function tituloLancamentoPayload(titulo, dataBaixaISO){
+  const isAR = titulo.tipo === "AR";
+  return {
+    data: dataBaixaISO,
+    contaId: titulo.contaId,
+    tipo: isAR ? "RECEITA" : "DESPESA",
+    categoriaId: titulo.categoriaId,
+    desc: `${titulo.desc}${titulo.pessoa ? " - " + titulo.pessoa : ""}${titulo.centroCusto ? " ["+titulo.centroCusto+"]" : ""}`,
+    valor: Math.abs(Number(titulo.valor||0)),
+    conciliado: !!titulo.bankTxId,
+    bankTxId: titulo.bankTxId || null
+  };
+}
+
+function contaIdFromBankTx(bankTxId){
+  if(!bankTxId) return "";
+  for(const imp of state.imports){
+    if((imp.txs || []).some(tx => tx.id === bankTxId)) return imp.contaId || "";
+  }
+  return "";
+}
+
+function ensureTituloBankTxConta(titulo){
+  if(!titulo.bankTxId) return;
+  const bankContaId = contaIdFromBankTx(titulo.bankTxId);
+  if(bankContaId && bankContaId !== titulo.contaId){
+    state.reconciliations = state.reconciliations.filter(r => r.bankTxId !== titulo.bankTxId);
+    titulo.bankTxId = null;
+  }
+}
+
+function syncTituloLancamento(titulo){
+  if(!titulo.lancId) return null;
+  const lanc = state.lancamentos.find(l => l.id === titulo.lancId);
+  if(!lanc){
+    titulo.lancId = null;
+    return null;
+  }
+
+  ensureTituloBankTxConta(titulo);
+  Object.assign(lanc, tituloLancamentoPayload(titulo, titulo.baixadoEm || lanc.data || toISODate(new Date())));
+
+  state.reconciliations = state.reconciliations.filter(r => r.lancId !== lanc.id);
+  if(titulo.bankTxId){
+    state.reconciliations = state.reconciliations.filter(r => r.bankTxId !== titulo.bankTxId);
+    state.reconciliations.push({ bankTxId: titulo.bankTxId, lancId: lanc.id });
+  }
+
+  return lanc;
+}
+
+function desfazerBaixaTituloRecord(titulo){
+  if(titulo.lancId){
+    const lancId = titulo.lancId;
+    state.reconciliations = state.reconciliations.filter(r => r.lancId !== lancId);
+    state.lancamentos = state.lancamentos.filter(l => l.id !== lancId);
+  }
+
+  titulo.lancId = null;
+  titulo.baixadoEm = null;
+}
+
+function criarLancamentoDaBaixa(titulo, dataBaixaISO){
+  ensureTituloBankTxConta(titulo);
+  const lanc = {
+    id: uid("lanc"),
+    ...tituloLancamentoPayload(titulo, dataBaixaISO)
+  };
+
+  state.lancamentos.unshift(lanc);
+  titulo.lancId = lanc.id;
+  titulo.baixadoEm = dataBaixaISO;
+
+  if(titulo.bankTxId){
+    state.reconciliations = state.reconciliations.filter(r => r.bankTxId !== titulo.bankTxId && r.lancId !== lanc.id);
+    state.reconciliations.push({ bankTxId: titulo.bankTxId, lancId: lanc.id });
+  }
+
+  return lanc;
+}
+
+function aplicarStatusTitulo(titulo, statusDesejado, dataBaixaISO=null){
+  if(statusDesejado === "BAIXADO"){
+    titulo.status = "BAIXADO";
+    const data = dataBaixaISO || titulo.baixadoEm || toISODate(new Date());
+    if(titulo.lancId){
+      titulo.baixadoEm = data;
+      const lanc = syncTituloLancamento(titulo);
+      if(lanc) return lanc;
+    }
+    return criarLancamentoDaBaixa(titulo, data);
+  }
+
+  if(titulo.lancId){
+    desfazerBaixaTituloRecord(titulo);
+  }
+  titulo.status = statusDesejado || "ABERTO";
+  titulo.baixadoEm = null;
+  return null;
+}
+
 function baixarTitulo(tituloId, dataBaixaISO=null){
   const t = state.titulos.find(x=>x.id===tituloId);
   if(!t) throw new Error("Título não encontrado.");
   if(t.status !== "ABERTO") throw new Error("Título não está em aberto.");
 
   const data = dataBaixaISO || toISODate(new Date());
-  const isAR = t.tipo === "AR";
 
-  const lanc = {
-    id: uid("lanc"),
-    data,
-    contaId: t.contaId,
-    tipo: isAR ? "RECEITA" : "DESPESA",
-    categoriaId: t.categoriaId,
-    desc: `${t.desc}${t.pessoa ? " - " + t.pessoa : ""}${t.centroCusto ? " ["+t.centroCusto+"]" : ""}`,
-    valor: Math.abs(Number(t.valor||0)),
-    conciliado: !!t.bankTxId,
-    bankTxId: t.bankTxId || null
-  };
+  aplicarStatusTitulo(t, "BAIXADO", data);
+  return state.lancamentos.find(l => l.id === t.lancId) || null;
+}
 
-  state.lancamentos.unshift(lanc);
+function syncTituloFromLancamento(lancamento){
+  const titulo = state.titulos.find(t => t.lancId === lancamento.id);
+  if(!titulo) return;
 
-  t.status = "BAIXADO";
-  t.baixadoEm = data;
-  t.lancId = lanc.id;
-
-  return lanc;
+  titulo.contaId = lancamento.contaId;
+  titulo.categoriaId = lancamento.categoriaId;
+  titulo.tipo = lancamento.tipo === "RECEITA" ? "AR" : "AP";
+  titulo.valor = Math.abs(Number(lancamento.valor || 0));
+  titulo.status = "BAIXADO";
+  titulo.baixadoEm = lancamento.data;
+  titulo.bankTxId = lancamento.bankTxId || titulo.bankTxId || null;
 }
 
 function vincularBankTxAoTitulo({tituloId, bankTxId, bankDateISO}){
@@ -1725,6 +1931,7 @@ function syncCompraToTitulo(compra){
   titulo.vencimento = compra.vencimento;
   titulo.centroCusto = compra.centroCusto;
   titulo.obs = buildCompraTituloObs(compra);
+  if(titulo.status === "BAIXADO") syncTituloLancamento(titulo);
 }
 
 function aprovarCompra(compraId){
@@ -2226,7 +2433,7 @@ function handleTituloAction(act, id){
 
   if(act==="cancel"){
     if(confirm("Cancelar este título?")){
-      t.status="CANCELADO";
+      aplicarStatusTitulo(t, "CANCELADO");
       saveState();
       renderAll();
     }
@@ -2282,8 +2489,8 @@ function criarTitulosParcelados(draft){
         baseMeta
       )
     });
-    titulo.status = draft.status || "ABERTO";
     state.titulos.unshift(titulo);
+    aplicarStatusTitulo(titulo, draft.status || "ABERTO");
     createdIds.push(titulo.id);
   }
 
@@ -2446,7 +2653,6 @@ $("#btnSalvarTitulo").addEventListener("click", ()=>{
     if(!t) return;
     const oldMeta = parseTitleObs(t.obs).meta;
     t.tipo = d.tipo;
-    t.status = d.status;
     t.vencimento = d.vencimento;
     t.contaId = d.contaId;
     t.categoriaId = d.categoriaId;
@@ -2455,6 +2661,7 @@ $("#btnSalvarTitulo").addEventListener("click", ()=>{
     t.valor = d.valor;
     t.centroCusto = d.centroCusto;
     t.obs = buildTitleObs(d.obs, { ...oldMeta, formaPagamento: d.formaPagamento });
+    aplicarStatusTitulo(t, d.status);
     syncCompraFromTitulo(t, d, oldMeta);
   } else {
     if(d.gerarParcelas && d.parcelas > 1){
@@ -2468,8 +2675,8 @@ $("#btnSalvarTitulo").addEventListener("click", ()=>{
     }
 
     const t = novoTitulo({ ...d, obs: buildTitleObs(d.obs, { formaPagamento: d.formaPagamento }) });
-    t.status = d.status || "ABERTO";
     state.titulos.unshift(t);
+    aplicarStatusTitulo(t, d.status || "ABERTO");
     editTituloId = t.id;
   }
 
