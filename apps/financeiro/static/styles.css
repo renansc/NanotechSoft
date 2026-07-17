@@ -139,6 +139,9 @@ input, select, textarea{
   outline:none;
 }
 input::placeholder{ color: rgba(174,183,231,.65); }
+select[multiple]{
+  min-height: 132px;
+}
 textarea{
   resize: vertical;
   min-height: 96px;
@@ -204,6 +207,11 @@ textarea{
 
 .dashboardWide{
   margin-top: 14px;
+}
+
+.dashboardRightColumn{
+  display:grid;
+  gap: 14px;
 }
 
 .accountStatusList .accountStatusItem{
@@ -283,6 +291,17 @@ textarea{
 .badge.warn{ background: rgba(251,191,36,.10); border-color: rgba(251,191,36,.25); }
 .badge.bad{ background: rgba(251,113,133,.12); border-color: rgba(251,113,133,.35); }
 .badge.transfer{ background: rgba(168,85,247,.12); border-color: rgba(168,85,247,.32); }
+.badge.categoryTag{ background: rgba(96,165,250,.10); border-color: rgba(96,165,250,.25); }
+
+.tagList{
+  display:flex;
+  gap: 6px;
+  flex-wrap:wrap;
+}
+
+.categoryTotalItem{
+  align-items:flex-start;
+}
 
 .pill{
   font-size: 12px;

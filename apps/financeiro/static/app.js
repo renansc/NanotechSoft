@@ -169,6 +169,11 @@ function migrate(d){
   if(!d.titulos) d.titulos = [];
   if(!d.compras) d.compras = [];
   d.compras = Array.isArray(d.compras) ? d.compras.map(normalizeCompraRecord) : [];
+  let lancCategoriasChanged = false;
+  for(const lanc of d.lancamentos){
+    if(normalizeLancamentoCategorias(lanc)) lancCategoriasChanged = true;
+  }
+  if(lancCategoriasChanged) financeStateNeedsPersist = true;
   normalizeTituloLancamentoLinks(d);
   return d;
 }
@@ -181,6 +186,7 @@ function tituloLancamentoPayloadFromRecord(titulo, dataBaixaISO, existing={}){
     contaId: titulo.contaId,
     tipo: isAR ? "RECEITA" : "DESPESA",
     categoriaId: titulo.categoriaId,
+    categoriaIds: uniqueNonEmpty([titulo.categoriaId]),
     desc: `${titulo.desc || ""}${titulo.pessoa ? " - " + titulo.pessoa : ""}${titulo.centroCusto ? " ["+titulo.centroCusto+"]" : ""}`,
     valor: Math.abs(Number(titulo.valor || 0)),
     conciliado: !!titulo.bankTxId,
@@ -337,6 +343,72 @@ function getCompraByTituloId(tituloId){
   return state.compras.find(compra => compra.titleId === tituloId) || null;
 }
 
+function uniqueNonEmpty(values){
+  return Array.from(new Set((values || []).map(v => String(v || "").trim()).filter(Boolean)));
+}
+
+function normalizeLancamentoCategorias(lancamento){
+  if(!lancamento || isTransferenciaLancamento(lancamento)) return false;
+  const ids = uniqueNonEmpty([
+    ...(Array.isArray(lancamento.categoriaIds) ? lancamento.categoriaIds : []),
+    lancamento.categoriaId
+  ]);
+  const before = JSON.stringify({
+    categoriaId: lancamento.categoriaId || "",
+    categoriaIds: Array.isArray(lancamento.categoriaIds) ? lancamento.categoriaIds : null
+  });
+  lancamento.categoriaIds = ids;
+  lancamento.categoriaId = ids[0] || "";
+  return before !== JSON.stringify({ categoriaId: lancamento.categoriaId, categoriaIds: lancamento.categoriaIds });
+}
+
+function getLancCategoriaIds(lancamento){
+  if(!lancamento || isTransferenciaLancamento(lancamento)) return [];
+  return uniqueNonEmpty([
+    ...(Array.isArray(lancamento.categoriaIds) ? lancamento.categoriaIds : []),
+    lancamento.categoriaId
+  ]);
+}
+
+function getSelectValues(selector){
+  const el = $(selector);
+  if(!el) return [];
+  return Array.from(el.selectedOptions || []).map(opt => opt.value).filter(Boolean);
+}
+
+function setSelectValues(selector, values, fallback=""){
+  const el = $(selector);
+  if(!el) return;
+  const wanted = new Set(uniqueNonEmpty(values));
+  let selected = 0;
+  for(const opt of Array.from(el.options)){
+    opt.selected = wanted.has(opt.value);
+    if(opt.selected) selected++;
+  }
+  if(!selected && fallback){
+    const opt = Array.from(el.options).find(option => option.value === fallback);
+    if(opt) opt.selected = true;
+  }
+}
+
+function categoriaNamesText(categoriaIds, fallback="Sem categoria"){
+  const ids = uniqueNonEmpty(categoriaIds);
+  const names = ids
+    .map(id => state.categorias.find(c => c.id === id)?.nome)
+    .filter(Boolean);
+  return names.length ? names.join(", ") : fallback;
+}
+
+function categoriaBadgesHtml(categoriaIds, fallback="Sem categoria"){
+  const ids = uniqueNonEmpty(categoriaIds);
+  const badges = ids
+    .map(id => state.categorias.find(c => c.id === id))
+    .filter(Boolean)
+    .map(cat => `<span class="badge categoryTag">${escapeHtml(cat.nome)}</span>`);
+  if(!badges.length) return `<span class="muted">${escapeHtml(fallback)}</span>`;
+  return `<div class="tagList">${badges.join("")}</div>`;
+}
+
 const TRANSFERENCIA_TIPO = "TRANSFERENCIA";
 
 function isTransferenciaLancamento(lancamento){
@@ -386,6 +458,7 @@ function buildTransferenciaLancamento({ existing=null, transferenciaId, lado, da
     contaId: isOrigem ? contaOrigemId : contaDestinoId,
     tipo: isOrigem ? "DESPESA" : "RECEITA",
     categoriaId: "",
+    categoriaIds: [],
     desc: transferenciaDescricao(desc, contaOrigemId, contaDestinoId),
     valor,
     conciliado: !!(existing?.bankTxId || conciliado),
@@ -568,6 +641,7 @@ function fillSelects(){
 
     lTipo: $("#lTipo")?.value,
     lCategoria: $("#lCategoria")?.value,
+    lCategorias: getSelectValues("#lCategoria"),
 
     tTipo: $("#tTipo")?.value,
     tCategoria: $("#tCategoria")?.value,
@@ -614,11 +688,15 @@ function fillSelects(){
   $("#lTipo").value = tipoLanc;
   if(tipoLanc === TRANSFERENCIA_TIPO){
     $("#lCategoria").innerHTML = `<option value="">Sem categoria</option>`;
-    $("#lCategoria").value = "";
+    setSelectValues("#lCategoria", []);
   } else {
     const catsLanc = cats.filter(c => c.tipo === tipoLanc);
     $("#lCategoria").innerHTML = catsLanc.map(c => `<option value="${c.id}">${escapeHtml(c.nome)}</option>`).join("");
-    safeRestoreSelect("#lCategoria", prev.lCategoria ?? (catsLanc[0]?.id || ""));
+    setSelectValues(
+      "#lCategoria",
+      prev.lCategorias.length ? prev.lCategorias : uniqueNonEmpty([prev.lCategoria]),
+      catsLanc[0]?.id || ""
+    );
   }
 
   // categorias do modal de título dependem do tipo AP/AR
@@ -749,6 +827,61 @@ function aggregateFinanceStatus(statuses){
   return finishFinanceStatus(total);
 }
 
+function buildCategoriaTotals(lancamentos){
+  const byCat = new Map();
+
+  for(const lanc of lancamentos){
+    if(isTransferenciaLancamento(lanc)) continue;
+    const valor = Math.abs(Number(lanc.valor || 0));
+    const isReceita = lanc.tipo === "RECEITA";
+    const ids = getLancCategoriaIds(lanc);
+    const targetIds = ids.length ? ids : ["__sem_categoria__"];
+
+    for(const categoriaId of targetIds){
+      if(!byCat.has(categoriaId)){
+        const cat = state.categorias.find(c => c.id === categoriaId);
+        byCat.set(categoriaId, {
+          id: categoriaId,
+          nome: cat?.nome || "Sem categoria",
+          tipo: cat?.tipo || lanc.tipo || "DESPESA",
+          receitas: 0,
+          despesas: 0
+        });
+      }
+      const item = byCat.get(categoriaId);
+      if(isReceita) item.receitas += valor;
+      else item.despesas += valor;
+    }
+  }
+
+  return Array.from(byCat.values())
+    .map(item => ({ ...item, saldo: item.receitas - item.despesas, total: item.receitas + item.despesas }))
+    .sort((a,b)=> Math.abs(b.total) - Math.abs(a.total) || a.nome.localeCompare(b.nome));
+}
+
+function renderCategoriasDashboard(lancamentos){
+  const totals = buildCategoriaTotals(lancamentos);
+  $("#boxCategoriasMes").innerHTML = totals.length ? totals.map(item=>{
+    const hasBoth = item.receitas > 0 && item.despesas > 0;
+    const primaryValue = hasBoth ? item.saldo : (item.receitas || item.despesas);
+    const valueClass = hasBoth
+      ? (item.saldo >= 0 ? "ok" : "bad")
+      : (item.receitas > 0 ? "ok" : "bad");
+    const details = hasBoth
+      ? `Receitas ${brl(item.receitas)} · Despesas ${brl(item.despesas)}`
+      : (item.receitas > 0 ? "Receita" : "Despesa");
+    return `
+      <div class="item categoryTotalItem">
+        <div>
+          <b>${escapeHtml(item.nome)}</b>
+          <div class="muted">${escapeHtml(details)}</div>
+        </div>
+        <span class="badge ${valueClass}">${brl(primaryValue)}</span>
+      </div>
+    `;
+  }).join("") : `<div class="muted">Sem valores por categoria no mês selecionado.</div>`;
+}
+
 function renderDashboard(){
   const selConta = $("#dashConta").value || "ALL";
   if(!$("#dashMes").value) $("#dashMes").value = toISODate(new Date()).slice(0,7);
@@ -814,7 +947,6 @@ function renderDashboard(){
     `;
   }).join("") : `<div class="muted">Nenhuma conta cadastrada.</div>`;
 
-  const cats = state.categorias;
   const contas = state.contas;
   const rows = buildLancamentoRows(lancs);
   $("#boxLancamentosMes").innerHTML = rows.length ? rows.map(row=>{
@@ -832,19 +964,20 @@ function renderDashboard(){
       `;
     }
     const l = row.lanc;
-    const cat = cats.find(c=>c.id===l.categoriaId);
     const conta = contas.find(c=>c.id===l.contaId);
     const valueClass = l.tipo === "RECEITA" ? "ok" : "bad";
     return `
       <div class="item">
         <div>
           <b>${escapeHtml(l.desc || "Sem descrição")}</b>
-          <div class="muted">${escapeHtml(l.data || "-")} · ${escapeHtml(conta?.nome || "Conta")} · ${escapeHtml(cat?.nome || "Sem categoria")}</div>
+          <div class="muted">${escapeHtml(l.data || "-")} · ${escapeHtml(conta?.nome || "Conta")} · ${escapeHtml(categoriaNamesText(getLancCategoriaIds(l)))}</div>
         </div>
         <span class="badge ${valueClass}">${brl(Number(l.valor || 0))}</span>
       </div>
     `;
   }).join("") : `<div class="muted">Sem lançamentos no mês selecionado.</div>`;
+
+  renderCategoriasDashboard(lancs);
 
   const titulosMes = state.titulos
     .filter(t => {
@@ -899,7 +1032,6 @@ function renderLancamentos(){
   if(busca) list = list.filter(l => (l.desc || "").toLowerCase().includes(busca));
 
   const contaById = new Map(state.contas.map(c=>[c.id,c]));
-  const catById = new Map(state.categorias.map(c=>[c.id,c]));
   const rows = buildLancamentoRows(list);
 
   $("#tbLanc").innerHTML = rows.map(row=>{
@@ -924,7 +1056,6 @@ function renderLancamentos(){
     }
     const l = row.lanc;
     const c = contaById.get(l.contaId);
-    const cat = catById.get(l.categoriaId);
     const conc = l.conciliado ? `<span class="badge ok">Sim</span>` : `<span class="badge warn">Não</span>`;
     const tipoBadge = lancamentoTipoBadge(l);
     return `
@@ -932,7 +1063,7 @@ function renderLancamentos(){
         <td>${escapeHtml(l.data)}</td>
         <td>${escapeHtml(c?.nome || "-")}</td>
         <td>${tipoBadge}</td>
-        <td>${escapeHtml(cat?.nome || "-")}</td>
+        <td>${categoriaBadgesHtml(getLancCategoriaIds(l), "-")}</td>
         <td>${escapeHtml(l.desc || "")}</td>
         <td class="right"><b>${brl(l.valor)}</b></td>
         <td>${conc}</td>
@@ -1006,7 +1137,8 @@ function openLancModal(id){
   fillSelects();
   $("#lConta").value = origem?.contaId || l?.contaId || $("#lConta").value;
   $("#lContaDestino").value = destino?.contaId || $("#lContaDestino").value;
-  $("#lCategoria").value = isTransferencia ? "" : (l?.categoriaId || $("#lCategoria").value);
+  if(isTransferencia) setSelectValues("#lCategoria", []);
+  else setSelectValues("#lCategoria", getLancCategoriaIds(l), $("#lCategoria").options[0]?.value || "");
   $("#lDesc").value = origem?.desc || l?.desc || "";
   $("#lValor").value = (origem || l) ? Number((origem || l).valor || 0) : "";
   $("#lConc").value = (partes.entries || [l]).some(item => item?.conciliado || item?.bankTxId) ? "1" : "0";
@@ -1051,7 +1183,8 @@ $("#btnSalvarLanc").addEventListener("click", ()=>{
   const contaId = $("#lConta").value;
   const contaDestinoId = $("#lContaDestino").value;
   const tipo = $("#lTipo").value;
-  const categoriaId = $("#lCategoria").value;
+  const categoriaIds = getSelectValues("#lCategoria");
+  const categoriaId = categoriaIds[0] || "";
   const desc = $("#lDesc").value.trim();
   const valor = Number($("#lValor").value);
   const conciliado = $("#lConc").value === "1";
@@ -1108,6 +1241,7 @@ $("#btnSalvarLanc").addEventListener("click", ()=>{
       contaId,
       tipo,
       categoriaId,
+      categoriaIds,
       desc,
       valor,
       conciliado: !!(base.bankTxId || conciliado)
@@ -1118,11 +1252,11 @@ $("#btnSalvarLanc").addEventListener("click", ()=>{
     const idx = state.lancamentos.findIndex(x=>x.id===editLancId);
     if(idx >= 0){
       const old = state.lancamentos[idx];
-      state.lancamentos[idx] = { ...old, data, contaId, tipo, categoriaId, desc, valor, conciliado };
+      state.lancamentos[idx] = { ...old, data, contaId, tipo, categoriaId, categoriaIds, desc, valor, conciliado };
       syncTituloFromLancamento(state.lancamentos[idx]);
     }
   } else {
-    state.lancamentos.unshift({ id: uid("lanc"), data, contaId, tipo, categoriaId, desc, valor, conciliado });
+    state.lancamentos.unshift({ id: uid("lanc"), data, contaId, tipo, categoriaId, categoriaIds, desc, valor, conciliado });
   }
   saveState();
   closeLancModal();
@@ -1473,7 +1607,6 @@ function renderConciliacao(){
     `;
   }).join("") || `<div class="muted">Selecione uma importação OFX.</div>`;
 
-  const catById = new Map(state.categorias.map(c=>[c.id,c]));
   $("#sysList").innerHTML = lancs
     .slice()
     .sort((a,b)=> b.data.localeCompare(a.data))
@@ -1482,14 +1615,13 @@ function renderConciliacao(){
       const status = linkedBankId ? `<span class="badge ok">Conciliado</span>` : `<span class="badge warn">Pendente</span>`;
       const cls = (selectedLancId === l.id) ? "item selected" : "item";
       const tipoBadge = lancamentoTipoBadge(l);
-      const cat = catById.get(l.categoriaId);
       return `
         <div class="${cls}" data-id="${l.id}" data-kind="sys">
           <div class="left">
             ${tipoBadge}
             <div>
               <div><b>${escapeHtml(l.desc || "")}</b></div>
-              <div class="muted">${escapeHtml(l.data)} • ${escapeHtml(cat?.nome || "-")}</div>
+              <div class="muted">${escapeHtml(l.data)} • ${escapeHtml(categoriaNamesText(getLancCategoriaIds(l), "-"))}</div>
             </div>
           </div>
           <div style="text-align:right">
@@ -1600,6 +1732,7 @@ $("#btnVincular").addEventListener("click", ()=>{
       contaId,
       tipo,
       categoriaId: catId,
+      categoriaIds: uniqueNonEmpty([catId]),
       desc: bankTx.memo || "(importado do banco)",
       valor: Math.abs(Number(bankTx.amount||0)),
       conciliado: true,
@@ -1767,6 +1900,7 @@ $("#btnCriarLancDoBanco").addEventListener("click", ()=>{
       contaId,
       tipo,
       categoriaId,
+      categoriaIds: uniqueNonEmpty([categoriaId]),
       desc: bt.memo || "(importado do banco)",
       valor: Math.abs(Number(bt.amount||0)),
       conciliado: true,
@@ -1810,6 +1944,7 @@ function tituloLancamentoPayload(titulo, dataBaixaISO){
     contaId: titulo.contaId,
     tipo: isAR ? "RECEITA" : "DESPESA",
     categoriaId: titulo.categoriaId,
+    categoriaIds: uniqueNonEmpty([titulo.categoriaId]),
     desc: `${titulo.desc}${titulo.pessoa ? " - " + titulo.pessoa : ""}${titulo.centroCusto ? " ["+titulo.centroCusto+"]" : ""}`,
     valor: Math.abs(Number(titulo.valor||0)),
     conciliado: !!titulo.bankTxId,
@@ -1919,8 +2054,9 @@ function syncTituloFromLancamento(lancamento){
   const titulo = state.titulos.find(t => t.lancId === lancamento.id);
   if(!titulo) return;
 
+  const categoriaIds = getLancCategoriaIds(lancamento);
   titulo.contaId = lancamento.contaId;
-  titulo.categoriaId = lancamento.categoriaId;
+  titulo.categoriaId = categoriaIds[0] || lancamento.categoriaId;
   titulo.tipo = lancamento.tipo === "RECEITA" ? "AR" : "AP";
   titulo.valor = Math.abs(Number(lancamento.valor || 0));
   titulo.status = "BAIXADO";

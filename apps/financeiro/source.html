@@ -99,12 +99,22 @@
           <div id="boxLancamentosMes" class="list compact"></div>
         </div>
 
-        <div class="card">
-          <div class="cardhead">
-            <h2>Títulos em aberto</h2>
-            <div class="muted">AP/AR vencendo no mês e na conta selecionados.</div>
+        <div class="dashboardRightColumn">
+          <div class="card">
+            <div class="cardhead">
+              <h2>Títulos em aberto</h2>
+              <div class="muted">AP/AR vencendo no mês e na conta selecionados.</div>
+            </div>
+            <div id="boxTitulosMes" class="list compact"></div>
           </div>
-          <div id="boxTitulosMes" class="list compact"></div>
+
+          <div class="card">
+            <div class="cardhead">
+              <h2>Valor por categoria</h2>
+              <div class="muted">Movimentos realizados no mês.</div>
+            </div>
+            <div id="boxCategoriasMes" class="list compact"></div>
+          </div>
         </div>
       </div>
     </section>
@@ -167,8 +177,8 @@
                 <option value="TRANSFERENCIA">TRANSFERÊNCIA</option>
               </select>
             </label>
-            <label id="lCategoriaWrap">Categoria
-              <select id="lCategoria"></select>
+            <label id="lCategoriaWrap">Categorias
+              <select id="lCategoria" multiple size="5"></select>
             </label>
             <label class="span2">Descrição
               <input type="text" id="lDesc" placeholder="Ex.: Combustível, Aluguel, Venda...">
