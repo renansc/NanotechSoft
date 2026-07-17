@@ -282,6 +282,7 @@ textarea{
 .badge.ok{ background: rgba(94,234,212,.12); border-color: rgba(94,234,212,.35); }
 .badge.warn{ background: rgba(251,191,36,.10); border-color: rgba(251,191,36,.25); }
 .badge.bad{ background: rgba(251,113,133,.12); border-color: rgba(251,113,133,.35); }
+.badge.transfer{ background: rgba(168,85,247,.12); border-color: rgba(168,85,247,.32); }
 
 .pill{
   font-size: 12px;

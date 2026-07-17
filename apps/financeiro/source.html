@@ -154,16 +154,20 @@
             <label>Data
               <input type="date" id="lData">
             </label>
-            <label>Conta
+            <label><span id="lContaLabel">Conta</span>
               <select id="lConta"></select>
+            </label>
+            <label id="lContaDestinoWrap" class="hidden">Conta destino
+              <select id="lContaDestino"></select>
             </label>
             <label>Tipo
               <select id="lTipo">
                 <option value="DESPESA">DESPESA</option>
                 <option value="RECEITA">RECEITA</option>
+                <option value="TRANSFERENCIA">TRANSFERÊNCIA</option>
               </select>
             </label>
-            <label>Categoria
+            <label id="lCategoriaWrap">Categoria
               <select id="lCategoria"></select>
             </label>
             <label class="span2">Descrição

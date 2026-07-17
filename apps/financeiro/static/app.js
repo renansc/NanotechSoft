@@ -337,6 +337,165 @@ function getCompraByTituloId(tituloId){
   return state.compras.find(compra => compra.titleId === tituloId) || null;
 }
 
+const TRANSFERENCIA_TIPO = "TRANSFERENCIA";
+
+function isTransferenciaLancamento(lancamento){
+  return !!lancamento?.transferenciaId;
+}
+
+function isTransferenciaOrigem(lancamento){
+  if(!isTransferenciaLancamento(lancamento)) return false;
+  return lancamento.transferenciaLado === "ORIGEM" || lancamento.tipo === "DESPESA";
+}
+
+function isTransferenciaDestino(lancamento){
+  if(!isTransferenciaLancamento(lancamento)) return false;
+  return lancamento.transferenciaLado === "DESTINO" || lancamento.tipo === "RECEITA";
+}
+
+function getTransferenciaEntries(transferenciaId){
+  if(!transferenciaId) return [];
+  return state.lancamentos.filter(l => l.transferenciaId === transferenciaId);
+}
+
+function getTransferenciaPartes(transferenciaId){
+  const entries = getTransferenciaEntries(transferenciaId);
+  const origem = entries.find(isTransferenciaOrigem) || entries[0] || null;
+  const destino = entries.find(l => l.id !== origem?.id && isTransferenciaDestino(l)) ||
+    entries.find(l => l.id !== origem?.id) ||
+    null;
+  return { entries, origem, destino };
+}
+
+function contaNome(contaId){
+  return state.contas.find(c => c.id === contaId)?.nome || "Conta";
+}
+
+function transferenciaDescricao(desc, origemId, destinoId){
+  const clean = String(desc || "").trim();
+  if(clean) return clean;
+  return `Transferencia entre ${contaNome(origemId)} e ${contaNome(destinoId)}`;
+}
+
+function buildTransferenciaLancamento({ existing=null, transferenciaId, lado, data, contaOrigemId, contaDestinoId, desc, valor, conciliado }){
+  const isOrigem = lado === "ORIGEM";
+  return {
+    ...(existing || {}),
+    id: existing?.id || uid("lanc"),
+    data,
+    contaId: isOrigem ? contaOrigemId : contaDestinoId,
+    tipo: isOrigem ? "DESPESA" : "RECEITA",
+    categoriaId: "",
+    desc: transferenciaDescricao(desc, contaOrigemId, contaDestinoId),
+    valor,
+    conciliado: !!(existing?.bankTxId || conciliado),
+    bankTxId: existing?.bankTxId || null,
+    transferenciaId,
+    transferenciaLado: lado,
+    contaOrigemId,
+    contaDestinoId
+  };
+}
+
+function salvarTransferenciaLancamento({ data, contaOrigemId, contaDestinoId, desc, valor, conciliado }){
+  const editingEntries = editTransferenciaId ? getTransferenciaEntries(editTransferenciaId) : [];
+  const transferId = editTransferenciaId || uid("transf");
+  const oldOrigem = editingEntries.find(isTransferenciaOrigem) || editingEntries[0] || null;
+  const oldDestino = editingEntries.find(l => l.id !== oldOrigem?.id && isTransferenciaDestino(l)) ||
+    editingEntries.find(l => l.id !== oldOrigem?.id) ||
+    null;
+
+  const origem = buildTransferenciaLancamento({
+    existing: oldOrigem || (editLancId ? state.lancamentos.find(l => l.id === editLancId) : null),
+    transferenciaId: transferId,
+    lado: "ORIGEM",
+    data,
+    contaOrigemId,
+    contaDestinoId,
+    desc,
+    valor,
+    conciliado
+  });
+  const destino = buildTransferenciaLancamento({
+    existing: oldDestino,
+    transferenciaId: transferId,
+    lado: "DESTINO",
+    data,
+    contaOrigemId,
+    contaDestinoId,
+    desc,
+    valor,
+    conciliado
+  });
+
+  const oldIds = new Set(editingEntries.map(l => l.id));
+  if(editLancId) oldIds.add(editLancId);
+  const keepIds = new Set([origem.id, destino.id]);
+  state.reconciliations = state.reconciliations.filter(r => !oldIds.has(r.lancId) || keepIds.has(r.lancId));
+
+  state.lancamentos = state.lancamentos.filter(l => {
+    if(l.transferenciaId && l.transferenciaId === transferId) return false;
+    if(editLancId && l.id === editLancId) return false;
+    return true;
+  });
+  state.lancamentos.unshift(destino);
+  state.lancamentos.unshift(origem);
+}
+
+function lancamentoTipoBadge(lancamento){
+  if(isTransferenciaLancamento(lancamento)){
+    const side = isTransferenciaOrigem(lancamento) ? "SAIDA" : "ENTRADA";
+    const cls = isTransferenciaOrigem(lancamento) ? "bad" : "ok";
+    return `<span class="badge ${cls}">TRANSF. ${side}</span>`;
+  }
+  return lancamento.tipo === "RECEITA"
+    ? `<span class="badge ok">RECEITA</span>`
+    : `<span class="badge bad">DESPESA</span>`;
+}
+
+function transferenciaConciliacaoBadge(entries){
+  const total = entries.length || 2;
+  const done = entries.filter(l => l.conciliado || l.bankTxId).length;
+  if(done >= total) return `<span class="badge ok">Sim</span>`;
+  if(done > 0) return `<span class="badge warn">Parcial</span>`;
+  return `<span class="badge warn">Não</span>`;
+}
+
+function transferenciaRowFromLancamento(lancamento, scopedList){
+  const partes = getTransferenciaPartes(lancamento.transferenciaId);
+  const scopedEntries = scopedList.filter(l => l.transferenciaId === lancamento.transferenciaId);
+  const origem = partes.origem || scopedEntries[0] || lancamento;
+  const destino = partes.destino || scopedEntries.find(l => l.id !== origem.id) || null;
+  return {
+    kind: "transferencia",
+    id: origem.id,
+    transferenciaId: lancamento.transferenciaId,
+    data: origem.data || destino?.data || lancamento.data || "",
+    valor: Number(origem.valor || destino?.valor || lancamento.valor || 0),
+    desc: origem.desc || destino?.desc || lancamento.desc || "",
+    origem,
+    destino,
+    entries: partes.entries.length ? partes.entries : scopedEntries
+  };
+}
+
+function buildLancamentoRows(list){
+  const rows = [];
+  const seenTransfers = new Set();
+
+  for(const lanc of list){
+    if(isTransferenciaLancamento(lanc)){
+      if(seenTransfers.has(lanc.transferenciaId)) continue;
+      seenTransfers.add(lanc.transferenciaId);
+      rows.push(transferenciaRowFromLancamento(lanc, list));
+      continue;
+    }
+    rows.push({ kind: "lancamento", id: lanc.id, data: lanc.data || "", lanc });
+  }
+
+  return rows.sort((a,b)=> String(b.data || "").localeCompare(String(a.data || "")));
+}
+
 /* ---------- Navegação ---------- */
 function canUseFinanceView(name){
   return FINANCEIRO_ALLOWED.includes("*") || FINANCEIRO_ALLOWED.includes(name);
@@ -397,6 +556,7 @@ function fillSelects(){
     dashConta: $("#dashConta")?.value,
     fConta: $("#fConta")?.value,
     lConta: $("#lConta")?.value,
+    lContaDestino: $("#lContaDestino")?.value,
     ofxConta: $("#ofxConta")?.value,
     concConta: $("#concConta")?.value,
     concImport: $("#concImport")?.value,
@@ -427,6 +587,7 @@ function fillSelects(){
   $("#dashConta").innerHTML = contaOptions(true);
   $("#fConta").innerHTML    = contaOptions(true);
   $("#lConta").innerHTML    = contaOptions(false);
+  $("#lContaDestino").innerHTML = contaOptions(false);
   $("#ofxConta").innerHTML  = contaOptions(false);
   $("#concConta").innerHTML = contaOptions(false);
 
@@ -439,6 +600,7 @@ function fillSelects(){
   safeRestoreSelect("#dashConta", prev.dashConta ?? "ALL");
   safeRestoreSelect("#fConta", prev.fConta ?? "ALL");
   safeRestoreSelect("#lConta", prev.lConta ?? (contas[0]?.id || ""));
+  safeRestoreSelect("#lContaDestino", prev.lContaDestino ?? (contas.find(c => c.id !== $("#lConta")?.value)?.id || contas[1]?.id || ""));
   safeRestoreSelect("#ofxConta", prev.ofxConta ?? (contas[0]?.id || ""));
   safeRestoreSelect("#concConta", prev.concConta ?? (contas[0]?.id || ""));
 
@@ -450,9 +612,14 @@ function fillSelects(){
   // categorias do modal de lançamento dependem do tipo
   const tipoLanc = $("#lTipo").value || prev.lTipo || "DESPESA";
   $("#lTipo").value = tipoLanc;
-  const catsLanc = cats.filter(c => c.tipo === tipoLanc);
-  $("#lCategoria").innerHTML = catsLanc.map(c => `<option value="${c.id}">${escapeHtml(c.nome)}</option>`).join("");
-  safeRestoreSelect("#lCategoria", prev.lCategoria ?? (catsLanc[0]?.id || ""));
+  if(tipoLanc === TRANSFERENCIA_TIPO){
+    $("#lCategoria").innerHTML = `<option value="">Sem categoria</option>`;
+    $("#lCategoria").value = "";
+  } else {
+    const catsLanc = cats.filter(c => c.tipo === tipoLanc);
+    $("#lCategoria").innerHTML = catsLanc.map(c => `<option value="${c.id}">${escapeHtml(c.nome)}</option>`).join("");
+    safeRestoreSelect("#lCategoria", prev.lCategoria ?? (catsLanc[0]?.id || ""));
+  }
 
   // categorias do modal de título dependem do tipo AP/AR
   const tipoTit = $("#tTipo")?.value || prev.tTipo || "AP";
@@ -469,7 +636,11 @@ function fillSelects(){
   }
 }
 
-$("#lTipo").addEventListener("change", fillSelects);
+$("#lTipo").addEventListener("change", ()=>{
+  fillSelects();
+  updateLancModalMode();
+});
+$("#lConta").addEventListener("change", updateLancModalMode);
 $("#tTipo").addEventListener("change", fillSelects);
 
 /* ---------- Dashboard ---------- */
@@ -528,12 +699,13 @@ function calcContaFinanceStatus(contaId, mes, todayISO=toISODate(new Date())){
     if(lanc.contaId !== contaId) continue;
     const valor = Number(lanc.valor || 0);
     const isReceita = lanc.tipo === "RECEITA";
+    const isTransferencia = isTransferenciaLancamento(lanc);
 
     if(isValidDateISO(lanc.data) && lanc.data <= todayISO){
       status.saldoAtual += isReceita ? valor : -valor;
     }
 
-    if(isSameMonthISO(lanc.data, year, month)){
+    if(!isTransferencia && isSameMonthISO(lanc.data, year, month)){
       if(isReceita) status.receitasMes += valor;
       else status.despesasMes += valor;
     }
@@ -644,10 +816,22 @@ function renderDashboard(){
 
   const cats = state.categorias;
   const contas = state.contas;
-  const rows = lancs
-    .slice()
-    .sort((a,b)=> String(b.data || "").localeCompare(String(a.data || "")));
-  $("#boxLancamentosMes").innerHTML = rows.length ? rows.map(l=>{
+  const rows = buildLancamentoRows(lancs);
+  $("#boxLancamentosMes").innerHTML = rows.length ? rows.map(row=>{
+    if(row.kind === "transferencia"){
+      const origem = contas.find(c=>c.id===row.origem?.contaId);
+      const destino = contas.find(c=>c.id===row.destino?.contaId);
+      return `
+        <div class="item">
+          <div>
+            <b>${escapeHtml(row.desc || "Transferência entre contas")}</b>
+            <div class="muted">${escapeHtml(row.data || "-")} · ${escapeHtml(origem?.nome || "Origem")} -> ${escapeHtml(destino?.nome || "Destino")}</div>
+          </div>
+          <span class="badge transfer">${brl(row.valor)}</span>
+        </div>
+      `;
+    }
+    const l = row.lanc;
     const cat = cats.find(c=>c.id===l.categoriaId);
     const conta = contas.find(c=>c.id===l.contaId);
     const valueClass = l.tipo === "RECEITA" ? "ok" : "bad";
@@ -699,6 +883,7 @@ $("#dashMes").addEventListener("change", renderDashboard);
 
 /* ---------- Lançamentos ---------- */
 let editLancId = null;
+let editTransferenciaId = null;
 
 function renderLancamentos(){
   const conta = $("#fConta").value || "ALL";
@@ -713,16 +898,35 @@ function renderLancamentos(){
   if(fim) list = list.filter(l => l.data <= fim);
   if(busca) list = list.filter(l => (l.desc || "").toLowerCase().includes(busca));
 
-  list.sort((a,b)=> b.data.localeCompare(a.data));
-
   const contaById = new Map(state.contas.map(c=>[c.id,c]));
   const catById = new Map(state.categorias.map(c=>[c.id,c]));
+  const rows = buildLancamentoRows(list);
 
-  $("#tbLanc").innerHTML = list.map(l=>{
+  $("#tbLanc").innerHTML = rows.map(row=>{
+    if(row.kind === "transferencia"){
+      const origem = contaById.get(row.origem?.contaId);
+      const destino = contaById.get(row.destino?.contaId);
+      return `
+        <tr>
+          <td>${escapeHtml(row.data)}</td>
+          <td>${escapeHtml(origem?.nome || "Origem")} -> ${escapeHtml(destino?.nome || "Destino")}</td>
+          <td><span class="badge transfer">TRANSFERÊNCIA</span></td>
+          <td>Transferência entre contas</td>
+          <td>${escapeHtml(row.desc || "")}</td>
+          <td class="right"><b>${brl(row.valor)}</b></td>
+          <td>${transferenciaConciliacaoBadge(row.entries)}</td>
+          <td class="right">
+            <button class="btn" data-act="edit" data-id="${row.id}">Editar</button>
+            <button class="btn danger" data-act="del-transfer" data-id="${row.transferenciaId}">Excluir</button>
+          </td>
+        </tr>
+      `;
+    }
+    const l = row.lanc;
     const c = contaById.get(l.contaId);
     const cat = catById.get(l.categoriaId);
     const conc = l.conciliado ? `<span class="badge ok">Sim</span>` : `<span class="badge warn">Não</span>`;
-    const tipoBadge = l.tipo === "RECEITA" ? `<span class="badge ok">RECEITA</span>` : `<span class="badge bad">DESPESA</span>`;
+    const tipoBadge = lancamentoTipoBadge(l);
     return `
       <tr>
         <td>${escapeHtml(l.data)}</td>
@@ -751,6 +955,15 @@ $("#tbLanc").addEventListener("click", (e)=>{
   const act = btn.dataset.act;
   if(act === "edit"){
     openLancModal(id);
+  } else if(act === "del-transfer"){
+    if(confirm("Excluir esta transferência?")){
+      const entries = getTransferenciaEntries(id);
+      const ids = new Set(entries.map(l => l.id));
+      state.reconciliations = state.reconciliations.filter(r => !ids.has(r.lancId));
+      state.lancamentos = state.lancamentos.filter(l => l.transferenciaId !== id);
+      saveState();
+      renderAll();
+    }
   } else if(act === "del"){
     if(confirm("Excluir este lançamento?")){
       state.reconciliations = state.reconciliations.filter(r => r.lancId !== id);
@@ -771,23 +984,55 @@ $("#tbLanc").addEventListener("click", (e)=>{
 
 function openLancModal(id){
   editLancId = id;
+  editTransferenciaId = null;
   $("#modalLanc").classList.remove("hidden");
   $("#modalLancTitle").textContent = id ? "Editar lançamento" : "Novo lançamento";
 
   const l = id ? state.lancamentos.find(x=>x.id===id) : null;
+  const isTransferencia = isTransferenciaLancamento(l);
+  const partes = isTransferencia ? getTransferenciaPartes(l.transferenciaId) : { origem: null, destino: null };
+  const origem = partes.origem || l;
+  const destino = partes.destino || null;
 
-  $("#lData").value = l?.data || toISODate(new Date());
-  $("#lConta").value = l?.contaId || (state.contas[0]?.id || "");
-  $("#lTipo").value = l?.tipo || "DESPESA";
+  if(isTransferencia){
+    editTransferenciaId = l.transferenciaId;
+    $("#modalLancTitle").textContent = "Editar transferência";
+  }
+
+  $("#lData").value = origem?.data || l?.data || toISODate(new Date());
+  $("#lConta").value = origem?.contaId || l?.contaId || (state.contas[0]?.id || "");
+  $("#lContaDestino").value = destino?.contaId || state.contas.find(c => c.id !== $("#lConta").value)?.id || "";
+  $("#lTipo").value = isTransferencia ? TRANSFERENCIA_TIPO : (l?.tipo || "DESPESA");
   fillSelects();
-  $("#lCategoria").value = l?.categoriaId || $("#lCategoria").value;
-  $("#lDesc").value = l?.desc || "";
-  $("#lValor").value = l ? Number(l.valor || 0) : "";
-  $("#lConc").value = l?.conciliado ? "1" : "0";
+  $("#lConta").value = origem?.contaId || l?.contaId || $("#lConta").value;
+  $("#lContaDestino").value = destino?.contaId || $("#lContaDestino").value;
+  $("#lCategoria").value = isTransferencia ? "" : (l?.categoriaId || $("#lCategoria").value);
+  $("#lDesc").value = origem?.desc || l?.desc || "";
+  $("#lValor").value = (origem || l) ? Number((origem || l).valor || 0) : "";
+  $("#lConc").value = (partes.entries || [l]).some(item => item?.conciliado || item?.bankTxId) ? "1" : "0";
+  updateLancModalMode();
 }
 function closeLancModal(){
   $("#modalLanc").classList.add("hidden");
   editLancId = null;
+  editTransferenciaId = null;
+}
+
+function updateLancModalMode(){
+  const isTransferencia = $("#lTipo").value === TRANSFERENCIA_TIPO;
+  $("#lContaLabel").textContent = isTransferencia ? "Conta origem" : "Conta";
+  $("#lContaDestinoWrap").classList.toggle("hidden", !isTransferencia);
+  $("#lCategoriaWrap").classList.toggle("hidden", isTransferencia);
+  $("#lCategoria").disabled = isTransferencia;
+  $("#lContaDestino").disabled = !isTransferencia;
+
+  if(!isTransferencia) return;
+  const origemId = $("#lConta").value;
+  const destinoEl = $("#lContaDestino");
+  if(!destinoEl.value || destinoEl.value === origemId){
+    const destino = state.contas.find(c => c.id !== origemId);
+    if(destino) destinoEl.value = destino.id;
+  }
 }
 
 $("#btnFecharModalLanc").addEventListener("click", closeLancModal);
@@ -804,18 +1049,72 @@ document.addEventListener("keydown",(e)=>{
 $("#btnSalvarLanc").addEventListener("click", ()=>{
   const data = $("#lData").value;
   const contaId = $("#lConta").value;
+  const contaDestinoId = $("#lContaDestino").value;
   const tipo = $("#lTipo").value;
   const categoriaId = $("#lCategoria").value;
   const desc = $("#lDesc").value.trim();
   const valor = Number($("#lValor").value);
   const conciliado = $("#lConc").value === "1";
 
+  if(tipo === TRANSFERENCIA_TIPO){
+    if(state.contas.length < 2){
+      alert("Cadastre pelo menos duas contas para registrar uma transferência.");
+      return;
+    }
+    if(!data || !contaId || !contaDestinoId || contaId === contaDestinoId || !Number.isFinite(valor) || valor<=0){
+      alert("Informe data, conta origem, conta destino e valor positivo.");
+      return;
+    }
+    if(editLancId && !editTransferenciaId && state.titulos.some(t => t.lancId === editLancId)){
+      alert("Este lançamento está vinculado a um título. Para usar transferência, crie um novo lançamento.");
+      return;
+    }
+
+    salvarTransferenciaLancamento({
+      data,
+      contaOrigemId: contaId,
+      contaDestinoId,
+      desc,
+      valor,
+      conciliado
+    });
+    saveState();
+    closeLancModal();
+    renderAll();
+    return;
+  }
+
   if(!data || !contaId || !tipo || !categoriaId || !desc || !Number.isFinite(valor) || valor<=0){
     alert("Preencha todos os campos corretamente.");
     return;
   }
 
-  if(editLancId){
+  if(editTransferenciaId){
+    const entries = getTransferenciaEntries(editTransferenciaId);
+    const keep = entries.find(l => l.id === editLancId) || entries.find(isTransferenciaOrigem) || entries[0] || null;
+    const removedIds = new Set(entries.filter(l => l.id !== keep?.id).map(l => l.id));
+    state.reconciliations = state.reconciliations.filter(r => !removedIds.has(r.lancId));
+    state.lancamentos = state.lancamentos.filter(l => l.transferenciaId !== editTransferenciaId && l.id !== keep?.id);
+
+    const base = keep ? { ...keep } : { id: uid("lanc") };
+    delete base.transferenciaId;
+    delete base.transferenciaLado;
+    delete base.contaOrigemId;
+    delete base.contaDestinoId;
+
+    const normal = {
+      ...base,
+      data,
+      contaId,
+      tipo,
+      categoriaId,
+      desc,
+      valor,
+      conciliado: !!(base.bankTxId || conciliado)
+    };
+    state.lancamentos.unshift(normal);
+    syncTituloFromLancamento(normal);
+  } else if(editLancId){
     const idx = state.lancamentos.findIndex(x=>x.id===editLancId);
     if(idx >= 0){
       const old = state.lancamentos[idx];
@@ -886,7 +1185,9 @@ $("#listaContas").addEventListener("click", (e)=>{
   if(act === "edit") openContaModal(id);
   if(act === "del"){
     if(confirm("Excluir esta conta? (lançamentos, títulos e imports dessa conta também serão removidos)")){
-      state.lancamentos = state.lancamentos.filter(l => l.contaId !== id);
+      state.lancamentos = state.lancamentos.filter(l =>
+        l.contaId !== id && l.contaOrigemId !== id && l.contaDestinoId !== id
+      );
       state.titulos = state.titulos.filter(t => t.contaId !== id);
       state.compras = state.compras.filter(c => c.contaId !== id);
       state.imports = state.imports.filter(i => i.contaId !== id);
@@ -1180,7 +1481,7 @@ function renderConciliacao(){
       const linkedBankId = reconByLanc.get(l.id);
       const status = linkedBankId ? `<span class="badge ok">Conciliado</span>` : `<span class="badge warn">Pendente</span>`;
       const cls = (selectedLancId === l.id) ? "item selected" : "item";
-      const tipoBadge = l.tipo === "RECEITA" ? `<span class="badge ok">RECEITA</span>` : `<span class="badge bad">DESPESA</span>`;
+      const tipoBadge = lancamentoTipoBadge(l);
       const cat = catById.get(l.categoriaId);
       return `
         <div class="${cls}" data-id="${l.id}" data-kind="sys">
