@@ -90,8 +90,8 @@
         </div>
       </div>
 
-      <div class="grid2 dashboardWide">
-        <div class="card">
+      <div class="grid3 dashboardWide dashboardDesktopGrid">
+        <div class="card dashboardLancamentosCard">
           <div class="cardhead">
             <h2>Lançamentos do mês</h2>
             <div class="muted">Movimentos realizados no mês e na conta selecionados.</div>
@@ -99,22 +99,20 @@
           <div id="boxLancamentosMes" class="list compact"></div>
         </div>
 
-        <div class="dashboardRightColumn">
-          <div class="card">
-            <div class="cardhead">
-              <h2>Títulos em aberto</h2>
-              <div class="muted">AP/AR vencendo no mês e na conta selecionados.</div>
-            </div>
-            <div id="boxTitulosMes" class="list compact"></div>
+        <div class="card dashboardTitulosCard">
+          <div class="cardhead">
+            <h2>Títulos em aberto</h2>
+            <div class="muted">AP/AR vencendo no mês e na conta selecionados.</div>
           </div>
+          <div id="boxTitulosMes" class="list compact"></div>
+        </div>
 
-          <div class="card">
-            <div class="cardhead">
-              <h2>Valor por categoria</h2>
-              <div class="muted">Movimentos realizados no mês.</div>
-            </div>
-            <div id="boxCategoriasMes" class="list compact"></div>
+        <div class="card dashboardCategoriasCard">
+          <div class="cardhead">
+            <h2>Valor por categoria</h2>
+            <div class="muted">Movimentos realizados no mês.</div>
           </div>
+          <div id="boxCategoriasMes" class="list compact"></div>
         </div>
       </div>
     </section>
@@ -364,7 +362,7 @@
             </select>
             <input type="date" id="apIni" />
             <input type="date" id="apFim" />
-            <input type="text" id="apBusca" placeholder="Buscar (descrição/pessoa/centro custo)..." />
+            <input type="text" id="apBusca" placeholder="Buscar (descrição/pessoa/etiqueta)..." />
             <button class="btn" id="btnFiltrarAP">Filtrar</button>
             <button class="btn primary" id="btnNovoAP">+ Novo AP</button>
           </div>
@@ -376,10 +374,9 @@
               <tr>
                 <th>Venc.</th>
                 <th>Conta</th>
-                <th>Centro de custo</th>
+                <th>Etiquetas</th>
                 <th>Fornecedor</th>
                 <th>Descrição</th>
-                <th>Pagamento</th>
                 <th class="right">Valor</th>
                 <th>Status</th>
                 <th>Anexos</th>
@@ -407,7 +404,7 @@
             </select>
             <input type="date" id="arIni" />
             <input type="date" id="arFim" />
-            <input type="text" id="arBusca" placeholder="Buscar (descrição/pessoa/centro custo)..." />
+            <input type="text" id="arBusca" placeholder="Buscar (descrição/pessoa/etiqueta)..." />
             <button class="btn" id="btnFiltrarAR">Filtrar</button>
             <button class="btn primary" id="btnNovoAR">+ Novo AR</button>
           </div>
@@ -419,10 +416,9 @@
               <tr>
                 <th>Venc.</th>
                 <th>Conta</th>
-                <th>Centro de custo</th>
+                <th>Etiquetas</th>
                 <th>Cliente</th>
                 <th>Descrição</th>
-                <th>Pagamento</th>
                 <th class="right">Valor</th>
                 <th>Status</th>
                 <th>Anexos</th>
@@ -462,7 +458,6 @@
                 <th>Produto</th>
                 <th>Fornecedor</th>
                 <th>Conta</th>
-                <th>Pagamento</th>
                 <th>Venc.</th>
                 <th class="right">Valor</th>
                 <th>Status</th>
@@ -515,15 +510,8 @@
             <label>Conta do contas a pagar
               <select id="pcConta"></select>
             </label>
-            <label>Categoria
+            <label>Etiqueta
               <select id="pcCategoria"></select>
-            </label>
-
-            <label>Centro de custo
-              <input type="text" id="pcCentroCusto" placeholder="Ex.: Administrativo, Operacao...">
-            </label>
-            <label>Forma de pagamento
-              <input type="text" id="pcFormaPagamento" placeholder="Ex.: PIX, boleto, cartao, transferencia...">
             </label>
 
             <label>Vencimento
@@ -609,32 +597,20 @@
             <select id="tConta"></select>
           </label>
 
-          <label>Centro de custo
-            <input type="text" id="tCentroCusto" placeholder="Ex.: Adm, Operação, Filial A...">
-          </label>
-
           <label>Pessoa (Fornecedor/Cliente)
             <input type="text" id="tPessoa" placeholder="Ex.: Posto X / Cliente Y">
-          </label>
-
-          <label class="span2">Descrição
-            <input type="text" id="tDesc" placeholder="Ex.: NF 1234, aluguel, prestação...">
-          </label>
-
-          <label>Categoria
-            <select id="tCategoria"></select>
           </label>
 
           <label><span id="tValorLabel">Valor (R$)</span>
             <input type="number" id="tValor" step="0.01" inputmode="decimal">
           </label>
 
-          <label>Forma de pagamento
-            <input type="text" id="tFormaPagamento" placeholder="Ex.: PIX, boleto, transferencia, cartao...">
+          <label class="span2">Descrição
+            <textarea id="tDesc" rows="3" placeholder="Ex.: NF 1234, aluguel, prestação..."></textarea>
           </label>
 
-          <label class="span2">Observação
-            <input type="text" id="tObs" placeholder="Opcional">
+          <label class="span2">Etiquetas
+            <select id="tCategoria" multiple size="5"></select>
           </label>
 
           <div class="span2 sectionBox" id="parcelamentoBox">
@@ -643,10 +619,16 @@
                 <input type="checkbox" id="tGerarParcelas" />
                 <span>Gerar parcelas de uma vez</span>
               </label>
-              <div class="muted" id="parcelamentoHint">Disponível para novos lançamentos. O valor será tratado como total.</div>
+              <div class="muted" id="parcelamentoHint">Disponível para novos lançamentos. Escolha como o valor será usado.</div>
             </div>
             <div class="formGrid nestedGrid" id="parcelamentoCampos">
-              <label>Qtd. parcelas
+              <label class="span2">Modo
+                <select id="tParcelamentoModo">
+                  <option value="total">Informar valor total e dividir pelas parcelas</option>
+                  <option value="mensal">Informar valor da mensalidade</option>
+                </select>
+              </label>
+              <label><span id="tParcelasLabel">Qtd. parcelas</span>
                 <input type="number" id="tParcelas" min="2" max="60" value="2" inputmode="numeric">
               </label>
               <label>Primeira parcela

@@ -209,9 +209,23 @@ textarea{
   margin-top: 14px;
 }
 
-.dashboardRightColumn{
-  display:grid;
-  gap: 14px;
+.dashboardDesktopGrid{
+  grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-areas: "lancamentos titulos categorias";
+}
+
+.dashboardLancamentosCard{ grid-area: lancamentos; }
+.dashboardTitulosCard{ grid-area: titulos; }
+.dashboardCategoriasCard{ grid-area: categorias; }
+
+@media (max-width: 900px){
+  .dashboardDesktopGrid{
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "lancamentos"
+      "titulos"
+      "categorias";
+  }
 }
 
 .accountStatusList .accountStatusItem{

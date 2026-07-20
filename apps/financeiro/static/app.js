@@ -3,7 +3,7 @@
    - MySQL via /apps/financeiro/api/state
    - Importação OFX
    - Conciliação: Banco↔Lançamento e Banco↔Título (AP/AR)
-   - Contas a pagar/receber com centro de custo e anexos
+   - Contas a pagar/receber com etiquetas e anexos
 ========================= */
 
 const FINANCE_STATE_API = "/apps/financeiro/api/state";
@@ -173,21 +173,27 @@ function migrate(d){
   for(const lanc of d.lancamentos){
     if(normalizeLancamentoCategorias(lanc)) lancCategoriasChanged = true;
   }
-  if(lancCategoriasChanged) financeStateNeedsPersist = true;
+  let tituloChanged = false;
+  for(const titulo of d.titulos){
+    if(normalizeTituloCategorias(titulo)) tituloChanged = true;
+    if(normalizeTituloRemovedFields(titulo)) tituloChanged = true;
+  }
+  if(lancCategoriasChanged || tituloChanged) financeStateNeedsPersist = true;
   normalizeTituloLancamentoLinks(d);
   return d;
 }
 
 function tituloLancamentoPayloadFromRecord(titulo, dataBaixaISO, existing={}){
   const isAR = titulo.tipo === "AR";
+  const categoriaIds = getTituloCategoriaIds(titulo);
   return {
     ...existing,
     data: dataBaixaISO,
     contaId: titulo.contaId,
     tipo: isAR ? "RECEITA" : "DESPESA",
-    categoriaId: titulo.categoriaId,
-    categoriaIds: uniqueNonEmpty([titulo.categoriaId]),
-    desc: `${titulo.desc || ""}${titulo.pessoa ? " - " + titulo.pessoa : ""}${titulo.centroCusto ? " ["+titulo.centroCusto+"]" : ""}`,
+    categoriaId: categoriaIds[0] || titulo.categoriaId || "",
+    categoriaIds,
+    desc: `${titulo.desc || ""}${titulo.pessoa ? " - " + titulo.pessoa : ""}`,
     valor: Math.abs(Number(titulo.valor || 0)),
     conciliado: !!titulo.bankTxId,
     bankTxId: titulo.bankTxId || null
@@ -335,24 +341,55 @@ function buildTitleObs(text, meta={}){
   return `${cleanText}${cleanText ? "\n" : ""}${TITLE_META_MARKER}${JSON.stringify(cleanMeta)}`;
 }
 
-function getTituloFormaPagamento(titulo){
-  return parseTitleObs(titulo?.obs).meta.formaPagamento || "";
-}
-
 function getCompraByTituloId(tituloId){
   return state.compras.find(compra => compra.titleId === tituloId) || null;
+}
+
+function stripRemovedTitleMeta(meta={}){
+  const cleanMeta = { ...(meta || {}) };
+  delete cleanMeta.formaPagamento;
+  return cleanMeta;
+}
+
+function appendTextToDescription(desc, extraText){
+  const base = String(desc || "").trim();
+  const extra = String(extraText || "").trim();
+  if(!extra) return base;
+  if(!base) return extra;
+  if(base.toLowerCase().includes(extra.toLowerCase())) return base;
+  return `${base} | ${extra}`;
+}
+
+function normalizeTituloRemovedFields(titulo){
+  if(!titulo) return false;
+  const parsedObs = parseTitleObs(titulo.obs);
+  let nextDesc = appendTextToDescription(titulo.desc, parsedObs.text);
+  if(parsedObs.meta?.formaPagamento){
+    nextDesc = appendTextToDescription(nextDesc, `Pagamento: ${parsedObs.meta.formaPagamento}`);
+  }
+
+  const nextObs = buildTitleObs("", stripRemovedTitleMeta(parsedObs.meta));
+  const changed = nextDesc !== String(titulo.desc || "").trim() || String(titulo.obs || "") !== nextObs;
+  titulo.desc = nextDesc;
+  titulo.obs = nextObs;
+  return changed;
 }
 
 function uniqueNonEmpty(values){
   return Array.from(new Set((values || []).map(v => String(v || "").trim()).filter(Boolean)));
 }
 
+function normalizedLancCategoriaIds(lancamento){
+  if(!lancamento || isTransferenciaLancamento(lancamento)) return [];
+  const ids = Array.isArray(lancamento.categoriaIds) ? uniqueNonEmpty(lancamento.categoriaIds) : [];
+  const primary = String(lancamento.categoriaId || "").trim();
+  if(ids.length && (!primary || ids.includes(primary))) return ids;
+  return primary ? [primary] : ids;
+}
+
 function normalizeLancamentoCategorias(lancamento){
   if(!lancamento || isTransferenciaLancamento(lancamento)) return false;
-  const ids = uniqueNonEmpty([
-    ...(Array.isArray(lancamento.categoriaIds) ? lancamento.categoriaIds : []),
-    lancamento.categoriaId
-  ]);
+  const ids = normalizedLancCategoriaIds(lancamento);
   const before = JSON.stringify({
     categoriaId: lancamento.categoriaId || "",
     categoriaIds: Array.isArray(lancamento.categoriaIds) ? lancamento.categoriaIds : null
@@ -363,11 +400,30 @@ function normalizeLancamentoCategorias(lancamento){
 }
 
 function getLancCategoriaIds(lancamento){
-  if(!lancamento || isTransferenciaLancamento(lancamento)) return [];
-  return uniqueNonEmpty([
-    ...(Array.isArray(lancamento.categoriaIds) ? lancamento.categoriaIds : []),
-    lancamento.categoriaId
-  ]);
+  return normalizedLancCategoriaIds(lancamento);
+}
+
+function normalizedTituloCategoriaIds(titulo){
+  const ids = Array.isArray(titulo?.categoriaIds) ? uniqueNonEmpty(titulo.categoriaIds) : [];
+  const primary = String(titulo?.categoriaId || "").trim();
+  if(ids.length && (!primary || ids.includes(primary))) return ids;
+  return primary ? [primary] : ids;
+}
+
+function normalizeTituloCategorias(titulo){
+  if(!titulo) return false;
+  const ids = normalizedTituloCategoriaIds(titulo);
+  const before = JSON.stringify({
+    categoriaId: titulo.categoriaId || "",
+    categoriaIds: Array.isArray(titulo.categoriaIds) ? titulo.categoriaIds : null
+  });
+  titulo.categoriaIds = ids;
+  titulo.categoriaId = ids[0] || "";
+  return before !== JSON.stringify({ categoriaId: titulo.categoriaId, categoriaIds: titulo.categoriaIds });
+}
+
+function getTituloCategoriaIds(titulo){
+  return normalizedTituloCategoriaIds(titulo);
 }
 
 function getSelectValues(selector){
@@ -645,6 +701,7 @@ function fillSelects(){
 
     tTipo: $("#tTipo")?.value,
     tCategoria: $("#tCategoria")?.value,
+    tCategorias: getSelectValues("#tCategoria"),
     pcCategoria: $("#pcCategoria")?.value
   };
 
@@ -705,7 +762,11 @@ function fillSelects(){
   const tipoCatTit = (tipoTit === "AR") ? "RECEITA" : "DESPESA";
   const catsTit = cats.filter(c => c.tipo === tipoCatTit);
   $("#tCategoria").innerHTML = catsTit.map(c => `<option value="${c.id}">${escapeHtml(c.nome)}</option>`).join("");
-  safeRestoreSelect("#tCategoria", prev.tCategoria ?? (catsTit[0]?.id || ""));
+  setSelectValues(
+    "#tCategoria",
+    prev.tCategorias.length ? prev.tCategorias : uniqueNonEmpty([prev.tCategoria]),
+    catsTit[0]?.id || ""
+  );
 
   const catsCompra = cats.filter(c => c.tipo === "DESPESA");
   if($("#pcCategoria")){
@@ -997,6 +1058,7 @@ function renderDashboard(){
         <div>
           <b>${escapeHtml(t.desc || "Sem descrição")}</b>
           <div class="muted">${escapeHtml(t.vencimento || "-")} · ${escapeHtml(conta?.nome || "Conta")} · ${escapeHtml(t.pessoa || "-")}</div>
+          ${categoriaBadgesHtml(getTituloCategoriaIds(t), "-")}
         </div>
         <div style="text-align:right">
           <span class="badge ${badgeClass}">${tipoLabel}</span>
@@ -1647,7 +1709,8 @@ function renderConciliacao(){
           ${badge}
           <div>
             <div><b>${escapeHtml(t.desc || "")}</b></div>
-            <div class="muted">${escapeHtml(t.vencimento)} • ${escapeHtml(t.pessoa||"-")} • ${escapeHtml(t.centroCusto||"-")}</div>
+            <div class="muted">${escapeHtml(t.vencimento)} • ${escapeHtml(t.pessoa||"-")}</div>
+            ${categoriaBadgesHtml(getTituloCategoriaIds(t), "-")}
           </div>
         </div>
         <div style="text-align:right">
@@ -1917,13 +1980,15 @@ $("#btnCriarLancDoBanco").addEventListener("click", ()=>{
 });
 
 /* ---------- AP/AR (Títulos) + anexos ---------- */
-function novoTitulo({tipo, pessoa, desc, categoriaId, contaId, valor, vencimento, centroCusto, obs}){
+function novoTitulo({tipo, pessoa, desc, categoriaId, categoriaIds, contaId, valor, vencimento, centroCusto, obs}){
+  const tituloCategoriaIds = uniqueNonEmpty(Array.isArray(categoriaIds) && categoriaIds.length ? categoriaIds : [categoriaId]);
   return {
     id: uid("tit"),
     tipo,
     pessoa: (pessoa||"").trim(),
     desc: (desc||"").trim(),
-    categoriaId,
+    categoriaId: tituloCategoriaIds[0] || "",
+    categoriaIds: tituloCategoriaIds,
     contaId,
     valor: Number(valor),
     vencimento,
@@ -1939,13 +2004,14 @@ function novoTitulo({tipo, pessoa, desc, categoriaId, contaId, valor, vencimento
 
 function tituloLancamentoPayload(titulo, dataBaixaISO){
   const isAR = titulo.tipo === "AR";
+  const categoriaIds = getTituloCategoriaIds(titulo);
   return {
     data: dataBaixaISO,
     contaId: titulo.contaId,
     tipo: isAR ? "RECEITA" : "DESPESA",
-    categoriaId: titulo.categoriaId,
-    categoriaIds: uniqueNonEmpty([titulo.categoriaId]),
-    desc: `${titulo.desc}${titulo.pessoa ? " - " + titulo.pessoa : ""}${titulo.centroCusto ? " ["+titulo.centroCusto+"]" : ""}`,
+    categoriaId: categoriaIds[0] || titulo.categoriaId || "",
+    categoriaIds,
+    desc: `${titulo.desc}${titulo.pessoa ? " - " + titulo.pessoa : ""}`,
     valor: Math.abs(Number(titulo.valor||0)),
     conciliado: !!titulo.bankTxId,
     bankTxId: titulo.bankTxId || null
@@ -2057,6 +2123,7 @@ function syncTituloFromLancamento(lancamento){
   const categoriaIds = getLancCategoriaIds(lancamento);
   titulo.contaId = lancamento.contaId;
   titulo.categoriaId = categoriaIds[0] || lancamento.categoriaId;
+  titulo.categoriaIds = categoriaIds;
   titulo.tipo = lancamento.tipo === "RECEITA" ? "AR" : "AP";
   titulo.valor = Math.abs(Number(lancamento.valor || 0));
   titulo.status = "BAIXADO";
@@ -2330,24 +2397,28 @@ function compraStatusBadge(status){
 }
 
 function buildCompraTituloObs(compra){
-  return buildTitleObs(compra.obs, {
-    formaPagamento: compra.formaPagamento,
+  return buildTitleObs("", {
     compraId: compra.id,
     produtoUrl: compra.produtoUrl,
     justificativaCompra: compra.justificativa
   });
 }
 
+function compraTituloDescricao(compra){
+  return appendTextToDescription(compra.desc, compra.obs);
+}
+
 function gerarTituloDaCompra(compra){
   const titulo = novoTitulo({
     tipo: "AP",
     pessoa: compra.fornecedor,
-    desc: compra.desc,
+    desc: compraTituloDescricao(compra),
     categoriaId: compra.categoriaId,
+    categoriaIds: uniqueNonEmpty([compra.categoriaId]),
     contaId: compra.contaId,
     valor: compra.valor,
     vencimento: compra.vencimento,
-    centroCusto: compra.centroCusto,
+    centroCusto: "",
     obs: buildCompraTituloObs(compra)
   });
   titulo.status = "ABERTO";
@@ -2362,11 +2433,12 @@ function syncCompraToTitulo(compra){
 
   titulo.contaId = compra.contaId;
   titulo.categoriaId = compra.categoriaId;
+  titulo.categoriaIds = uniqueNonEmpty([compra.categoriaId]);
   titulo.pessoa = compra.fornecedor;
-  titulo.desc = compra.desc;
+  titulo.desc = compraTituloDescricao(compra);
   titulo.valor = compra.valor;
   titulo.vencimento = compra.vencimento;
-  titulo.centroCusto = compra.centroCusto;
+  titulo.centroCusto = "";
   titulo.obs = buildCompraTituloObs(compra);
   if(titulo.status === "BAIXADO") syncTituloLancamento(titulo);
 }
@@ -2621,8 +2693,6 @@ function openCompraModal(id=null){
   $("#pcJustificativa").value = compra?.justificativa || "";
   $("#pcConta").value = compra?.contaId || $("#pcConta").value;
   $("#pcCategoria").value = compra?.categoriaId || $("#pcCategoria").value;
-  $("#pcCentroCusto").value = compra?.centroCusto || "";
-  $("#pcFormaPagamento").value = compra?.formaPagamento || "";
   $("#pcVenc").value = compra?.vencimento || toISODate(new Date());
   $("#pcValor").value = compra ? Number(compra.valor || 0) : "";
   $("#pcObs").value = compra?.obs || "";
@@ -2650,8 +2720,8 @@ function currentCompraDraft(){
     justificativa: $("#pcJustificativa").value.trim(),
     contaId: $("#pcConta").value,
     categoriaId: $("#pcCategoria").value,
-    centroCusto: $("#pcCentroCusto").value.trim(),
-    formaPagamento: $("#pcFormaPagamento").value.trim(),
+    centroCusto: "",
+    formaPagamento: "",
     vencimento: $("#pcVenc").value,
     valor: Number($("#pcValor").value),
     obs: $("#pcObs").value.trim(),
@@ -2687,7 +2757,6 @@ function renderCompras(){
         <td>${escapeHtml(compra.desc || "")}</td>
         <td>${escapeHtml(compra.fornecedor || "-")}</td>
         <td>${escapeHtml(conta?.nome || "-")}</td>
-        <td>${escapeHtml(compra.formaPagamento || "-")}</td>
         <td>${escapeHtml(compra.vencimento || "-")}</td>
         <td class="right"><b>${brl(compra.valor)}</b></td>
         <td>${compraStatusBadge(compra.status)}</td>
@@ -2700,7 +2769,7 @@ function renderCompras(){
         </td>
       </tr>
     `;
-  }).join("") || `<tr><td colspan="10" class="muted">Nenhuma solicitacao de compra.</td></tr>`;
+  }).join("") || `<tr><td colspan="9" class="muted">Nenhuma solicitacao de compra.</td></tr>`;
 }
 
 $("#btnFiltrarCompras")?.addEventListener("click", renderCompras);
@@ -2719,8 +2788,8 @@ $("#compraAiResultados")?.addEventListener("click", (e)=>{
 
 $("#btnSalvarCompra")?.addEventListener("click", ()=>{
   const draft = currentCompraDraft();
-  if(!draft.desc || !draft.justificativa || !draft.contaId || !draft.categoriaId || !draft.formaPagamento || !draft.vencimento || !Number.isFinite(draft.valor) || draft.valor <= 0){
-    alert("Preencha produto, justificativa, conta, categoria, forma de pagamento, vencimento e valor.");
+  if(!draft.desc || !draft.justificativa || !draft.contaId || !draft.categoriaId || !draft.vencimento || !Number.isFinite(draft.valor) || draft.valor <= 0){
+    alert("Preencha produto, justificativa, conta, etiqueta, vencimento e valor.");
     return;
   }
 
@@ -2798,7 +2867,8 @@ function renderTabelaTitulos(tipo){
   if(fim) list = list.filter(t=>t.vencimento <= fim);
   if(busca){
     list = list.filter(t=>{
-      const s = `${t.desc} ${t.pessoa} ${t.centroCusto}`.toLowerCase();
+      const etiquetas = categoriaNamesText(getTituloCategoriaIds(t), "");
+      const s = `${t.desc} ${t.pessoa} ${etiquetas}`.toLowerCase();
       return s.includes(busca);
     });
   }
@@ -2807,7 +2877,6 @@ function renderTabelaTitulos(tipo){
 
   tb.innerHTML = list.map(t=>{
     const conta = contaById.get(t.contaId);
-    const pagamento = getTituloFormaPagamento(t);
     const st = t.status==="ABERTO" ? `<span class="badge warn">ABERTO</span>`
             : t.status==="BAIXADO" ? `<span class="badge ok">BAIXADO</span>`
             : `<span class="badge bad">CANCELADO</span>`;
@@ -2820,10 +2889,9 @@ function renderTabelaTitulos(tipo){
       <tr>
         <td>${escapeHtml(t.vencimento)}</td>
         <td>${escapeHtml(conta?.nome || "-")}</td>
-        <td>${escapeHtml(t.centroCusto || "-")}</td>
+        <td>${categoriaBadgesHtml(getTituloCategoriaIds(t), "-")}</td>
         <td>${escapeHtml(t.pessoa || "-")}</td>
         <td>${escapeHtml(t.desc || "")}</td>
-        <td>${escapeHtml(pagamento || "-")}</td>
         <td class="right"><b>${brl(t.valor)}</b></td>
         <td>${st}</td>
         <td>${anexBadge}</td>
@@ -2834,7 +2902,7 @@ function renderTabelaTitulos(tipo){
         </td>
       </tr>
     `;
-  }).join("") || `<tr><td colspan="10" class="muted">Nenhum título.</td></tr>`;
+  }).join("") || `<tr><td colspan="9" class="muted">Nenhum título.</td></tr>`;
 }
 
 $("#btnFiltrarAP").addEventListener("click", ()=>renderTabelaTitulos("AP"));
@@ -2885,21 +2953,33 @@ function syncParcelamentoUi(){
   const isNewTitulo = !editTituloId;
   const enabled = isNewTitulo && $("#tGerarParcelas").checked;
   const qtdParcelas = clamp(Number($("#tParcelas").value || 2), 2, 60);
-  const valorTotal = Number($("#tValor").value);
+  const modo = $("#tParcelamentoModo")?.value || "total";
+  const valorInformado = Number($("#tValor").value);
 
   $("#tGerarParcelas").disabled = !isNewTitulo;
   $("#parcelamentoCampos").classList.toggle("hidden", !enabled);
-  $("#tValorLabel").textContent = enabled ? "Valor total (R$)" : "Valor (R$)";
+  $("#tValorLabel").textContent = enabled && modo === "total"
+    ? "Valor total (R$)"
+    : enabled && modo === "mensal"
+      ? "Valor da mensalidade (R$)"
+      : "Valor (R$)";
+  $("#tParcelasLabel").textContent = modo === "mensal" ? "Parcelas restantes" : "Qtd. parcelas";
   $("#parcelamentoHint").textContent = isNewTitulo
-    ? "Disponivel para novos lancamentos. O valor sera tratado como total."
+    ? "Disponivel para novos lancamentos. Escolha se o valor informado e total ou mensalidade."
     : "Parcelamento fica disponivel apenas na criacao de um novo titulo.";
 
   if(!$("#tPrimeiraParcela").value){
     $("#tPrimeiraParcela").value = $("#tVenc").value || toISODate(new Date());
   }
 
-  if(enabled && Number.isFinite(valorTotal) && valorTotal > 0){
-    const parcelas = splitAmount(valorTotal, qtdParcelas).map(brl);
+  if(enabled && Number.isFinite(valorInformado) && valorInformado > 0 && modo === "mensal"){
+    const total = valorInformado * qtdParcelas;
+    $("#parcelamentoResumo").textContent = `Serao geradas ${qtdParcelas} parcelas mensais de ${brl(valorInformado)}, totalizando ${brl(total)}.`;
+    return;
+  }
+
+  if(enabled && Number.isFinite(valorInformado) && valorInformado > 0){
+    const parcelas = splitAmount(valorInformado, qtdParcelas).map(brl);
     const exemplo = parcelas.slice(0, 3).join(", ");
     $("#parcelamentoResumo").textContent = `Serao geradas ${qtdParcelas} parcelas mensais. Ex.: ${exemplo}${parcelas.length > 3 ? "..." : ""}`;
     return;
@@ -2911,9 +2991,11 @@ function syncParcelamentoUi(){
 function criarTitulosParcelados(draft){
   const parcelas = clamp(Number(draft.parcelas || 1), 2, 60);
   const primeiraParcela = draft.primeiraParcela || draft.vencimento;
-  const valores = splitAmount(draft.valor, parcelas);
+  const modo = draft.parcelamentoModo || "total";
+  const valores = modo === "mensal"
+    ? Array.from({ length: parcelas }, () => Number(draft.valor || 0))
+    : splitAmount(draft.valor, parcelas);
   const createdIds = [];
-  const baseMeta = { formaPagamento: draft.formaPagamento };
 
   for(let index = 0; index < parcelas; index++){
     const titulo = novoTitulo({
@@ -2921,10 +3003,7 @@ function criarTitulosParcelados(draft){
       valor: valores[index],
       vencimento: addMonthsISO(primeiraParcela, index),
       desc: `${draft.desc} (${index + 1}/${parcelas})`,
-      obs: buildTitleObs(
-        [draft.obs, `Parcela ${index + 1}/${parcelas}`].filter(Boolean).join(" | "),
-        baseMeta
-      )
+      obs: ""
     });
     state.titulos.unshift(titulo);
     aplicarStatusTitulo(titulo, draft.status || "ABERTO");
@@ -2940,7 +3019,6 @@ function openTituloModal(id, tipoDefault="AP"){
   $("#modalTitulo").classList.remove("hidden");
 
   const t = id ? state.titulos.find(x=>x.id===id) : null;
-  const parsedObs = parseTitleObs(t?.obs);
   const compraVinculada = id ? getCompraByTituloId(id) : null;
   $("#modalTituloTitle").textContent = id ? "Editar título" : "Novo título";
 
@@ -2950,14 +3028,12 @@ function openTituloModal(id, tipoDefault="AP"){
   $("#tStatus").value = t?.status || "ABERTO";
   $("#tVenc").value = t?.vencimento || toISODate(new Date());
   $("#tConta").value = t?.contaId || (state.contas[0]?.id || "");
-  $("#tCentroCusto").value = t?.centroCusto || "";
   $("#tPessoa").value = t?.pessoa || "";
   $("#tDesc").value = t?.desc || "";
-  $("#tCategoria").value = t?.categoriaId || $("#tCategoria").value;
+  setSelectValues("#tCategoria", getTituloCategoriaIds(t), $("#tCategoria").value);
   $("#tValor").value = t ? Number(t.valor||0) : "";
-  $("#tFormaPagamento").value = parsedObs.meta.formaPagamento || "";
-  $("#tObs").value = parsedObs.text || "";
   $("#tGerarParcelas").checked = false;
+  $("#tParcelamentoModo").value = "total";
   $("#tParcelas").value = 2;
   $("#tPrimeiraParcela").value = t?.vencimento || $("#tVenc").value;
   $("#tVenc").dataset.prevValue = $("#tVenc").value;
@@ -2977,19 +3053,19 @@ function closeTituloModal(){
 }
 
 function currentTituloDraft(){
+  const categoriaIds = getSelectValues("#tCategoria");
   return {
     tipo: $("#tTipo").value,
     status: $("#tStatus").value,
     vencimento: $("#tVenc").value,
     contaId: $("#tConta").value,
-    centroCusto: $("#tCentroCusto").value.trim(),
     pessoa: $("#tPessoa").value.trim(),
     desc: $("#tDesc").value.trim(),
-    categoriaId: $("#tCategoria").value,
+    categoriaId: categoriaIds[0] || "",
+    categoriaIds,
     valor: Number($("#tValor").value),
-    formaPagamento: $("#tFormaPagamento").value.trim(),
-    obs: $("#tObs").value.trim(),
     gerarParcelas: $("#tGerarParcelas").checked,
+    parcelamentoModo: $("#tParcelamentoModo")?.value || "total",
     parcelas: clamp(Number($("#tParcelas").value || 1), 1, 60),
     primeiraParcela: $("#tPrimeiraParcela").value || $("#tVenc").value
   };
@@ -3008,9 +3084,6 @@ function syncCompraFromTitulo(titulo, draft, meta){
   compra.contaId = draft.contaId;
   compra.valor = draft.valor;
   compra.vencimento = draft.vencimento;
-  compra.centroCusto = draft.centroCusto;
-  compra.formaPagamento = draft.formaPagamento;
-  compra.obs = draft.obs;
 }
 
 function updateBaixaButton(){
@@ -3068,6 +3141,7 @@ $("#btnFecharModalTitulo").addEventListener("click", closeTituloModal);
 $("#btnCancelarTitulo").addEventListener("click", closeTituloModal);
 $("#modalTitulo").addEventListener("click",(e)=>{ if(e.target.id==="modalTitulo") closeTituloModal(); });
 $("#tGerarParcelas").addEventListener("change", syncParcelamentoUi);
+$("#tParcelamentoModo").addEventListener("change", syncParcelamentoUi);
 $("#tParcelas").addEventListener("input", syncParcelamentoUi);
 $("#tValor").addEventListener("input", syncParcelamentoUi);
 $("#tVenc").addEventListener("change", ()=>{
@@ -3080,24 +3154,25 @@ $("#tVenc").addEventListener("change", ()=>{
 
 $("#btnSalvarTitulo").addEventListener("click", ()=>{
   const d = currentTituloDraft();
-  if(!d.vencimento || !d.contaId || !d.categoriaId || !d.desc || !Number.isFinite(d.valor) || d.valor<=0){
-    alert("Preencha vencimento, conta, categoria, descrição e valor.");
+  if(!d.vencimento || !d.contaId || !d.categoriaIds.length || !d.desc || !Number.isFinite(d.valor) || d.valor<=0){
+    alert("Preencha vencimento, conta, etiquetas, descrição e valor.");
     return;
   }
 
   if(editTituloId){
     const t = state.titulos.find(x=>x.id===editTituloId);
     if(!t) return;
-    const oldMeta = parseTitleObs(t.obs).meta;
+    const oldMeta = stripRemovedTitleMeta(parseTitleObs(t.obs).meta);
     t.tipo = d.tipo;
     t.vencimento = d.vencimento;
     t.contaId = d.contaId;
     t.categoriaId = d.categoriaId;
+    t.categoriaIds = d.categoriaIds;
     t.desc = d.desc;
     t.pessoa = d.pessoa;
     t.valor = d.valor;
-    t.centroCusto = d.centroCusto;
-    t.obs = buildTitleObs(d.obs, { ...oldMeta, formaPagamento: d.formaPagamento });
+    t.centroCusto = "";
+    t.obs = buildTitleObs("", oldMeta);
     aplicarStatusTitulo(t, d.status);
     syncCompraFromTitulo(t, d, oldMeta);
   } else {
@@ -3111,7 +3186,7 @@ $("#btnSalvarTitulo").addEventListener("click", ()=>{
       return;
     }
 
-    const t = novoTitulo({ ...d, obs: buildTitleObs(d.obs, { formaPagamento: d.formaPagamento }) });
+    const t = novoTitulo({ ...d, obs: "" });
     state.titulos.unshift(t);
     aplicarStatusTitulo(t, d.status || "ABERTO");
     editTituloId = t.id;
