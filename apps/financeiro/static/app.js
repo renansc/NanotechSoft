@@ -22,6 +22,22 @@ let financeAiDiagState = {
   data: null,
   lastLoadedAt: 0
 };
+let financeSaveQueue = Promise.resolve();
+let financePersistBusy = false;
+let financePersistBusyCount = 0;
+
+function setFinancePersistBusy(delta){
+  financePersistBusyCount = Math.max(0, financePersistBusyCount + delta);
+  financePersistBusy = financePersistBusyCount > 0;
+}
+
+document.addEventListener("click", (event)=>{
+  if(!financePersistBusy) return;
+  const interactive = event.target.closest?.("button,a,input,select,textarea,label");
+  if(!interactive) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+}, true);
 
 /* ---------- Util ---------- */
 function uid(prefix="id"){
@@ -104,7 +120,7 @@ async function uploadTituloAttachment(file, titulo){
   formData.set("vencimento", titulo.vencimento || "");
   formData.set("contaNome", getContaNome(titulo.contaId));
   formData.set("pessoa", titulo.pessoa || "");
-  formData.set("descricao", titulo.desc || "");
+  formData.set("descricao", tituloDescricaoText(titulo));
 
   const payload = await requestJson("/api/finance/attachments", {
     method: "POST",
@@ -132,7 +148,39 @@ async function triggerFinanceReminders({silent=false}={}){
 }
 
 function saveState(){
-  return persistServerState();
+  const serializedState = JSON.stringify({ state });
+  financeSaveQueue = financeSaveQueue
+    .catch(() => {})
+    .then(() => persistServerState(serializedState));
+  return financeSaveQueue;
+}
+function cloneStateSnapshot(){
+  return JSON.parse(JSON.stringify(state));
+}
+async function persistStateOrRollback(snapshot, { button=null, savingText="Salvando..." }={}){
+  const previousDisabled = button ? button.disabled : null;
+  const previousText = button ? button.textContent : "";
+  setFinancePersistBusy(1);
+  if(button){
+    button.disabled = true;
+    button.textContent = savingText;
+  }
+
+  try{
+    await saveState();
+    return true;
+  }catch(err){
+    if(snapshot) state = migrate(snapshot);
+    renderAll();
+    alert(`Não foi possível salvar no banco. A alteração não foi confirmada.\n${err?.message || ""}`.trim());
+    return false;
+  }finally{
+    setFinancePersistBusy(-1);
+    if(button){
+      button.disabled = previousDisabled;
+      button.textContent = previousText;
+    }
+  }
 }
 function loadState(){
   return seed();
@@ -152,11 +200,11 @@ async function loadServerState(){
     }
   }
 }
-async function persistServerState(){
+async function persistServerState(serializedState=null){
   await requestJson(FINANCE_STATE_API, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ state })
+    body: serializedState || JSON.stringify({ state })
   });
 }
 function migrate(d){
@@ -186,6 +234,7 @@ function migrate(d){
 function tituloLancamentoPayloadFromRecord(titulo, dataBaixaISO, existing={}){
   const isAR = titulo.tipo === "AR";
   const categoriaIds = getTituloCategoriaIds(titulo);
+  const desc = tituloDescricaoText(titulo);
   return {
     ...existing,
     data: dataBaixaISO,
@@ -193,7 +242,7 @@ function tituloLancamentoPayloadFromRecord(titulo, dataBaixaISO, existing={}){
     tipo: isAR ? "RECEITA" : "DESPESA",
     categoriaId: categoriaIds[0] || titulo.categoriaId || "",
     categoriaIds,
-    desc: `${titulo.desc || ""}${titulo.pessoa ? " - " + titulo.pessoa : ""}`,
+    desc: `${desc}${titulo.pessoa ? " - " + titulo.pessoa : ""}`,
     valor: Math.abs(Number(titulo.valor || 0)),
     conciliado: !!titulo.bankTxId,
     bankTxId: titulo.bankTxId || null
@@ -313,7 +362,7 @@ function escapeHtml(str){
     .replaceAll("'","&#039;");
 }
 
-const TITLE_META_MARKER = "\n__GF_META__:";
+const TITLE_META_MARKER = "__GF_META__:";
 
 function parseTitleObs(obs){
   const raw = String(obs || "");
@@ -322,13 +371,13 @@ function parseTitleObs(obs){
     return { text: raw.trim(), meta: {} };
   }
 
-  const text = raw.slice(0, markerIndex).trim();
-  const metaRaw = raw.slice(markerIndex + TITLE_META_MARKER.length);
+  const text = raw.slice(0, markerIndex).replace(/\s*\|\s*$/, "").trim();
+  const metaRaw = raw.slice(markerIndex + TITLE_META_MARKER.length).trim();
   try{
     const meta = JSON.parse(metaRaw);
     return { text, meta: (meta && typeof meta === "object") ? meta : {} };
   }catch{
-    return { text: raw.trim(), meta: {} };
+    return { text, meta: {} };
   }
 }
 
@@ -362,17 +411,23 @@ function appendTextToDescription(desc, extraText){
 
 function normalizeTituloRemovedFields(titulo){
   if(!titulo) return false;
+  const parsedDesc = parseTitleObs(titulo.desc);
   const parsedObs = parseTitleObs(titulo.obs);
-  let nextDesc = appendTextToDescription(titulo.desc, parsedObs.text);
-  if(parsedObs.meta?.formaPagamento){
-    nextDesc = appendTextToDescription(nextDesc, `Pagamento: ${parsedObs.meta.formaPagamento}`);
+  const mergedMeta = { ...parsedDesc.meta, ...parsedObs.meta };
+  let nextDesc = appendTextToDescription(parsedDesc.text, parsedObs.text);
+  if(mergedMeta.formaPagamento){
+    nextDesc = appendTextToDescription(nextDesc, `Pagamento: ${mergedMeta.formaPagamento}`);
   }
 
-  const nextObs = buildTitleObs("", stripRemovedTitleMeta(parsedObs.meta));
+  const nextObs = buildTitleObs("", stripRemovedTitleMeta(mergedMeta));
   const changed = nextDesc !== String(titulo.desc || "").trim() || String(titulo.obs || "") !== nextObs;
   titulo.desc = nextDesc;
   titulo.obs = nextObs;
   return changed;
+}
+
+function tituloDescricaoText(titulo, fallback=""){
+  return parseTitleObs(titulo?.desc).text || fallback;
 }
 
 function uniqueNonEmpty(values){
@@ -1053,10 +1108,11 @@ function renderDashboard(){
     const isAR = t.tipo === "AR";
     const badgeClass = isAR ? "ok" : "bad";
     const tipoLabel = isAR ? "AR" : "AP";
+    const desc = tituloDescricaoText(t, "Sem descrição");
     return `
       <div class="item">
         <div>
-          <b>${escapeHtml(t.desc || "Sem descrição")}</b>
+          <b>${escapeHtml(desc)}</b>
           <div class="muted">${escapeHtml(t.vencimento || "-")} · ${escapeHtml(conta?.nome || "Conta")} · ${escapeHtml(t.pessoa || "-")}</div>
           ${categoriaBadgesHtml(getTituloCategoriaIds(t), "-")}
         </div>
@@ -1141,7 +1197,7 @@ function renderLancamentos(){
 $("#btnFiltrar").addEventListener("click", renderLancamentos);
 $("#btnNovoLanc").addEventListener("click", ()=> openLancModal(null));
 
-$("#tbLanc").addEventListener("click", (e)=>{
+$("#tbLanc").addEventListener("click", async (e)=>{
   const btn = e.target.closest("button");
   if(!btn) return;
   const id = btn.dataset.id;
@@ -1150,15 +1206,17 @@ $("#tbLanc").addEventListener("click", (e)=>{
     openLancModal(id);
   } else if(act === "del-transfer"){
     if(confirm("Excluir esta transferência?")){
+      const snapshot = cloneStateSnapshot();
       const entries = getTransferenciaEntries(id);
       const ids = new Set(entries.map(l => l.id));
       state.reconciliations = state.reconciliations.filter(r => !ids.has(r.lancId));
       state.lancamentos = state.lancamentos.filter(l => l.transferenciaId !== id);
-      saveState();
+      if(!await persistStateOrRollback(snapshot, { button: btn })) return;
       renderAll();
     }
   } else if(act === "del"){
     if(confirm("Excluir este lançamento?")){
+      const snapshot = cloneStateSnapshot();
       state.reconciliations = state.reconciliations.filter(r => r.lancId !== id);
       // desmarca títulos que apontem para esse lançamento
       for(const t of state.titulos){
@@ -1169,7 +1227,7 @@ $("#tbLanc").addEventListener("click", (e)=>{
         }
       }
       state.lancamentos = state.lancamentos.filter(l => l.id !== id);
-      saveState();
+      if(!await persistStateOrRollback(snapshot, { button: btn })) return;
       renderAll();
     }
   }
@@ -1240,7 +1298,7 @@ document.addEventListener("keydown",(e)=>{
   if(!$("#modalTitulo").classList.contains("hidden")) closeTituloModal();
 });
 
-$("#btnSalvarLanc").addEventListener("click", ()=>{
+$("#btnSalvarLanc").addEventListener("click", async (e)=>{
   const data = $("#lData").value;
   const contaId = $("#lConta").value;
   const contaDestinoId = $("#lContaDestino").value;
@@ -1250,6 +1308,7 @@ $("#btnSalvarLanc").addEventListener("click", ()=>{
   const desc = $("#lDesc").value.trim();
   const valor = Number($("#lValor").value);
   const conciliado = $("#lConc").value === "1";
+  const btn = e.currentTarget;
 
   if(tipo === TRANSFERENCIA_TIPO){
     if(state.contas.length < 2){
@@ -1265,6 +1324,7 @@ $("#btnSalvarLanc").addEventListener("click", ()=>{
       return;
     }
 
+    const snapshot = cloneStateSnapshot();
     salvarTransferenciaLancamento({
       data,
       contaOrigemId: contaId,
@@ -1273,7 +1333,7 @@ $("#btnSalvarLanc").addEventListener("click", ()=>{
       valor,
       conciliado
     });
-    saveState();
+    if(!await persistStateOrRollback(snapshot, { button: btn })) return;
     closeLancModal();
     renderAll();
     return;
@@ -1284,6 +1344,7 @@ $("#btnSalvarLanc").addEventListener("click", ()=>{
     return;
   }
 
+  const snapshot = cloneStateSnapshot();
   if(editTransferenciaId){
     const entries = getTransferenciaEntries(editTransferenciaId);
     const keep = entries.find(l => l.id === editLancId) || entries.find(isTransferenciaOrigem) || entries[0] || null;
@@ -1320,7 +1381,7 @@ $("#btnSalvarLanc").addEventListener("click", ()=>{
   } else {
     state.lancamentos.unshift({ id: uid("lanc"), data, contaId, tipo, categoriaId, categoriaIds, desc, valor, conciliado });
   }
-  saveState();
+  if(!await persistStateOrRollback(snapshot, { button: btn })) return;
   closeLancModal();
   renderAll();
 });
@@ -1372,7 +1433,7 @@ function renderContas(){
 
 $("#btnNovaConta").addEventListener("click", ()=> openContaModal(null));
 
-$("#listaContas").addEventListener("click", (e)=>{
+$("#listaContas").addEventListener("click", async (e)=>{
   const btn = e.target.closest("button");
   if(!btn) return;
   const id = btn.dataset.id;
@@ -1381,6 +1442,7 @@ $("#listaContas").addEventListener("click", (e)=>{
   if(act === "edit") openContaModal(id);
   if(act === "del"){
     if(confirm("Excluir esta conta? (lançamentos, títulos e imports dessa conta também serão removidos)")){
+      const snapshot = cloneStateSnapshot();
       state.lancamentos = state.lancamentos.filter(l =>
         l.contaId !== id && l.contaOrigemId !== id && l.contaDestinoId !== id
       );
@@ -1397,13 +1459,13 @@ $("#listaContas").addEventListener("click", (e)=>{
       if(state.contas.length === 0){
         state.contas.push({ id: uid("conta"), nome:"Conta principal", moeda:"BRL", saldoInicial:0 });
       }
-      saveState();
+      if(!await persistStateOrRollback(snapshot, { button: btn })) return;
       renderAll();
     }
   }
 });
 
-$("#listaImports").addEventListener("click", (e)=>{
+$("#listaImports").addEventListener("click", async (e)=>{
   const btn = e.target.closest("button");
   if(!btn) return;
   const id = btn.dataset.id;
@@ -1416,6 +1478,7 @@ $("#listaImports").addEventListener("click", (e)=>{
   }
   if(act === "delImport"){
     if(confirm("Excluir este OFX importado? (vínculos de conciliação serão removidos)")){
+      const snapshot = cloneStateSnapshot();
       const imp = state.imports.find(i=>i.id===id);
       const bankIds = new Set(imp?.txs.map(t=>t.id) || []);
       state.reconciliations = state.reconciliations.filter(r => !bankIds.has(r.bankTxId));
@@ -1434,7 +1497,7 @@ $("#listaImports").addEventListener("click", (e)=>{
       }
 
       state.imports = state.imports.filter(i=>i.id!==id);
-      saveState();
+      if(!await persistStateOrRollback(snapshot, { button: btn })) return;
       renderAll();
     }
   }
@@ -1457,7 +1520,7 @@ $("#btnFecharModalConta").addEventListener("click", closeContaModal);
 $("#btnCancelarConta").addEventListener("click", closeContaModal);
 $("#modalConta").addEventListener("click",(e)=>{ if(e.target.id==="modalConta") closeContaModal(); });
 
-$("#btnSalvarConta").addEventListener("click", ()=>{
+$("#btnSalvarConta").addEventListener("click", async (e)=>{
   const nome = $("#cNome").value.trim();
   const moeda = ($("#cMoeda").value || "BRL").trim().toUpperCase();
   const saldoInicial = Number($("#cSaldo").value);
@@ -1467,13 +1530,14 @@ $("#btnSalvarConta").addEventListener("click", ()=>{
     return;
   }
 
+  const snapshot = cloneStateSnapshot();
   if(editContaId){
     const idx = state.contas.findIndex(c=>c.id===editContaId);
     if(idx>=0) state.contas[idx] = { ...state.contas[idx], nome, moeda, saldoInicial };
   } else {
     state.contas.push({ id: uid("conta"), nome, moeda, saldoInicial });
   }
-  saveState();
+  if(!await persistStateOrRollback(snapshot, { button: e.currentTarget })) return;
   closeContaModal();
   renderAll();
 });
@@ -1497,23 +1561,25 @@ function renderCategorias(){
   }).join("");
 }
 
-$("#btnAddCat").addEventListener("click", ()=>{
+$("#btnAddCat").addEventListener("click", async (e)=>{
   const nome = $("#catNome").value.trim();
   const tipo = $("#catTipo").value;
   if(!nome) return alert("Informe o nome da categoria.");
+  const snapshot = cloneStateSnapshot();
   state.categorias.push({ id: uid("cat"), nome, tipo });
   $("#catNome").value = "";
-  saveState();
+  if(!await persistStateOrRollback(snapshot, { button: e.currentTarget })) return;
   renderAll();
 });
 
-$("#listaCats").addEventListener("click", (e)=>{
+$("#listaCats").addEventListener("click", async (e)=>{
   const btn = e.target.closest("button");
   if(!btn) return;
   const id = btn.dataset.id;
   if(confirm("Excluir categoria? (lançamentos existentes manterão o ID antigo)")){
+    const snapshot = cloneStateSnapshot();
     state.categorias = state.categorias.filter(c=>c.id!==id);
-    saveState();
+    if(!await persistStateOrRollback(snapshot, { button: btn })) return;
     renderAll();
   }
 });
@@ -1559,8 +1625,9 @@ $("#btnImportarOFX").addEventListener("click", async ()=>{
     txs: txs.map(t => ({...t, id: uid("banktx")}))
   };
 
+  const snapshot = cloneStateSnapshot();
   state.imports.push(imp);
-  saveState();
+  if(!await persistStateOrRollback(snapshot, { button: $("#btnImportarOFX") })) return;
   renderAll();
   alert(`Importado: ${imp.txs.length} transações. Vá em "Conciliação".`);
 });
@@ -1708,7 +1775,7 @@ function renderConciliacao(){
         <div class="left">
           ${badge}
           <div>
-            <div><b>${escapeHtml(t.desc || "")}</b></div>
+            <div><b>${escapeHtml(tituloDescricaoText(t))}</b></div>
             <div class="muted">${escapeHtml(t.vencimento)} • ${escapeHtml(t.pessoa||"-")}</div>
             ${categoriaBadgesHtml(getTituloCategoriaIds(t), "-")}
           </div>
@@ -1763,7 +1830,7 @@ $("#titList").addEventListener("click",(e)=>{
 });
 
 // Banco ↔ Lançamento (com criação se não selecionar lançamento)
-$("#btnVincular").addEventListener("click", ()=>{
+$("#btnVincular").addEventListener("click", async (e)=>{
   const contaId = $("#concConta").value;
   const importId = $("#concImport").value;
   const imp = state.imports.find(i=>i.id===importId);
@@ -1782,6 +1849,8 @@ $("#btnVincular").addEventListener("click", ()=>{
     alert("Transação do banco não encontrada.");
     return;
   }
+
+  const snapshot = cloneStateSnapshot();
 
   // Se não selecionou lançamento, cria automático
   if(!selectedLancId){
@@ -1817,15 +1886,16 @@ $("#btnVincular").addEventListener("click", ()=>{
     l.bankTxId = selectedBankTxId;
   }
 
-  saveState();
+  if(!await persistStateOrRollback(snapshot, { button: e.currentTarget })) return;
   renderAll();
 });
 
-$("#btnDesvincular").addEventListener("click", ()=>{
+$("#btnDesvincular").addEventListener("click", async (e)=>{
   if(!selectedBankTxId && !selectedLancId){
     alert("Selecione um item do banco OU um lançamento conciliado.");
     return;
   }
+  const snapshot = cloneStateSnapshot();
   const before = state.reconciliations.length;
   state.reconciliations = state.reconciliations.filter(r => {
     if(selectedBankTxId && r.bankTxId === selectedBankTxId) return false;
@@ -1850,7 +1920,7 @@ $("#btnDesvincular").addEventListener("click", ()=>{
         }
       }
     }
-    saveState();
+    if(!await persistStateOrRollback(snapshot, { button: e.currentTarget })) return;
   }
   selectedBankTxId = null;
   selectedLancId = null;
@@ -1858,7 +1928,7 @@ $("#btnDesvincular").addEventListener("click", ()=>{
   renderAll();
 });
 
-$("#btnSugerir").addEventListener("click", ()=>{
+$("#btnSugerir").addEventListener("click", async (e)=>{
   const contaId = $("#concConta").value;
   const importId = $("#concImport").value;
   const imp = state.imports.find(i=>i.id===importId);
@@ -1871,6 +1941,7 @@ $("#btnSugerir").addEventListener("click", ()=>{
   const pendBank = imp.txs.filter(t => !reconBank.has(t.id));
   const pendLanc = state.lancamentos.filter(l => l.contaId===contaId && !reconLanc.has(l.id));
 
+  const snapshot = cloneStateSnapshot();
   let linked = 0;
 
   for(const bt of pendBank){
@@ -1891,7 +1962,7 @@ $("#btnSugerir").addEventListener("click", ()=>{
     }
   }
 
-  saveState();
+  if(!await persistStateOrRollback(snapshot, { button: e.currentTarget })) return;
   renderAll();
   alert(`Sugestões aplicadas: ${linked} vínculo(s).`);
 });
@@ -1937,7 +2008,7 @@ function textOverlap(a,b){
   return hit;
 }
 
-$("#btnCriarLancDoBanco").addEventListener("click", ()=>{
+$("#btnCriarLancDoBanco").addEventListener("click", async (e)=>{
   const contaId = $("#concConta").value;
   const importId = $("#concImport").value;
   const imp = state.imports.find(i=>i.id===importId);
@@ -1951,6 +2022,7 @@ $("#btnCriarLancDoBanco").addEventListener("click", ()=>{
   const catDesp = state.categorias.find(c=>c.tipo==="DESPESA")?.id || state.categorias[0]?.id;
   const catRec = state.categorias.find(c=>c.tipo==="RECEITA")?.id || state.categorias[0]?.id;
 
+  const snapshot = cloneStateSnapshot();
   let created = 0;
   for(const bt of pendBank){
     const isCredit = Number(bt.amount||0) >= 0;
@@ -1974,7 +2046,7 @@ $("#btnCriarLancDoBanco").addEventListener("click", ()=>{
     created++;
   }
 
-  saveState();
+  if(!await persistStateOrRollback(snapshot, { button: e.currentTarget })) return;
   renderAll();
   alert(`Criados ${created} lançamento(s) a partir do OFX e marcados como conciliados.`);
 });
@@ -2005,13 +2077,14 @@ function novoTitulo({tipo, pessoa, desc, categoriaId, categoriaIds, contaId, val
 function tituloLancamentoPayload(titulo, dataBaixaISO){
   const isAR = titulo.tipo === "AR";
   const categoriaIds = getTituloCategoriaIds(titulo);
+  const desc = tituloDescricaoText(titulo);
   return {
     data: dataBaixaISO,
     contaId: titulo.contaId,
     tipo: isAR ? "RECEITA" : "DESPESA",
     categoriaId: categoriaIds[0] || titulo.categoriaId || "",
     categoriaIds,
-    desc: `${titulo.desc}${titulo.pessoa ? " - " + titulo.pessoa : ""}`,
+    desc: `${desc}${titulo.pessoa ? " - " + titulo.pessoa : ""}`,
     valor: Math.abs(Number(titulo.valor||0)),
     conciliado: !!titulo.bankTxId,
     bankTxId: titulo.bankTxId || null
@@ -2244,7 +2317,7 @@ function criarTitulosDoOFX({contaId, importId}){
 }
 
 // Conciliação: Banco ↔ Título
-$("#btnVincularTitulo").addEventListener("click", ()=>{
+$("#btnVincularTitulo").addEventListener("click", async (e)=>{
   const contaId = $("#concConta").value;
   const importId = $("#concImport").value;
   const imp = state.imports.find(i=>i.id===importId);
@@ -2256,8 +2329,9 @@ $("#btnVincularTitulo").addEventListener("click", ()=>{
   if(!bt) return alert("Transação do banco não encontrada.");
 
   try{
+    const snapshot = cloneStateSnapshot();
     vincularBankTxAoTitulo({ tituloId: selectedTituloId, bankTxId: bt.id, bankDateISO: bt.date });
-    saveState();
+    if(!await persistStateOrRollback(snapshot, { button: e.currentTarget })) return;
     selectedTituloId = null;
     selectedLancId = null;
     renderAll();
@@ -2267,12 +2341,13 @@ $("#btnVincularTitulo").addEventListener("click", ()=>{
   }
 });
 
-$("#btnCriarTitulosDoOFX").addEventListener("click", ()=>{
+$("#btnCriarTitulosDoOFX").addEventListener("click", async (e)=>{
   const contaId = $("#concConta").value;
   const importId = $("#concImport").value;
   if(!importId) return alert("Selecione um OFX.");
+  const snapshot = cloneStateSnapshot();
   const qtd = criarTitulosDoOFX({contaId, importId});
-  saveState();
+  if(!await persistStateOrRollback(snapshot, { button: e.currentTarget })) return;
   renderAll();
   alert(`Criados ${qtd} título(s) a partir do OFX.`);
 });
@@ -2786,13 +2861,14 @@ $("#compraAiResultados")?.addEventListener("click", (e)=>{
   aplicarOfertaPesquisaIA(Number(btn.dataset.idx));
 });
 
-$("#btnSalvarCompra")?.addEventListener("click", ()=>{
+$("#btnSalvarCompra")?.addEventListener("click", async (e)=>{
   const draft = currentCompraDraft();
   if(!draft.desc || !draft.justificativa || !draft.contaId || !draft.categoriaId || !draft.vencimento || !Number.isFinite(draft.valor) || draft.valor <= 0){
     alert("Preencha produto, justificativa, conta, etiqueta, vencimento e valor.");
     return;
   }
 
+  const snapshot = cloneStateSnapshot();
   if(editCompraId){
     const compra = state.compras.find(c => c.id === editCompraId);
     if(!compra) return;
@@ -2802,12 +2878,12 @@ $("#btnSalvarCompra")?.addEventListener("click", ()=>{
     state.compras.unshift(novoPedidoCompra(draft));
   }
 
-  saveState();
+  if(!await persistStateOrRollback(snapshot, { button: e.currentTarget })) return;
   renderAll();
   closeCompraModal();
 });
 
-$("#tbCompras")?.addEventListener("click", (e)=>{
+$("#tbCompras")?.addEventListener("click", async (e)=>{
   const btn = e.target.closest("button");
   if(!btn) return;
   const compraId = btn.dataset.id;
@@ -2819,20 +2895,23 @@ $("#tbCompras")?.addEventListener("click", (e)=>{
     if(act === "edit") openCompraModal(compraId);
     if(act === "openTitle") openTituloDaCompra(compraId);
     if(act === "approve"){
+      const snapshot = cloneStateSnapshot();
       aprovarCompra(compraId);
-      saveState();
+      if(!await persistStateOrRollback(snapshot, { button: btn })) return;
       renderAll();
       alert("Solicitacao aprovada e contas a pagar gerado.");
     }
     if(act === "reject"){
+      const snapshot = cloneStateSnapshot();
       reprovarCompra(compraId);
-      saveState();
+      if(!await persistStateOrRollback(snapshot, { button: btn })) return;
       renderAll();
       alert("Solicitacao reprovada.");
     }
     if(act === "cancel"){
+      const snapshot = cloneStateSnapshot();
       cancelarCompra(compraId);
-      saveState();
+      if(!await persistStateOrRollback(snapshot, { button: btn })) return;
       renderAll();
       alert("Solicitacao cancelada.");
     }
@@ -2868,7 +2947,7 @@ function renderTabelaTitulos(tipo){
   if(busca){
     list = list.filter(t=>{
       const etiquetas = categoriaNamesText(getTituloCategoriaIds(t), "");
-      const s = `${t.desc} ${t.pessoa} ${etiquetas}`.toLowerCase();
+      const s = `${tituloDescricaoText(t)} ${t.pessoa} ${etiquetas}`.toLowerCase();
       return s.includes(busca);
     });
   }
@@ -2877,6 +2956,7 @@ function renderTabelaTitulos(tipo){
 
   tb.innerHTML = list.map(t=>{
     const conta = contaById.get(t.contaId);
+    const desc = tituloDescricaoText(t);
     const st = t.status==="ABERTO" ? `<span class="badge warn">ABERTO</span>`
             : t.status==="BAIXADO" ? `<span class="badge ok">BAIXADO</span>`
             : `<span class="badge bad">CANCELADO</span>`;
@@ -2891,7 +2971,7 @@ function renderTabelaTitulos(tipo){
         <td>${escapeHtml(conta?.nome || "-")}</td>
         <td>${categoriaBadgesHtml(getTituloCategoriaIds(t), "-")}</td>
         <td>${escapeHtml(t.pessoa || "-")}</td>
-        <td>${escapeHtml(t.desc || "")}</td>
+        <td>${escapeHtml(desc)}</td>
         <td class="right"><b>${brl(t.valor)}</b></td>
         <td>${st}</td>
         <td>${anexBadge}</td>
@@ -2910,16 +2990,16 @@ $("#btnFiltrarAR").addEventListener("click", ()=>renderTabelaTitulos("AR"));
 $("#btnNovoAP").addEventListener("click", ()=>openTituloModal(null,"AP"));
 $("#btnNovoAR").addEventListener("click", ()=>openTituloModal(null,"AR"));
 
-$("#tbAP").addEventListener("click",(e)=>{
+$("#tbAP").addEventListener("click", async (e)=>{
   const btn=e.target.closest("button"); if(!btn) return;
-  handleTituloAction(btn.dataset.act, btn.dataset.id);
+  await handleTituloAction(btn.dataset.act, btn.dataset.id, btn);
 });
-$("#tbAR").addEventListener("click",(e)=>{
+$("#tbAR").addEventListener("click", async (e)=>{
   const btn=e.target.closest("button"); if(!btn) return;
-  handleTituloAction(btn.dataset.act, btn.dataset.id);
+  await handleTituloAction(btn.dataset.act, btn.dataset.id, btn);
 });
 
-function handleTituloAction(act, id){
+async function handleTituloAction(act, id, button=null){
   const t = state.titulos.find(x=>x.id===id);
   if(!t) return;
 
@@ -2927,8 +3007,9 @@ function handleTituloAction(act, id){
 
   if(act==="baixar"){
     try{
+      const snapshot = cloneStateSnapshot();
       baixarTitulo(id, toISODate(new Date()));
-      saveState();
+      if(!await persistStateOrRollback(snapshot, { button })) return;
       renderAll();
       alert("Baixado e lançamento criado.");
     }catch(err){
@@ -2938,8 +3019,9 @@ function handleTituloAction(act, id){
 
   if(act==="cancel"){
     if(confirm("Cancelar este título?")){
+      const snapshot = cloneStateSnapshot();
       aplicarStatusTitulo(t, "CANCELADO");
-      saveState();
+      if(!await persistStateOrRollback(snapshot, { button })) return;
       renderAll();
     }
   }
@@ -3029,7 +3111,7 @@ function openTituloModal(id, tipoDefault="AP"){
   $("#tVenc").value = t?.vencimento || toISODate(new Date());
   $("#tConta").value = t?.contaId || (state.contas[0]?.id || "");
   $("#tPessoa").value = t?.pessoa || "";
-  $("#tDesc").value = t?.desc || "";
+  $("#tDesc").value = tituloDescricaoText(t);
   setSelectValues("#tCategoria", getTituloCategoriaIds(t), $("#tCategoria").value);
   $("#tValor").value = t ? Number(t.valor||0) : "";
   $("#tGerarParcelas").checked = false;
@@ -3152,13 +3234,15 @@ $("#tVenc").addEventListener("change", ()=>{
   syncParcelamentoUi();
 });
 
-$("#btnSalvarTitulo").addEventListener("click", ()=>{
+$("#btnSalvarTitulo").addEventListener("click", async (e)=>{
   const d = currentTituloDraft();
   if(!d.vencimento || !d.contaId || !d.categoriaIds.length || !d.desc || !Number.isFinite(d.valor) || d.valor<=0){
     alert("Preencha vencimento, conta, etiquetas, descrição e valor.");
     return;
   }
 
+  const snapshot = cloneStateSnapshot();
+  let nextEditTituloId = editTituloId;
   if(editTituloId){
     const t = state.titulos.find(x=>x.id===editTituloId);
     if(!t) return;
@@ -3178,8 +3262,9 @@ $("#btnSalvarTitulo").addEventListener("click", ()=>{
   } else {
     if(d.gerarParcelas && d.parcelas > 1){
       const createdIds = criarTitulosParcelados(d);
-      editTituloId = createdIds[0] || null;
-      saveState();
+      nextEditTituloId = createdIds[0] || null;
+      if(!await persistStateOrRollback(snapshot, { button: e.currentTarget })) return;
+      editTituloId = nextEditTituloId;
       renderAll();
       if(editTituloId) openTituloModal(editTituloId, d.tipo);
       alert(`${createdIds.length} parcelas criadas com sucesso.`);
@@ -3189,19 +3274,21 @@ $("#btnSalvarTitulo").addEventListener("click", ()=>{
     const t = novoTitulo({ ...d, obs: "" });
     state.titulos.unshift(t);
     aplicarStatusTitulo(t, d.status || "ABERTO");
-    editTituloId = t.id;
+    nextEditTituloId = t.id;
   }
 
-  saveState();
+  if(!await persistStateOrRollback(snapshot, { button: e.currentTarget })) return;
+  editTituloId = nextEditTituloId;
   renderAll();
   openTituloModal(editTituloId, d.tipo);
 });
 
-$("#btnBaixarTitulo").addEventListener("click", ()=>{
+$("#btnBaixarTitulo").addEventListener("click", async (e)=>{
   if(!editTituloId) return;
   try{
+    const snapshot = cloneStateSnapshot();
     baixarTitulo(editTituloId, toISODate(new Date()));
-    saveState();
+    if(!await persistStateOrRollback(snapshot, { button: e.currentTarget })) return;
     renderAll();
     openTituloModal(editTituloId, $("#tTipo").value);
   }catch(err){
@@ -3226,12 +3313,13 @@ $("#btnAddAnexo").addEventListener("click", async ()=>{
   if(!t) return;
 
   try{
+    const snapshot = cloneStateSnapshot();
     const uploaded = await uploadTituloAttachment(file, t);
     if(!uploaded) throw new Error("Upload nao retornou metadados do anexo.");
     t.anexos.push(uploaded);
 
     $("#tAnexoFile").value = "";
-    await saveState();
+    if(!await persistStateOrRollback(snapshot, { button: $("#btnAddAnexo") })) return;
     renderAll();
     openTituloModal(editTituloId, t.tipo);
     previewAnexoId = uploaded.id;
@@ -3258,6 +3346,7 @@ $("#listaAnexos").addEventListener("click", async (e)=>{
   }
   if(act==="del"){
     if(confirm("Remover anexo?")){
+      const snapshot = cloneStateSnapshot();
       const anexo = t.anexos.find(x=>x.id===id);
       t.anexos = t.anexos.filter(x=>x.id!==id);
       if(previewAnexoId===id){ previewAnexoId=null; renderAnexoPreview(null); }
@@ -3266,7 +3355,7 @@ $("#listaAnexos").addEventListener("click", async (e)=>{
       }catch(err){
         console.warn("Falha ao remover arquivo fisico do anexo:", err);
       }
-      await saveState();
+      if(!await persistStateOrRollback(snapshot, { button: btn })) return;
       renderAnexos();
     }
   }
@@ -3457,11 +3546,12 @@ function renderConfig(){
     loadFinanceAiStatus();
   }
 }
-$("#btnSalvarCfg").addEventListener("click", ()=>{
+$("#btnSalvarCfg").addEventListener("click", async (e)=>{
+  const snapshot = cloneStateSnapshot();
   state.config.tolDias = clamp(Number($("#cfgTolDias").value), 0, 30);
   state.config.tolValor = clamp(Number($("#cfgTolValor").value), 0, 999999);
   state.config.scoreMin = clamp(Number($("#cfgScoreMin").value), 0, 100);
-  saveState();
+  if(!await persistStateOrRollback(snapshot, { button: e.currentTarget })) return;
   alert("Config salva.");
 });
 $("#btnRodarAvisos")?.addEventListener("click", ()=> triggerFinanceReminders());
@@ -3480,22 +3570,25 @@ $("#btnExportJSON").addEventListener("click", ()=>{
 $("#btnImportJSON").addEventListener("click", async ()=>{
   const file = $("#jsonFile").files?.[0];
   if(!file) return alert("Selecione um .json de backup.");
+  const snapshot = cloneStateSnapshot();
   try{
     const text = await file.text();
     const data = migrate(JSON.parse(text));
     replaceState(data);
-    saveState();
+    if(!await persistStateOrRollback(snapshot, { button: $("#btnImportJSON") })) return;
     renderAll();
     alert("Backup importado com sucesso.");
-  }catch{
-    alert("JSON inválido.");
+  }catch(err){
+    state = migrate(snapshot);
+    alert(err?.message || "JSON inválido.");
   }
 });
 
-$("#btnReset").addEventListener("click", ()=>{
+$("#btnReset").addEventListener("click", async (e)=>{
   if(confirm("Apagar tudo?")){
+    const snapshot = cloneStateSnapshot();
     replaceState(seed());
-    saveState();
+    if(!await persistStateOrRollback(snapshot, { button: e.currentTarget })) return;
     renderAll();
   }
 });
