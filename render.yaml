@@ -49,7 +49,7 @@ services:
       - key: GUNICORN_THREADS
         value: "4"
       - key: GUNICORN_TIMEOUT
-        value: "120"
+        value: "240"
       - key: AUTOMACAO_APP_DIR
         value: /app/apps/automacao/source
       - key: NANOPONTO_APP_DIR
@@ -88,6 +88,12 @@ services:
         value: /app/apps/shared
       - key: RIOB_BASE_URL
         value: http://127.0.0.1:8898
+      - key: RIOB_APP_PORT
+        value: "8898"
+      - key: RIOB_DB_NAME
+        value: riobranco
+      - key: RB_AGENT_LLM_PROVIDER
+        value: "off"
       - key: RIOB_SSL_VERIFY
         value: "0"
 

@@ -406,9 +406,9 @@ def _env_int(name, default):
         return int(default)
 
 db_config = {
-    "host": _env("DB_HOST", "172.19.92.122"),
-    "user": _env("DB_USER", "root"),
-    "password": _env("DB_PASSWORD", "desde51@"),
+    "host": _env("DB_HOST", "127.0.0.1"),
+    "user": _env("DB_USER", "riobranco"),
+    "password": _env("DB_PASSWORD", ""),
     "database": _env("DB_NAME", "riobranco"),
     "port": _env_int("DB_PORT", 3306),
 }

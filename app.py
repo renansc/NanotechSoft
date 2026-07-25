@@ -1717,6 +1717,19 @@ def riob_proxy_response(app_key="riob", subpath="", embedded=False):
     if not app_visible_to_user({"app_key": app_key}, usuario):
         return jsonify({"erro": "app nao liberado para este usuario"}), 403
 
+    # No Render o RioB compartilha o mesmo container do portal e escuta em
+    # 127.0.0.1. No Compose ele e um servico separado (riob-proxy), portanto
+    # nao deve ser iniciado como subprocesso.
+    riob_target = urllib.parse.urlparse(RIOB_BASE_URL)
+    if riob_target.hostname in {"127.0.0.1", "localhost", "::1"}:
+        if not ensure_local_riob_app("riob"):
+            return render_template(
+                "app_placeholder.html",
+                app_key=app_key,
+                mensagem=app_startup_message("riob", "Nao foi possivel iniciar o RioB local."),
+                **portal_context(usuario),
+            ), 502
+
     route = "/" if embedded else riob_app_path(app_key, subpath)
     parsed_default = urllib.parse.urlparse(route)
     upstream_path = parsed_default.path or "/"
