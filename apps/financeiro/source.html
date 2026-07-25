@@ -77,6 +77,7 @@
             <div class="kpi">
               <div class="kpiLabel">Saldo previsto</div>
               <div class="kpiValue" id="kpiSaldoPrevisto">R$ 0,00</div>
+              <div class="muted">Lançamentos e títulos em aberto do mês</div>
             </div>
           </div>
         </div>
@@ -84,7 +85,7 @@
         <div class="card">
           <div class="cardhead">
             <h2>Status por conta</h2>
-            <div class="muted">Saldos e títulos em aberto por conta.</div>
+            <div class="muted">Saldos e títulos em aberto no mês selecionado.</div>
           </div>
           <div id="boxStatusContas" class="list compact accountStatusList"></div>
         </div>
@@ -128,8 +129,16 @@
             <input type="date" id="fFim" />
             <input type="text" id="fBusca" placeholder="Buscar descrição..." />
             <button class="btn" id="btnFiltrar">Filtrar</button>
+            <button class="btn" id="btnExportarLanc">Exportar Excel</button>
             <button class="btn primary" id="btnNovoLanc">+ Novo</button>
           </div>
+        </div>
+
+        <div class="lancamentosTotals" id="lancamentosTotals">
+          <div><span>Receitas</span><b class="ok" id="totalLancReceitas">R$ 0,00</b></div>
+          <div><span>Despesas</span><b class="bad" id="totalLancDespesas">R$ 0,00</b></div>
+          <div><span>Saldo</span><b id="totalLancSaldo">R$ 0,00</b></div>
+          <div><span>Registros</span><b id="totalLancRegistros">0</b></div>
         </div>
 
         <div class="tableWrap">

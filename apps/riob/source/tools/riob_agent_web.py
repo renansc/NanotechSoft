@@ -6468,32 +6468,13 @@ def _sales_group_aliases(group_code: str, label: str, category: str) -> list[str
     return cleaned
 
 
-DEFAULT_SALES_GROUP_CATALOG = (
-    ("001004", "PET 2L", "PET 2L"),
-    ("001005", "PET 600ML", "PET 600ML"),
-    ("001006", "PET 200ML", "PET 200ML"),
-)
-
-
 @lru_cache(maxsize=1)
 def _sales_group_catalog() -> list[dict[str, str | list[str]]]:
-    catalog: list[dict[str, str | list[str]]] = []
-    seen_codes: set[str] = set()
-    for group_code, label, category in DEFAULT_SALES_GROUP_CATALOG:
-        aliases = _sales_group_aliases(group_code, label, category)
-        catalog.append({
-            "key": normalize(label).replace(" ", "") or group_code,
-            "label": label,
-            "group_code": group_code,
-            "category": category,
-            "aliases": aliases,
-        })
-        seen_codes.add(group_code)
-
     config_path = ROOT / "Relatorios" / "config-rel-vendas"
     if not config_path.exists():
-        return catalog
+        return []
 
+    catalog: list[dict[str, str | list[str]]] = []
     current_category = ""
     for raw_line in config_path.read_text(encoding="utf-8", errors="replace").splitlines():
         line = raw_line.strip()
@@ -6508,8 +6489,6 @@ def _sales_group_catalog() -> list[dict[str, str | list[str]]]:
             continue
         group_code = f"{group_match.group(1)}{group_match.group(2)}"
         label = _as_str(group_match.group(3))
-        if group_code in seen_codes:
-            continue
         aliases = _sales_group_aliases(group_code, label, current_category)
         catalog.append({
             "key": normalize(label).replace(" ", "") or group_code,
@@ -7718,7 +7697,9 @@ def handle_chat(payload: dict) -> dict:
 
 def handle_chat_stream(payload: dict):
     action = (payload.get("action") or "").strip()
-    if action:
+    if action or not _agent_llm_enabled():
+        if not action:
+            yield {"type": "status", "reply": "Consultando o Bot 1 local..."}
         yield {"type": "final", **handle_chat(payload)}
         return
     yield from _handle_chat_with_llm_stream(payload)

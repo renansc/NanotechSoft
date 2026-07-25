@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}{{ app_nome }} - NanotechSoft{% endblock %}
+{% block body %}
+<div class="app-shell">
+  {% set topbar_title = "NanotechSoft" %}
+  {% set topbar_subtitle = app_nome %}
+  {% include "_topbar.html" %}
+  {% include "_menu.html" %}
+
+  <main class="content riob-integrated-page">
+    <iframe
+      id="riobIntegratedFrame"
+      class="riob-integrated-frame"
+      src="{{ frame_url }}"
+      title="{{ app_nome }}"
+      loading="eager"
+      allow="camera; microphone; clipboard-read; clipboard-write; fullscreen"
+    ></iframe>
+  </main>
+</div>
+<style>
+.riob-integrated-page {
+  padding: 0;
+  overflow: hidden;
+}
+.riob-integrated-frame {
+  display: block;
+  width: 100%;
+  height: calc(100vh - 118px);
+  height: calc(100dvh - 118px);
+  min-height: 0;
+  border: 0;
+  background: transparent;
+}
+@media (max-width: 760px) {
+  .riob-integrated-frame {
+    height: calc(100vh - 72px);
+    height: calc(100dvh - 72px);
+  }
+}
+</style>
+<script>
+(function () {
+  var frame = document.getElementById("riobIntegratedFrame");
+  if (!frame) return;
+
+  function sendHash() {
+    var hash = window.location.hash || "";
+    try {
+      if (frame.contentWindow && frame.contentWindow.location.hash !== hash) {
+        frame.contentWindow.location.hash = hash;
+      }
+    } catch (_) {}
+  }
+
+  frame.addEventListener("load", sendHash);
+  window.addEventListener("hashchange", sendHash);
+})();
+</script>
+{% endblock %}

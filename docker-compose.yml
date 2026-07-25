@@ -38,6 +38,123 @@ services:
       retries: 30
       start_period: 30s
 
+  riob-db:
+    image: mariadb:10.11.16-jammy
+    container_name: riobranco-db
+    restart: unless-stopped
+    environment:
+      MARIADB_DATABASE: ${RB_DB_NAME:-riobranco}
+      MARIADB_USER: ${RB_DB_USER:-riobranco}
+      MARIADB_PASSWORD: ${RB_DB_PASSWORD:-riobranco123}
+      MARIADB_ROOT_PASSWORD: ${RB_DB_ROOT_PASSWORD:-root123}
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    ports:
+      - "${RB_DB_BIND:-127.0.0.1}:${RB_DB_PORT_HOST:-3306}:3306"
+    volumes:
+      - riob_db_data:/var/lib/mysql
+      - ./apps/riob/source/sql/init_riobranco.sql:/docker-entrypoint-initdb.d/01-init_riobranco.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mariadb-admin ping -h 127.0.0.1 --protocol=tcp -uroot -p\"$${MARIADB_ROOT_PASSWORD}\" --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 120s
+
+  riob-app:
+    container_name: riobranco-app
+    image: riob-app:latest
+    build:
+      context: ./apps/riob/source
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      riob-db:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      APP_HOST: 0.0.0.0
+      APP_PORT: 8080
+      APP_HTTPS: 0
+      FLASK_SECRET: ${RB_FLASK_SECRET:-riob-local-secret}
+      DB_HOST: riob-db
+      DB_PORT: 3306
+      DB_NAME: ${RB_DB_NAME:-riobranco}
+      DB_USER: ${RB_DB_USER:-riobranco}
+      DB_PASSWORD: ${RB_DB_PASSWORD:-riobranco123}
+      UI_USER: ${RB_UI_USER:-admin}
+      UI_PASS: ${RB_UI_PASS:-admin123}
+      ESXI_HOST: ${ESXI_HOST:-192.168.200.198}
+      ESXI_USER: ${ESXI_USER:-root}
+      ESXI_PASS: ${ESXI_PASS:-}
+      ESXI_SSH_PORT: ${ESXI_SSH_PORT:-22}
+      RB_FREEPBX_HOST: ${RB_FREEPBX_HOST:-192.168.200.253}
+      RB_FREEPBX_SSH_PORT: ${RB_FREEPBX_SSH_PORT:-22}
+      RB_FREEPBX_SSH_USER: ${RB_FREEPBX_SSH_USER:-}
+      RB_FREEPBX_SSH_PASS: ${RB_FREEPBX_SSH_PASS:-}
+      RB_FREEPBX_PJSIP_TRANSPORT: ${RB_FREEPBX_PJSIP_TRANSPORT:-0.0.0.0-wss}
+      RB_FREEPBX_PJSIP_ALLOW: ${RB_FREEPBX_PJSIP_ALLOW:-ulaw,alaw}
+      RB_ENABLE_HTTPS: ${RB_ENABLE_HTTPS:-1}
+      RB_HTTP_PORT: ${RB_HTTP_PORT:-8898}
+      RB_HTTPS_PORT: ${RB_HTTPS_PORT:-8899}
+      RB_SERVER_NAME: ${RB_SERVER_NAME:-localhost}
+      RB_PUBLIC_BASE_URL: ${RB_PUBLIC_BASE_URL:-https://localhost:8899}
+      RB_PROJECT_NAME: ${RB_PROJECT_NAME:-RioBranco}
+      RB_COMPANY_NAME: ${RB_COMPANY_NAME:-RioBranco}
+      RB_COMPANY_CNPJ: ${RB_COMPANY_CNPJ:-20.984.401/0001-30}
+      RB_INTERNAL_IP: ${RB_INTERNAL_IP:-192.168.200.10}
+      RB_AGENT_LLM_PROVIDER: "off"
+      RB_AGENT_WEB_ENABLED: ${RB_AGENT_WEB_ENABLED:-1}
+      RB_AGENT_WEB_TIMEOUT: ${RB_AGENT_WEB_TIMEOUT:-12}
+      RB_AGENT_WEB_BUDGET: ${RB_AGENT_WEB_BUDGET:-20}
+      RB_DATA_DIR: /data/app
+      RB_DB_BACKUP_DIR: /backups
+      CAMERAS_DATA_DIR: /data/cameras
+      RB_AUTOMACAO_MONITOR_CONTAINER_PATH: /opt/automacao-monitor
+      RB_IMPORTAR_XML_LEGACY_DIR: /legacy/ImportarXml
+      RB_GESTOR_EMAIL_LEGACY_DIR: /legacy/GestorEmails
+      RB_MIGRATE_LEGACY_SERVICES: ${RB_MIGRATE_LEGACY_SERVICES:-1}
+      RB_SYNC_ABASTECIMENTOS_XML_STARTUP: ${RB_SYNC_ABASTECIMENTOS_XML_STARTUP:-0}
+      RB_ENV: ${RB_ENV:-producao}
+      APP_ENV: ${RB_ENV:-producao}
+      RB_EMAIL_DELETE_FROM_SERVER: ${RB_EMAIL_DELETE_FROM_SERVER:-0}
+      RB_EMAIL_AUTO_IMPORT: ${RB_EMAIL_AUTO_IMPORT:-1}
+      RB_EMAIL_AUTO_INTERVAL_MINUTES: ${RB_EMAIL_AUTO_INTERVAL_MINUTES:-5}
+      RB_EMAIL_TIMEZONE: ${RB_EMAIL_TIMEZONE:-America/Sao_Paulo}
+    volumes:
+      - riob_app_data:/data/app
+      - riob_cameras_data:/data/cameras
+      - ./apps/riob/source/cameras/index.html:/app/cameras/index.html:ro
+      - ./apps/riob/source/backupsSql:/backups
+      - ./apps/riob/source/Relatorios:/app/Relatorios:ro
+      - ./apps/riob/source/esxi:/opt/vsphere-flask-client:ro
+      - ./apps/automacao/source:/opt/automacao-monitor:ro
+      - ./apps/riob/source/certs:/app/certs:ro
+      - ./apps/riob/source/ImportarXml:/legacy/ImportarXml:ro
+      - ./apps/riob/source/GestorEmails:/legacy/GestorEmails:ro
+
+  riob-proxy:
+    image: nginx:1.27-alpine
+    container_name: riobranco-proxy
+    restart: unless-stopped
+    depends_on:
+      riob-app:
+        condition: service_started
+    environment:
+      RB_ENABLE_HTTPS: ${RB_ENABLE_HTTPS:-1}
+      RB_SERVER_NAME: ${RB_SERVER_NAME:-localhost}
+      RB_HTTPS_PORT: ${RB_HTTPS_PORT:-8899}
+    ports:
+      - "0.0.0.0:${RB_HTTP_PORT:-8898}:80"
+      - "0.0.0.0:${RB_HTTPS_PORT:-8899}:443"
+    volumes:
+      - ./apps/riob/source/deploy/nginx/http.conf.template:/etc/nginx/riobranco-http.conf.template:ro
+      - ./apps/riob/source/deploy/nginx/https.conf.template:/etc/nginx/riobranco-https.conf.template:ro
+      - ./apps/riob/source/deploy/nginx/select-config.sh:/docker-entrypoint.d/40-select-config.sh:ro
+      - ./apps/riob/source/certs:/etc/nginx/certs:ro
+
   app:
     container_name: nanotechsoft-app
     build:
@@ -49,6 +166,10 @@ services:
         condition: service_healthy
       pacs-postgres:
         condition: service_healthy
+      riob-proxy:
+        condition: service_started
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       FLASK_SECRET: ${FLASK_SECRET:-notechsoft-dev-secret}
       NS_DB_HOST: mysql
@@ -75,7 +196,7 @@ services:
       RAIOXPACS_PGSSLMODE: ${RAIOXPACS_PGSSLMODE:-prefer}
       RAIOXPACS_AUTO_BOOTSTRAP_SCHEMA: ${RAIOXPACS_AUTO_BOOTSTRAP_SCHEMA:-1}
       NANOTECH_SHARED_DIR: ${NANOTECH_SHARED_DIR:-/app/apps/shared}
-      RIOB_BASE_URL: ${RIOB_BASE_URL:-http://127.0.0.1:8898}
+      RIOB_BASE_URL: ${RIOB_BASE_URL:-https://riob-proxy}
       RIOB_SSL_VERIFY: ${RIOB_SSL_VERIFY:-0}
     ports:
       - "${NOTECHSOFT_APP_PORT:-5600}:5600"
@@ -91,3 +212,9 @@ services:
 volumes:
   notechsoft_mysql:
   notechsoft_pacs_postgres:
+  riob_db_data:
+    name: riob_db_data
+  riob_app_data:
+    name: riob_app_data
+  riob_cameras_data:
+    name: riob_cameras_data

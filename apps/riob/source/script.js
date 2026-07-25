@@ -4,16 +4,17 @@
 
 let fretes = [];
 let freteKanbanFiltro = "";
-const FRETE_AUTO_ARQUIVO_HORAS = 24;
+const FRETE_ARQUIVO_MANUAL_HORAS = 24;
+const FRETE_AUTO_ARQUIVO_HORAS = 48;
 const FRETE_AUTO_SAVE_DELAY_MS = 900;
 const ESTOQUE_CAMERA_SCAN_INTERVAL_MS = 450;
 const freteDraftState = new Map();
 
 let cacheCadastros = {
   colaboradores: null,
-  motoristas: null,  // compatibilidade com APIs antigas
   veiculos: null,
   cargas: null,
+  rotasCargas: null,
 };
 
 let cacheUsuarios = null;
@@ -94,6 +95,7 @@ let manutencaoOcrDraft = null;
 let manutencaoItensDraft = [];
 let manutencaoXmlPreLancamentoId = 0;
 let manutencaoXmlPendencias = [];
+let manutencaoXmlPendenciasSelecionadas = new Set();
 let estoqueState = {
   view: "lancar",
   conferencias: [],
@@ -106,6 +108,12 @@ let estoqueState = {
   posicaoRows: [],
   posicaoMeta: {},
   movimentos: [],
+  rastreioLotes: [],
+  rastreioLotesFiltro: "",
+  rastreioResultado: null,
+  rastreioInicializado: false,
+  lotesOperacionais: [],
+  lotesOperacionaisDetalhe: null,
   importacoesXml: [],
   importacoesXmlMeta: {},
   importacoesXmlSelecionadas: [],
@@ -342,6 +350,12 @@ async function editarCadastro(tipo, id, nomeAtual) {
     const novoVeiculo = prompt("Numero do veiculo:", veiculoAtual);
     if (novoVeiculo == null) return;
     payload.veiculo_numero = (novoVeiculo || "").trim();
+    const novaRota = prompt("Rota:", (cargaAtual.rota || "").toString().trim());
+    if (novaRota == null) return;
+    payload.rota = (novaRota || "").trim();
+    const novasCidades = prompt("Cidades da carga:", (cargaAtual.cidade || cargaAtual.carga_cidades || "").toString().trim());
+    if (novasCidades == null) return;
+    payload.cidade = _normalizarCidadesCargaTexto(novasCidades).join(" - ");
   }
 
   await fetch(`/api/${tipo}/${id}`, {
@@ -363,6 +377,17 @@ async function salvarCadastro(tipo, inputId) {
   if (tipo === "cargas") {
     const veiculoNumero = (document.getElementById("cargasVeiculoNumero")?.value || "").trim();
     if (veiculoNumero) payload.veiculo_numero = veiculoNumero;
+    const rotaId = document.getElementById("cargasRotaSelect")?.value || "";
+    const rotaSelecionada = rotaId
+      ? (cacheCadastros.rotasCargas || []).find((rota) => String(rota.id) === String(rotaId))
+      : null;
+    const cidadesManuais = _normalizarCidadesCargaTexto(document.getElementById("cargasCidadesManual")?.value || "");
+    if (rotaSelecionada) {
+      payload.rota = rotaSelecionada.nome || "";
+      payload.cidade = (Array.isArray(rotaSelecionada.cidades) ? rotaSelecionada.cidades : []).join(" - ");
+    } else if (cidadesManuais.length) {
+      payload.cidade = cidadesManuais.join(" - ");
+    }
   }
 
   const endpoint = `/api/${tipo}`;
@@ -385,6 +410,10 @@ async function salvarCadastro(tipo, inputId) {
   if (tipo === "cargas") {
     const veiculoInput = document.getElementById("cargasVeiculoNumero");
     if (veiculoInput) veiculoInput.value = "";
+    const rotaSelect = document.getElementById("cargasRotaSelect");
+    if (rotaSelect) rotaSelect.value = "";
+    const cidadesInput = document.getElementById("cargasCidadesManual");
+    if (cidadesInput) cidadesInput.value = "";
   }
 
   // Invalida cache (para selects e cards)
@@ -394,6 +423,97 @@ async function salvarCadastro(tipo, inputId) {
   await carregarSelectsNovoFrete();
 
   try { await carregarSelectsDevolucao?.(); } catch {}
+}
+
+function _normalizarCidadesCargaTexto(valor) {
+  const partes = Array.isArray(valor)
+    ? valor
+    : String(valor || "").split(/\r?\n|[;,|]+|\s+-\s+/);
+  const vistos = new Set();
+  return partes
+    .map((item) => String(item || "").replace(/\s+/g, " ").trim())
+    .filter((cidade) => {
+      if (!cidade) return false;
+      const key = cidade.toLowerCase();
+      if (vistos.has(key)) return false;
+      vistos.add(key);
+      return true;
+    });
+}
+
+function _rotasCargasOptions(selectedId = "") {
+  const selected = selectedId == null ? "" : String(selectedId);
+  return `<option value="">Sem rota cadastrada</option>` + _ordenarListaNatural(cacheCadastros.rotasCargas || [])
+    .map((rota) => `<option value="${_escAttr(rota.id)}"${String(rota.id) === selected ? " selected" : ""}>${_escHtml(rota.nome || "-")}</option>`)
+    .join("");
+}
+
+function aplicarRotaSelecionadaCarga() {
+  const rotaId = document.getElementById("cargasRotaSelect")?.value || "";
+  const rota = (cacheCadastros.rotasCargas || []).find((item) => String(item.id) === String(rotaId));
+  const cidadesInput = document.getElementById("cargasCidadesManual");
+  if (cidadesInput && rota) {
+    cidadesInput.value = (Array.isArray(rota.cidades) ? rota.cidades : []).join("\n");
+  }
+}
+
+function limparCargaRotaForm() {
+  const idInput = document.getElementById("cargaRotaId");
+  const nomeInput = document.getElementById("cargaRotaNome");
+  const cidadesInput = document.getElementById("cargaRotaCidades");
+  const btn = document.getElementById("btnSalvarCargaRota");
+  if (idInput) idInput.value = "";
+  if (nomeInput) nomeInput.value = "";
+  if (cidadesInput) cidadesInput.value = "";
+  if (btn) btn.textContent = "Salvar rota";
+}
+
+async function salvarCargaRota() {
+  const id = (document.getElementById("cargaRotaId")?.value || "").trim();
+  const nome = (document.getElementById("cargaRotaNome")?.value || "").trim();
+  const cidades = _normalizarCidadesCargaTexto(document.getElementById("cargaRotaCidades")?.value || "");
+  if (!nome) return alert("Informe o nome da rota.");
+  if (!cidades.length) return alert("Informe ao menos uma cidade da rota.");
+
+  const endpoint = id ? `/api/cargas/rotas/${encodeURIComponent(id)}` : "/api/cargas/rotas";
+  const resp = await apiFetch(endpoint, {
+    method: id ? "PUT" : "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ nome, cidades }),
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok || data?.ok === false) {
+    alert(data?.erro || "Nao foi possivel salvar a rota.");
+    return;
+  }
+  cacheCadastros.rotasCargas = null;
+  limparCargaRotaForm();
+  await renderCadastros();
+}
+
+function editarCargaRota(id) {
+  const rota = (cacheCadastros.rotasCargas || []).find((item) => Number(item.id) === Number(id));
+  if (!rota) return;
+  const idInput = document.getElementById("cargaRotaId");
+  const nomeInput = document.getElementById("cargaRotaNome");
+  const cidadesInput = document.getElementById("cargaRotaCidades");
+  const btn = document.getElementById("btnSalvarCargaRota");
+  if (idInput) idInput.value = rota.id;
+  if (nomeInput) nomeInput.value = rota.nome || "";
+  if (cidadesInput) cidadesInput.value = (Array.isArray(rota.cidades) ? rota.cidades : []).join("\n");
+  if (btn) btn.textContent = "Atualizar rota";
+}
+
+async function excluirCargaRota(id) {
+  if (!confirm("Deseja excluir esta rota?")) return;
+  const resp = await apiFetch(`/api/cargas/rotas/${encodeURIComponent(id)}`, { method: "DELETE" });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok || data?.ok === false) {
+    alert(data?.erro || "Nao foi possivel excluir a rota.");
+    return;
+  }
+  cacheCadastros.rotasCargas = null;
+  await renderCadastros();
 }
 
 async function importarCargasCsv() {
@@ -707,11 +827,7 @@ function cadastroEmptyItem(msg) {
 function _buscarColaboradorCadastro(colaboradorId){
   if (!colaboradorId) return null;
   const idStr = String(colaboradorId);
-  return (
-    (cacheCadastros.colaboradores || []).find((item) => String(item.id) === idStr) ||
-    (cacheCadastros.motoristas || []).find((item) => String(item.id) === idStr) ||
-    null
-  );
+  return (cacheCadastros.colaboradores || []).find((item) => String(item.id) === idStr) || null;
 }
 
 function _colaboradorTemFuncao(colaborador, funcao){
@@ -802,6 +918,7 @@ async function renderCadastros() {
   const colaboradores = _ordenarListaNatural(cacheCadastros.colaboradores || []);
   const veiculos = _ordenarListaNatural(cacheCadastros.veiculos || []);
   const cargas = _ordenarListaNatural(cacheCadastros.cargas || []);
+  const rotasCargas = _ordenarListaNatural(cacheCadastros.rotasCargas || []);
 
   const listaColaboradores = document.getElementById("listaMotoristas");
   if (listaColaboradores) {
@@ -821,6 +938,10 @@ async function renderCadastros() {
           <div style="display:flex; flex-direction:column; gap:2px;">
             <span>${_escHtml(d.nome || d.optionLabel || "-")}</span>
             <small style="opacity:.75;">${_escHtml(d.veiculo_numero ? `Veiculo ${d.veiculo_numero}` : "Sem veiculo")}</small>
+            ${(d.rota || d.cidade) ? `<small style="opacity:.75;">${_escHtml([
+              d.rota ? `Rota ${d.rota}` : "",
+              d.cidade || "",
+            ].filter(Boolean).join(" | "))}</small>` : ""}
           </div>
           <div>
             <button onclick="editarCadastro('cargas', ${d.id}, '${_escJsString(d.nome)}')">✏</button>
@@ -829,6 +950,28 @@ async function renderCadastros() {
         </li>
       `)
       .join("") : cadastroEmptyItem("Nenhuma carga cadastrada.");
+  }
+
+  const selectRotasCarga = document.getElementById("cargasRotaSelect");
+  if (selectRotasCarga) {
+    const selected = selectRotasCarga.value || "";
+    selectRotasCarga.innerHTML = _rotasCargasOptions(selected);
+  }
+
+  const listaRotas = document.getElementById("listaCargasRotas");
+  if (listaRotas) {
+    listaRotas.innerHTML = rotasCargas.length ? rotasCargas.map((rota) => `
+      <li>
+        <div style="display:flex; flex-direction:column; gap:2px;">
+          <span>${_escHtml(rota.nome || "-")}</span>
+          <small style="opacity:.75;">${_escHtml((Array.isArray(rota.cidades) ? rota.cidades : []).join(" - ") || "Sem cidades")}</small>
+        </div>
+        <div>
+          <button type="button" onclick="editarCargaRota(${Number(rota.id)})">✏</button>
+          <button type="button" onclick="excluirCargaRota(${Number(rota.id)})">❌</button>
+        </div>
+      </li>
+    `).join("") : cadastroEmptyItem("Nenhuma rota cadastrada.");
   }
 
   if (window.__cargasView === "escala") {
@@ -1291,7 +1434,6 @@ async function salvarColaboradorCadastro() {
   _limparFormularioNovoColaboradorUsuario();
 
   cacheCadastros.colaboradores = null;
-  cacheCadastros.motoristas = null;  // manter compatibilidade
   cacheUsuarios = null;  // limpar cache de usuários também
   await renderCadastros();
   await carregarSelectsNovoFrete();
@@ -1331,7 +1473,6 @@ async function salvarColaboradorLinha(id) {
   }
 
   cacheCadastros.colaboradores = null;
-  cacheCadastros.motoristas = null;  // manter compatibilidade
   cacheUsuarios = null;
   await renderCadastros();
   await carregarSelectsNovoFrete();
@@ -1342,14 +1483,16 @@ async function ensureCadastrosCache() {
   if (!cacheCadastros.colaboradores) {
     cacheCadastros.colaboradores = _ordenarListaNatural(await (await apiFetch("/api/colaboradores")).json());
   }
-  if (!cacheCadastros.motoristas) {
-    cacheCadastros.motoristas = _ordenarListaNatural(await (await apiFetch("/api/motoristas")).json());
-  }
   if (!cacheCadastros.veiculos) {
     cacheCadastros.veiculos = _ordenarListaNatural(await (await apiFetch("/api/veiculos")).json());
   }
   if (!cacheCadastros.cargas) {
     cacheCadastros.cargas = _ordenarListaNatural(await (await apiFetch("/api/cargas")).json());
+  }
+  if (!cacheCadastros.rotasCargas) {
+    const resp = await apiFetch("/api/cargas/rotas");
+    const data = await resp.json().catch(() => ({}));
+    cacheCadastros.rotasCargas = _ordenarListaNatural(Array.isArray(data?.rotas) ? data.rotas : []);
   }
 }
 
@@ -1391,7 +1534,9 @@ function _resolverEntregadorPadrao(motoristaId, entregadorId){
 
 function _listaColaboradoresEscalaApoio() {
   return _ordenarListaNatural((cacheCadastros.colaboradores || []).filter((item) => (
-    _colaboradorTemFuncao(item, "entregador") || _colaboradorTemFuncao(item, "ajudante")
+    _colaboradorTemFuncao(item, "entregador") ||
+    _colaboradorTemFuncao(item, "ajudante") ||
+    _colaboradorTemFuncao(item, "motorista")
   )));
 }
 
@@ -1399,7 +1544,9 @@ function optionsFromEscalaApoio(selectedId, motoristaId = null) {
   const motorista = _buscarColaboradorCadastro(motoristaId);
   const selecionado = _buscarColaboradorCadastro(selectedId);
   const podeApoiar = selecionado && (
-    _colaboradorTemFuncao(selecionado, "entregador") || _colaboradorTemFuncao(selecionado, "ajudante")
+    _colaboradorTemFuncao(selecionado, "entregador") ||
+    _colaboradorTemFuncao(selecionado, "ajudante") ||
+    _colaboradorTemFuncao(selecionado, "motorista")
   );
   const fallback = selecionado && !podeApoiar
     ? { ...selecionado, optionLabel: `${selecionado.nome} (sem perfil de apoio)` }
@@ -1411,6 +1558,43 @@ function optionsFromEscalaApoio(selectedId, motoristaId = null) {
     selectedFallbackItem: fallback,
     emptyLabel,
   });
+}
+
+function _atualizarOptionsApoioFrete(selectEl, motoristaId = null, selectedId = null) {
+  if (!selectEl) return;
+  const selected = selectedId == null ? selectEl.value : selectedId;
+  selectEl.innerHTML = optionsFromEscalaApoio(selected, motoristaId);
+}
+
+function _atualizarApoioNovoFrete(selectedId = null) {
+  const motoristaId = document.getElementById("novoFreteMotorista")?.value || null;
+  const apoioSelect = document.getElementById("novoFreteEntregador");
+  _atualizarOptionsApoioFrete(apoioSelect, motoristaId, selectedId);
+}
+
+function _marcarOpcaoAtual(selectEl, selectedId) {
+  if (!selectEl || !selectedId) return;
+  const option = Array.from(selectEl.options || []).find(
+    (item) => String(item.value) === String(selectedId)
+  );
+  if (!option) return;
+  option.textContent = `${option.textContent.replace(/\s+\(atual\)$/i, "")} (atual)`;
+}
+
+function _aplicarEquipeAtualNovoFrete() {
+  const veiculoSelect = document.getElementById("novoFreteVeiculo");
+  const motoristaSelect = document.getElementById("novoFreteMotorista");
+  const apoioSelect = document.getElementById("novoFreteEntregador");
+  if (!veiculoSelect || !motoristaSelect || !apoioSelect) return;
+
+  const veiculo = _buscarVeiculoCadastro(veiculoSelect.value);
+  const motoristaAtual = Number(veiculo?.motorista_atual_id || 0) || null;
+  const ajudanteAtual = Number(veiculo?.ajudante_atual_id || 0) || null;
+
+  motoristaSelect.value = motoristaAtual ? String(motoristaAtual) : "";
+  _atualizarApoioNovoFrete(ajudanteAtual);
+  _marcarOpcaoAtual(motoristaSelect, motoristaAtual);
+  _marcarOpcaoAtual(apoioSelect, ajudanteAtual);
 }
 
 async function preencherSelectColaboradores(selectId, funcao, textoPadrao, selectedId = "") {
@@ -3557,6 +3741,154 @@ async function carregarRelatorioVendas(){
   renderRelatorioVendas(data || {});
 }
 
+function renderRelatorioPrecoMedioVendas(payload = {}){
+  vendasState.lastPayload = payload;
+  vendasState.tipoRelatorio = "preco_medio";
+  const resumo = payload?.resumo_geral || {};
+  const linhas = Array.isArray(payload?.precos_medios_vendedor_cidade) ? payload.precos_medios_vendedor_cidade : [];
+  const categoriasPayload = Array.isArray(payload?.categorias) ? payload.categorias : [];
+  const categorias = categoriasPayload.length ? categoriasPayload : Array.from(new Set(
+    linhas.flatMap((item) => Object.keys(item?.categorias || {}))
+  ));
+  const vendedores = Array.isArray(payload?.vendedores) ? payload.vendedores : [];
+  const arquivo = payload?.arquivo || {};
+  const vendedorFiltro = payload?.filtros?.vendedor || document.getElementById("vendasPrecoVendedor")?.value || "";
+  const normalizarPrecoOpcional = (valor) => {
+    if (typeof valor === "number") return Number.isFinite(valor) ? valor : 0;
+    const texto = String(valor ?? "").trim();
+    if (!texto) return 0;
+    const normalizado = texto
+      .replace(/R\$\s*/g, "")
+      .replace(/\./g, "")
+      .replace(/,/g, ".");
+    const numero = Number(normalizado);
+    return Number.isFinite(numero) ? numero : 0;
+  };
+  const fmtPrecoOpcional = (valor) => {
+    const numero = normalizarPrecoOpcional(valor);
+    return numero > 0 ? _fmtMoneyVendas(numero) : "-";
+  };
+
+  _vendasPreencherSelectVendedores(vendedores, vendedorFiltro, "vendasPrecoVendedor");
+
+  const infoEl = document.getElementById("vendasRelArquivoInfo");
+  if (infoEl) {
+    const parts = [
+      `Arquivo: ${arquivo.nome || "Base atual"}`,
+      `Atualizado em: ${arquivo.atualizado_em || "-"}`,
+      "Relatorio: Preco Medio por Cidade, Cliente e Categoria",
+    ];
+    if (vendedorFiltro) parts.push(`Vendedor: ${vendedorFiltro}`);
+    infoEl.textContent = parts.join(" | ");
+  }
+
+  const cardsEl = document.getElementById("vendasPrecoResumoCards");
+  if (cardsEl) {
+    cardsEl.innerHTML = _renderCardsVendasResumo([
+      ["Linhas", _fmtNumVendas(resumo.linhas || resumo.grupos)],
+      ["Vendedores", _fmtNumVendas(resumo.vendedores)],
+      ["Cidades", _fmtNumVendas(resumo.cidades)],
+      ["Clientes", _fmtNumVendas(resumo.clientes)],
+      ["Categorias", _fmtNumVendas(resumo.categorias)],
+    ]);
+  }
+
+  const head = document.getElementById("vendasPrecoHead");
+  const totalCols = Math.max(1, categorias.length) + 1;
+  if (head) {
+    head.innerHTML = `
+      <tr>
+        <th>Cliente</th>
+        ${categorias.map((categoria) => `<th>${_escHtml(categoria)}</th>`).join("")}
+      </tr>
+    `;
+  }
+
+  const renderCategoriaCell = (dados) => {
+    if (!dados) return "<td>-</td>";
+    const precos = dados.precos_praticados || "-";
+    const mediaCidade = fmtPrecoOpcional(dados.media_cidade || dados.preco_medio);
+    return `
+      <td>
+        <div><strong>Praticado:</strong> ${_escHtml(precos)}</div>
+        <div>Média cidade: ${_escHtml(mediaCidade)}</div>
+      </td>
+    `;
+  };
+
+  const body = document.getElementById("vendasPrecoBody");
+  if (body) {
+    const rows = [];
+    let cidadeAtual = "";
+    let vendedorAtual = "";
+    linhas.forEach((item) => {
+      const cidade = item.cidade || "SEM CIDADE";
+      const vendedorChave = item.vendedor_chave || "";
+      if (cidade !== cidadeAtual || vendedorChave !== vendedorAtual) {
+        const rotuloCidade = vendedorFiltro
+          ? `Cidade: ${cidade}`
+          : `Cidade: ${cidade}${item.vendedor ? ` | Vendedor: ${item.vendedor}` : ""}`;
+        rows.push(`<tr style="font-weight:700;background:#e0f2fe;"><td colspan="${totalCols}">${_escHtml(rotuloCidade)}</td></tr>`);
+        cidadeAtual = cidade;
+        vendedorAtual = vendedorChave;
+      }
+      const isResumoCidade = item.tipo_linha === "resumo_cidade";
+      const rowStyle = isResumoCidade ? ' style="font-weight:700;background:#fde68a;"' : "";
+      rows.push(`
+      <tr${rowStyle}>
+        <td>${_escHtml(item.cliente || "-")}</td>
+        ${categorias.map((categoria) => renderCategoriaCell((item.categorias || {})[categoria])).join("")}
+      </tr>
+    `);
+    });
+    body.innerHTML = rows.length ? rows.join("") : `<tr><td colspan="${totalCols}">Nenhum preco medio encontrado para os filtros atuais.</td></tr>`;
+  }
+}
+
+async function carregarRelatorioPrecoMedioVendas(){
+  const infoEl = document.getElementById("vendasRelArquivoInfo");
+  if (infoEl) infoEl.textContent = "Carregando relatorio de preco medio...";
+  const params = new URLSearchParams();
+  const vendedor = document.getElementById("vendasPrecoVendedor")?.value || "";
+  const dataInicio = document.getElementById("vendasPrecoDataInicio")?.value || "";
+  const dataFim = document.getElementById("vendasPrecoDataFim")?.value || "";
+  params.set("tipo_relatorio", "preco_medio");
+  if (vendedor) params.set("vendedor", vendedor);
+  if (dataInicio) params.set("data_inicio", dataInicio);
+  if (dataFim) params.set("data_fim", dataFim);
+  const resp = await apiFetch(`/api/vendas/relatorio?${params.toString()}`);
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    const erro = data?.erro || "Falha ao carregar relatorio de preco medio.";
+    if (infoEl) infoEl.textContent = erro;
+    if (resp.status !== 409) alert(erro);
+    return;
+  }
+  renderRelatorioPrecoMedioVendas(data || {});
+}
+
+function limparFiltrosRelatorioPrecoMedioVendas(){
+  const dataInicio = document.getElementById("vendasPrecoDataInicio");
+  const dataFim = document.getElementById("vendasPrecoDataFim");
+  const vendedor = document.getElementById("vendasPrecoVendedor");
+  if (dataInicio) dataInicio.value = "";
+  if (dataFim) dataFim.value = "";
+  if (vendedor) vendedor.value = "";
+  carregarRelatorioPrecoMedioVendas().catch(() => {});
+}
+
+function abrirPdfRelatorioPrecoMedioVendas(){
+  const params = new URLSearchParams();
+  const vendedor = document.getElementById("vendasPrecoVendedor")?.value || "";
+  const dataInicio = document.getElementById("vendasPrecoDataInicio")?.value || "";
+  const dataFim = document.getElementById("vendasPrecoDataFim")?.value || "";
+  if (vendedor) params.set("vendedor", vendedor);
+  if (dataInicio) params.set("data_inicio", dataInicio);
+  if (dataFim) params.set("data_fim", dataFim);
+  const qs = params.toString();
+  window.open(`/api/vendas/relatorio/preco-medio/pdf${qs ? `?${qs}` : ""}`, "_blank");
+}
+
 function _vendasMesLabelTexto(valor) {
   const texto = String(valor || "").trim();
   const m = texto.match(/^(\d{4})-(\d{2})$/);
@@ -3813,6 +4145,10 @@ async function recarregarRelatorioVendasAtual() {
     await carregarRelatorioMixEmbalagens();
     return;
   }
+  if (modo === "preco_medio") {
+    await carregarRelatorioPrecoMedioVendas();
+    return;
+  }
   await carregarRelatorioVendas();
 }
 
@@ -3822,21 +4158,27 @@ function setVendasRelatorioModo(modo){
     ? "variacao_preco"
     : raw === "mix_embalagens" || raw === "grupos_embalagem"
     ? "grupos_embalagem"
+    : raw === "preco_medio" || raw === "preco_medio_vendedor_cidade"
+    ? "preco_medio"
     : "bonificacoes";
   window.__vendasRelatorioModo = valor;
   vendasState.tipoRelatorio = valor;
   const viewBon = document.getElementById("vendasViewRelatorio");
   const viewVar = document.getElementById("vendasViewRelatorioVariacao");
   const viewMix = document.getElementById("vendasViewRelatorioMix");
+  const viewPreco = document.getElementById("vendasViewRelatorioPrecoMedio");
   const tabBon = document.getElementById("vendasRelTabBonificacoes");
   const tabVar = document.getElementById("vendasRelTabVariacao");
   const tabMix = document.getElementById("vendasRelTabMix");
+  const tabPreco = document.getElementById("vendasRelTabPrecoMedio");
   if (viewBon) viewBon.classList.toggle("hidden", valor !== "bonificacoes");
   if (viewVar) viewVar.classList.toggle("hidden", valor !== "variacao_preco");
   if (viewMix) viewMix.classList.toggle("hidden", valor !== "grupos_embalagem");
+  if (viewPreco) viewPreco.classList.toggle("hidden", valor !== "preco_medio");
   if (tabBon) tabBon.classList.toggle("active", valor === "bonificacoes");
   if (tabVar) tabVar.classList.toggle("active", valor === "variacao_preco");
   if (tabMix) tabMix.classList.toggle("active", valor === "grupos_embalagem");
+  if (tabPreco) tabPreco.classList.toggle("active", valor === "preco_medio");
   recarregarRelatorioVendasAtual().catch(() => {});
 }
 
@@ -4908,7 +5250,7 @@ async function salvarConfigVendas(){
 
 async function importarCacheVendas(){
   const resumo = document.getElementById("vendasConfigResumo");
-  if (resumo) resumo.textContent = "Importando CSV da pasta configurada...";
+  if (resumo) resumo.textContent = "Importando relatorio da pasta configurada...";
   const resp = await apiFetch("/api/vendas/cache/importar", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -4943,7 +5285,7 @@ async function importarRelatorioCsvVendas(){
   const input = document.getElementById("vendasConfigArquivoCsv");
   const arquivo = input?.files?.[0] || null;
   if (!arquivo) {
-    alert("Selecione um arquivo CSV antes de importar.");
+    alert("Selecione um arquivo CSV ou XLSX antes de importar.");
     return;
   }
   const resumo = document.getElementById("vendasConfigResumo");
@@ -4956,8 +5298,8 @@ async function importarRelatorioCsvVendas(){
   });
   const data = await resp.json().catch(() => ({}));
   if (!resp.ok) {
-    if (resumo) resumo.textContent = data?.erro || "Falha ao importar relatorio CSV.";
-    alert(data?.erro || "Falha ao importar relatorio CSV.");
+    if (resumo) resumo.textContent = data?.erro || "Falha ao importar relatorio.";
+    alert(data?.erro || "Falha ao importar relatorio.");
     return;
   }
   if (input) input.value = "";
@@ -7733,9 +8075,15 @@ const FRETE_STATUS_OPCOES = [
   { key: "paradoVasio", label: "Parado (vazio)" },
   { key: "paradoCarregado", label: "Parado (carregado)" },
 ];
-const FRETE_CARD_TEMPLATE_VERSION = "kanban-minimo-popup-20260429";
-const ESCALA_STATUS_OPCOES = FRETE_STATUS_OPCOES.filter((item) => ["chegada", "descarregado", "liberado"].includes(item.key));
-const ESCALA_STATUS_VIAGEM = new Set(["carregado", "entregando"]);
+const FRETE_CARD_TEMPLATE_VERSION = "kanban-arquivar-retornando-backend-20260714";
+const ESCALA_STATUS_KEYS = ["liberado", "paradoVasio", "carregando", "carregado", "paradoCarregado"];
+const ESCALA_STATUS_OPCOES = ESCALA_STATUS_KEYS
+  .map((key) => FRETE_STATUS_OPCOES.find((item) => item.key === key))
+  .filter(Boolean);
+const ESCALA_STATUS_SET = new Set(ESCALA_STATUS_KEYS);
+const ESCALA_STATUS_VIAGEM = new Set(["entregando"]);
+let escalaSorteioRegrasCache = [];
+let escalaSorteioRegrasCarregadas = false;
 
 function _freteStatusLabel(status){
   return FRETE_STATUS_OPCOES.find((item) => item.key === status)?.label || status || "-";
@@ -7844,7 +8192,8 @@ function _resolverEquipeEscala(motoristaId, apoioId) {
 
 function _listaFretesEscalaAtivos(excludeFreteId = null) {
   return (fretes || []).filter((item) => (
-    ESCALA_STATUS_OPCOES.some((statusInfo) => statusInfo.key === item?.status) &&
+    ESCALA_STATUS_SET.has(String(item?.status || "")) &&
+    !_freteOcultoNoKanban(item) &&
     String(item?.id) !== String(excludeFreteId ?? "")
   ));
 }
@@ -7884,6 +8233,7 @@ function _buscarPessoasEmViagem(freteId, pessoaIds) {
 
   (fretes || []).forEach((outroFrete) => {
     if (String(outroFrete?.id ?? "") === String(freteId ?? "")) return;
+    if (_freteOcultoNoKanban(outroFrete)) return;
     if (!ESCALA_STATUS_VIAGEM.has(String(outroFrete?.status || ""))) return;
 
     const usados = new Set();
@@ -7927,7 +8277,8 @@ function _avaliarEscalaFreteSelecao(frete, motoristaId, apoioId) {
       pendencias.push("Apoio informado nao foi encontrado.");
     } else if (
       !_colaboradorTemFuncao(equipe.apoio, "entregador") &&
-      !_colaboradorTemFuncao(equipe.apoio, "ajudante")
+      !_colaboradorTemFuncao(equipe.apoio, "ajudante") &&
+      !_colaboradorTemFuncao(equipe.apoio, "motorista")
     ) {
       pendencias.push(`${equipe.apoio.nome} nao tem perfil de apoio.`);
     } else if (!equipe.motoristaEntregador && !_colaboradorTemFuncao(equipe.apoio, "entregador")) {
@@ -7963,10 +8314,9 @@ function _avaliarEscalaFreteSelecao(frete, motoristaId, apoioId) {
     equipe.apoioId &&
     equipe.motoristaEntregador &&
     equipe.apoio &&
-    _colaboradorTemFuncao(equipe.apoio, "ajudante") &&
     _colaboradorTemFuncao(equipe.apoio, "entregador")
   ) {
-    avisos.push(`${equipe.apoio.nome} esta como ajudante-entregador com motorista que ja entrega. Confirme essa dupla.`);
+    avisos.push(`${equipe.apoio.nome} tambem e entregador. A prioridade e usar apenas um entregador na dupla.`);
   }
 
   if (
@@ -8056,20 +8406,493 @@ async function salvarEscalaFrete(id) {
   }
 }
 
-async function renderEscala() {
-  await ensureCadastrosCache();
+function _freteContaNaEscala(frete = {}) {
+  return ESCALA_STATUS_SET.has(String(frete?.status || "")) && !_freteOcultoNoKanban(frete);
+}
 
-  const grid = document.getElementById("escalaGrid");
-  if (!grid) return;
+function _freteEstaEmViagemEscala(frete = {}) {
+  return ESCALA_STATUS_VIAGEM.has(String(frete?.status || "")) && !_freteOcultoNoKanban(frete);
+}
 
-  const fretesEscala = fretes
-    .filter((frete) => ESCALA_STATUS_OPCOES.some((item) => item.key === frete.status))
+function _idsPessoasFrete(frete = {}) {
+  const ids = [];
+  const motoristaId = _freteColaboradorMotoristaId(frete);
+  const entregadorId = _normalizarApoioEscalaId(motoristaId, _freteColaboradorEntregadorId(frete));
+  if (motoristaId) ids.push(String(motoristaId));
+  if (entregadorId) ids.push(String(entregadorId));
+  return ids;
+}
+
+function _resumoDisponibilidadeEscala() {
+  const pessoasEmEscala = new Set();
+  const pessoasEmViagem = new Set();
+  const veiculosEmEscala = new Set();
+  const veiculosEmViagem = new Set();
+
+  (fretes || []).forEach((frete) => {
+    const contaNaEscala = _freteContaNaEscala(frete);
+    const estaEmViagem = _freteEstaEmViagemEscala(frete);
+    if (!contaNaEscala && !estaEmViagem) return;
+
+    _idsPessoasFrete(frete).forEach((id) => {
+      if (contaNaEscala) pessoasEmEscala.add(id);
+      if (estaEmViagem) pessoasEmViagem.add(id);
+    });
+
+    const veiculoId = _resolverVeiculoIdDoFrete(frete);
+    if (!veiculoId) return;
+    if (contaNaEscala) veiculosEmEscala.add(String(veiculoId));
+    if (estaEmViagem) veiculosEmViagem.add(String(veiculoId));
+  });
+
+  const pessoaLivre = (item) => {
+    const id = String(item?.id || "");
+    return id && !pessoasEmEscala.has(id) && !pessoasEmViagem.has(id);
+  };
+  const veiculoLivre = (item) => {
+    const id = String(item?.id || "");
+    return id && !veiculosEmEscala.has(id) && !veiculosEmViagem.has(id);
+  };
+
+  return {
+    motoristas: _listaColaboradoresPorFuncao("motorista").filter(pessoaLivre),
+    ajudantes: _listaColaboradoresPorFuncao("ajudante").filter(pessoaLivre),
+    veiculos: _ordenarListaNatural((cacheCadastros.veiculos || []).filter(veiculoLivre)),
+  };
+}
+
+function _rotuloVeiculoDisponibilidade(veiculo = {}) {
+  const nome = (veiculo.nome || `Veiculo ${veiculo.id || ""}`).toString().trim();
+  const detalhes = [veiculo.placa, veiculo.modelo].filter(Boolean).join(" - ");
+  return detalhes ? `${nome} (${detalhes})` : nome;
+}
+
+function _renderListaDisponibilidadeEscala(lista, getLabel, emptyLabel) {
+  if (!lista.length) {
+    return `<div class="escala-disponibilidade-empty">${_escHtml(emptyLabel)}</div>`;
+  }
+  return `
+    <ul>
+      ${lista.map((item) => `<li>${_escHtml(getLabel(item))}</li>`).join("")}
+    </ul>
+  `;
+}
+
+function _renderCardDisponibilidadeEscala(key, label, lista, getLabel, emptyLabel) {
+  return `
+    <div class="escala-disponibilidade-item" data-popup-key="${_escAttr(key)}">
+      <button class="escala-disponibilidade-trigger" type="button" onclick="toggleEscalaDisponibilidadePopup('${_escJsString(key)}', event)" aria-label="${_escAttr(`${label}: ${lista.length}`)}">
+        <span>${_escHtml(label)}</span>
+        <strong>${lista.length}</strong>
+      </button>
+      <div class="escala-disponibilidade-popup" role="dialog" aria-label="${_escAttr(label)}">
+        <div class="escala-disponibilidade-title">${_escHtml(label)}</div>
+        ${_renderListaDisponibilidadeEscala(lista, getLabel, emptyLabel)}
+      </div>
+    </div>
+  `;
+}
+
+function renderResumoDisponibilidadeEscala() {
+  const container = document.getElementById("escalaDisponibilidadeTop");
+  if (!container) return;
+  const resumo = _resumoDisponibilidadeEscala();
+  container.innerHTML = [
+    _renderCardDisponibilidadeEscala(
+      "motoristas",
+      "Motoristas sem escala",
+      resumo.motoristas,
+      (item) => item.nome || "-",
+      "Todos os motoristas disponiveis ja estao na escala."
+    ),
+    _renderCardDisponibilidadeEscala(
+      "ajudantes",
+      "Ajudantes sem escala",
+      resumo.ajudantes,
+      (item) => item.nome || "-",
+      "Todos os ajudantes disponiveis ja estao na escala."
+    ),
+    _renderCardDisponibilidadeEscala(
+      "veiculos",
+      "Caminhoes sem frete",
+      resumo.veiculos,
+      _rotuloVeiculoDisponibilidade,
+      "Todos os caminhoes disponiveis ja estao com frete."
+    ),
+  ].join("");
+}
+
+function toggleEscalaDisponibilidadePopup(key, event) {
+  event?.preventDefault?.();
+  event?.stopPropagation?.();
+  const item = document.querySelector(`.escala-disponibilidade-item[data-popup-key="${String(key)}"]`);
+  if (!item) return;
+  const shouldOpen = !item.classList.contains("is-open");
+  document.querySelectorAll(".escala-disponibilidade-item.is-open").forEach((el) => el.classList.remove("is-open"));
+  item.classList.toggle("is-open", shouldOpen);
+}
+
+document.addEventListener("click", (event) => {
+  if (event.target?.closest?.(".escala-disponibilidade-item")) return;
+  document.querySelectorAll(".escala-disponibilidade-item.is-open").forEach((el) => el.classList.remove("is-open"));
+});
+
+function _fretesEscalaOrdenados() {
+  return (fretes || [])
+    .filter((frete) => _freteContaNaEscala(frete))
     .sort((a, b) => {
       const statusA = ESCALA_STATUS_OPCOES.findIndex((item) => item.key === a.status);
       const statusB = ESCALA_STATUS_OPCOES.findIndex((item) => item.key === b.status);
       if (statusA !== statusB) return statusA - statusB;
       return String(a.veiculo_nome || a.nome || "").localeCompare(String(b.veiculo_nome || b.nome || ""), "pt-BR", { numeric: true, sensitivity: "base" });
     });
+}
+
+function _normalizarRegraSorteioEscala(item = {}) {
+  return {
+    id: Number(item.id || 0),
+    motoristaId: Number(item.motoristaId || item.motorista_id || 0),
+    apoioId: Number(item.apoioId || item.apoio_id || 0),
+    motoristaNome: item.motoristaNome || item.motorista_nome || "",
+    apoioNome: item.apoioNome || item.apoio_nome || "",
+  };
+}
+
+async function _lerJsonApiEscalaSorteio(resp, erroPadrao) {
+  let data = {};
+  try {
+    data = await resp.json();
+  } catch {}
+  if (!resp.ok || data?.ok === false || data?.erro) {
+    throw new Error(data?.erro || erroPadrao || `Erro HTTP ${resp.status || "?"}`);
+  }
+  return data;
+}
+
+async function _carregarRegrasSorteioEscala(force = false) {
+  if (escalaSorteioRegrasCarregadas && !force) return escalaSorteioRegrasCache;
+  const resp = await apiFetch("/api/escala/sorteio-regras");
+  const data = await _lerJsonApiEscalaSorteio(resp, "Erro ao carregar regras do sorteio.");
+  escalaSorteioRegrasCache = (Array.isArray(data?.regras) ? data.regras : [])
+    .map(_normalizarRegraSorteioEscala)
+    .filter((item) => item.id > 0 && item.motoristaId > 0 && item.apoioId > 0 && item.motoristaId !== item.apoioId);
+  escalaSorteioRegrasCarregadas = true;
+  return escalaSorteioRegrasCache;
+}
+
+function _funcoesResumoColaborador(colaborador = {}) {
+  const funcoes = [];
+  if (_colaboradorTemFuncao(colaborador, "motorista")) funcoes.push("motorista");
+  if (_colaboradorTemFuncao(colaborador, "entregador")) funcoes.push("entregador");
+  if (_colaboradorTemFuncao(colaborador, "ajudante")) funcoes.push("ajudante");
+  return funcoes.length ? funcoes.join(" / ") : "sem perfil";
+}
+
+function _optionsSorteioColaboradores(lista, selectedId = "", emptyLabel = "Selecione") {
+  const selected = String(selectedId || "");
+  return `<option value="">${_escHtml(emptyLabel)}</option>` + _ordenarListaNatural(lista || [])
+    .map((item) => {
+      const value = String(item.id);
+      const label = `${item.nome || "-"} (${_funcoesResumoColaborador(item)})`;
+      return `<option value="${_escAttr(value)}"${value === selected ? " selected" : ""}>${_escHtml(label)}</option>`;
+    })
+    .join("");
+}
+
+function _regraBloqueiaDuplaEscala(motoristaId, apoioId, regras = escalaSorteioRegrasCache) {
+  const motorista = Number(motoristaId || 0);
+  const apoio = Number(apoioId || 0);
+  if (!motorista || !apoio) return false;
+  return (regras || []).some((regra) => (
+    (Number(regra.motoristaId) === motorista && Number(regra.apoioId) === apoio) ||
+    (Number(regra.motoristaId) === apoio && Number(regra.apoioId) === motorista)
+  ));
+}
+
+async function renderRegrasSorteioEscala() {
+  const motoristaSelect = document.getElementById("escalaRegraMotorista");
+  const apoioSelect = document.getElementById("escalaRegraApoio");
+  const lista = document.getElementById("escalaRegrasSorteioLista");
+  if (motoristaSelect) {
+    motoristaSelect.innerHTML = _optionsSorteioColaboradores(_listaColaboradoresPorFuncao("motorista"), motoristaSelect.value, "Motorista");
+  }
+  if (apoioSelect) {
+    apoioSelect.innerHTML = _optionsSorteioColaboradores(_listaColaboradoresEscalaApoio(), apoioSelect.value, "Apoio");
+  }
+  if (!lista) return;
+  let regras = [];
+  try {
+    regras = await _carregarRegrasSorteioEscala();
+  } catch (err) {
+    lista.innerHTML = `<span class="escala-sorteio-status">Nao foi possivel carregar as regras.</span>`;
+    console.warn("erro ao carregar regras do sorteio:", err);
+    return;
+  }
+  lista.innerHTML = regras.length ? regras.map((regra) => {
+    const motorista = _buscarColaboradorCadastro(regra.motoristaId);
+    const apoio = _buscarColaboradorCadastro(regra.apoioId);
+    return `
+      <span class="escala-regra-chip">
+        ${_escHtml(regra.motoristaNome || motorista?.nome || `Motorista ${regra.motoristaId}`)} x ${_escHtml(regra.apoioNome || apoio?.nome || `Apoio ${regra.apoioId}`)}
+        <button type="button" onclick="removerRegraSorteioEscala(${regra.id})" aria-label="Remover regra">x</button>
+      </span>
+    `;
+  }).join("") : `<span class="escala-sorteio-status">Sem regras bloqueadas.</span>`;
+}
+
+async function adicionarRegraSorteioEscala() {
+  const motoristaId = Number(document.getElementById("escalaRegraMotorista")?.value || 0);
+  const apoioId = Number(document.getElementById("escalaRegraApoio")?.value || 0);
+  if (!motoristaId || !apoioId) {
+    alert("Selecione motorista e apoio para bloquear a dupla.");
+    return;
+  }
+  if (motoristaId === apoioId) {
+    alert("A regra precisa ter duas pessoas diferentes.");
+    return;
+  }
+  const regras = await _carregarRegrasSorteioEscala().catch(() => escalaSorteioRegrasCache);
+  if (_regraBloqueiaDuplaEscala(motoristaId, apoioId, regras)) {
+    alert("Esta dupla ja esta bloqueada.");
+    return;
+  }
+  try {
+    const resp = await apiFetch("/api/escala/sorteio-regras", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ motoristaId, apoioId }),
+    });
+    await _lerJsonApiEscalaSorteio(resp, "Erro ao salvar regra do sorteio.");
+    await _carregarRegrasSorteioEscala(true);
+    await renderRegrasSorteioEscala();
+  } catch (err) {
+    alert(err?.message || "Erro ao salvar regra do sorteio.");
+  }
+}
+
+async function removerRegraSorteioEscala(regraId) {
+  const id = Number(regraId || 0);
+  if (!id) return;
+  try {
+    const resp = await apiFetch(`/api/escala/sorteio-regras/${id}`, { method: "DELETE" });
+    await _lerJsonApiEscalaSorteio(resp, "Erro ao remover regra do sorteio.");
+    await _carregarRegrasSorteioEscala(true);
+    await renderRegrasSorteioEscala();
+  } catch (err) {
+    alert(err?.message || "Erro ao remover regra do sorteio.");
+  }
+}
+
+function _shuffleEscala(lista) {
+  const itens = [...(lista || [])];
+  for (let i = itens.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [itens[i], itens[j]] = [itens[j], itens[i]];
+  }
+  return itens;
+}
+
+function _pessoasEmViagemEscalaIds() {
+  const ids = new Set();
+  (fretes || []).forEach((frete) => {
+    if (!_freteEstaEmViagemEscala(frete)) return;
+    _idsPessoasFrete(frete).forEach((id) => ids.add(String(id)));
+  });
+  return ids;
+}
+
+function _chaveDuplaSorteioEscala(motoristaId, apoioId) {
+  const ids = [Number(motoristaId || 0), Number(apoioId || 0)].filter((id) => id > 0);
+  if (ids.length !== 2 || ids[0] === ids[1]) return "";
+  ids.sort((a, b) => a - b);
+  return ids.join(":");
+}
+
+function _registrarHistoricoDuplaSorteioEscala(historico, motoristaId, apoioId, rank = 0, origem = "") {
+  const chave = _chaveDuplaSorteioEscala(motoristaId, apoioId);
+  if (!chave) return;
+  const atual = historico.get(chave) || { ocorrencias: 0, rank: Infinity, naTela: false };
+  atual.ocorrencias += 1;
+  atual.rank = Math.min(atual.rank, Number(rank || 0));
+  atual.naTela = atual.naTela || origem === "tela";
+  historico.set(chave, atual);
+}
+
+function _freteTimestampHistoricoEscala(frete = {}) {
+  const data = (
+    _parseFreteDateTime(frete?.finalizado_em) ||
+    _parseFreteDateTime(frete?.updated_at) ||
+    _parseFreteDateTime(frete?.created_at)
+  );
+  if (data) return data.getTime();
+  return Number(frete?.id || 0);
+}
+
+function _historicoDuplasSorteioEscala(fretesEscalaAtual = []) {
+  const historico = new Map();
+
+  (fretesEscalaAtual || []).forEach((frete) => {
+    const card = document.querySelector(`.escala-item[data-frete-id="${String(frete?.id)}"]`);
+    const motoristaTela = card?.querySelector?.(".escala-motorista")?.value;
+    const apoioTela = card?.querySelector?.(".escala-apoio")?.value;
+    const motoristaId = motoristaTela ? Number(motoristaTela) : _freteColaboradorMotoristaId(frete);
+    const apoioId = apoioTela ? Number(apoioTela) : _normalizarApoioEscalaId(motoristaId, _freteColaboradorEntregadorId(frete));
+    _registrarHistoricoDuplaSorteioEscala(historico, motoristaId, apoioId, 0, "tela");
+  });
+
+  (fretes || [])
+    .filter((frete) => !_freteOcultoNoKanban(frete))
+    .map((frete) => ({
+      frete,
+      motoristaId: _freteColaboradorMotoristaId(frete),
+      apoioId: _normalizarApoioEscalaId(_freteColaboradorMotoristaId(frete), _freteColaboradorEntregadorId(frete)),
+      timestamp: _freteTimestampHistoricoEscala(frete),
+    }))
+    .filter((item) => _chaveDuplaSorteioEscala(item.motoristaId, item.apoioId))
+    .sort((a, b) => {
+      if (b.timestamp !== a.timestamp) return b.timestamp - a.timestamp;
+      return Number(b.frete?.id || 0) - Number(a.frete?.id || 0);
+    })
+    .slice(0, 60)
+    .forEach((item, index) => {
+      _registrarHistoricoDuplaSorteioEscala(historico, item.motoristaId, item.apoioId, index + 1, "frete");
+    });
+
+  return historico;
+}
+
+function _penalidadeHistoricoDuplaSorteioEscala(motoristaId, apoioId, historicoDuplas) {
+  const chave = _chaveDuplaSorteioEscala(motoristaId, apoioId);
+  const historico = chave ? historicoDuplas?.get?.(chave) : null;
+  if (!historico) return 0;
+  const rank = Number.isFinite(historico.rank) ? historico.rank : 10;
+  const penalidadeRecencia = historico.naTela ? 320 : Math.max(80, 260 - Math.min(rank, 8) * 22);
+  const penalidadeFrequencia = Math.min(Number(historico.ocorrencias || 0), 5) * 35;
+  return penalidadeRecencia + penalidadeFrequencia;
+}
+
+function _pontuarDuplaSorteioEscala(motorista, apoio, historicoDuplas = new Map()) {
+  if (!motorista || !apoio || String(motorista.id) === String(apoio.id)) return -Infinity;
+  if (!_colaboradorTemFuncao(motorista, "motorista")) return -Infinity;
+
+  const motoristaEntregador = _colaboradorTemFuncao(motorista, "entregador");
+  const apoioEntregador = _colaboradorTemFuncao(apoio, "entregador");
+  const apoioAjudante = _colaboradorTemFuncao(apoio, "ajudante");
+  const apoioMotorista = _colaboradorTemFuncao(apoio, "motorista");
+  if (!apoioEntregador && !apoioAjudante && !apoioMotorista) return -Infinity;
+  if (!motoristaEntregador && !apoioEntregador) return -Infinity;
+
+  const totalEntregadores = (motoristaEntregador ? 1 : 0) + (apoioEntregador ? 1 : 0);
+  let score = totalEntregadores === 1 ? 1000 : 100;
+
+  if (motoristaEntregador && apoioAjudante && !apoioEntregador && !apoioMotorista) score += 350;
+  else if (motoristaEntregador && apoioAjudante && !apoioEntregador) score += 300;
+  else if (!motoristaEntregador && apoioEntregador) score += 280;
+
+  if (apoioAjudante) score += 80;
+  if (!apoioMotorista) score += 40;
+  if (apoioMotorista && !apoioAjudante && !apoioEntregador) score -= 60;
+  if (motoristaEntregador && apoioEntregador) score -= 120;
+  score -= _penalidadeHistoricoDuplaSorteioEscala(motorista.id, apoio.id, historicoDuplas);
+
+  return score + Math.random();
+}
+
+function _escolherApoioSorteioEscala(motorista, apoios, usados, regras, historicoDuplas = new Map()) {
+  let melhor = null;
+  let melhorScore = -Infinity;
+  if (!motorista) return null;
+  _shuffleEscala(apoios).forEach((apoio) => {
+    if (usados.has(String(apoio.id))) return;
+    if (_regraBloqueiaDuplaEscala(motorista.id, apoio.id, regras)) return;
+    const score = _pontuarDuplaSorteioEscala(motorista, apoio, historicoDuplas);
+    if (score > melhorScore) {
+      melhorScore = score;
+      melhor = { motorista, apoio, score };
+    }
+  });
+  return melhor;
+}
+
+function _aplicarApoioSorteioNoCardEscala(freteId, apoioId) {
+  const card = document.querySelector(`.escala-item[data-frete-id="${String(freteId)}"]`);
+  if (!card) return false;
+  const apoioSelect = card.querySelector(".escala-apoio");
+  if (!apoioSelect) return false;
+  apoioSelect.value = String(apoioId || "");
+  atualizarPreviewEscalaFrete(freteId);
+  return true;
+}
+
+async function sortearEscala() {
+  const status = document.getElementById("escalaSorteioStatus");
+  const fretesEscala = _fretesEscalaOrdenados();
+  if (!fretesEscala.length) {
+    alert("Nao ha caminhoes na escala para sortear.");
+    return;
+  }
+
+  const viajando = _pessoasEmViagemEscalaIds();
+  const apoios = _listaColaboradoresEscalaApoio().filter((item) => !viajando.has(String(item.id)));
+  let regras = [];
+  try {
+    if (status) status.textContent = "Carregando regras do sorteio...";
+    regras = await _carregarRegrasSorteioEscala(true);
+  } catch (err) {
+    alert(err?.message || "Erro ao carregar regras do sorteio.");
+    if (status) status.textContent = "";
+    return;
+  }
+  const usados = new Set();
+  fretesEscala.forEach((frete) => {
+    const motoristaId = _freteColaboradorMotoristaId(frete);
+    if (motoristaId) usados.add(String(motoristaId));
+  });
+  const pendentes = [];
+  const historicoDuplas = _historicoDuplasSorteioEscala(fretesEscala);
+  let aplicados = 0;
+  let duplasComDoisEntregadores = 0;
+  let duplasRepetidas = 0;
+
+  fretesEscala.forEach((frete) => {
+    const motoristaId = _freteColaboradorMotoristaId(frete);
+    const motorista = _buscarColaboradorCadastro(motoristaId);
+    if (!motoristaId || !motorista || !_colaboradorTemFuncao(motorista, "motorista") || viajando.has(String(motoristaId))) {
+      pendentes.push(_rotuloFreteExibicao(frete));
+      return;
+    }
+    const dupla = _escolherApoioSorteioEscala(motorista, apoios, usados, regras, historicoDuplas);
+    if (!dupla) {
+      pendentes.push(_rotuloFreteExibicao(frete));
+      return;
+    }
+    usados.add(String(dupla.apoio.id));
+    if (_colaboradorTemFuncao(dupla.motorista, "entregador") && _colaboradorTemFuncao(dupla.apoio, "entregador")) {
+      duplasComDoisEntregadores += 1;
+    }
+    if (_chaveDuplaSorteioEscala(dupla.motorista.id, dupla.apoio.id) && historicoDuplas.has(_chaveDuplaSorteioEscala(dupla.motorista.id, dupla.apoio.id))) {
+      duplasRepetidas += 1;
+    }
+    if (_aplicarApoioSorteioNoCardEscala(frete.id, dupla.apoio.id)) {
+      aplicados += 1;
+    }
+  });
+
+  const partes = [`Sorteio de ajudantes aplicado em ${aplicados} caminhao(oes).`];
+  if (duplasComDoisEntregadores) partes.push(`${duplasComDoisEntregadores} dupla(s) ficaram com dois entregadores por falta de opcao melhor.`);
+  if (duplasRepetidas) partes.push(`${duplasRepetidas} dupla(s) repetiram a ultima escala por falta de opcao melhor.`);
+  if (pendentes.length) partes.push(`Sem ajudante: ${pendentes.slice(0, 5).join(", ")}${pendentes.length > 5 ? "..." : ""}.`);
+  partes.push("Revise e salve as equipes.");
+  if (status) status.textContent = partes.join(" ");
+}
+
+async function renderEscala() {
+  await ensureCadastrosCache();
+
+  const grid = document.getElementById("escalaGrid");
+  if (!grid) return;
+
+  const fretesEscala = _fretesEscalaOrdenados();
 
   const pendentes = fretesEscala.filter((frete) => _pendenciasEscalaFrete(frete).length > 0);
   const resumoTotal = document.getElementById("escalaResumoTotal");
@@ -8078,6 +8901,8 @@ async function renderEscala() {
   if (resumoTotal) resumoTotal.textContent = String(fretesEscala.length);
   if (resumoCompleta) resumoCompleta.textContent = String(fretesEscala.length - pendentes.length);
   if (resumoPendentes) resumoPendentes.textContent = String(pendentes.length);
+  renderResumoDisponibilidadeEscala();
+  await renderRegrasSorteioEscala();
 
   grid.innerHTML = ESCALA_STATUS_OPCOES.map((statusInfo) => {
     const itens = fretesEscala.filter((frete) => frete.status === statusInfo.key);
@@ -8116,7 +8941,7 @@ async function renderEscala() {
               </select>
             </label>
             <label class="escala-field">
-              <span>Entregador / Ajudante</span>
+              <span>Apoio</span>
               <select class="escala-apoio" onchange="atualizarPreviewEscalaFrete(${frete.id})">
                 ${optionsFromEscalaApoio(apoioSelecionado, motoristaAtual)}
               </select>
@@ -8140,6 +8965,89 @@ async function renderEscala() {
       </section>
     `;
   }).join("");
+}
+
+function _textoSelectSelecionado(selectEl) {
+  const option = selectEl?.selectedOptions?.[0];
+  const texto = (option?.textContent || "").toString().trim();
+  if (!selectEl?.value || texto === "-" || texto === "Selecione apoio" || texto === "Vai sozinho / selecione apoio") {
+    return "";
+  }
+  return texto;
+}
+
+function _coletarLinhasEscalaPdf() {
+  return Array.from(document.querySelectorAll(".escala-item"))
+    .map((card) => {
+      const frete = _findFreteById(card.dataset.freteId);
+      if (!frete) return null;
+      const motoristaSelect = card.querySelector(".escala-motorista");
+      const apoioSelect = card.querySelector(".escala-apoio");
+      const motoristaId = motoristaSelect?.value ? Number(motoristaSelect.value) : _freteColaboradorMotoristaId(frete);
+      const motorista = (
+        _textoSelectSelecionado(motoristaSelect) ||
+        _buscarColaboradorCadastro(motoristaId)?.nome ||
+        frete.colaborador_motorista_nome ||
+        frete.motorista_nome ||
+        "-"
+      );
+      const motoristaCadastro = _buscarColaboradorCadastro(motoristaId);
+      const ajudante = (
+        _textoSelectSelecionado(apoioSelect) ||
+        (motoristaCadastro && _colaboradorTemFuncao(motoristaCadastro, "entregador") ? "Motorista vai sozinho" : "-")
+      );
+      const caminhao = (
+        frete.carga_veiculo_numero ||
+        frete.veiculo_nome ||
+        frete.veiculo_placa ||
+        card.querySelector(".escala-item-subtitle")?.textContent ||
+        "-"
+      ).toString().trim();
+      return {
+        caminhao,
+        motorista,
+        ajudante,
+        frete: _rotuloFreteExibicao(frete),
+      };
+    })
+    .filter(Boolean);
+}
+
+async function imprimirEscalaPdf() {
+  const linhas = _coletarLinhasEscalaPdf();
+  if (!linhas.length) {
+    alert("Nao ha itens na escala para imprimir.");
+    return;
+  }
+
+  const janela = window.open("about:blank", "_blank");
+  if (janela) {
+    janela.document.write("<p>Gerando PDF da escala...</p>");
+  }
+
+  try {
+    const resp = await apiFetch("/api/escala/pdf", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ linhas }),
+    });
+    if (!resp.ok) {
+      let data = {};
+      try { data = await resp.json(); } catch {}
+      throw new Error(data?.erro || `Erro HTTP ${resp.status}`);
+    }
+    const blob = await resp.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    if (janela) {
+      janela.location.href = objectUrl;
+    } else {
+      window.open(objectUrl, "_blank");
+    }
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
+  } catch (err) {
+    if (janela) janela.close();
+    alert(err?.message || "Erro ao gerar PDF da escala.");
+  }
 }
 
 function filtrarFretesKanban(valor = ""){
@@ -8186,6 +9094,37 @@ function _parseFreteDateTime(value){
   return Number.isNaN(dt.getTime()) ? null : dt;
 }
 
+function _freteRetornandoDesde(frete){
+  if (String(frete?.status || "") !== "retornando") return null;
+  return (
+    _parseFreteDateTime(frete?.finalizado_em) ||
+    _parseFreteDateTime(frete?.updated_at) ||
+    _parseFreteDateTime(frete?.created_at)
+  );
+}
+
+function _freteHorasEmRetornando(frete){
+  const horasServidor = Number(frete?.horas_em_retornando);
+  if (Number.isFinite(horasServidor) && horasServidor >= 0) {
+    return horasServidor;
+  }
+  const desde = _freteRetornandoDesde(frete);
+  if (!desde) return 0;
+  const horas = (Date.now() - desde.getTime()) / (60 * 60 * 1000);
+  return Number.isFinite(horas) ? Math.max(0, horas) : 0;
+}
+
+function _fretePodeArquivarManual(frete){
+  if (typeof frete?.pode_arquivar_manual === "boolean") {
+    return frete.pode_arquivar_manual;
+  }
+  return (
+    String(frete?.status || "") === "retornando" &&
+    !frete?.arquivado &&
+    _freteHorasEmRetornando(frete) >= FRETE_ARQUIVO_MANUAL_HORAS
+  );
+}
+
 function _getNomeById(lista, id) {
   if (!id || !lista) return null;
   const item = lista.find(item => item.id == id);
@@ -8209,12 +9148,11 @@ function _formatDate(dateStr) {
 }
 
 async function _arquivarFretesAutomaticamente() {
-  // Arquivar cards em "retornando" com mais de 1 dia.
+  // Redundancia do frontend; a regra principal de 2 dias roda no backend.
   const candidatos = fretes.filter(f =>
     String(f.status || "") === "retornando" &&
     !f.arquivado &&
-    _parseFreteDateTime(f.finalizado_em) &&
-    (Date.now() - _parseFreteDateTime(f.finalizado_em).getTime()) >= (FRETE_AUTO_ARQUIVO_HORAS * 60 * 60 * 1000)
+    _freteHorasEmRetornando(f) >= FRETE_AUTO_ARQUIVO_HORAS
   );
 
   for (const frete of candidatos) {
@@ -8379,12 +9317,73 @@ function _bindNovoAbastecimentoKmAtual(){
   _sincronizarCombustivelAbastecimentoComVeiculo(selVeiculo, selCombustivel, selCombustivel.value);
 }
 
+function _loteTokensFrete(v){
+  const partes = Array.isArray(v) ? v : String(v || "").split(/[,;\n]+/);
+  const vistos = new Set();
+  const out = [];
+  partes.forEach((parte) => {
+    const lote = String(parte || "").trim().slice(0, 120);
+    const key = lote.toLowerCase();
+    if (!lote || vistos.has(key)) return;
+    vistos.add(key);
+    out.push(lote);
+  });
+  return out;
+}
+
+function _lotesFreteTexto(v){
+  return _loteTokensFrete(v).join(", ");
+}
+
+function _coletarLotesSelecionadosFrete(selectEl){
+  if (!selectEl) return "";
+  return _lotesFreteTexto(Array.from(selectEl.selectedOptions || []).map((opt) => opt.value || opt.textContent || ""));
+}
+
+function _optionsLotesFrete(selected = ""){
+  const selecionados = _loteTokensFrete(selected);
+  const selectedKeys = new Set(selecionados.map((lote) => lote.toLowerCase()));
+  const lotes = Array.isArray(estoqueState.lotesOperacionais) ? estoqueState.lotesOperacionais : [];
+  const vistos = new Set();
+  const options = [];
+  selecionados.forEach((lote) => {
+    const key = lote.toLowerCase();
+    vistos.add(key);
+    options.push(`<option value="${_escAttr(lote)}" selected>${_escHtml(lote)}</option>`);
+  });
+  lotes.forEach((lote) => {
+    const codigo = String(lote?.lote_codigo || "").trim();
+    if (!codigo) return;
+    const key = codigo.toLowerCase();
+    if (vistos.has(key)) return;
+    vistos.add(key);
+    const produto = String(lote?.nome_produto || "").trim();
+    const fretesCount = Number(lote?.fretes_vinculados || 0);
+    const label = [codigo, produto && produto !== "Sem movimento de estoque" ? produto : "", fretesCount ? `${fretesCount} frete(s)` : ""].filter(Boolean).join(" | ");
+    options.push(`<option value="${_escAttr(codigo)}" ${selectedKeys.has(key) ? "selected" : ""}>${_escHtml(label || codigo)}</option>`);
+  });
+  return options.length ? options.join("") : `<option value="" disabled>Nenhum lote cadastrado</option>`;
+}
+
+function _aplicarOpcoesSelectLotesFrete(selectEl, selected = ""){
+  if (!selectEl) return;
+  selectEl.innerHTML = _optionsLotesFrete(selected);
+}
+
+function _atualizarSelectsLotesFretes(){
+  const novo = document.getElementById("novoFreteLoteManual");
+  if (novo) _aplicarOpcoesSelectLotesFrete(novo, _coletarLotesSelecionadosFrete(novo));
+  document.querySelectorAll(".frete-lote-manual").forEach((selectEl) => {
+    _aplicarOpcoesSelectLotesFrete(selectEl, selectEl.dataset.selected || _coletarLotesSelecionadosFrete(selectEl));
+  });
+}
+
 function _freteColaboradorMotoristaId(frete = {}) {
-  return frete.colaborador_motorista_id ? Number(frete.colaborador_motorista_id) : (frete.motorista_id ? Number(frete.motorista_id) : null);
+  return frete.colaborador_motorista_id ? Number(frete.colaborador_motorista_id) : null;
 }
 
 function _freteColaboradorEntregadorId(frete = {}) {
-  return frete.colaborador_entregador_id ? Number(frete.colaborador_entregador_id) : (frete.entregador_id ? Number(frete.entregador_id) : null);
+  return frete.colaborador_entregador_id ? Number(frete.colaborador_entregador_id) : null;
 }
 
 function _cloneFretePayload(frete = {}){
@@ -8406,6 +9405,7 @@ function _cloneFretePayload(frete = {}){
     peso: Number(frete.peso || 0) || 0,
     qtd_entregas: Number(frete.qtd_entregas || 0) || 0,
     observacao: (frete.observacao || "").toString(),
+    lote_manual: _lotesFreteTexto(frete.lote_manual || ""),
     carga_rota: (frete.carga_rota || "").toString().trim(),
     carga_cidades: (frete.carga_cidades || "").toString().trim(),
     carga_veiculo_numero: (frete.carga_veiculo_numero || "").toString().trim(),
@@ -8430,14 +9430,17 @@ function _freteRemoteSignature(frete){
     frete.cidade || "",
     _normalizarDataFreteInput(frete.data_carga || frete.created_at || ""),
     frete.status || "",
-    frete.colaborador_motorista_id || frete.motorista_id || "",
-    frete.colaborador_entregador_id || frete.entregador_id || "",
+    frete.colaborador_motorista_id || "",
+    frete.colaborador_entregador_id || "",
     _resolverVeiculoIdDoFrete(frete) || "",
     frete.carga_id || "",
     frete.observacao || "",
+    _lotesFreteTexto(frete.lote_manual || ""),
     Number(frete.km_atual || 0),
     Number(frete.peso || 0),
     Number(frete.qtd_entregas || 0),
+    frete.arquivado ? 1 : 0,
+    _fretePodeArquivarManual(frete) ? 1 : 0,
     frete.updated_at || "",
     frete.finalizado_em || "",
     frete.carga_rota || "",
@@ -8657,6 +9660,7 @@ function _coletarPayloadFreteDoCard(card, freteBase){
   const inpPeso = card.querySelector(".frete-peso");
   const inpEntregas = card.querySelector(".frete-qtd-entregas");
   const txtObs = card.querySelector(".frete-obs");
+  const selLotes = card.querySelector(".frete-lote-manual");
   const motoristaId = selMotorista?.value ? Number(selMotorista.value) : null;
   const entregadorId = _resolverEntregadorPadrao(motoristaId, selEntregador?.value ? Number(selEntregador.value) : null);
   return {
@@ -8674,6 +9678,7 @@ function _coletarPayloadFreteDoCard(card, freteBase){
     peso: inpPeso && inpPeso.value.trim() !== "" ? Number(inpPeso.value) : 0,
     qtd_entregas: inpEntregas && inpEntregas.value.trim() !== "" ? Number(inpEntregas.value) : 0,
     observacao: (txtObs?.value || "").trim(),
+    lote_manual: selLotes ? _coletarLotesSelecionadosFrete(selLotes) : _lotesFreteTexto(freteBase?.lote_manual || ""),
     carga_rota: (freteBase?.carga_rota || "").toString().trim(),
     carga_cidades: (freteBase?.carga_cidades || "").toString().trim(),
     carga_veiculo_numero: (freteBase?.carga_veiculo_numero || "").toString().trim(),
@@ -8857,6 +9862,7 @@ function _freteCardTemplate(frete){
         </div>
       </div>
       <div class="frete-card-footer">
+        <button class="btn-arquivar-frete hidden" type="button">Arquivar</button>
         <button class="btn-dados" type="button">Dados</button>
       </div>
     </div>
@@ -8886,11 +9892,19 @@ function _preencherFreteCard(card, frete){
   _atualizarBotoesMovimentoMobile(card, data.status);
 
   const btnDados = card.querySelector(".btn-dados");
+  const btnArquivar = card.querySelector(".btn-arquivar-frete");
   const btnExcluir = card.querySelector(".btn-excluir-icon");
   const btnMoverPrev = card.querySelector(".btn-mover-mobile-prev");
   const btnMoverNext = card.querySelector(".btn-mover-mobile-next");
 
   if (btnDados) btnDados.onclick = () => _abrirFreteDadosDoCard(frete.id, "dados");
+  if (btnArquivar) {
+    const podeArquivar = _fretePodeArquivarManual(frete);
+    btnArquivar.classList.toggle("hidden", !podeArquivar);
+    btnArquivar.onclick = podeArquivar ? async () => {
+      await arquivarFrete(frete.id);
+    } : null;
+  }
   if (btnExcluir) {
     btnExcluir.onclick = async () => {
       if (!confirm("Deseja excluir este frete?")) return;
@@ -9021,6 +10035,41 @@ async function toggleNovoFrete() {
   }
 }
 
+async function importarFretesXmlWhiteRiver() {
+  const button = document.getElementById("btnImportarFretesXmlWhiteRiver");
+  const status = document.getElementById("importarFretesXmlWhiteRiverStatus");
+  if (button?.disabled) return;
+  if (button) button.disabled = true;
+  if (status) {
+    status.textContent = "Verificando NF-e de saída da Bebidas White River...";
+  }
+  try {
+    const resp = await apiFetch("/api/fretes/importar-xml-saidas-white-river", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok || data?.ok === false) {
+      throw new Error(data?.erro || "Falha ao importar os fretes.");
+    }
+    await carregarFretes();
+    await atualizarDash();
+    if (status) {
+      status.textContent = [
+        `${Number(data.notas_saida || 0)} saída(s) White River verificada(s)`,
+        `${Number(data.fretes_criados || 0)} card(s) criado(s)`,
+        `${Number(data.veiculos_vinculados || 0)} veículo(s) vinculado(s)`,
+        `${Number(data.cards_sem_veiculo || 0)} card(s) aguardando veículo`,
+      ].join(" • ");
+    }
+  } catch (err) {
+    if (status) status.textContent = err?.message || "Falha ao importar os fretes.";
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
 async function toggleArquivados() {
   const fretesSection = document.getElementById("fretes");
   const arquivadosSection = document.getElementById("fretesArquivados");
@@ -9067,8 +10116,8 @@ async function renderFretesArquivados(filtro = "") {
     card.setAttribute("role", "button");
     card.setAttribute("aria-label", `Ver detalhes do frete arquivado ${f.nome || f.id || ""}`.trim());
     const veiculo = f.veiculo_nome || _rotuloVeiculoCadastradoDoFrete(f) || _getNomeById(cacheCadastros.veiculos, f.veiculo_id) || "N/A";
-    const motorista = f.motorista_nome || _getNomeColaborador(f.colaborador_motorista_id || f.motorista_id) || "N/A";
-    const entregador = f.entregador_nome || _getNomeColaborador(f.colaborador_entregador_id || f.entregador_id) || "N/A";
+    const motorista = f.motorista_nome || _getNomeColaborador(f.colaborador_motorista_id) || "N/A";
+    const entregador = f.entregador_nome || _getNomeColaborador(f.colaborador_entregador_id) || "N/A";
     const dataCarga = f.data_carga ? _fmtDataCurtaBr(f.data_carga) : "N/A";
     card.innerHTML = `
       <div class="card-header">
@@ -9157,12 +10206,13 @@ function _freteResumoDetalhadoHtml(frete = {}) {
         ${_frotaHistoricoResumoRow("Rota", frete.carga_rota || frete.rota || "-")}
         ${_frotaHistoricoResumoRow("Veiculo importado", frete.carga_veiculo_numero || "-")}
         ${_frotaHistoricoResumoRow("Veiculo cadastrado", _rotuloVeiculoCadastradoDoFrete(frete) || frete.veiculo_nome || "-")}
-        ${_frotaHistoricoResumoRow("Motorista", frete.motorista_nome || _getNomeColaborador(frete.colaborador_motorista_id || frete.motorista_id) || "-")}
-        ${_frotaHistoricoResumoRow("Entregador", frete.entregador_nome || _getNomeColaborador(frete.colaborador_entregador_id || frete.entregador_id) || "-")}
+        ${_frotaHistoricoResumoRow("Motorista", frete.motorista_nome || _getNomeColaborador(frete.colaborador_motorista_id) || "-")}
+        ${_frotaHistoricoResumoRow("Entregador", frete.entregador_nome || _getNomeColaborador(frete.colaborador_entregador_id) || "-")}
         ${_frotaHistoricoResumoRow("Data carga", frete.data_carga ? _fmtDataCurtaBr(frete.data_carga) : "-")}
         ${_frotaHistoricoResumoRow("KM atual", frete.km_atual ?? 0)}
         ${_frotaHistoricoResumoRow("Peso", _fmtNumeroCarga(frete.peso, 3))}
         ${_frotaHistoricoResumoRow("Entregas", frete.qtd_entregas ?? frete.numero_entregas ?? 0)}
+        ${_frotaHistoricoResumoRow("Lotes", _lotesFreteTexto(frete.lote_manual || "") || "-")}
         ${_frotaHistoricoResumoRow("Carga vinculada", frete.carga_id || "-")}
         ${_frotaHistoricoResumoRow("Criado em", frete.created_at ? _fmtDateBr(frete.created_at) : "-")}
         ${_frotaHistoricoResumoRow("Atualizado em", frete.updated_at ? _fmtDateBr(frete.updated_at) : "-")}
@@ -9201,6 +10251,27 @@ async function abrirDetalhesFreteArquivado(freteId) {
   _abrirPopupBloqueante(modal);
 }
 
+async function arquivarFrete(freteId) {
+  try {
+    const r = await apiFetch(`/api/fretes/${freteId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ arquivado: true })
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok || data?.ok === false) {
+      throw new Error(data?.erro || "Erro ao arquivar frete.");
+    }
+
+    await carregarFretes();
+    await atualizarDash();
+    return true;
+  } catch (e) {
+    alert("Erro ao arquivar frete: " + e.message);
+    return false;
+  }
+}
+
 async function desarquivarFrete(freteId) {
   if (!confirm("Deseja desarquivar este frete? Ele voltará ao Kanban ativo.")) return;
 
@@ -9211,7 +10282,10 @@ async function desarquivarFrete(freteId) {
       body: JSON.stringify({ arquivado: false })
     });
 
-    if (!r.ok) throw new Error("Erro ao desarquivar frete.");
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok || data?.ok === false) {
+      throw new Error(data?.erro || "Erro ao desarquivar frete.");
+    }
 
     // Recarregar fretes e voltar ao kanban
     await carregarFretes();
@@ -9231,6 +10305,7 @@ async function salvarFrete() {
   let kmAtual = document.getElementById("novoFreteKmAtual").value;
   let peso = document.getElementById("novoFretePeso").value;
   let qtdEntregas = document.getElementById("novoFreteQtdEntregas").value;
+  const loteManual = _coletarLotesSelecionadosFrete(document.getElementById("novoFreteLoteManual"));
 
   const motoristaId = motorista ? Number(motorista) : null;
   const entregadorId = _resolverEntregadorPadrao(motoristaId, entregador ? Number(entregador) : null);
@@ -9254,6 +10329,7 @@ async function salvarFrete() {
       km_atual: kmAtual ? Number(kmAtual) : 0,
       peso: peso ? Number(peso) : 0,
       qtd_entregas: qtdEntregas ? Number(qtdEntregas) : 0,
+      lote_manual: loteManual,
     }),
   });
   const data = await resp.json().catch(() => ({}));
@@ -9273,6 +10349,7 @@ async function salvarFrete() {
   document.getElementById("novoFreteKmAtual").value = "";
   document.getElementById("novoFretePeso").value = "";
   document.getElementById("novoFreteQtdEntregas").value = "";
+  Array.from(document.getElementById("novoFreteLoteManual")?.options || []).forEach((opt) => { opt.selected = false; });
 }
 
 async function preencherSelect(tipo, selectId, textoPadrao) {
@@ -9488,9 +10565,20 @@ function ativarDragDropMobile() {
 
 async function carregarSelectsNovoFrete() {
   await preencherSelectColaboradores("novoFreteMotorista", "motorista", "Selecione motorista");
-  await preencherSelectColaboradores("novoFreteEntregador", "entregador", "Selecione entregador");
+  _atualizarApoioNovoFrete();
+  const motoristaSelect = document.getElementById("novoFreteMotorista");
+  if (motoristaSelect) {
+    motoristaSelect.onchange = () => _atualizarApoioNovoFrete();
+  }
   await preencherSelect("veiculos", "novoFreteVeiculo", "Selecione veículo");
+  const veiculoSelect = document.getElementById("novoFreteVeiculo");
+  if (veiculoSelect && veiculoSelect.dataset.equipeAtualBound !== "1") {
+    veiculoSelect.dataset.equipeAtualBound = "1";
+    veiculoSelect.addEventListener("change", _aplicarEquipeAtualNovoFrete);
+  }
   await preencherSelect("cargas", "novoFreteCarga", "Selecione carga");
+  await carregarLotesOperacionaisEstoque({ silencioso: true }).catch((e) => console.warn("lotes frete erro:", e));
+  _aplicarOpcoesSelectLotesFrete(document.getElementById("novoFreteLoteManual"));
   _bindNovoFreteKmAtual();
 }
 
@@ -9500,8 +10588,12 @@ async function carregarSelectsNovoFrete() {
 async function deletar(tipo, id) {
   if (!confirm("Deseja excluir?")) return;
 
-  // Deleta do servidor
-  await apiFetch(`/api/${tipo}/${id}`, { method: "DELETE" });
+  const resp = await apiFetch(`/api/${tipo}/${id}`, { method: "DELETE" });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok || data?.ok === false) {
+    alert(data?.erro || "Nao foi possivel excluir.");
+    return;
+  }
 
   // Força recarregar o cache deste tipo
   cacheCadastros[tipo] = null; // Marca como inválido
@@ -9591,6 +10683,8 @@ function fecharDetalhesFrete(e) {
 }
 
 function _freteDetalheDadosTemplate(frete) {
+  const motoristaAtual = _freteColaboradorMotoristaId(frete);
+  const apoioAtual = _normalizarApoioEscalaId(motoristaAtual, _freteColaboradorEntregadorId(frete));
   return `
     <div class="frete-detail-grid">
       <div class="crud-field crud-field--full">
@@ -9610,19 +10704,25 @@ function _freteDetalheDadosTemplate(frete) {
       <div class="crud-field">
         <span>Motorista</span>
         <select class="frete-motorista">
-          ${optionsFromColaboradores("motorista", frete.motorista_id)}
+          ${optionsFromColaboradores("motorista", motoristaAtual)}
         </select>
       </div>
       <div class="crud-field">
-        <span>Entregador</span>
+        <span>Apoio</span>
         <select class="frete-entregador">
-          ${optionsFromColaboradores("entregador", frete.entregador_id)}
+          ${optionsFromEscalaApoio(apoioAtual, motoristaAtual)}
         </select>
       </div>
       <div class="crud-field">
         <span>Carga</span>
         <select class="frete-carga">
           ${optionsFrom(cacheCadastros.cargas, frete.carga_id)}
+        </select>
+      </div>
+      <div class="crud-field crud-field--full">
+        <span>Lotes vinculados</span>
+        <select class="frete-lote-manual" multiple size="4" data-selected="${_escAttr(_lotesFreteTexto(frete.lote_manual || ""))}">
+          ${_optionsLotesFrete(frete.lote_manual || "")}
         </select>
       </div>
       <div class="crud-field">
@@ -9644,6 +10744,7 @@ function _freteDetalheDadosTemplate(frete) {
     </div>
     <div class="crud-actions frete-detail-actions">
       <button class="btn-primary btn-salvar-frete" type="button">Salvar</button>
+      ${_fretePodeArquivarManual(frete) ? `<button class="btn-secondary btn-arquivar-frete-detalhe" type="button">Arquivar</button>` : ""}
       <button class="btn-secondary" type="button" onclick="fecharDetalhesFrete()">Fechar</button>
     </div>
   `;
@@ -9664,12 +10765,132 @@ function _freteDetalheCargaTemplate(frete) {
   `;
 }
 
-function _freteDetalheNotasSaidaTemplate(notas) {
-  if (!Array.isArray(notas) || !notas.length) {
-    return `<div class="frete-detail-empty">Nenhuma nota de saida vinculada a este frete.</div>`;
+function _freteDetalheCargaXmlTemplate(frete, cargaXml = {}) {
+  const itens = Array.isArray(cargaXml.itens) ? cargaXml.itens : [];
+  const petsPorTamanho = cargaXml.pets_por_tamanho && typeof cargaXml.pets_por_tamanho === "object"
+    ? Object.entries(cargaXml.pets_por_tamanho)
+    : [];
+  if (!itens.length) {
+    return `
+      <div class="frete-detail-empty">
+        Este card possui XML vinculado, mas os itens da carga ainda não foram encontrados.
+        Confira se a NF-e está confirmada ou pré-vinculada na aba “Notas de saída”.
+      </div>
+    `;
   }
   return `
-    <div class="frete-notas-summary">${notas.length} nota(s) de saida vinculada(s)</div>
+    <div class="frota-historico-grid">
+      <div class="frota-historico-card">
+        <h4>Resumo da carga pelos XMLs</h4>
+        <div class="frota-historico-kv">
+          ${_frotaHistoricoResumoRow("NF-e vinculadas", cargaXml.notas_total || 0)}
+          ${_frotaHistoricoResumoRow("Total de embalagens", _fmtNumeroCarga(cargaXml.total_embalagens, 3))}
+          ${_frotaHistoricoResumoRow("Total de garrafas / unidades", _fmtNumeroCarga(cargaXml.total_unidades, 3))}
+          ${_frotaHistoricoResumoRow("Total de PETs", _fmtNumeroCarga(cargaXml.total_pets, 3))}
+          ${_frotaHistoricoResumoRow("Total retornáveis / vidro", _fmtNumeroCarga(cargaXml.total_retornaveis, 3))}
+          ${_frotaHistoricoResumoRow("Volume estimado", `${_fmtNumeroCarga(cargaXml.total_litros, 3)} L`)}
+          ${_frotaHistoricoResumoRow("Valor total das notas", _fmtMoney(cargaXml.valor_total || 0))}
+        </div>
+        ${petsPorTamanho.length ? `
+          <div class="hint">
+            PETs por tamanho:
+            ${petsPorTamanho.map(([tamanho, total]) => `${_escHtml(tamanho)}: ${_escHtml(_fmtNumeroCarga(total, 3))}`).join(" • ")}
+          </div>
+        ` : ""}
+      </div>
+      <div class="frota-historico-card">
+        <h4>Produtos consolidados</h4>
+        <div class="frota-historico-table-wrap">
+          <table class="frota-historico-table">
+            <thead>
+              <tr>
+                <th>Produto</th>
+                <th>Tipo</th>
+                <th>Embalagens</th>
+                <th>Fator</th>
+                <th>Garrafas / unidades</th>
+                <th>Litros</th>
+                <th>Valor</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${itens.map((item) => `
+                <tr>
+                  <td>
+                    <strong>${_escHtml(item.nome || "-")}</strong>
+                    ${item.codigo_produto ? `<div class="hint">Código ${_escHtml(item.codigo_produto)}</div>` : ""}
+                  </td>
+                  <td>${_escHtml(item.tipo || "-")}</td>
+                  <td>${_escHtml(_fmtNumeroCarga(item.embalagens, 3))} ${_escHtml(item.unidade || "")}</td>
+                  <td>${_escHtml(_fmtNumeroCarga(item.fator, 3))}</td>
+                  <td>${_escHtml(_fmtNumeroCarga(item.unidades, 3))}</td>
+                  <td>${_escHtml(_fmtNumeroCarga(item.litros, 3))}</td>
+                  <td>${_escHtml(_fmtMoney(item.valor || 0))}</td>
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function _freteXmlTransporteHint(nota = {}) {
+  return [
+    nota.placa_xml ? `Placa ${nota.placa_xml}` : "",
+    nota.mapa_xml ? `Mapa ${nota.mapa_xml}` : "",
+    nota.numero_caminhao_xml ? `Caminhao ${nota.numero_caminhao_xml}` : "",
+  ].filter(Boolean).join(" | ");
+}
+
+function _freteDetalheNotasSaidaTemplate(notas, pendentes = []) {
+  const notasConfirmadas = Array.isArray(notas) ? notas : [];
+  const notasPendentes = Array.isArray(pendentes) ? pendentes : [];
+  if (!notasConfirmadas.length && !notasPendentes.length) {
+    return `<div class="frete-detail-empty">Nenhuma nota de saida vinculada a este frete.</div>`;
+  }
+  const pendentesHtml = notasPendentes.length ? `
+    <div class="frete-notas-summary frete-notas-summary--pending">${notasPendentes.length} nota(s) pre-vinculada(s), aguardando confirmacao do XML no estoque</div>
+    <div class="frota-historico-table-wrap">
+      <table class="frota-historico-table">
+        <thead>
+          <tr>
+            <th>Nota</th>
+            <th>Emissao</th>
+            <th>Vinculo</th>
+            <th>XML</th>
+            <th>Destino</th>
+            <th>Pendentes</th>
+            <th>Valor</th>
+            <th>Atualizacao</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${notasPendentes.map((nota) => `
+            <tr>
+              <td>
+                <strong>${_escHtml(nota.numero_nota || "-")}</strong>
+                ${nota.chave_nfe ? `<div class="hint">${_escHtml(nota.chave_nfe)}</div>` : ""}
+              </td>
+              <td>${_escHtml(_fmtDataCurtaBr(nota.data_emissao) || "-")}</td>
+              <td>
+                ${_escHtml(nota.origem_frete === "selecionado_kanban" ? "Kanban" : (nota.origem_frete || "Pre-vinculo"))}
+                <div class="hint">${_escHtml(nota.status || "pendente")}</div>
+              </td>
+              <td>${_escHtml(_freteXmlTransporteHint(nota) || "-")}</td>
+              <td>${_escHtml(nota.destinatario_nome || "-")}</td>
+              <td>${_escHtml(String(nota.itens_pendentes ?? nota.itens_total ?? 0))}</td>
+              <td>${_escHtml(_fmtMoney(nota.valor_total_nota || 0))}</td>
+              <td>${_escHtml(_fmtDateBr(nota.atualizado_em) || nota.atualizado_em || "-")}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    </div>
+  ` : "";
+  const confirmadasHtml = notasConfirmadas.length ? `
+    <div class="frete-notas-summary">${notasConfirmadas.length} nota(s) de saida vinculada(s)</div>
     <div class="frota-historico-table-wrap">
       <table class="frota-historico-table">
         <thead>
@@ -9686,7 +10907,7 @@ function _freteDetalheNotasSaidaTemplate(notas) {
           </tr>
         </thead>
         <tbody>
-          ${notas.map((nota) => `
+          ${notasConfirmadas.map((nota) => `
             <tr>
               <td>
                 <strong>${_escHtml(nota.numero_nota || "-")}</strong>
@@ -9696,10 +10917,7 @@ function _freteDetalheNotasSaidaTemplate(notas) {
               <td>${_escHtml(nota.rota_registrada || "-")}</td>
               <td>
                 ${_escHtml(nota.vinculacao_origem === "automatica_xml" ? "Automatico" : "Manual")}
-                ${(nota.placa_xml || nota.mapa_xml) ? `<div class="hint">${_escHtml([
-                  nota.placa_xml ? `Placa ${nota.placa_xml}` : "",
-                  nota.mapa_xml ? `Mapa ${nota.mapa_xml}` : "",
-                ].filter(Boolean).join(" | "))}</div>` : ""}
+                ${_freteXmlTransporteHint(nota) ? `<div class="hint">${_escHtml(_freteXmlTransporteHint(nota))}</div>` : ""}
               </td>
               <td>${_escHtml(nota.destinatario_nome || "-")}</td>
               <td>${_escHtml(String(nota.itens_total || 0))}</td>
@@ -9714,7 +10932,598 @@ function _freteDetalheNotasSaidaTemplate(notas) {
         </tbody>
       </table>
     </div>
+  ` : "";
+  return `
+    ${pendentesHtml}
+    ${confirmadasHtml}
   `;
+}
+
+function _freteXmlDataNota(nota = {}) {
+  return String(nota.data_emissao_normalizada || nota.data_emissao || "").trim().slice(0, 10);
+}
+
+function _freteXmlRotaNota(nota = {}, frete = {}) {
+  return String(
+    nota.rota_sugerida
+    || nota.frete_sugerido_nome
+    || frete.carga_rota
+    || frete.carga_cidades
+    || frete.cidade
+    || ""
+  ).trim();
+}
+
+function _freteXmlVinculoEstadoLabel(estado = "") {
+  const labels = {
+    vinculado_frete: "Vinculado neste frete",
+    sugerido_frete: "Sugerido para este frete",
+    sem_vinculo: "Sem vinculo",
+    vinculado_outro: "Vinculado em outro frete",
+  };
+  return labels[String(estado || "").trim()] || "Sem vinculo";
+}
+
+let freteXmlUltimaSelecaoIndex = null;
+
+function _freteDetalheVincularXmlTemplate(payload = {}, frete = {}) {
+  const todasNotas = Array.isArray(payload?.notas) ? payload.notas : [];
+  const filtroData = String(payload?.filtro_data || "").trim();
+  const filtroRota = String(payload?.filtro_rota || "").trim();
+  const filtroVinculo = String(payload?.filtro_vinculo || "todos").trim() || "todos";
+  const contadoresVinculo = payload?.contadores_vinculo && typeof payload.contadores_vinculo === "object"
+    ? payload.contadores_vinculo
+    : {};
+  const semVinculoTotal = Number(contadoresVinculo.sem_vinculo || 0) || 0;
+  const vinculadosNesteTotal = Number(contadoresVinculo.vinculado_frete || 0) || 0;
+  const sugeridosTotal = Number(contadoresVinculo.sugerido_frete || 0) || 0;
+  const vinculadosOutroTotal = Number(contadoresVinculo.vinculado_outro || 0) || 0;
+  const totalVinculos = Number(contadoresVinculo.total || 0) || 0;
+  const datas = Array.from(new Set(todasNotas.map(_freteXmlDataNota).filter(Boolean)))
+    .sort((a, b) => b.localeCompare(a));
+  const rotas = Array.from(new Set(todasNotas.map((nota) => _freteXmlRotaNota(nota, frete)).filter(Boolean)))
+    .sort((a, b) => a.localeCompare(b, "pt-BR", { numeric: true, sensitivity: "base" }));
+  if (filtroData && !datas.includes(filtroData)) datas.unshift(filtroData);
+  if (filtroRota && !rotas.includes(filtroRota)) rotas.unshift(filtroRota);
+  const notas = todasNotas.filter((nota) => {
+    if (filtroData && _freteXmlDataNota(nota) !== filtroData) return false;
+    if (filtroRota && _freteXmlRotaNota(nota, frete) !== filtroRota) return false;
+    return true;
+  });
+  const toolbarHtml = `
+    <div class="frete-xml-vinculo-toolbar">
+      <input id="freteXmlBuscaInput" type="search" value="${_escAttr(payload?.busca_form || "")}" placeholder="Buscar nota, chave, cliente, placa" onkeydown="if(event.key === 'Enter'){ event.preventDefault(); buscarXmlPendentesFrete(${Number(frete.id || 0)}); }">
+      <label class="frete-xml-vinculo-toggle">
+        <input id="freteXmlMostrarTodas" type="checkbox" ${payload?.incluindo_todas ? "checked" : ""}>
+        <span>Mostrar todas</span>
+      </label>
+      <button type="button" onclick="buscarXmlPendentesFrete(${Number(frete.id || 0)})">Filtrar</button>
+      <select id="freteXmlFiltroVinculo">
+        <option value="todos" ${filtroVinculo === "todos" ? "selected" : ""}>Todos os vinculos${totalVinculos ? ` (${totalVinculos})` : ""}</option>
+        <option value="vinculados_frete" ${filtroVinculo === "vinculados_frete" ? "selected" : ""}>Vinculados neste frete (${vinculadosNesteTotal})</option>
+        <option value="sugeridos" ${filtroVinculo === "sugeridos" ? "selected" : ""}>Sugeridos para este frete (${sugeridosTotal})</option>
+        <option value="sem_vinculo" ${filtroVinculo === "sem_vinculo" ? "selected" : ""}>Sem nenhum vinculo (${semVinculoTotal})</option>
+        <option value="vinculados_outro" ${filtroVinculo === "vinculados_outro" ? "selected" : ""}>Vinculados em outro frete (${vinculadosOutroTotal})</option>
+      </select>
+      <select id="freteXmlFiltroData">
+        <option value="">Todas as datas</option>
+        ${datas.map((data) => `<option value="${_escAttr(data)}" ${data === filtroData ? "selected" : ""}>${_escHtml(_fmtDataCurtaBr(data) || data)}</option>`).join("")}
+      </select>
+      <select id="freteXmlFiltroRota">
+        <option value="">Todas as rotas/fretes</option>
+        ${rotas.map((rota) => `<option value="${_escAttr(rota)}" ${rota === filtroRota ? "selected" : ""}>${_escHtml(rota)}</option>`).join("")}
+      </select>
+      <button type="button" onclick="selecionarXmlFretePorFiltro(${Number(frete.id || 0)}, 'data')">Selecionar data</button>
+      <button type="button" onclick="selecionarXmlFretePorFiltro(${Number(frete.id || 0)}, 'rota')">Selecionar rota/frete</button>
+      <button type="button" class="btn-primary" onclick="vincularXmlPendentesSelecionadosFrete(${Number(frete.id || 0)})">Vincular selecionados</button>
+    </div>
+  `;
+  if (!notas.length) {
+    return `
+      <div class="frete-notas-summary">XMLs sem vinculo: ${semVinculoTotal}</div>
+      ${toolbarHtml}
+      <div class="frete-detail-empty">${todasNotas.length ? "Nenhum XML de saida corresponde aos filtros aplicados." : "Nenhum XML de saida pendente encontrado para vincular."}</div>
+    `;
+  }
+  return `
+    <div class="frete-notas-summary">XMLs de saida no filtro: ${notas.length}${notas.length !== todasNotas.length ? ` de ${todasNotas.length}` : ""} | Sem vinculo: ${semVinculoTotal}</div>
+    ${toolbarHtml}
+    <div class="frota-historico-table-wrap frete-xml-vinculo-wrap">
+      <table class="frota-historico-table">
+        <thead>
+          <tr>
+            <th class="estoque-xml-selecao-col">
+              <input type="checkbox" aria-label="Selecionar todos os XMLs visiveis" onchange="selecionarTodosXmlFreteVisiveis(this.checked)">
+            </th>
+            <th>Nota</th>
+            <th>Emissao</th>
+            <th>XML</th>
+            <th>Vinculo</th>
+            <th>Sugestao</th>
+            <th>Destino</th>
+            <th>Pendentes</th>
+            <th>Valor</th>
+            <th>Acao</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${notas.map((nota) => {
+            const notaKey = nota.nota_key || nota.chave_nfe || "";
+            const dataFiltro = _freteXmlDataNota(nota);
+            const rotaFiltro = _freteXmlRotaNota(nota, frete);
+            const estadoVinculo = String(nota.vinculo_estado || (nota.vinculado_este_frete ? "vinculado_frete" : (nota.sugerido_para_frete ? "sugerido_frete" : "sem_vinculo")));
+            const vinculadoAqui = estadoVinculo === "vinculado_frete" || !!nota.vinculado_este_frete;
+            const vinculadoOutro = estadoVinculo === "vinculado_outro" || !!nota.vinculado_outro_frete;
+            const vinculoFinalOutro = !!nota.vinculo_final_outro_frete;
+            const podeDesvincular = !!nota.pode_desvincular || vinculadoAqui;
+            const podeSelecionar = !!notaKey && !vinculadoAqui;
+            const preOutro = !!nota.pre_vinculado_outro_frete;
+            const sugeridaAqui = estadoVinculo === "sugerido_frete" || nota.sugerido_para_frete;
+            const vinculoLabel = _freteXmlVinculoEstadoLabel(estadoVinculo);
+            const freteVinculadoTexto = nota.frete_vinculado_nome
+              ? `${nota.frete_vinculado_nome}${nota.frete_vinculado_status ? ` | ${_freteStatusLabel(nota.frete_vinculado_status)}` : ""}`
+              : "";
+            const sugestaoTexto = vinculadoAqui
+              ? (nota.vinculo_final_este_frete ? "Ja vinculada neste frete" : "Ja pre-vinculada neste frete")
+              : (vinculadoOutro
+                ? `${nota.vinculo_final_outro_frete ? "Vinculada" : "Pre-vinculada"} em ${nota.frete_vinculado_nome || nota.frete_sugerido_nome || "outro frete"}`
+                : (sugeridaAqui
+                  ? "Sugerida para este frete"
+                  : (nota.frete_sugerido_nome
+                    ? `Sugerida: ${nota.frete_sugerido_nome}`
+                    : "Sem sugestao segura")));
+            const rowClass = [
+              sugeridaAqui ? "frete-xml-vinculo-sugerida" : "",
+              vinculadoAqui ? "frete-xml-vinculo-atual" : "",
+              vinculadoOutro ? "frete-xml-vinculo-outro" : "",
+            ].filter(Boolean).join(" ");
+            return `
+              <tr class="${rowClass}" data-emissao="${_escAttr(dataFiltro)}" data-rota="${_escAttr(rotaFiltro)}" data-vinculo="${_escAttr(estadoVinculo)}">
+                <td class="estoque-xml-selecao-col">
+                  <input type="checkbox" class="frete-xml-vinculo-check" value="${_escAttr(notaKey)}" aria-label="Selecionar XML ${_escAttr(nota.numero_nota || notaKey)}" onclick="alternarXmlFreteCheckbox(event, this)" ${podeSelecionar ? "" : "disabled"}>
+                </td>
+                <td>
+                  <strong>${_escHtml(nota.numero_nota || "-")}</strong>
+                  ${nota.chave_nfe ? `<div class="hint">${_escHtml(nota.chave_nfe)}</div>` : ""}
+                </td>
+                <td>${_escHtml(_fmtDataCurtaBr(nota.data_emissao) || "-")}</td>
+                <td>${_escHtml(_freteXmlTransporteHint(nota) || "-")}</td>
+                <td>
+                  <strong>${_escHtml(vinculoLabel)}</strong>
+                  ${freteVinculadoTexto ? `<div class="hint">${_escHtml(freteVinculadoTexto)}</div>` : ""}
+                </td>
+                <td>
+                  ${sugeridaAqui || vinculadoAqui || vinculadoOutro ? `<strong>${_escHtml(sugestaoTexto)}</strong>` : _escHtml(sugestaoTexto)}
+                  ${nota.sugestao_motivo ? `<div class="hint">${_escHtml(nota.sugestao_motivo)}</div>` : ""}
+                </td>
+                <td>${_escHtml(nota.destinatario_nome || "-")}</td>
+                <td>${_escHtml(String(nota.itens_pendentes ?? 0))}</td>
+                <td>${_escHtml(_fmtMoney(nota.valor_total_nota || 0))}</td>
+                <td>
+                  ${podeDesvincular ? `
+                    <button type="button" class="btn-secondary" onclick="desvincularXmlPendenteFrete(${Number(frete.id)}, '${_escJsString(notaKey)}')">Desvincular</button>
+                  ` : (vinculadoOutro ? `
+                    <button type="button" class="btn-primary" onclick="vincularXmlPendenteFrete(${Number(frete.id)}, '${_escJsString(notaKey)}', { transferir: true })">Mover para este frete</button>
+                  ` : `
+                    <button type="button" class="btn-primary" onclick="vincularXmlPendenteFrete(${Number(frete.id)}, '${_escJsString(notaKey)}')">
+                      ${preOutro ? "Mover" : "Vincular"}
+                    </button>
+                  `)}
+                </td>
+              </tr>
+            `;
+          }).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function selecionarTodosXmlFreteVisiveis(selecionar) {
+  document.querySelectorAll("#freteDetalheBody .frete-xml-vinculo-check").forEach((checkbox) => {
+    if (checkbox.disabled) return;
+    checkbox.checked = !!selecionar;
+  });
+  freteXmlUltimaSelecaoIndex = null;
+}
+
+function alternarXmlFreteCheckbox(event, checkbox) {
+  const checks = Array.from(document.querySelectorAll("#freteDetalheBody .frete-xml-vinculo-check"));
+  const index = checks.indexOf(checkbox);
+  if (index < 0) return;
+  if (event?.shiftKey && freteXmlUltimaSelecaoIndex !== null && freteXmlUltimaSelecaoIndex >= 0) {
+    const inicio = Math.min(freteXmlUltimaSelecaoIndex, index);
+    const fim = Math.max(freteXmlUltimaSelecaoIndex, index);
+    const marcado = !!checkbox.checked;
+    checks.slice(inicio, fim + 1).forEach((item) => {
+      if (item.disabled) return;
+      item.checked = marcado;
+    });
+  }
+  freteXmlUltimaSelecaoIndex = index;
+}
+
+function _xmlFreteSelecionadosInfoNoModal() {
+  return Array.from(document.querySelectorAll("#freteDetalheBody .frete-xml-vinculo-check:checked"))
+    .filter((checkbox) => !checkbox.disabled)
+    .map((checkbox) => {
+      const row = checkbox.closest("tr");
+      return {
+        notaKey: String(checkbox.value || "").trim(),
+        vinculadoOutro: row?.dataset?.vinculo === "vinculado_outro",
+      };
+    })
+    .filter((item) => item.notaKey);
+}
+
+function selecionarXmlFretePorFiltro(freteId, tipoFiltro) {
+  const filtro = String(tipoFiltro || "");
+  const data = String(document.getElementById("freteXmlFiltroData")?.value || "");
+  const rota = String(document.getElementById("freteXmlFiltroRota")?.value || "");
+  if (filtro === "data" && !data) {
+    alert("Escolha uma data para selecionar os XMLs desse dia.");
+    return;
+  }
+  if (filtro === "rota" && !rota) {
+    alert("Escolha uma rota/frete para selecionar os XMLs desse grupo.");
+    return;
+  }
+  document.querySelectorAll("#freteDetalheBody .frete-xml-vinculo-check").forEach((checkbox) => {
+    if (checkbox.disabled) return;
+    const row = checkbox.closest("tr");
+    const bate = filtro === "data"
+      ? row?.dataset?.emissao === data
+      : row?.dataset?.rota === rota;
+    if (bate) checkbox.checked = true;
+  });
+}
+
+function _xmlFreteSelecionadosNoModal() {
+  return _xmlFreteSelecionadosInfoNoModal().map((item) => item.notaKey);
+}
+
+async function vincularXmlPendentesSelecionadosFrete(freteId) {
+  const selecionados = _xmlFreteSelecionadosInfoNoModal();
+  const notaKeys = Array.from(new Set(selecionados.map((item) => item.notaKey)));
+  if (!notaKeys.length) {
+    alert("Selecione ao menos um XML para vincular.");
+    return;
+  }
+  await vincularXmlPendenteFrete(freteId, notaKeys, {
+    transferir: selecionados.some((item) => item.vinculadoOutro),
+  });
+}
+
+async function buscarXmlPendentesFrete(freteId) {
+  const modal = document.getElementById("freteDetalheModal");
+  const frete = _findFreteById(freteId);
+  if (!modal || !frete) return;
+  modal.dataset.xmlBusca = String(document.getElementById("freteXmlBuscaInput")?.value || "").trim();
+  modal.dataset.xmlTodas = document.getElementById("freteXmlMostrarTodas")?.checked ? "1" : "";
+  modal.dataset.xmlFiltroVinculo = String(document.getElementById("freteXmlFiltroVinculo")?.value || "todos").trim();
+  modal.dataset.xmlFiltroData = String(document.getElementById("freteXmlFiltroData")?.value || "").trim();
+  modal.dataset.xmlFiltroRota = String(document.getElementById("freteXmlFiltroRota")?.value || "").trim();
+  await _renderFreteDetalheTab(frete, "vincular_xml");
+}
+
+async function vincularXmlPendenteFrete(freteId, notaKey, options = {}) {
+  if (!freteId || !notaKey) return;
+  const notaKeys = Array.isArray(notaKey)
+    ? Array.from(new Set(notaKey.map((item) => String(item || "").trim()).filter(Boolean)))
+    : [String(notaKey || "").trim()].filter(Boolean);
+  if (!notaKeys.length) return;
+  const transferir = !!options?.transferir;
+  if (notaKeys.length > 1) {
+    const mensagem = transferir
+      ? `Vincular ${notaKeys.length} XML(s) ao frete selecionado? XMLs que ja estiverem em outro frete serao movidos para este frete.`
+      : `Vincular ${notaKeys.length} XML(s) ao frete selecionado?`;
+    if (!confirm(mensagem)) return;
+    const sucessos = [];
+    const falhas = [];
+    for (const chave of notaKeys) {
+      try {
+        const resp = await apiFetch(`/api/fretes/${Number(freteId)}/xml-pendentes/vincular`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ nota_key: chave, transferir }),
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok || data?.ok === false) throw new Error(data?.erro || "Nao foi possivel vincular o XML ao frete.");
+        sucessos.push(data?.nota?.numero_nota || chave);
+      } catch (err) {
+        falhas.push({ chave, erro: err?.message || "Falha desconhecida." });
+      }
+    }
+    const frete = _findFreteById(freteId);
+    if (frete) {
+      await _renderFreteDetalheTab(frete, "notas_saida");
+    }
+    try { await carregarImportacoesXmlEstoque?.(); } catch {}
+    const falhasTexto = falhas.length
+      ? `\n${falhas.length} XML(s) ficaram pendentes:\n${falhas.slice(0, 8).map((item) => `- ${item.chave}: ${item.erro}`).join("\n")}`
+      : "";
+    alert(`${sucessos.length} XML(s) vinculado(s).${falhasTexto}`);
+    return;
+  }
+  const chaveUnica = notaKeys[0];
+  if (transferir && !confirm("Mover este XML para este frete? Ele saira do frete anterior.")) return;
+  const resp = await apiFetch(`/api/fretes/${Number(freteId)}/xml-pendentes/vincular`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ nota_key: chaveUnica, transferir }),
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok || data?.ok === false) {
+    alert(data?.erro || "Nao foi possivel vincular o XML ao frete.");
+    return;
+  }
+  const frete = _findFreteById(freteId);
+  if (frete) {
+    await _renderFreteDetalheTab(frete, "notas_saida");
+  }
+  try { await carregarImportacoesXmlEstoque?.(); } catch {}
+}
+
+async function desvincularXmlPendenteFrete(freteId, notaKey) {
+  if (!freteId || !notaKey) return;
+  const chave = String(notaKey || "").trim();
+  if (!chave) return;
+  if (!confirm("Desvincular este XML do frete? A nota voltara a ficar sem vinculo no Kanban.")) return;
+  const resp = await apiFetch(`/api/fretes/${Number(freteId)}/xml-pendentes/desvincular`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ nota_key: chave }),
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok || data?.ok === false) {
+    alert(data?.erro || "Nao foi possivel desvincular o XML do frete.");
+    return;
+  }
+  const frete = _findFreteById(freteId);
+  if (frete) {
+    await _renderFreteDetalheTab(frete, "vincular_xml");
+  }
+  try { await carregarImportacoesXmlEstoque?.(); } catch {}
+}
+
+function _bindFreteDetalheDadosWorkflow(body) {
+  const motoristaSelect = body?.querySelector?.(".frete-motorista");
+  const apoioSelect = body?.querySelector?.(".frete-entregador");
+  if (!motoristaSelect || !apoioSelect) return;
+  motoristaSelect.onchange = () => {
+    const motoristaId = motoristaSelect.value ? Number(motoristaSelect.value) : null;
+    const apoioAtual = apoioSelect.value ? Number(apoioSelect.value) : null;
+    _atualizarOptionsApoioFrete(apoioSelect, motoristaId, apoioAtual);
+  };
+}
+
+const FRETE_DETALHE_DEVOLUCAO_ITENS = [
+  { campo: "c24", obsCampo: "obs_c24", label: "Cx24", id: "C24" },
+  { campo: "c48", obsCampo: "obs_c48", label: "Cx48", id: "C48" },
+  { campo: "pet2l", obsCampo: "obs_pet2l", label: "PET 2L", id: "Pet2l" },
+  { campo: "pet600", obsCampo: "obs_pet600", label: "PET 600", id: "Pet600" },
+  { campo: "pet200", obsCampo: "obs_pet200", label: "PET 200", id: "Pet200" },
+  { campo: "agua_com_gas", obsCampo: "obs_agua_com_gas", label: "Agua c/ gas", id: "AguaComGas" },
+  { campo: "agua_sem_gas", obsCampo: "obs_agua_sem_gas", label: "Agua s/ gas", id: "AguaSemGas" },
+  { campo: "cx_600", obsCampo: "obs_cx_600", label: "CX 600", id: "Cx600" },
+];
+
+function _freteDetalheDevId(item, tipo = "qtd") {
+  return `freteDev${item.id}${tipo === "obs" ? "Obs" : ""}`;
+}
+
+function _freteDetalheDevolucoesTemplate(frete = {}) {
+  const freteId = Number(frete?.id || 0);
+  const freteNome = frete?.nome || frete?.frete_nome || (freteId ? `Frete ${freteId}` : "Frete");
+  const veiculoNome = frete?.veiculo_nome || frete?.veiculo || "-";
+  const motoristaNome = frete?.motorista_nome || frete?.motorista || "-";
+  const itemRows = FRETE_DETALHE_DEVOLUCAO_ITENS.map((item) => `
+    <div class="dev-itens-grid">
+      <div class="dev-item-label">${_escHtml(item.label)}</div>
+      <input type="number" id="${_freteDetalheDevId(item)}" min="0" step="1" value="0">
+      <input type="text" id="${_freteDetalheDevId(item, "obs")}" placeholder="Obs ${_escAttr(item.label)}">
+    </div>
+  `).join("");
+
+  return `
+    <div class="frete-notas-summary">
+      Lancando devolucao para ${_escHtml(freteNome)}
+    </div>
+    <div class="frete-dev-wrap">
+      <div class="frete-dev-panel">
+        <h4 class="dev-title">Dados da devolucao</h4>
+        <div class="dev-frete-info">
+          <strong>Frete:</strong> ${_escHtml(freteNome)}<br>
+          <strong>Veiculo:</strong> ${_escHtml(veiculoNome)}<br>
+          <strong>Motorista:</strong> ${_escHtml(motoristaNome)}
+        </div>
+        <label for="freteDevConf">Conferente</label>
+        <select id="freteDevConf"></select>
+      </div>
+
+      <div class="frete-dev-panel frete-dev-panel--wide">
+        <h4 class="dev-title">Itens devolvidos</h4>
+        <div class="dev-itens-grid dev-itens-header">
+          <div>Item</div>
+          <div>Qtd</div>
+          <div>Observacao</div>
+        </div>
+        ${itemRows}
+
+        <label>Anexos</label>
+        <div class="dev-anexos">
+          <label class="btn-file" for="freteDevFotosGaleria" title="Selecionar fotos da galeria ou arquivos">
+            Anexar arquivo
+          </label>
+          <input type="file" id="freteDevFotosGaleria" accept="image/*" multiple>
+
+          <label class="btn-file btn-camera only-mobile" for="freteDevFotosCamera" title="Abrir camera para tirar foto">
+            Tirar foto
+          </label>
+          <input type="file" id="freteDevFotosCamera" accept="image/*" capture="environment" class="only-mobile">
+        </div>
+
+        <div class="frete-detail-actions">
+          <span id="freteDevStatus" class="frete-dev-status" aria-live="polite"></span>
+          <button type="button" id="freteDevSalvarBtn" class="btn-primary" onclick="salvarDevolucaoFreteDetalhe(${freteId})">Salvar devolucao</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="frete-dev-history">
+      <div class="frete-dev-history-title">Devolucoes deste frete</div>
+      <div id="freteDevHistorico" class="frete-detail-empty">Carregando devolucoes...</div>
+    </div>
+  `;
+}
+
+async function _bindFreteDetalheDevolucoes(frete = {}) {
+  await preencherSelectColaboradores("freteDevConf", "conferente", "Selecione conferente");
+  await _carregarHistoricoDevolucoesFrete(frete?.id);
+}
+
+function _freteDetalheDevolucaoQtd(id) {
+  const valor = Number(document.getElementById(id)?.value || 0);
+  if (!Number.isFinite(valor) || valor < 0) return 0;
+  return Math.trunc(valor);
+}
+
+function _limparFormularioDevolucaoFreteDetalhe() {
+  FRETE_DETALHE_DEVOLUCAO_ITENS.forEach((item) => {
+    const inputQtd = document.getElementById(_freteDetalheDevId(item));
+    const inputObs = document.getElementById(_freteDetalheDevId(item, "obs"));
+    if (inputQtd) inputQtd.value = "0";
+    if (inputObs) inputObs.value = "";
+  });
+  const galeria = document.getElementById("freteDevFotosGaleria");
+  const camera = document.getElementById("freteDevFotosCamera");
+  if (galeria) galeria.value = "";
+  if (camera) camera.value = "";
+}
+
+function _freteDetalheItensDevolucaoResumo(devolucao = {}) {
+  const partes = FRETE_DETALHE_DEVOLUCAO_ITENS
+    .map((item) => {
+      const qtd = Number(devolucao?.[item.campo] || 0);
+      if (!Number.isFinite(qtd) || qtd <= 0) return "";
+      const obs = String(devolucao?.[item.obsCampo] || "").trim();
+      const qtdTexto = Number.isInteger(qtd) ? String(qtd) : qtd.toLocaleString("pt-BR");
+      return `${_escHtml(item.label)}: ${_escHtml(qtdTexto)}${obs ? ` (${_escHtml(obs)})` : ""}`;
+    })
+    .filter(Boolean);
+  return partes.length ? partes.join("<br>") : "-";
+}
+
+function _renderHistoricoDevolucoesFrete(devolucoes = []) {
+  if (!devolucoes.length) {
+    return `<div class="frete-detail-empty">Nenhuma devolucao lancada para este frete.</div>`;
+  }
+  return `
+    <div class="frete-dev-history-table">
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Itens</th>
+            <th>Conferente</th>
+            <th>Anexos</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${devolucoes.map((d) => {
+            const temFotos = !!(d.tem_fotos || (Array.isArray(d.fotos) && d.fotos.length));
+            return `
+              <tr>
+                <td>${_escHtml(d.id || "-")}</td>
+                <td>${_freteDetalheItensDevolucaoResumo(d)}</td>
+                <td>${_escHtml(d.conferente_nome || "-")}</td>
+                <td>
+                  ${temFotos ? `<button type="button" class="btn-secondary" onclick="abrirFotosDevolucao(${Number(d.id)})">Ver anexos</button>` : "-"}
+                </td>
+              </tr>
+            `;
+          }).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+async function _carregarHistoricoDevolucoesFrete(freteId) {
+  const alvo = document.getElementById("freteDevHistorico");
+  const id = Number(freteId || 0);
+  if (!alvo || !id) return;
+  try {
+    const resp = await apiFetch("/api/devolucoes");
+    const dados = await resp.json().catch(() => []);
+    if (!resp.ok) throw new Error("Falha ao carregar devolucoes.");
+    devolucoesCache = Array.isArray(dados) ? dados : [];
+    const filtradas = devolucoesCache.filter((d) => Number(d.frete_id) === id);
+    alvo.innerHTML = _renderHistoricoDevolucoesFrete(filtradas);
+  } catch (err) {
+    console.error("Erro ao carregar devolucoes do frete:", err);
+    alvo.innerHTML = `<div class="frete-detail-empty">Nao foi possivel carregar as devolucoes deste frete.</div>`;
+  }
+}
+
+async function salvarDevolucaoFreteDetalhe(freteId) {
+  const id = Number(freteId || 0);
+  if (!id) return alert("Frete invalido.");
+  const conferenteId = String(document.getElementById("freteDevConf")?.value || "").trim();
+  if (!conferenteId) return alert("Selecione o conferente.");
+
+  const fd = new FormData();
+  const frete = _findFreteById(id) || {};
+  let totalItens = 0;
+  fd.append("frete_id", String(id));
+  fd.append("veiculo_id", String(frete?.veiculo_id || ""));
+  fd.append("conferente_id", conferenteId);
+  fd.append("colaborador_conferente_id", conferenteId);
+
+  FRETE_DETALHE_DEVOLUCAO_ITENS.forEach((item) => {
+    const qtd = _freteDetalheDevolucaoQtd(_freteDetalheDevId(item));
+    totalItens += qtd;
+    fd.append(item.campo, String(qtd));
+    fd.append(item.obsCampo, String(document.getElementById(_freteDetalheDevId(item, "obs"))?.value || "").trim());
+  });
+
+  if (totalItens <= 0) {
+    alert("Informe ao menos uma quantidade devolvida.");
+    return;
+  }
+
+  const galeria = document.getElementById("freteDevFotosGaleria");
+  const camera = document.getElementById("freteDevFotosCamera");
+  const filesGaleria = galeria?.files ? Array.from(galeria.files) : [];
+  const fileCamera = (camera?.files && camera.files[0]) ? [camera.files[0]] : [];
+  [...filesGaleria, ...fileCamera].forEach((file) => fd.append("fotos", file));
+
+  const btn = document.getElementById("freteDevSalvarBtn");
+  const status = document.getElementById("freteDevStatus");
+  try {
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = "Salvando...";
+    }
+    if (status) status.textContent = "";
+    const resp = await apiFetch("/api/devolucoes", { method: "POST", body: fd });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok || data?.ok === false) {
+      throw new Error(data?.erro || "Erro ao salvar devolucao.");
+    }
+    _limparFormularioDevolucaoFreteDetalhe();
+    if (status) status.textContent = "Devolucao salva.";
+    await _carregarHistoricoDevolucoesFrete(id);
+    try { await carregarDevolucoes(); } catch (err) { console.warn("Nao foi possivel atualizar a lista geral de devolucoes:", err); }
+  } catch (err) {
+    console.error("Erro ao salvar devolucao no frete:", err);
+    alert(err?.message || "Erro ao salvar devolucao.");
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "Salvar devolucao";
+    }
+  }
 }
 
 async function _renderFreteDetalheTab(frete, tab = "dados") {
@@ -9731,16 +11540,55 @@ async function _renderFreteDetalheTab(frete, tab = "dados") {
       await abrirDetalhesCarga(frete.carga_id);
       return;
     }
-    body.innerHTML = _freteDetalheCargaTemplate(frete);
+    body.innerHTML = `<div class="frete-detail-empty">Consolidando a carga pelos XMLs vinculados...</div>`;
+    const resp = await apiFetch(`/api/fretes/${Number(frete.id)}/notas-saida`);
+    const data = await resp.json().catch(() => ({}));
+    body.innerHTML = resp.ok
+      ? _freteDetalheCargaXmlTemplate(frete, data?.carga_xml || {})
+      : `<div class="frete-detail-empty">${_escHtml(data?.erro || "Falha ao carregar os itens da carga.")}</div>`;
   } else if (tab === "notas_saida") {
     body.innerHTML = `<div class="frete-detail-empty">Carregando notas de saida...</div>`;
     const resp = await apiFetch(`/api/fretes/${Number(frete.id)}/notas-saida`);
     const data = await resp.json().catch(() => ({}));
     body.innerHTML = resp.ok
-      ? _freteDetalheNotasSaidaTemplate(data?.notas || [])
+      ? _freteDetalheNotasSaidaTemplate(data?.notas || [], data?.pendentes || [])
       : `<div class="frete-detail-empty">${_escHtml(data?.erro || "Falha ao carregar notas de saida.")}</div>`;
+  } else if (tab === "vincular_xml") {
+    body.innerHTML = `<div class="frete-detail-empty">Carregando XMLs pendentes...</div>`;
+    const params = new URLSearchParams();
+    const buscaXml = String(modal.dataset.xmlBusca || "").trim();
+    const mostrarTodasXml = modal.dataset.xmlTodas === "1";
+    const filtroVinculoXml = String(modal.dataset.xmlFiltroVinculo || "todos").trim() || "todos";
+    const filtroDataXml = String(modal.dataset.xmlFiltroData || "").trim();
+    const filtroRotaXml = String(modal.dataset.xmlFiltroRota || "").trim();
+    if (buscaXml) params.set("q", buscaXml);
+    if (filtroVinculoXml && filtroVinculoXml !== "todos") params.set("vinculo", filtroVinculoXml);
+    if (filtroDataXml) params.set("data", filtroDataXml);
+    if (filtroRotaXml) params.set("rota", filtroRotaXml);
+    if (mostrarTodasXml) {
+      params.set("todas", "1");
+      params.set("limite_outras", "1000");
+    }
+    const query = params.toString();
+    const resp = await apiFetch(`/api/fretes/${Number(frete.id)}/xml-pendentes${query ? `?${query}` : ""}`);
+    const data = await resp.json().catch(() => ({}));
+    if (data && typeof data === "object") {
+      data.busca_form = buscaXml;
+      data.incluindo_todas = mostrarTodasXml;
+      data.filtro_vinculo = filtroVinculoXml;
+      data.filtro_data = filtroDataXml;
+      data.filtro_rota = filtroRotaXml;
+    }
+    body.innerHTML = resp.ok
+      ? _freteDetalheVincularXmlTemplate(data || {}, frete)
+      : `<div class="frete-detail-empty">${_escHtml(data?.erro || "Falha ao carregar XMLs pendentes.")}</div>`;
+    freteXmlUltimaSelecaoIndex = null;
+  } else if (tab === "devolucoes") {
+    body.innerHTML = _freteDetalheDevolucoesTemplate(frete);
+    await _bindFreteDetalheDevolucoes(frete);
   } else {
     body.innerHTML = _freteDetalheDadosTemplate(frete);
+    _bindFreteDetalheDadosWorkflow(body);
   }
   const btnSalvar = body.querySelector(".btn-salvar-frete");
   if (btnSalvar) {
@@ -9759,6 +11607,18 @@ async function _renderFreteDetalheTab(frete, tab = "dados") {
         btnSalvar.disabled = false;
         btnSalvar.textContent = "Salvar";
       }
+    };
+  }
+  const btnArquivarDetalhe = body.querySelector(".btn-arquivar-frete-detalhe");
+  if (btnArquivarDetalhe) {
+    btnArquivarDetalhe.onclick = async () => {
+      btnArquivarDetalhe.disabled = true;
+      const arquivado = await arquivarFrete(frete.id);
+      if (arquivado) {
+        fecharDetalhesFrete();
+        return;
+      }
+      btnArquivarDetalhe.disabled = false;
     };
   }
   const btnAbreCarga = body.querySelector(".btn-abre-carga");
@@ -9796,9 +11656,16 @@ async function abrirDetalhesFrete(freteId, initialTab = "dados"){
   if (!frete) return;
 
   await ensureCadastrosCache();
+  await carregarLotesOperacionaisEstoque({ silencioso: true }).catch((e) => console.warn("lotes frete detalhe erro:", e));
   const state = _ensureFreteDraftState(frete);
   const data = _cloneFretePayload(state.dirty ? state.draft : frete);
   modal.dataset.freteId = String(freteId);
+  modal.dataset.xmlBusca = "";
+  modal.dataset.xmlTodas = "";
+  modal.dataset.xmlFiltroVinculo = "todos";
+  modal.dataset.xmlFiltroData = "";
+  modal.dataset.xmlFiltroRota = "";
+  freteXmlUltimaSelecaoIndex = null;
   _abrirPopupBloqueante(modal);
   _bindFreteDetalheModalEvents(freteId);
   await _renderFreteDetalheTab(data, initialTab);
@@ -9819,6 +11686,7 @@ function _coletarPayloadFreteDoDetalheModal(freteBase){
   const inpEntregas = body.querySelector(".frete-qtd-entregas");
   const txtObs = body.querySelector(".frete-obs");
   const txtNome = body.querySelector(".frete-nome");
+  const selLotes = body.querySelector(".frete-lote-manual");
   const motoristaId = selMotorista?.value ? Number(selMotorista.value) : null;
   const entregadorId = _resolverEntregadorPadrao(motoristaId, selEntregador?.value ? Number(selEntregador.value) : null);
   return {
@@ -9836,6 +11704,7 @@ function _coletarPayloadFreteDoDetalheModal(freteBase){
     peso: inpPeso && inpPeso.value.trim() !== "" ? Number(inpPeso.value) : 0,
     qtd_entregas: inpEntregas && inpEntregas.value.trim() !== "" ? Number(inpEntregas.value) : 0,
     observacao: (txtObs?.value || "").trim(),
+    lote_manual: selLotes ? _coletarLotesSelecionadosFrete(selLotes) : _lotesFreteTexto(freteBase?.lote_manual || ""),
     carga_rota: (freteBase?.carga_rota || "").toString().trim(),
     carga_cidades: (freteBase?.carga_cidades || "").toString().trim(),
     carga_veiculo_numero: (freteBase?.carga_veiculo_numero || "").toString().trim(),
@@ -10925,13 +12794,54 @@ function _resumoItensPreManutencaoXml(itens = []){
     .join(", ") + (normalizados.length > 3 ? ` +${normalizados.length - 3}` : "");
 }
 
+function _chaveOrdenacaoItensManutencaoXml(row = {}){
+  const itens = _normalizarItensManutencao(row.itens || []);
+  const nomes = itens
+    .map((item) => String(item.nome_produto || item.codigo_produto_nfe || item.codigo_barras || "").trim())
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b, "pt-BR", { numeric: true, sensitivity: "base" }));
+  return nomes[0] || String(row.numero_nota || row.chave_nfe || row.id || "");
+}
+
+function _preLancamentosManutencaoOrdenados(){
+  const rows = [...(Array.isArray(manutencaoXmlPendencias) ? manutencaoXmlPendencias : [])];
+  const ordenacao = String(document.getElementById("manutXmlOrdenacao")?.value || "recente");
+  if (ordenacao === "itens_nome") {
+    return rows.sort((a, b) => {
+      const porItem = _chaveOrdenacaoItensManutencaoXml(a).localeCompare(
+        _chaveOrdenacaoItensManutencaoXml(b),
+        "pt-BR",
+        { numeric: true, sensitivity: "base" }
+      );
+      if (porItem) return porItem;
+      return String(a.numero_nota || a.id || "").localeCompare(String(b.numero_nota || b.id || ""), "pt-BR", { numeric: true, sensitivity: "base" });
+    });
+  }
+  return rows.sort((a, b) => {
+    const dataA = String(a.atualizado_em || "");
+    const dataB = String(b.atualizado_em || "");
+    const porData = dataB.localeCompare(dataA);
+    if (porData) return porData;
+    return Number(b.id || 0) - Number(a.id || 0);
+  });
+}
+
 function _renderPreLancamentosManutencaoXml(){
   const body = document.getElementById("manutXmlPendenciasBody");
   const resumo = document.getElementById("manutXmlPendenciasResumo");
   if (!body || !resumo) return;
-  resumo.textContent = `${manutencaoXmlPendencias.length} nota(s) aguardando conferencia.`;
-  body.innerHTML = manutencaoXmlPendencias.length
-    ? manutencaoXmlPendencias.map((row) => {
+  const rowsOrdenadas = _preLancamentosManutencaoOrdenados();
+  const idsDisponiveis = new Set(
+    manutencaoXmlPendencias.map((row) => Number(row.id || 0)).filter((id) => id > 0)
+  );
+  manutencaoXmlPendenciasSelecionadas = new Set(
+    Array.from(manutencaoXmlPendenciasSelecionadas || []).filter((id) => idsDisponiveis.has(Number(id)))
+  );
+  resumo.textContent = `${manutencaoXmlPendencias.length} nota(s) aguardando conferencia. ${manutencaoXmlPendenciasSelecionadas.size} selecionada(s).`;
+  body.innerHTML = rowsOrdenadas.length
+    ? rowsOrdenadas.map((row) => {
+        const id = Number(row.id || 0);
+        const selecionada = manutencaoXmlPendenciasSelecionadas.has(id);
         const veiculo = [
           row.veiculo_nome || "",
           row.veiculo_placa || "",
@@ -10942,7 +12852,8 @@ function _renderPreLancamentosManutencaoXml(){
           ? `${veiculo}${confianca > 0 && confianca < 1 ? ` (${Math.round(confianca * 100)}%)` : ""}`
           : "Selecionar na conferencia";
         return `
-          <tr class="${Number(row.id) === Number(manutencaoXmlPreLancamentoId) ? "is-selected" : ""}">
+          <tr class="${Number(row.id) === Number(manutencaoXmlPreLancamentoId) || selecionada ? "is-selected" : ""}">
+            <td><input type="checkbox" class="manut-xml-selecao" aria-label="Selecionar nota ${_escAttr(row.numero_nota || row.chave_nfe || id)}" ${selecionada ? "checked" : ""} onchange="selecionarPendenciaManutencaoXml(${id}, this.checked)"></td>
             <td>${_escHtml(row.numero_nota || row.chave_nfe || "-")}</td>
             <td>${_escHtml(row.placa_xml || "-")}</td>
             <td>${_escHtml(sugestao)}</td>
@@ -10950,12 +12861,18 @@ function _renderPreLancamentosManutencaoXml(){
             <td>${_escHtml(row.motivo || "Revisao necessaria")}</td>
             <td class="abastecimento-actions">
               <button type="button" onclick="conferirPreLancamentoManutencaoXml(${Number(row.id)})">Conferir</button>
+              <button type="button" class="btn-secondary" onclick="devolverPreLancamentosManutencaoSelecionados([${id}])">Devolver</button>
               <button type="button" class="btn-secondary" onclick="descartarPreLancamentoManutencaoXml(${Number(row.id)})">Descartar</button>
             </td>
           </tr>
         `;
       }).join("")
-    : `<tr><td colspan="6">Nenhum pre-lancamento de manutencao pendente.</td></tr>`;
+    : `<tr><td colspan="7">Nenhum pre-lancamento de manutencao pendente.</td></tr>`;
+  _atualizarControlesPreLancamentosManutencaoXml();
+}
+
+function renderizarPreLancamentosManutencaoXml(){
+  _renderPreLancamentosManutencaoXml();
 }
 
 async function carregarPreLancamentosManutencaoXml(){
@@ -10966,7 +12883,7 @@ async function carregarPreLancamentosManutencaoXml(){
   const data = await resp.json().catch(() => ({}));
   if (!resp.ok) {
     resumo.textContent = data?.erro || "Falha ao carregar pre-lancamentos.";
-    body.innerHTML = `<tr><td colspan="6">Falha ao carregar pendencias.</td></tr>`;
+    body.innerHTML = `<tr><td colspan="7">Falha ao carregar pendencias.</td></tr>`;
     return;
   }
   manutencaoXmlPendencias = Array.isArray(data?.rows) ? data.rows : [];
@@ -10979,6 +12896,157 @@ async function carregarPreLancamentosManutencaoXml(){
     manutencaoXmlPreLancamentoId = 0;
   }
   _renderPreLancamentosManutencaoXml();
+}
+
+function _atualizarControlesPreLancamentosManutencaoXml(){
+  const selecionarTodas = document.getElementById("manutXmlSelecionarTodas");
+  const botaoLancar = document.getElementById("manutXmlLancarSelecionadasBtn");
+  const botaoDevolver = document.getElementById("manutXmlDevolverSelecionadasBtn");
+  const ids = manutencaoXmlPendencias.map((row) => Number(row.id || 0)).filter((id) => id > 0);
+  const selecionadas = ids.filter((id) => manutencaoXmlPendenciasSelecionadas.has(id));
+  if (selecionarTodas) {
+    selecionarTodas.checked = ids.length > 0 && selecionadas.length === ids.length;
+    selecionarTodas.indeterminate = selecionadas.length > 0 && selecionadas.length < ids.length;
+    selecionarTodas.disabled = !ids.length;
+  }
+  if (botaoLancar) {
+    botaoLancar.textContent = `Lancar selecionadas (${selecionadas.length})`;
+    botaoLancar.disabled = !selecionadas.length;
+  }
+  if (botaoDevolver) {
+    botaoDevolver.textContent = `Devolver ao estoque (${selecionadas.length})`;
+    botaoDevolver.disabled = !selecionadas.length;
+  }
+}
+
+function selecionarPendenciaManutencaoXml(id, selecionada){
+  const itemId = Number(id || 0);
+  if (itemId <= 0) return;
+  if (selecionada) {
+    manutencaoXmlPendenciasSelecionadas.add(itemId);
+  } else {
+    manutencaoXmlPendenciasSelecionadas.delete(itemId);
+  }
+  _renderPreLancamentosManutencaoXml();
+}
+
+function selecionarTodasPendenciasManutencaoXml(selecionar){
+  manutencaoXmlPendenciasSelecionadas = new Set(
+    selecionar
+      ? manutencaoXmlPendencias.map((row) => Number(row.id || 0)).filter((id) => id > 0)
+      : []
+  );
+  _renderPreLancamentosManutencaoXml();
+}
+
+async function lancarPreLancamentosManutencaoSelecionados(idsOverride = null){
+  const ids = Array.isArray(idsOverride)
+    ? idsOverride.map((id) => Number(id || 0)).filter((id) => id > 0)
+    : Array.from(manutencaoXmlPendenciasSelecionadas || []).map((id) => Number(id || 0)).filter((id) => id > 0);
+  if (!ids.length) {
+    alert("Selecione ao menos uma nota para lancar em manutencao.");
+    return;
+  }
+  if (!confirm(`Lancar ${ids.length} nota(s) como manutencao usando os dados sugeridos da NF-e?`)) return;
+  const botaoLancar = document.getElementById("manutXmlLancarSelecionadasBtn");
+  const botaoDevolver = document.getElementById("manutXmlDevolverSelecionadasBtn");
+  if (botaoLancar) botaoLancar.disabled = true;
+  if (botaoDevolver) botaoDevolver.disabled = true;
+  const status = document.getElementById("manutencaoOcrStatus");
+  if (status) status.textContent = `Lancando ${ids.length} nota(s) de manutencao...`;
+
+  const sucessos = [];
+  const erros = [];
+  for (const id of ids) {
+    const row = manutencaoXmlPendencias.find((item) => Number(item.id || 0) === Number(id));
+    try {
+      const resp = await apiFetch("/api/manutencoes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pre_lancamento_id: id }),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok || data?.ok === false) {
+        throw new Error(data?.erro || "Erro ao registrar manutencao.");
+      }
+      sucessos.push({
+        id,
+        numero_nota: row?.numero_nota || data?.numero_nota || id,
+        manutencao_id: data?.id || 0,
+      });
+      manutencaoXmlPendenciasSelecionadas.delete(id);
+      if (Number(manutencaoXmlPreLancamentoId || 0) === Number(id)) {
+        manutencaoXmlPreLancamentoId = 0;
+        limparPreviewOcrManutencao();
+      }
+    } catch (err) {
+      erros.push({
+        id,
+        numero_nota: row?.numero_nota || id,
+        erro: err?.message || "Falha desconhecida.",
+      });
+    }
+  }
+
+  await carregarManutencoesFrota();
+  await carregarPreLancamentosManutencaoXml();
+  await carregarFrotaResumo();
+  if (window.__dashView === "frota") await renderDashboardFrota();
+
+  const detalhesErro = erros.length
+    ? `\n${erros.slice(0, 8).map((item) => `- ${item.numero_nota}: ${item.erro}`).join("\n")}${erros.length > 8 ? `\n... e mais ${erros.length - 8} erro(s).` : ""}`
+    : "";
+  if (status) {
+    status.textContent = `${sucessos.length} nota(s) lancada(s) em manutencao.${erros.length ? ` ${erros.length} com erro.` : ""}`;
+  }
+  if (erros.length) {
+    alert(`${sucessos.length} nota(s) lancada(s). ${erros.length} ficaram pendentes:${detalhesErro}`);
+  }
+}
+
+async function devolverPreLancamentosManutencaoSelecionados(idsOverride = null){
+  const ids = Array.isArray(idsOverride)
+    ? idsOverride.map((id) => Number(id || 0)).filter((id) => id > 0)
+    : Array.from(manutencaoXmlPendenciasSelecionadas || []).map((id) => Number(id || 0)).filter((id) => id > 0);
+  if (!ids.length) {
+    alert("Selecione ao menos uma nota para devolver ao estoque.");
+    return;
+  }
+  const plural = ids.length > 1;
+  if (!confirm(`Devolver ${ids.length} nota(s) para o estoque? Elas sairao da manutencao e voltarao para lancamento no estoque.`)) return;
+  const botaoDevolver = document.getElementById("manutXmlDevolverSelecionadasBtn");
+  if (botaoDevolver) botaoDevolver.disabled = true;
+  const resp = await apiFetch("/api/manutencoes/importacoes-xml/devolver-estoque", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ids }),
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    alert(data?.erro || "Falha ao devolver notas para o estoque.");
+    _atualizarControlesPreLancamentosManutencaoXml();
+    return;
+  }
+  const devolvidos = Array.isArray(data?.devolvidos) ? data.devolvidos : [];
+  devolvidos.forEach((item) => {
+    manutencaoXmlPendenciasSelecionadas.delete(Number(item.id || 0));
+    if (Number(manutencaoXmlPreLancamentoId || 0) === Number(item.id || 0)) {
+      manutencaoXmlPreLancamentoId = 0;
+      limparPreviewOcrManutencao();
+    }
+  });
+  const erros = Array.isArray(data?.erros) ? data.erros : [];
+  await carregarPreLancamentosManutencaoXml();
+  if (window.__estoqueView === "lancar") {
+    carregarImportacoesXmlEstoque().catch(() => {});
+  }
+  if (erros.length) {
+    alert(`${devolvidos.length} nota(s) devolvida(s). ${erros.length} ficaram com erro.`);
+  } else {
+    const msg = plural ? "Notas devolvidas ao estoque." : "Nota devolvida ao estoque.";
+    const status = document.getElementById("manutencaoOcrStatus");
+    if (status) status.textContent = msg;
+  }
 }
 
 function conferirPreLancamentoManutencaoXml(id){
@@ -12588,8 +14656,8 @@ function _estoqueResolverFatorProduto(item = {}, cadastro = null){
       } else if (apresentacao === "UN") {
         fator = 1;
       } else {
-        fator = 0;
-        motivoConfirmacao = "Produto de agua sem fator explicito. Revise o cadastro antes de lancar.";
+        fator = 1;
+        motivoConfirmacao = "Produto de agua sem fator explicito. Usando fator padrao 1.";
       }
     } else {
       if (multiplicador > 0) {
@@ -12599,10 +14667,16 @@ function _estoqueResolverFatorProduto(item = {}, cadastro = null){
       } else if (apresentacao === "UN") {
         fator = 1;
       } else {
-        fator = 0;
-        motivoConfirmacao = "Produto sem fator explicito para esta apresentacao.";
+        fator = 1;
+        motivoConfirmacao = "Produto sem fator explicito para esta apresentacao. Usando fator padrao 1.";
       }
     }
+  }
+
+  if (!(Number(fator || 0) > 0)) {
+    fator = 1;
+    fatorInferido = false;
+    motivoConfirmacao = "Sem fator cadastrado. Usando fator padrao 1.";
   }
 
   const confirmacaoPendente = !cadastroExplicitado || fatorInferido;
@@ -12753,6 +14827,7 @@ function _estoqueAjustarEmbalagemPorFator(embalagem, fator){
 function _estoqueProdutoCadastroNormalizado(item = {}){
   const grupo = _estoqueGrupoNormalizado(item.grupo_estoque || item.grupo || "") || _estoqueGrupoInferido(item) || "OUTROS";
   const produtoBaseNome = String(item.produto_base_nome || item.produto_base || "").trim() || _estoqueBaseNomeInferido({ ...item, grupo_estoque: grupo });
+  const fatorCadastro = Number(item.fator_embalagem_padrao || item.fator_embalagem || 0) || 0;
   const produto = {
     id: Number(item.id || 0) || 0,
     codigo_barras: _digitsOnly(item.codigo_barras || ""),
@@ -12762,7 +14837,7 @@ function _estoqueProdutoCadastroNormalizado(item = {}){
     produto_base_nome: produtoBaseNome,
     unidade: String(item.unidade || "").trim(),
     embalagem_tipo_padrao: _estoqueEmbalagemPadrao(item.embalagem_tipo_padrao || item.embalagem_tipo || item.unidade || ""),
-    fator_embalagem_padrao: Number(item.fator_embalagem_padrao || item.fator_embalagem || 0) || 0,
+    fator_embalagem_padrao: fatorCadastro > 0 ? fatorCadastro : 1,
     cadastro_explicitado: Number(item.cadastro_explicitado || 0) === 1 ? 1 : 0,
   };
   produto.produto_base_key = String(item.produto_base_key || "").trim() || _estoqueProdutoBaseKey(produto);
@@ -12818,11 +14893,12 @@ function _enriquecerItemImportacaoEstoque(item = {}){
     embalagem_tipo: embalagemBase,
     quantidade_embalagem,
   }, cadastro);
-  const fator_embalagem = Number(resolvido.fator_embalagem || 0) || 0;
+  const fatorResolvido = Number(resolvido.fator_embalagem || 0) || 0;
+  const fator_embalagem = fatorResolvido > 0 ? fatorResolvido : 1;
   const embalagem_tipo = _estoqueAjustarEmbalagemPorFator(resolvido.embalagem_tipo || embalagemBase, fator_embalagem);
-  const quantidade_unidades = fator_embalagem > 0
-    ? (Number(item.quantidade_unidades ?? 0) || (quantidade_embalagem * fator_embalagem))
-    : 0;
+  const quantidade_unidades = quantidade_embalagem > 0
+    ? (quantidade_embalagem * fator_embalagem)
+    : (Number(item.quantidade_unidades ?? 0) || 0);
   const fator_inferido = item.fator_inferido === true || item.fator_inferido === 1 || item.fator_inferido === "1"
     ? true
     : !!resolvido.fator_inferido;
@@ -12838,7 +14914,7 @@ function _enriquecerItemImportacaoEstoque(item = {}){
     unidade: unidadeRaw,
     embalagem_tipo,
     quantidade_embalagem,
-    fator_embalagem: fator_embalagem > 0 ? fator_embalagem : 0,
+    fator_embalagem,
     fator_inferido,
     quantidade_unidades,
   };
@@ -12865,6 +14941,7 @@ function _normalizarDraftImportacaoEstoque(draft){
     motivo_confirmacao: (item?.motivo_confirmacao || "").trim(),
     quantidade_unidades: item?.quantidade_unidades ?? "",
     valor_unitario: item?.valor_unitario ?? "",
+    valor_total: item?.valor_total ?? "",
   })).map((item) => _enriquecerItemImportacaoEstoque(item)).filter((item) => (
     item.nome_produto || item.codigo_produto_nfe || item.codigo_barras || String(item.quantidade || "").trim() || String(item.valor_unitario || "").trim()
   )) : [];
@@ -12881,9 +14958,11 @@ function _normalizarDraftImportacaoEstoque(draft){
   const decisaoLogistica = base.decisao_logistica && typeof base.decisao_logistica === "object"
     ? base.decisao_logistica
     : {};
+  const destinoImportacao = String(base.destino_importacao || base.destino || "").trim().toLowerCase();
 
   return {
     source_type: sourceType === "pdf" || sourceType === "dfe" || sourceType === "portal" || sourceType === "ocr" || sourceType === "manual" || sourceType === "xml_fabrica" || sourceType === "importar_xml" ? sourceType : "xml",
+    destino_importacao: destinoImportacao === "manutencao" ? "manutencao" : "estoque",
     importar_xml_chave: String(base.importar_xml_chave || "").trim(),
     frete_id: Number(base.frete_id || 0) || 0,
     veiculo_id: Number(base.veiculo_id || 0) || 0,
@@ -12969,6 +15048,7 @@ function _coletarDraftImportacaoEstoqueForm(){
     emitente_cnpj: document.getElementById("estoquePreviewEmitenteCnpj")?.value || "",
     destinatario_nome: document.getElementById("estoquePreviewDestinatarioNome")?.value || "",
     destinatario_cnpj: document.getElementById("estoquePreviewDestinatarioCnpj")?.value || "",
+    destino_importacao: document.getElementById("estoquePreviewDestinoNota")?.value || "estoque",
     frete_id: Number(document.getElementById("estoqueXmlFreteSelect")?.value || 0) || 0,
     itens,
   });
@@ -13030,6 +15110,14 @@ function selecionarFreteImportacaoXml(){
   estoqueState.importDraft.frete_id = Number(select?.value || 0) || 0;
   estoqueState.importDraftDirty = true;
   _atualizarHintFreteImportacaoXml();
+}
+
+function alterarDestinoImportacaoEstoque(){
+  const draftAtual = _coletarDraftImportacaoEstoqueForm() || _normalizarDraftImportacaoEstoque(estoqueState.importDraft || {});
+  if (!draftAtual) return;
+  estoqueState.importDraft = draftAtual;
+  estoqueState.importDraftDirty = true;
+  renderEstoqueImportPreview();
 }
 
 async function alterarDispensaFreteImportacaoXml(){
@@ -13108,6 +15196,8 @@ function renderEstoqueImportPreview(){
   const freteSelect = document.getElementById("estoqueXmlFreteSelect");
   const dispensaFreteInput = document.getElementById("estoqueXmlDispensaFrete");
   const freteVinculo = document.getElementById("estoqueXmlFreteVinculo");
+  const destinoSelect = document.getElementById("estoquePreviewDestinoNota");
+  const confirmarBtn = document.getElementById("estoqueImportConfirmBtn");
   if (!card || !fonte || !status || !body) return;
 
   const draft = estoqueState.importDraft ? _normalizarDraftImportacaoEstoque(estoqueState.importDraft) : null;
@@ -13118,22 +15208,29 @@ function renderEstoqueImportPreview(){
     if (fretePanel) fretePanel.classList.add("hidden");
     if (fotoImg) fotoImg.removeAttribute("src");
     if (fotoNome) fotoNome.textContent = "Nenhuma foto carregada.";
+    if (destinoSelect) destinoSelect.value = "estoque";
+    if (confirmarBtn) confirmarBtn.textContent = "Lancar NF-e no Estoque";
     return;
   }
 
   estoqueState.importDraft = draft;
   card.classList.remove("hidden");
+  const destinoManutencao = draft.destino_importacao === "manutencao";
   const movimentoLabel = draft.source_type === "importar_xml"
     ? ` | Movimento reconhecido: ${draft.tipo_movimento === "saida" ? "SAIDA" : "ENTRADA"}`
     : "";
   fonte.textContent = `Arquivo: ${draft.arquivo_origem || "-"} | Origem: ${_nfeImportSourceLabel(draft.source_type)}${draft.preview_tipo === "parcial" ? " (preview parcial)" : ""}${movimentoLabel}`;
-  status.textContent = draft.warnings.length
+  status.textContent = destinoManutencao
+    ? "Esta nota sera enviada para a tela de manutencao, sem lancar saldo no estoque."
+    : draft.warnings.length
     ? draft.warnings.join(" | ")
     : "Revise os dados abaixo e confirme a importacao quando estiver tudo certo.";
+  if (destinoSelect) destinoSelect.value = draft.destino_importacao || "estoque";
+  if (confirmarBtn) confirmarBtn.textContent = destinoManutencao ? "Enviar para Manutencao" : "Lancar NF-e no Estoque";
   document.querySelectorAll(".estoque-import-add-btn").forEach((button) => {
     button.classList.toggle("hidden", draft.source_type === "importar_xml");
   });
-  const exigeFrete = draft.source_type === "importar_xml" && draft.tipo_movimento === "saida";
+  const exigeFrete = !destinoManutencao && draft.source_type === "importar_xml" && draft.tipo_movimento === "saida";
   if (fretePanel) fretePanel.classList.toggle("hidden", !exigeFrete);
   if (dispensaFreteInput) dispensaFreteInput.checked = !!draft.dispensa_frete;
   if (freteVinculo) freteVinculo.classList.toggle("hidden", !exigeFrete || draft.dispensa_frete);
@@ -13264,12 +15361,109 @@ function removerItemImportacaoEstoque(index){
   renderEstoqueImportPreview();
 }
 
+function _dataImportacaoXmlEstoque(row = {}){
+  return String(row.data_emissao_normalizada || row.data_emissao || "").trim().slice(0, 10);
+}
+
+function _rotaImportacaoXmlEstoque(row = {}){
+  return String(row.rota_sugerida || row.frete_sugerido_nome || "").trim();
+}
+
+function _origemImportacaoXmlEstoque(row = {}){
+  return String(row.emitente_nome || "").trim();
+}
+
+function _destinoImportacaoXmlEstoque(row = {}){
+  return String(row.destinatario_nome || "").trim();
+}
+
+function _filtrarImportacoesXmlEstoque(){
+  const tipo = String(document.getElementById("estoqueXmlPendentesTipo")?.value || "");
+  const origem = String(document.getElementById("estoqueXmlPendentesOrigem")?.value || "");
+  const destino = String(document.getElementById("estoqueXmlPendentesDestino")?.value || "");
+  const data = String(document.getElementById("estoqueXmlPendentesData")?.value || "");
+  const rota = String(document.getElementById("estoqueXmlPendentesRota")?.value || "");
+  const grupoItem = String(document.getElementById("estoqueXmlPendentesGrupoItem")?.value || "");
+  return (estoqueState.importacoesXml || []).filter((row) => {
+    if (tipo && row.tipo_movimento !== tipo) return false;
+    if (origem && _origemImportacaoXmlEstoque(row) !== origem) return false;
+    if (destino && _destinoImportacaoXmlEstoque(row) !== destino) return false;
+    if (data && _dataImportacaoXmlEstoque(row) !== data) return false;
+    if (rota && _rotaImportacaoXmlEstoque(row) !== rota) return false;
+    if (grupoItem && !(row.grupos_itens || []).includes(grupoItem)) return false;
+    return true;
+  });
+}
+
+function _atualizarFiltrosImportacoesXmlEstoque(){
+  const origemSelect = document.getElementById("estoqueXmlPendentesOrigem");
+  const destinoSelect = document.getElementById("estoqueXmlPendentesDestino");
+  const dataSelect = document.getElementById("estoqueXmlPendentesData");
+  const rotaSelect = document.getElementById("estoqueXmlPendentesRota");
+  const grupoItemSelect = document.getElementById("estoqueXmlPendentesGrupoItem");
+  const tipo = String(document.getElementById("estoqueXmlPendentesTipo")?.value || "");
+  const rowsPorTipo = (estoqueState.importacoesXml || []).filter((row) => !tipo || row.tipo_movimento === tipo);
+  if (origemSelect) {
+    const atual = origemSelect.value;
+    const origens = Array.from(new Set(rowsPorTipo.map(_origemImportacaoXmlEstoque).filter(Boolean)))
+      .sort((a, b) => a.localeCompare(b, "pt-BR", { numeric: true, sensitivity: "base" }));
+    origemSelect.innerHTML = `<option value="">Todas as origens</option>` + origens.map((origem) => (
+      `<option value="${_escAttr(origem)}">${_escHtml(origem)}</option>`
+    )).join("");
+    origemSelect.value = origens.includes(atual) ? atual : "";
+  }
+  const origemAtual = String(origemSelect?.value || "");
+  const rowsPorOrigem = rowsPorTipo.filter((row) => !origemAtual || _origemImportacaoXmlEstoque(row) === origemAtual);
+  if (destinoSelect) {
+    const atual = destinoSelect.value;
+    const destinos = Array.from(new Set(rowsPorOrigem.map(_destinoImportacaoXmlEstoque).filter(Boolean)))
+      .sort((a, b) => a.localeCompare(b, "pt-BR", { numeric: true, sensitivity: "base" }));
+    destinoSelect.innerHTML = `<option value="">Todos os destinos</option>` + destinos.map((destino) => (
+      `<option value="${_escAttr(destino)}">${_escHtml(destino)}</option>`
+    )).join("");
+    destinoSelect.value = destinos.includes(atual) ? atual : "";
+  }
+  const destinoAtual = String(destinoSelect?.value || "");
+  const rowsBase = rowsPorOrigem.filter((row) => !destinoAtual || _destinoImportacaoXmlEstoque(row) === destinoAtual);
+  if (dataSelect) {
+    const atual = dataSelect.value;
+    const datas = Array.from(new Set(rowsBase.map(_dataImportacaoXmlEstoque).filter(Boolean)))
+      .sort((a, b) => b.localeCompare(a));
+    dataSelect.innerHTML = `<option value="">Todas as datas</option>` + datas.map((data) => (
+      `<option value="${_escAttr(data)}">${_escHtml(_fmtDataCurtaBr(data) || data)}</option>`
+    )).join("");
+    dataSelect.value = datas.includes(atual) ? atual : "";
+  }
+  if (rotaSelect) {
+    const atual = rotaSelect.value;
+    const rotas = Array.from(new Set(rowsBase.map(_rotaImportacaoXmlEstoque).filter(Boolean)))
+      .sort((a, b) => a.localeCompare(b, "pt-BR", { numeric: true, sensitivity: "base" }));
+    rotaSelect.innerHTML = `<option value="">Todas as rotas/fretes</option>` + rotas.map((rota) => (
+      `<option value="${_escAttr(rota)}">${_escHtml(rota)}</option>`
+    )).join("");
+    rotaSelect.value = rotas.includes(atual) ? atual : "";
+  }
+  if (grupoItemSelect) {
+    const atual = grupoItemSelect.value;
+    const grupos = Array.from(new Set(
+      rowsBase.flatMap((row) => Array.isArray(row.grupos_itens) ? row.grupos_itens : [])
+    )).filter(Boolean).sort((a, b) => a.localeCompare(b, "pt-BR", {
+      numeric: true,
+      sensitivity: "base",
+    }));
+    grupoItemSelect.innerHTML = `<option value="">Todos os grupos de itens</option>` + grupos.map((grupo) => (
+      `<option value="${_escAttr(grupo)}">${_escHtml(grupo)}</option>`
+    )).join("");
+    grupoItemSelect.value = grupos.includes(atual) ? atual : "";
+  }
+}
+
 function renderImportacoesXmlEstoque(){
   const body = document.getElementById("estoqueXmlPendentesBody");
   const resumo = document.getElementById("estoqueXmlPendentesResumo");
   if (!body || !resumo) return;
-  const tipo = String(document.getElementById("estoqueXmlPendentesTipo")?.value || "");
-  const rows = (estoqueState.importacoesXml || []).filter((row) => !tipo || row.tipo_movimento === tipo);
+  _atualizarFiltrosImportacoesXmlEstoque();
+  const rows = _filtrarImportacoesXmlEstoque();
   const chavesDisponiveis = new Set(
     (estoqueState.importacoesXml || []).map((row) => String(row.nota_key || "")).filter(Boolean)
   );
@@ -13283,9 +15477,28 @@ function renderImportacoesXmlEstoque(){
   resumo.textContent = `${rows.length} nota(s) pendente(s): ${entradas} entrada(s), ${saidas} saida(s), ${itens} item(ns). ${selecionadas.size} selecionada(s).`;
   body.innerHTML = rows.length ? rows.map((row) => {
     const duplicatas = Math.max(0, Number(row.arquivos_repetidos || 0) - 1);
-    const fluxo = [row.emitente_nome, row.destinatario_nome].filter(Boolean).join(" -> ") || "-";
+    const fantasia = row.emitente_fantasia || row.emitente_nome || "-";
+    const razaoSocial = row.emitente_nome && row.emitente_nome !== fantasia
+      ? row.emitente_nome
+      : "";
+    const itensPreview = Array.isArray(row.itens_preview) ? row.itens_preview : [];
+    const sugestao = row.classificacao_sugerida || {};
+    const itensPreviewHtml = itensPreview.length
+      ? itensPreview.map((item) => `
+          <div>
+            ${_escHtml(item.nome || "-")}
+            <span class="hint">${_escHtml(
+              [item.quantidade, item.unidade].filter((valor) => valor !== null && valor !== undefined && valor !== "").join(" ")
+            )}</span>
+          </div>
+        `).join("")
+      : '<span class="hint">Sem previa</span>';
     const notaKey = String(row.nota_key || "");
     const selecionada = selecionadas.has(notaKey);
+    const rota = _rotaImportacaoXmlEstoque(row);
+    const freteHint = row.frete_sugerido_id
+      ? `Frete #${Number(row.frete_sugerido_id)}${row.frete_sugerido_nome ? ` - ${row.frete_sugerido_nome}` : ""}`
+      : "";
     return `
       <tr class="${selecionada ? "is-selected" : ""}">
         <td class="estoque-xml-selecao-col">
@@ -13294,21 +15507,36 @@ function renderImportacoesXmlEstoque(){
         <td>${_escHtml(_fmtDateBr(row.data_emissao) || row.data_emissao || "-")}</td>
         <td>${_escHtml(row.numero_nota || row.chave_nfe || "-")}</td>
         <td><span class="estoque-movimento-badge is-${row.tipo_movimento === "saida" ? "saida" : "entrada"}">${row.tipo_movimento === "saida" ? "SAIDA" : "ENTRADA"}</span></td>
-        <td>${_escHtml(fluxo)}</td>
+        <td>
+          <strong>${_escHtml(fantasia)}</strong>
+          ${razaoSocial ? `<div class="hint">${_escHtml(razaoSocial)}</div>` : ""}
+          ${sugestao.destino ? `
+            <div class="hint-chip">
+              Sugerido: ${_escHtml(sugestao.destino)}
+              por ${_escHtml(sugestao.escopo || "regra")}
+            </div>
+            <button type="button" class="btn-link" onclick="desativarRegraClassificacaoXml(${Number(sugestao.regra_id || 0)})">Parar automacao</button>
+          ` : ""}
+        </td>
+        <td>${_escHtml(row.destinatario_nome || "-")}</td>
+        <td>${itensPreviewHtml}</td>
+        <td>
+          ${_escHtml(rota || "-")}
+          ${freteHint ? `<div class="hint">${_escHtml(freteHint)}</div>` : ""}
+        </td>
         <td>${_escHtml(String(row.itens_pendentes || 0))}</td>
         <td>${_escHtml(String(duplicatas))}</td>
         <td><button type="button" onclick="abrirImportacaoXmlEstoque('${_escJsString(notaKey)}')">Abrir</button></td>
       </tr>
     `;
-  }).join("") : `<tr><td colspan="8">Nenhuma importacao XML pendente para este filtro.</td></tr>`;
+  }).join("") : `<tr><td colspan="11">Nenhuma importacao XML pendente para este filtro.</td></tr>`;
   _atualizarControlesLoteImportacoesXml(rows);
 }
 
 function _atualizarControlesLoteImportacoesXml(rowsVisiveis = null){
-  const tipo = String(document.getElementById("estoqueXmlPendentesTipo")?.value || "");
   const rows = Array.isArray(rowsVisiveis)
     ? rowsVisiveis
-    : (estoqueState.importacoesXml || []).filter((row) => !tipo || row.tipo_movimento === tipo);
+    : _filtrarImportacoesXmlEstoque();
   const selecionadas = new Set(estoqueState.importacoesXmlSelecionadas || []);
   const visiveisSelecionadas = rows.filter((row) => selecionadas.has(String(row.nota_key || ""))).length;
   const selecionarTodas = document.getElementById("estoqueXmlSelecionarTodas");
@@ -13321,9 +15549,16 @@ function _atualizarControlesLoteImportacoesXml(rowsVisiveis = null){
   if (botao) {
     const progresso = estoqueState.importacoesXmlLoteProgresso || {};
     botao.textContent = estoqueState.importacoesXmlLoteExecutando
-      ? `Importando lote ${Number(progresso.loteAtual || 1)}/${Number(progresso.totalLotes || 1)}`
-      : `Importar selecionadas (${selecionadas.size})`;
+      ? `Contabilizando lote ${Number(progresso.loteAtual || 1)}/${Number(progresso.totalLotes || 1)}`
+      : `Contabilizar no estoque (${selecionadas.size})`;
     botao.disabled = !selecionadas.size || estoqueState.importacoesXmlLoteExecutando;
+  }
+  const botaoManutencao = document.getElementById("estoqueXmlManutencaoLoteBtn");
+  if (botaoManutencao) {
+    botaoManutencao.textContent = estoqueState.importacoesXmlLoteExecutando
+      ? "Enviando para manutencao..."
+      : `Classificar como manutencao (${selecionadas.size})`;
+    botaoManutencao.disabled = !selecionadas.size || estoqueState.importacoesXmlLoteExecutando;
   }
 }
 
@@ -13384,8 +15619,7 @@ function selecionarImportacaoXmlEstoque(notaKey, selecionada){
 }
 
 function selecionarTodasImportacoesXmlEstoque(selecionar){
-  const tipo = String(document.getElementById("estoqueXmlPendentesTipo")?.value || "");
-  const rows = (estoqueState.importacoesXml || []).filter((row) => !tipo || row.tipo_movimento === tipo);
+  const rows = _filtrarImportacoesXmlEstoque();
   const chaves = new Set(estoqueState.importacoesXmlSelecionadas || []);
   rows.forEach((row) => {
     const chave = String(row.nota_key || "");
@@ -13397,18 +15631,160 @@ function selecionarTodasImportacoesXmlEstoque(selecionar){
   renderImportacoesXmlEstoque();
 }
 
+function selecionarImportacoesXmlPorFiltro(tipoFiltro){
+  const filtro = String(tipoFiltro || "");
+  const dataSelecionada = String(document.getElementById("estoqueXmlPendentesData")?.value || "");
+  const rotaSelecionada = String(document.getElementById("estoqueXmlPendentesRota")?.value || "");
+  if (filtro === "data" && !dataSelecionada) {
+    alert("Escolha uma data para selecionar as NF-e desse dia.");
+    return;
+  }
+  if (filtro === "rota" && !rotaSelecionada) {
+    alert("Escolha uma rota/frete para selecionar as NF-e desse grupo.");
+    return;
+  }
+  const tipo = String(document.getElementById("estoqueXmlPendentesTipo")?.value || "");
+  const origem = String(document.getElementById("estoqueXmlPendentesOrigem")?.value || "");
+  const destino = String(document.getElementById("estoqueXmlPendentesDestino")?.value || "");
+  const rows = (estoqueState.importacoesXml || []).filter((row) => {
+    if (tipo && row.tipo_movimento !== tipo) return false;
+    if (origem && _origemImportacaoXmlEstoque(row) !== origem) return false;
+    if (destino && _destinoImportacaoXmlEstoque(row) !== destino) return false;
+    if (filtro === "data") return _dataImportacaoXmlEstoque(row) === dataSelecionada;
+    if (filtro === "rota") return _rotaImportacaoXmlEstoque(row) === rotaSelecionada;
+    return false;
+  });
+  const chaves = new Set(estoqueState.importacoesXmlSelecionadas || []);
+  rows.forEach((row) => {
+    const chave = String(row.nota_key || "");
+    if (chave) chaves.add(chave);
+  });
+  estoqueState.importacoesXmlSelecionadas = Array.from(chaves);
+  renderImportacoesXmlEstoque();
+}
+
 async function carregarImportacoesXmlEstoque(){
   const body = document.getElementById("estoqueXmlPendentesBody");
-  if (body) body.innerHTML = `<tr><td colspan="8">Carregando importacoes XML...</td></tr>`;
+  if (body) body.innerHTML = `<tr><td colspan="9">Carregando importacoes XML...</td></tr>`;
   const resp = await apiFetch("/api/estoque/importacoes-xml?status=pendente");
   const data = await resp.json().catch(() => ({}));
   if (!resp.ok) {
-    if (body) body.innerHTML = `<tr><td colspan="8">${_escHtml(data?.erro || "Falha ao carregar importacoes XML.")}</td></tr>`;
+    if (body) body.innerHTML = `<tr><td colspan="9">${_escHtml(data?.erro || "Falha ao carregar importacoes XML.")}</td></tr>`;
     return;
   }
   estoqueState.importacoesXml = Array.isArray(data?.rows) ? data.rows : [];
   estoqueState.importacoesXmlMeta = data?.meta || {};
+  const selecionadas = new Set(estoqueState.importacoesXmlSelecionadas || []);
+  estoqueState.importacoesXml.forEach((row) => {
+    if (row?.classificacao_sugerida?.destino && row?.nota_key) {
+      selecionadas.add(String(row.nota_key));
+    }
+  });
+  estoqueState.importacoesXmlSelecionadas = Array.from(selecionadas);
   renderImportacoesXmlEstoque();
+}
+
+async function registrarRegrasClassificacaoXml(chaves, destino) {
+  if (!document.getElementById("estoqueXmlAprenderRegra")?.checked) return;
+  const escopo = document.getElementById("estoqueXmlAprenderEscopo")?.value || "empresa";
+  const resp = await apiFetch("/api/estoque/importacoes-xml/classificacao-regras", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ chaves, destino, escopo }),
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw new Error(data?.erro || "Falha ao salvar a automacao.");
+}
+
+async function desativarRegraClassificacaoXml(regraId) {
+  if (!(Number(regraId || 0) > 0)) return;
+  const resp = await apiFetch(`/api/estoque/importacoes-xml/classificacao-regras/${Number(regraId)}`, {
+    method: "DELETE",
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    alert(data?.erro || "Falha ao parar a automacao.");
+    return;
+  }
+  await carregarImportacoesXmlEstoque();
+}
+
+async function direcionarSelecionadasXmlManutencao(){
+  if (estoqueState.importacoesXmlLoteExecutando) return;
+  const chaves = Array.from(new Set(estoqueState.importacoesXmlSelecionadas || [])).filter(Boolean);
+  if (!chaves.length) {
+    alert("Selecione ao menos uma NF-e para enviar para manutencao.");
+    return;
+  }
+  if (!confirm(`Enviar ${chaves.length} NF-e(s) selecionada(s) para conferencia de manutencao?\nNada sera lancado no estoque.`)) {
+    return;
+  }
+  if (estoqueState.importDraftDirty) {
+    if (!confirm("Existe uma nota aberta com alteracoes em revisao. Deseja descartar essa revisao e enviar o lote para manutencao?")) {
+      return;
+    }
+    estoqueState.importDraft = null;
+    estoqueState.importDraftDirty = false;
+    renderEstoqueImportPreview();
+  }
+
+  estoqueState.importacoesXmlLoteExecutando = true;
+  _atualizarControlesLoteImportacoesXml();
+  _atualizarProgressoLoteImportacoesXml({
+    fase: "preparando",
+    loteAtual: 1,
+    totalLotes: 1,
+    processadas: 0,
+    total: chaves.length,
+    tamanhoLote: chaves.length,
+    mensagem: `Enviando ${chaves.length} NF-e(s) para manutencao...`,
+  });
+  try {
+    const resp = await apiFetch("/api/estoque/nfe/direcionar/lote", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ destino: "manutencao", chaves }),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      throw new Error(data?.erro || "Falha ao enviar as notas para manutencao.");
+    }
+    const direcionados = Array.isArray(data?.direcionados) ? data.direcionados : [];
+    const erros = Array.isArray(data?.erros) ? data.erros : [];
+    const chavesDirecionadas = new Set(direcionados.map((item) => String(item.chave || item.nota_key || "")).filter(Boolean));
+    if (chavesDirecionadas.size) {
+      await registrarRegrasClassificacaoXml(Array.from(chavesDirecionadas), "manutencao");
+    }
+    estoqueState.importacoesXmlSelecionadas = chaves.filter((chave) => !chavesDirecionadas.has(String(chave)));
+    estoqueState.importDraft = null;
+    estoqueState.importDraftDirty = false;
+    renderEstoqueImportPreview();
+    await carregarImportacoesXmlEstoque();
+    try { await carregarPreLancamentosManutencaoXml?.(); } catch {}
+    const detalhesErro = erros.length
+      ? `\n${erros.length} NF-e(s) ficaram pendentes:\n${erros.slice(0, 10).map((item) => `- ${item.numero_nota || item.chave}: ${item.erro}`).join("\n")}`
+      : "";
+    _atualizarProgressoLoteImportacoesXml({
+      fase: "concluido",
+      loteAtual: 1,
+      totalLotes: 1,
+      processadas: direcionados.length,
+      total: chaves.length,
+      mensagem: `${direcionados.length} de ${chaves.length} NF-e(s) enviada(s) para manutencao.`,
+    });
+    alert(`${direcionados.length} NF-e(s) enviada(s) para manutencao.${detalhesErro}`);
+  } catch (err) {
+    _atualizarProgressoLoteImportacoesXml({
+      ...(estoqueState.importacoesXmlLoteProgresso || {}),
+      fase: "erro",
+      mensagem: `Envio para manutencao interrompido: ${err?.message || "falha desconhecida."}`,
+    });
+    alert(err?.message || "Falha ao enviar as notas para manutencao.");
+  } finally {
+    estoqueState.importacoesXmlLoteExecutando = false;
+    _atualizarControlesLoteImportacoesXml();
+    renderImportacoesXmlEstoque();
+  }
 }
 
 async function importarSelecionadasXmlEstoque(){
@@ -13494,16 +15870,35 @@ async function importarSelecionadasXmlEstoque(){
         tamanhoLote: chavesLote.length,
       });
     }
-    if (errosPreparo.length) {
-      const detalhes = errosPreparo.slice(0, 12).map(
+    const notasJaConsolidadas = errosPreparo.filter(
+      (item) => String(item?.erro || "").toLowerCase() === "nota ja consolidada no estoque"
+    );
+    const errosQuePrecisamRevisao = errosPreparo.filter(
+      (item) => !notasJaConsolidadas.includes(item)
+    );
+    if (notasJaConsolidadas.length) {
+      const chavesConsolidadas = new Set(
+        notasJaConsolidadas.map((item) => String(item?.chave || "")).filter(Boolean)
+      );
+      estoqueState.importacoesXmlSelecionadas = (
+        estoqueState.importacoesXmlSelecionadas || []
+      ).filter((chave) => !chavesConsolidadas.has(String(chave)));
+      estoqueState.importacoesXml = (estoqueState.importacoesXml || []).filter(
+        (row) => !chavesConsolidadas.has(String(row?.nota_key || ""))
+      );
+    }
+    if (errosQuePrecisamRevisao.length) {
+      const detalhes = errosQuePrecisamRevisao.slice(0, 12).map(
         (item) => `- Lote ${item.lote}: ${item.numero_nota || item.chave || "-"}: ${item.erro}`
       ).join("\n");
-      const restante = errosPreparo.length > 12 ? `\n... e mais ${errosPreparo.length - 12} nota(s).` : "";
+      const restante = errosQuePrecisamRevisao.length > 12
+        ? `\n... e mais ${errosQuePrecisamRevisao.length - 12} nota(s).`
+        : "";
       _atualizarProgressoLoteImportacoesXml({
         ...(estoqueState.importacoesXmlLoteProgresso || {}),
         fase: "pendente",
         mensagem: (
-          `Importacao nao iniciada: ${errosPreparo.length} nota(s) precisam `
+          `Importacao nao iniciada: ${errosQuePrecisamRevisao.length} nota(s) precisam `
           + "de revisao antes de processar os lotes."
         ),
       });
@@ -13545,10 +15940,16 @@ async function importarSelecionadasXmlEstoque(){
     if (!drafts.length) {
       _atualizarProgressoLoteImportacoesXml({
         ...(estoqueState.importacoesXmlLoteProgresso || {}),
-        fase: "pendente",
-        mensagem: "Nenhuma nota selecionada esta pronta para importacao.",
+        fase: notasJaConsolidadas.length ? "concluido" : "pendente",
+        mensagem: notasJaConsolidadas.length
+          ? `${notasJaConsolidadas.length} nota(s) ja estavam consolidadas. A lista foi atualizada.`
+          : "Nenhuma nota selecionada esta pronta para importacao.",
       });
-      alert("Nenhuma nota selecionada esta pronta para importacao.");
+      alert(
+        notasJaConsolidadas.length
+          ? `${notasJaConsolidadas.length} nota(s) ja estavam consolidadas no estoque e foram retiradas da lista.`
+          : "Nenhuma nota selecionada esta pronta para importacao."
+      );
       return;
     }
 
@@ -13654,14 +16055,38 @@ async function importarSelecionadasXmlEstoque(){
           tamanhoLote: draftsLote.length,
         });
       }
+      const chavesConcluidas = new Set(
+        sucessos.map((item) => String(item.chave || "")).filter(Boolean)
+      );
+      estoqueState.importacoesXmlSelecionadas = chaves.filter(
+        (chave) => !chavesConcluidas.has(String(chave))
+      );
+      await carregarImportacoesXmlEstoque();
+      _atualizarProgressoLoteImportacoesXml({
+        fase: "importando",
+        loteAtual: loteIndex + 1,
+        totalLotes,
+        processadas,
+        total: drafts.length,
+        tamanhoLote: draftsLote.length,
+        mensagem: (
+          `Lote ${loteIndex + 1} de ${totalLotes} concluido. `
+          + `${sucessos.length} nota(s) contabilizada(s); `
+          + `${falhas.length} falha(s) ate agora.`
+        ),
+      });
     }
 
     const chavesComSucesso = new Set(sucessos.map((item) => String(item.chave || "")));
+    if (chavesComSucesso.size) {
+      await registrarRegrasClassificacaoXml(Array.from(chavesComSucesso), "estoque");
+    }
     estoqueState.importacoesXmlSelecionadas = chaves.filter((chave) => !chavesComSucesso.has(String(chave)));
     estoqueState.importDraft = null;
     estoqueState.importDraftDirty = false;
     renderEstoqueImportPreview();
     await carregarEstoque();
+    await ensureProdutosEstoqueCache(true).catch(() => {});
     await carregarImportacoesXmlEstoque();
     const movimentos = sucessos.reduce((total, item) => total + item.movimentos, 0);
     const mensagemFalhas = falhas.length
@@ -13735,8 +16160,68 @@ function cancelarImportacaoNfeEstoque(){
   if (status) status.textContent = "Importacao cancelada. Selecione outro XML ou PDF para abrir uma nova confirmacao.";
 }
 
+async function abrirPreLancamentoManutencaoDirecionado(preLancamento = {}){
+  const id = Number(preLancamento?.id || 0);
+  openGestaoFrotaView(null, "registrar");
+  openGestaoRegistroView("manutencao");
+  try {
+    await carregarPreLancamentosManutencaoXml();
+  } catch {}
+  if (id > 0) {
+    if (!manutencaoXmlPendencias.some((row) => Number(row.id || 0) === id) && preLancamento) {
+      manutencaoXmlPendencias = [preLancamento, ...manutencaoXmlPendencias];
+      _renderPreLancamentosManutencaoXml();
+    }
+    conferirPreLancamentoManutencaoXml(id);
+  }
+  document.getElementById("manutXmlPendencias")?.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+async function direcionarImportacaoNfeManutencao(draft){
+  const notaLabel = draft.numero_nota || draft.chave_acesso || draft.importar_xml_chave || "-";
+  if (!confirm(`Enviar a nota ${notaLabel} para conferencia de manutencao?\nNada sera lancado no estoque.`)) {
+    return;
+  }
+  const status = document.getElementById("estoqueImportPreviewStatus");
+  if (status) status.textContent = "Enviando nota para manutencao...";
+  const resp = await apiFetch("/api/estoque/nfe/direcionar", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      destino: "manutencao",
+      chave: draft.importar_xml_chave || draft.chave_acesso,
+      preview: draft,
+    }),
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    const mensagem = data?.erro || "Falha ao enviar a nota para manutencao.";
+    if (status) status.textContent = mensagem;
+    alert(mensagem);
+    return;
+  }
+
+  estoqueState.importDraft = null;
+  estoqueState.importDraftDirty = false;
+  estoqueState.lastPortalPreviewSignature = "";
+  _revogarFotoManualItensEstoque();
+  renderEstoqueImportPreview();
+  const input = document.getElementById("estoqueNfeArquivo");
+  const campoChave = document.getElementById("estoqueChaveAcesso");
+  const statusLancar = document.getElementById("estoqueNfeImportStatus");
+  if (input) input.value = "";
+  if (campoChave) campoChave.value = "";
+  if (statusLancar) statusLancar.textContent = "Nota enviada para manutencao. Confira veiculo, KM e itens antes de salvar.";
+  await carregarImportacoesXmlEstoque().catch(() => {});
+  await abrirPreLancamentoManutencaoDirecionado(data?.pre_lancamento || {});
+}
+
 async function confirmarImportacaoNfeEstoque(){
   const draftBruto = _coletarDraftImportacaoEstoqueForm();
+  if (draftBruto?.destino_importacao === "manutencao") {
+    await direcionarImportacaoNfeManutencao(draftBruto);
+    return;
+  }
   const draft = draftBruto ? _normalizarDraftImportacaoEstoque({
     ...draftBruto,
     itens: (draftBruto.itens || []).map((item) => {
@@ -13825,6 +16310,7 @@ async function confirmarImportacaoNfeEstoque(){
       statusLancar.textContent = `${tipoLabel} confirmada: ${dataXml.movimentos_criados || 0} movimento(s) contabilizado(s), sem duplicar os dados do XML.${freteInfo}`;
     }
     await carregarEstoque();
+    await ensureProdutosEstoqueCache(true).catch(() => {});
     setEstoqueView("posicao");
     if (window.__dashView === "estoque") await renderDashboardEstoque();
     return;
@@ -13879,6 +16365,7 @@ async function confirmarImportacaoNfeEstoque(){
   }
 
   await carregarEstoque();
+  await ensureProdutosEstoqueCache(true).catch(() => {});
   setEstoqueView("posicao");
   if (window.__dashView === "estoque") await renderDashboardEstoque();
 }
@@ -13925,11 +16412,11 @@ function setEstoqueView(view){
       console.warn("movimentos estoque erro:", e);
     });
   } else if (nextView === "rastreio") {
-    carregarSaldoEstoque().catch((e) => {
-      console.warn("rastreio saldo erro:", e);
+    inicializarRastreabilidadeEstoque().catch((e) => {
+      console.warn("rastreabilidade estoque erro:", e);
     });
-    carregarMovimentosEstoque().catch((e) => {
-      console.warn("rastreio movimentos erro:", e);
+    prepararRastreioLotesOperacionais().catch((e) => {
+      console.warn("lotes operacionais erro:", e);
     });
   }
 }
@@ -13951,6 +16438,8 @@ function limparProdutoEstoqueCadastro(){
     const el = document.getElementById(id);
     if (el) el.value = "";
   });
+  const fatorPadrao = document.getElementById("estoqueCadastroFator");
+  if (fatorPadrao) fatorPadrao.value = "1";
   const ajusteBox = document.getElementById("estoqueCadastroAjusteBox");
   const ajusteBtn = document.getElementById("estoqueCadastroAjusteBtn");
   if (ajusteBox) ajusteBox.classList.add("hidden");
@@ -14281,18 +16770,17 @@ async function salvarProdutoEstoqueCadastro(){
     grupo_estoque: (document.getElementById("estoqueCadastroGrupo")?.value || "").trim(),
     produto_base_nome: (document.getElementById("estoqueCadastroBaseNome")?.value || "").trim(),
     embalagem_tipo_padrao: (document.getElementById("estoqueCadastroEmbalagem")?.value || "").trim(),
-    fator_embalagem_padrao: Number((document.getElementById("estoqueCadastroFator")?.value || "").trim() || 0),
+    fator_embalagem_padrao: Number((document.getElementById("estoqueCadastroFator")?.value || "").trim() || 1),
   };
+  if (!(payload.fator_embalagem_padrao > 0)) {
+    payload.fator_embalagem_padrao = 1;
+  }
   if (!payload.nome_produto && !payload.codigo_barras && !payload.codigo_produto_nfe) {
     alert("Informe ao menos o produto, codigo de barras ou codigo NF-e.");
     return;
   }
   if (!payload.embalagem_tipo_padrao) {
     alert("Informe o tipo da embalagem.");
-    return;
-  }
-  if (!(payload.fator_embalagem_padrao > 0)) {
-    alert("Informe quantas unidades existem por embalagem.");
     return;
   }
   const editId = Number(estoqueState.cadastroProdutoEditId || 0);
@@ -15594,7 +18082,7 @@ async function carregarMovimentosEstoque(){
   if (!body) return;
   const resp = await apiFetch("/api/estoque?limit=2000");
   if (!resp.ok) {
-    body.innerHTML = `<tr><td colspan="12">Erro ao carregar historico do estoque.</td></tr>`;
+    body.innerHTML = `<tr><td colspan="13">Erro ao carregar historico do estoque.</td></tr>`;
     return;
   }
   const dados = await resp.json();
@@ -15614,6 +18102,7 @@ function renderMovimentosEstoqueFiltrado(){
     <tr>
       <td>${_escHtml(_fmtDateBr(r.data_registro))}</td>
       <td>${_escHtml(r.numero_nota || "-")}</td>
+      <td>${_escHtml(r.lote_codigo || "-")}</td>
       <td>${_escHtml(_estoqueCodigoReferencia(r))}</td>
       <td>${_escHtml(r.produto_base_nome || r.nome_produto || "-")}</td>
       <td>${_escHtml(_estoqueFornecedorResumo(r))}</td>
@@ -15630,37 +18119,602 @@ function renderMovimentosEstoqueFiltrado(){
              <button type="button" onclick="excluirMovimentoEstoque(${Number(r.id || 0)})">Excluir</button>`}
       </td>
     </tr>
-  `).join("") : `<tr><td colspan="12">Sem lancamentos de estoque para os filtros selecionados.</td></tr>`;
+  `).join("") : `<tr><td colspan="13">Sem lancamentos de estoque para os filtros selecionados.</td></tr>`;
+}
+
+function _produtoLoteLabel(produto = {}){
+  return [
+    produto.codigo_produto_nfe || produto.codigo_barras || "",
+    produto.produto_base_nome || produto.nome_produto || "",
+    produto.grupo_estoque || "",
+  ].filter(Boolean).join(" | ");
+}
+
+function popularProdutoCriarLoteEstoque(selectedId = ""){
+  const select = document.getElementById("estoqueLoteCriarProduto");
+  if (!select) return;
+  const produtos = Array.isArray(estoqueState.cadastroProdutos) ? estoqueState.cadastroProdutos : [];
+  select.innerHTML = [
+    `<option value="">Selecione um produto cadastrado</option>`,
+    ...produtos.map((produto) => (
+      `<option value="${_escAttr(String(produto.id || ""))}" ${String(produto.id || "") === String(selectedId || "") ? "selected" : ""}>${_escHtml(_produtoLoteLabel(produto) || produto.nome_produto || "Produto")}</option>`
+    )),
+  ].join("");
+}
+
+function _produtoSelecionadoCriarLoteEstoque(){
+  const id = Number(document.getElementById("estoqueLoteCriarProduto")?.value || 0);
+  if (!(id > 0)) return null;
+  return (estoqueState.cadastroProdutos || []).find((produto) => Number(produto.id || 0) === id) || null;
+}
+
+function sincronizarProdutoCriarLoteEstoque(){
+  const produto = _produtoSelecionadoCriarLoteEstoque();
+  const status = document.getElementById("estoqueLoteCriarStatus");
+  if (status && produto) {
+    status.textContent = `Produto selecionado: ${_produtoLoteLabel(produto) || produto.nome_produto || "-"}.`;
+  }
+}
+
+function atualizarFluxoCriarLoteEstoque(){
+  const tipo = (document.getElementById("estoqueLoteCriarTipo")?.value || "entrada").toLowerCase() === "saida" ? "saida" : "entrada";
+  const lote = document.getElementById("estoqueLoteCriarCodigo");
+  const origem = document.getElementById("estoqueLoteCriarOrigem");
+  const destino = document.getElementById("estoqueLoteCriarDestino");
+  const status = document.getElementById("estoqueLoteCriarStatus");
+  if (tipo === "entrada" && lote && !String(lote.value || "").trim()) lote.value = _rastreioCodigoLocal(_rastreioHojeInput(), 1);
+  if (origem && !origem.value) origem.value = tipo === "saida" ? "Almoxarifado" : "Fabrica";
+  if (destino && !destino.value) destino.value = tipo === "saida" ? "Saida" : "Almoxarifado";
+  if (status) status.textContent = tipo === "saida"
+    ? "Saida operacional: informe manualmente o lote que sera usado nos fretes."
+    : "Entrada de materia-prima: o lote diario da fabrica sera sugerido automaticamente e pode ser corrigido.";
+}
+
+function renderLotesOperacionaisEstoque(){
+  const body = document.getElementById("estoqueLotesOperacionaisBody");
+  if (!body) return;
+  const lotes = Array.isArray(estoqueState.lotesOperacionais) ? estoqueState.lotesOperacionais : [];
+  body.innerHTML = lotes.length ? lotes.map((lote) => `
+    <tr>
+      <td><button type="button" class="estoque-lote-detalhe-btn" data-lote="${_escAttr(lote.lote_codigo || "")}">${_escHtml(lote.lote_codigo || "-")}</button></td>
+      <td>${_escHtml(lote.nome_produto || "-")}</td>
+      <td>${_escHtml(_estoqueFormatQtd(lote.quantidade_atual || 0))}</td>
+      <td>${_escHtml(String(lote.fretes_vinculados || 0))}</td>
+      <td>${_escHtml(_fmtDateBr(lote.ultima_movimentacao) || lote.ultima_movimentacao || "-")}</td>
+    </tr>
+  `).join("") : `<tr><td colspan="5">Nenhum lote operacional encontrado.</td></tr>`;
+  body.querySelectorAll(".estoque-lote-detalhe-btn").forEach((btn) => {
+    btn.onclick = () => detalharLoteOperacionalEstoque(btn.dataset.lote || "");
+  });
+  const detalhe = document.getElementById("estoqueLoteOperacionalDetalhe");
+  if (detalhe && !estoqueState.lotesOperacionaisDetalhe) {
+    detalhe.textContent = `${lotes.length} lote(s) operacional(is) carregado(s).`;
+  }
+}
+
+async function carregarLotesOperacionaisEstoque(options = {}){
+  const { silencioso = false } = options || {};
+  const body = document.getElementById("estoqueLotesOperacionaisBody");
+  if (body && !silencioso) body.innerHTML = `<tr><td colspan="5">Carregando lotes...</td></tr>`;
+  const resp = await apiFetch("/api/estoque/lotes");
+  const data = await resp.json().catch(() => []);
+  if (!resp.ok) {
+    if (body) body.innerHTML = `<tr><td colspan="5">${_escHtml(data?.erro || "Falha ao carregar lotes.")}</td></tr>`;
+    throw new Error(data?.erro || "Falha ao carregar lotes.");
+  }
+  estoqueState.lotesOperacionais = Array.isArray(data) ? data : [];
+  renderLotesOperacionaisEstoque();
+  _atualizarSelectsLotesFretes();
+  return estoqueState.lotesOperacionais;
+}
+
+async function detalharLoteOperacionalEstoque(loteCodigo){
+  const codigo = String(loteCodigo || "").trim();
+  if (!codigo) return;
+  const detalhe = document.getElementById("estoqueLoteOperacionalDetalhe");
+  if (detalhe) detalhe.textContent = `Carregando lote ${codigo}...`;
+  const resp = await apiFetch(`/api/estoque/lotes/${encodeURIComponent(codigo)}`);
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    if (detalhe) detalhe.textContent = data?.erro || "Falha ao carregar detalhe do lote.";
+    return;
+  }
+  estoqueState.lotesOperacionaisDetalhe = data;
+  const movimentos = Array.isArray(data.movimentos) ? data.movimentos : [];
+  const fretesLote = Array.isArray(data.fretes) ? data.fretes : [];
+  if (detalhe) {
+    detalhe.innerHTML = `
+      <strong>${_escHtml(codigo)}</strong> |
+      ${_escHtml(String(movimentos.length))} movimento(s) |
+      ${_escHtml(String(fretesLote.length))} frete(s)
+      ${fretesLote.length ? `<div class="hint">Fretes: ${_escHtml(fretesLote.map((f) => f.nome || `#${f.id}`).slice(0, 8).join(", "))}</div>` : ""}
+    `;
+  }
+}
+
+async function criarMovimentoLoteEstoque(){
+  let lote_codigo = (document.getElementById("estoqueLoteCriarCodigo")?.value || "").trim();
+  const tipo_movimento = (document.getElementById("estoqueLoteCriarTipo")?.value || "entrada").toLowerCase() === "saida" ? "saida" : "entrada";
+  if (!lote_codigo && tipo_movimento === "entrada") {
+    lote_codigo = _rastreioCodigoLocal(_rastreioHojeInput(), 1);
+    const loteEl = document.getElementById("estoqueLoteCriarCodigo");
+    if (loteEl) loteEl.value = lote_codigo;
+  }
+  const numero_nota = (document.getElementById("estoqueLoteCriarNota")?.value || "").trim() || lote_codigo;
+  const produto = _produtoSelecionadoCriarLoteEstoque();
+  const quantidade = Number((document.getElementById("estoqueLoteCriarQuantidade")?.value || "").replace(",", "."));
+  const valor_unitario = Number((document.getElementById("estoqueLoteCriarValor")?.value || "0").replace(",", ".")) || 0;
+  const origem_setor = (document.getElementById("estoqueLoteCriarOrigem")?.value || "").trim() || (tipo_movimento === "saida" ? "Almoxarifado" : "Fabrica");
+  const destino_setor = (document.getElementById("estoqueLoteCriarDestino")?.value || "").trim() || (tipo_movimento === "saida" ? "Saida" : "Almoxarifado");
+  const status = document.getElementById("estoqueLoteCriarStatus");
+
+  if (!lote_codigo) return alert("Informe o codigo do lote para esta saida.");
+  if (!produto) return alert("Selecione um produto cadastrado.");
+  if (!(quantidade > 0)) return alert("Informe uma quantidade valida.");
+  if (status) status.textContent = "Registrando lote...";
+
+  const resp = await apiFetch("/api/estoque", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      produto_id: Number(produto.id || 0) || null,
+      codigo_barras: produto.codigo_barras || "",
+      codigo_produto_nfe: produto.codigo_produto_nfe || "",
+      lote_codigo,
+      numero_nota,
+      nome_produto: produto.nome_produto || produto.produto_base_nome || "",
+      quantidade,
+      valor_unitario,
+      tipo_movimento,
+      origem_setor,
+      destino_setor,
+      unidade: produto.unidade || produto.embalagem_tipo_padrao || "",
+    }),
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    if (status) status.textContent = data?.erro || "Falha ao registrar lote.";
+    return alert(data?.erro || "Falha ao registrar lote.");
+  }
+
+  ["estoqueLoteCriarNota", "estoqueLoteCriarQuantidade", "estoqueLoteCriarValor"].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.value = "";
+  });
+  if (status) status.textContent = `Lote ${lote_codigo} registrado com sucesso.`;
+  await Promise.all([
+    carregarLotesOperacionaisEstoque().catch((e) => console.warn("lotes operacionais erro:", e)),
+    carregarMovimentosEstoque().catch((e) => console.warn("movimentos estoque erro:", e)),
+    carregarSaldoEstoque().catch((e) => console.warn("saldo estoque erro:", e)),
+  ]);
+  if (window.__dashView === "estoque") await renderDashboardEstoque();
+}
+
+async function prepararRastreioLotesOperacionais(){
+  await ensureProdutosEstoqueCache().catch((e) => console.warn("produtos lote erro:", e));
+  popularProdutoCriarLoteEstoque(document.getElementById("estoqueLoteCriarProduto")?.value || "");
+  atualizarFluxoCriarLoteEstoque();
+  await carregarLotesOperacionaisEstoque().catch((e) => console.warn("lotes operacionais erro:", e));
+}
+
+function _rastreioHojeInput(){
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const dia = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${dia}`;
+}
+
+function _rastreioCodigoLocal(dataValue, serialValue){
+  const serial = Math.max(1, Math.min(100000, Number.parseInt(serialValue || "1", 10) || 1));
+  const partes = String(dataValue || "").split("-");
+  if (partes.length !== 3) return serial <= 1 ? "lote00fab00000000" : `lote00fab00000000-${String(serial).padStart(2, "0")}`;
+  const [ano, mes, dia] = partes;
+  const base = `lote${dia}fab${dia}${mes}${ano}`;
+  return serial <= 1 ? base : `${base}-${String(serial).padStart(2, "0")}`;
+}
+
+function _rastreioFmtData(v){
+  if (!v) return "-";
+  const texto = String(v).slice(0, 10);
+  const partes = texto.split("-");
+  if (partes.length === 3) return `${partes[2]}/${partes[1]}/${partes[0]}`;
+  return _fmtDateBr(v);
+}
+
+function _rastreioProdutoOpcao(item = {}){
+  const nome = item.nome_produto || item.produto_base_nome || "";
+  const codigo = item.codigo_produto_nfe || item.codigo_barras || "";
+  return {
+    value: nome || codigo,
+    label: [codigo, item.produto_base_nome || nome].filter(Boolean).join(" | "),
+    produto: item,
+  };
+}
+
+function atualizarPreviewCodigoLote(){
+  const dataEl = document.getElementById("estoqueRastreioData");
+  const serialEl = document.getElementById("estoqueRastreioSerial");
+  const chip = document.getElementById("estoqueRastreioLoteChip");
+  if (chip) chip.textContent = _rastreioCodigoLocal(dataEl?.value || "", serialEl?.value || "1");
+}
+
+function renderRastreabilidadeDatalists(){
+  const saboresList = document.getElementById("estoqueRastreioSaboresList");
+  if (!saboresList) return;
+  const vistos = new Set();
+  saboresList.innerHTML = (estoqueState.cadastroProdutos || []).map(_rastreioProdutoOpcao)
+    .filter((opt) => {
+      const key = String(opt.value || "").trim();
+      if (!key || vistos.has(key)) return false;
+      vistos.add(key);
+      return true;
+    })
+    .map((opt) => `<option value="${_escAttr(opt.value)}" label="${_escAttr(opt.label)}"></option>`)
+    .join("");
+}
+
+function _rastreioLoteOptionValue(lote = {}){
+  return `${lote.data || ""}|${Number(lote.serial || 0)}`;
+}
+
+function _rastreioPeriodoBuscaAtual(){
+  return {
+    dataInicio: String(document.getElementById("estoqueRastreioInicio")?.value || "").trim(),
+    dataFim: String(document.getElementById("estoqueRastreioFim")?.value || "").trim(),
+  };
+}
+
+function _rastreioFiltroLotesLabel(opcoes = {}){
+  const inicio = String(opcoes.dataInicio || "").trim();
+  const fim = String(opcoes.dataFim || "").trim();
+  const data = String(opcoes.data || "").trim();
+  if (inicio && fim) return `${_rastreioFmtData(inicio)} a ${_rastreioFmtData(fim)}`;
+  if (inicio) return `a partir de ${_rastreioFmtData(inicio)}`;
+  if (fim) return `ate ${_rastreioFmtData(fim)}`;
+  if (data) return _rastreioFmtData(data);
+  return "";
+}
+
+function _rastreioFiltroLotesAtual(fallbackData = ""){
+  const periodo = _rastreioPeriodoBuscaAtual();
+  if (periodo.dataInicio || periodo.dataFim) return periodo;
+  return fallbackData ? { data: fallbackData } : {};
+}
+
+function renderLotesRastreabilidadeSelect(filtroData = estoqueState.rastreioLotesFiltro || ""){
+  const select = document.getElementById("estoqueRastreioLoteSelect");
+  if (!select) return;
+  const dataAtual = String(document.getElementById("estoqueRastreioData")?.value || "").trim();
+  const serialAtual = Number.parseInt(document.getElementById("estoqueRastreioSerial")?.value || "0", 10) || 0;
+  const valorAtual = dataAtual && serialAtual ? `${dataAtual}|${serialAtual}` : String(select.value || "");
+  const lotes = Array.isArray(estoqueState.rastreioLotes) ? estoqueState.rastreioLotes : [];
+  if (!lotes.length) {
+    select.innerHTML = `<option value="">${filtroData ? "Nenhum lote amarrado no periodo" : "Nenhum lote amarrado encontrado"}</option>`;
+    return;
+  }
+  select.innerHTML = [
+    `<option value="">${filtroData ? "Selecione um lote do periodo" : "Selecione um lote amarrado"}</option>`,
+    ...lotes.map((lote) => {
+      const value = _rastreioLoteOptionValue(lote);
+      const notas = Array.isArray(lote.notas) && lote.notas.length ? ` | NF ${lote.notas.slice(0, 2).join(", ")}` : "";
+      const produto = Array.isArray(lote.produtos) && lote.produtos.length ? ` | ${lote.produtos[0]}` : "";
+      const movs = `${Number(lote.entradas || 0)}E/${Number(lote.saidas || 0)}S`;
+      const label = `${_rastreioFmtData(lote.data)} | ${lote.lote_codigo || value} | ${movs}${notas}${produto}`;
+      return `<option value="${_escAttr(value)}" ${value === valorAtual ? "selected" : ""}>${_escHtml(label)}</option>`;
+    }),
+  ].join("");
+}
+
+async function carregarLotesRastreabilidade(opcoes = {}){
+  const data = String(opcoes.data || "").trim();
+  const dataInicio = String(opcoes.dataInicio || "").trim();
+  const dataFim = String(opcoes.dataFim || "").trim();
+  const filtroLabel = _rastreioFiltroLotesLabel({ data, dataInicio, dataFim });
+  const temFiltro = Boolean(data || dataInicio || dataFim);
+  const params = new URLSearchParams({ limit: temFiltro ? "20000" : "5000" });
+  if (dataInicio || dataFim) {
+    if (dataInicio) params.set("data_inicio", dataInicio);
+    if (dataFim) params.set("data_fim", dataFim);
+  } else if (data) {
+    params.set("data", data);
+  }
+  const resp = await apiFetch(`/api/estoque/rastreabilidade/lotes?${params.toString()}`);
+  const payload = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw new Error(payload?.erro || "Falha ao carregar lotes.");
+  estoqueState.rastreioLotes = Array.isArray(payload?.lotes) ? payload.lotes : [];
+  estoqueState.rastreioLotesFiltro = filtroLabel;
+  renderLotesRastreabilidadeSelect(filtroLabel);
+  return estoqueState.rastreioLotes;
+}
+
+async function atualizarLotesRastreabilidadePorPeriodo(){
+  const periodo = _rastreioPeriodoBuscaAtual();
+  const lotes = await carregarLotesRastreabilidade(periodo).catch((e) => {
+    console.warn("lotes rastreio erro:", e);
+    return [];
+  });
+  const dataEl = document.getElementById("estoqueRastreioData");
+  const serialEl = document.getElementById("estoqueRastreioSerial");
+  const dataAtual = String(dataEl?.value || "").trim();
+  const serialAtual = Number.parseInt(serialEl?.value || "0", 10) || 0;
+  const jaSelecionado = lotes.some((lote) => (
+    String(lote.data || "") === dataAtual && Number(lote.serial || 0) === serialAtual
+  ));
+  if (lotes.length && !jaSelecionado) {
+    if (dataEl) dataEl.value = lotes[0].data || dataEl.value;
+    if (serialEl) serialEl.value = String(Number(lotes[0].serial || 1) || 1);
+    atualizarPreviewCodigoLote();
+    renderLotesRastreabilidadeSelect(estoqueState.rastreioLotesFiltro);
+  }
+  if (lotes.length) {
+    await consultarRastreioLote();
+  } else {
+    estoqueState.rastreioResultado = null;
+    renderRastreioLotesEstoque();
+  }
+}
+
+async function atualizarLotesRastreabilidadePorData(){
+  await atualizarLotesRastreabilidadePorPeriodo();
+}
+
+function selecionarLoteRastreabilidade(){
+  const select = document.getElementById("estoqueRastreioLoteSelect");
+  const [data, serial] = String(select?.value || "").split("|");
+  if (!data || !serial) return;
+  const dataEl = document.getElementById("estoqueRastreioData");
+  const serialEl = document.getElementById("estoqueRastreioSerial");
+  if (dataEl) dataEl.value = data;
+  if (serialEl) serialEl.value = String(Number(serial) || 1);
+  atualizarPreviewCodigoLote();
+  consultarRastreioLote();
+}
+
+async function verificarLotesRastreabilidade(){
+  const data = String(document.getElementById("estoqueRastreioData")?.value || "").trim();
+  const periodo = _rastreioPeriodoBuscaAtual();
+  const body = {
+    data: periodo.dataInicio || periodo.dataFim ? null : (data || null),
+    data_inicio: periodo.dataInicio || null,
+    data_fim: periodo.dataFim || null,
+    limit: 100000,
+  };
+  const resp = await apiFetch("/api/estoque/rastreabilidade/verificar", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const result = await resp.json().catch(() => ({}));
+  if (!resp.ok) return alert(result?.erro || "Erro ao verificar XMLs importados.");
+  const resumo = result.bootstrap || {};
+  alert(`Verificacao concluida. Novos vinculos: ${Number(resumo.criados || 0)} | Regularizados: ${Number(resumo.regularizados || 0)} | Saidas novas manuais: ${Number(resumo.saidas_manuais || 0)} | XMLs considerados: ${Number(resumo.xml_importados || 0)} | Movimentos: ${Number(resumo.movimentos || 0)}`);
+  await carregarLotesRastreabilidade(_rastreioFiltroLotesAtual(data)).catch((e) => console.warn("lotes rastreio erro:", e));
+  await consultarRastreioLote();
+}
+
+async function inicializarRastreabilidadeEstoque(){
+  const dataEl = document.getElementById("estoqueRastreioData");
+  const serialEl = document.getElementById("estoqueRastreioSerial");
+  if (dataEl && !dataEl.value) dataEl.value = _rastreioHojeInput();
+  if (serialEl && !serialEl.value) serialEl.value = "1";
+  atualizarPreviewCodigoLote();
+  await Promise.all([
+    ensureProdutosEstoqueCache().catch((e) => console.warn("produtos rastreio erro:", e)),
+    carregarLotesRastreabilidade().catch((e) => console.warn("lotes rastreio erro:", e)),
+  ]);
+  renderRastreabilidadeDatalists();
+  if (!estoqueState.rastreioInicializado) {
+    const lotes = Array.isArray(estoqueState.rastreioLotes) ? estoqueState.rastreioLotes : [];
+    if (lotes.length) {
+      const primeiro = lotes[0];
+      if (dataEl) dataEl.value = primeiro.data || dataEl.value;
+      if (serialEl) serialEl.value = String(Number(primeiro.serial || 1) || 1);
+      atualizarPreviewCodigoLote();
+      renderLotesRastreabilidadeSelect();
+    }
+    estoqueState.rastreioInicializado = true;
+    await consultarRastreioLote();
+  } else {
+    renderRastreioLotesEstoque();
+  }
+}
+
+async function consultarRastreioLote(){
+  const dataEl = document.getElementById("estoqueRastreioData");
+  const serialEl = document.getElementById("estoqueRastreioSerial");
+  const saborEl = document.getElementById("estoqueRastreioSabor");
+  const data = String(dataEl?.value || "").trim();
+  const serial = Number.parseInt(serialEl?.value || "1", 10) || 1;
+  const sabor = String(saborEl?.value || "").trim();
+  atualizarPreviewCodigoLote();
+  if (!data) return;
+  const resumo = document.getElementById("estoqueRastreioResumo");
+  if (resumo) resumo.textContent = "Consultando lote...";
+  const params = new URLSearchParams({ data, serial: String(serial) });
+  if (sabor) params.set("sabor", sabor);
+  const resp = await apiFetch(`/api/estoque/rastreabilidade/lote?${params.toString()}`);
+  const result = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    if (resumo) resumo.textContent = "Nao foi possivel consultar o lote.";
+    return alert(result?.erro || "Erro ao consultar lote.");
+  }
+  estoqueState.rastreioResultado = result;
+  if (Number(result?.bootstrap?.criados || 0) > 0) {
+    await carregarLotesRastreabilidade(_rastreioFiltroLotesAtual(data)).catch((e) => console.warn("lotes rastreio erro:", e));
+  } else {
+    renderLotesRastreabilidadeSelect();
+  }
+  renderRastreioLotesEstoque();
+}
+
+function _rastreioOrigemLabel(item = {}){
+  const origemRaw = String(item.origem || "").trim();
+  const origemKey = origemRaw.toLowerCase();
+  const labels = {
+    bootstrap_simulado: "amarracao inicial",
+    bootstrap_movimento: "lancamento",
+    bootstrap_xml_importado: "xml importado",
+    amarracao_inicial: "amarracao inicial",
+    auto_entrada_fabrica: "entrada fabrica",
+    auto_saida_semana: "saida da semana",
+    manual_correcao: "correcao manual",
+    simulacao: "amarracao inicial",
+    simulacao_cliente: "amarracao inicial",
+    xml_frete: "xml frete",
+    importar_xml: "xml importado",
+    carga: "carga",
+    vendas: "vendas",
+  };
+  return labels[origemKey] || origemRaw.replace(/_/g, " ") || "-";
+}
+
+function _rastreioCorrecaoOrigemHtml(item = {}, loteAtual = {}){
+  const label = _escHtml(_rastreioOrigemLabel(item));
+  const vinculoId = Number(item.vinculo_id || 0);
+  if (!(vinculoId > 0) || item.simulado) return label;
+  const dataLote = String(loteAtual.data || item.data || "").slice(0, 10);
+  const serial = Number(item.serial || loteAtual.serial || 1) || 1;
+  const loteCodigo = item.lote_codigo || loteAtual.codigo || _rastreioCodigoLocal(dataLote, serial);
+  return `
+    ${label}
+    <div class="hint" style="margin-top:4px;">
+      <button
+        type="button"
+        class="rastreio-vinculo-corrigir-btn"
+        data-vinculo-id="${_escAttr(String(vinculoId))}"
+        data-lote="${_escAttr(loteCodigo || "")}"
+        data-data="${_escAttr(dataLote || "")}"
+        data-serial="${_escAttr(String(serial))}"
+      >Corrigir</button>
+    </div>
+  `;
+}
+
+function _rastreioAtivarBotoesCorrecao(root){
+  if (!root) return;
+  root.querySelectorAll(".rastreio-vinculo-corrigir-btn").forEach((btn) => {
+    btn.onclick = () => editarVinculoRastreabilidade(
+      Number(btn.dataset.vinculoId || 0),
+      btn.dataset.lote || "",
+      btn.dataset.data || "",
+      Number(btn.dataset.serial || 1) || 1,
+    );
+  });
+}
+
+async function editarVinculoRastreabilidade(id, loteCodigoAtual = "", dataLoteAtual = "", serialAtual = 1){
+  if (!(Number(id) > 0)) return alert("Vinculo de rastreio nao encontrado.");
+  const dataPadrao = String(dataLoteAtual || document.getElementById("estoqueRastreioData")?.value || _rastreioHojeInput()).slice(0, 10);
+  const serialPadrao = Number(serialAtual || document.getElementById("estoqueRastreioSerial")?.value || 1) || 1;
+  const lotePadrao = loteCodigoAtual || _rastreioCodigoLocal(dataPadrao, serialPadrao);
+
+  const lote_codigo = prompt("Codigo do lote:", lotePadrao);
+  if (lote_codigo == null) return;
+  const data_lote = prompt("Data do lote (AAAA-MM-DD):", dataPadrao);
+  if (data_lote == null) return;
+  const serialTxt = prompt("Serial:", String(serialPadrao));
+  if (serialTxt == null) return;
+
+  const resp = await apiFetch(`/api/estoque/rastreabilidade/vinculos/${id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      lote_codigo: String(lote_codigo || "").trim(),
+      data_lote: String(data_lote || "").trim(),
+      serial: Number.parseInt(serialTxt, 10) || 1,
+    }),
+  });
+  const result = await resp.json().catch(() => ({}));
+  if (!resp.ok) return alert(result?.erro || "Erro ao corrigir vinculo de rastreio.");
+
+  const vinculo = result.vinculo || {};
+  const dataEl = document.getElementById("estoqueRastreioData");
+  const serialEl = document.getElementById("estoqueRastreioSerial");
+  if (dataEl && vinculo.data_lote) dataEl.value = vinculo.data_lote;
+  if (serialEl && vinculo.serial) serialEl.value = String(vinculo.serial);
+  atualizarPreviewCodigoLote();
+  await carregarLotesRastreabilidade(_rastreioFiltroLotesAtual(vinculo.data_lote || data_lote)).catch((e) => console.warn("lotes rastreio erro:", e));
+  await consultarRastreioLote();
 }
 
 function renderRastreioLotesEstoque(){
-  const body = document.getElementById("estoqueRastreioBody");
   const resumo = document.getElementById("estoqueRastreioResumo");
-  if (!body) return;
-  const filtros = _estoqueFiltrosEscopo("Rastreio");
-  const dados = (Array.isArray(estoqueState.movimentos) ? estoqueState.movimentos : [])
-    .filter((row) => _estoqueItemCombinaFiltros(row, filtros));
-  const entradas = dados.filter((row) => String(row.tipo_movimento || "entrada").toLowerCase() === "entrada")
-    .reduce((total, row) => total + (Number(row.quantidade || 0) || 0), 0);
-  const saidas = dados.filter((row) => String(row.tipo_movimento || "entrada").toLowerCase() === "saida")
-    .reduce((total, row) => total + (Number(row.quantidade || 0) || 0), 0);
-  if (resumo) {
-    resumo.textContent = `${dados.length} lancamento(s) rastreados | Entradas ${_estoqueFormatQtd(entradas)} | Saidas ${_estoqueFormatQtd(saidas)}`;
+  const avisos = document.getElementById("estoqueRastreioAvisos");
+  const comprasBody = document.getElementById("estoqueRastreioComprasBody");
+  const saidasBody = document.getElementById("estoqueRastreioSaidasBody");
+  const clientesBody = document.getElementById("estoqueRastreioClientesBody");
+  const chip = document.getElementById("estoqueRastreioLoteChip");
+  const result = estoqueState.rastreioResultado;
+  if (!comprasBody || !saidasBody || !clientesBody) return;
+  if (!result?.ok) {
+    if (resumo) resumo.textContent = "Selecione um lote para consultar.";
+    if (avisos) avisos.innerHTML = "";
+    comprasBody.innerHTML = `<tr><td colspan="7">Informe um lote.</td></tr>`;
+    saidasBody.innerHTML = `<tr><td colspan="8">Informe um lote.</td></tr>`;
+    clientesBody.innerHTML = `<tr><td colspan="7">Informe um lote.</td></tr>`;
+    return;
   }
-  body.innerHTML = dados.length ? dados.map((r) => `
-    <tr>
-      <td>${_escHtml(_fmtDateBr(r.data_registro))}</td>
-      <td>${_escHtml(r.numero_nota || "-")}</td>
-      <td>${_escHtml(r.produto_base_nome || r.nome_produto || "-")}</td>
-      <td>${_escHtml(_estoqueCodigoReferencia(r))}</td>
-      <td>${_escHtml(_estoqueFornecedorResumo(r))}</td>
-      <td>${_escHtml(_estoqueCategoriaFornecedorResumo(r))}</td>
-      <td>${_escHtml(r.tipo_movimento || "entrada")}</td>
-      <td>${_escHtml(_estoqueFormatQtd(r.quantidade))}</td>
-      <td>R$ ${_escHtml(_fmtMoney(r.valor_unitario))}</td>
-      <td>${_escHtml(_estoqueResumoFluxo(r))}</td>
+  const lote = result.lote || {};
+  const res = result.resumo || {};
+  if (chip) chip.textContent = lote.codigo || _rastreioCodigoLocal(lote.data, lote.serial);
+  if (resumo) {
+    const modoRaw = String(lote.modo || "sem_dados").trim().toLowerCase();
+    const modo = {
+      simulado: "temporario",
+      temporario: "temporario",
+      misto: "parcial",
+      real: "real",
+      sem_dados: "sem dados",
+    }[modoRaw] || modoRaw.replace(/_/g, " ");
+    resumo.textContent = `${lote.codigo || "-"} | ${modo} | ${res.notas_compra || 0} compra(s) | ${res.notas_saida || 0} saida(s) | ${res.clientes || 0} cliente(s)`;
+  }
+  if (avisos) {
+    const lista = Array.isArray(result.avisos) ? result.avisos : [];
+    avisos.innerHTML = lista.map((msg) => `<div class="estoque-rastreio-aviso">${_escHtml(msg)}</div>`).join("");
+  }
+
+  const compras = Array.isArray(result.notas_compra) ? result.notas_compra : [];
+  comprasBody.innerHTML = compras.length ? compras.map((item) => `
+    <tr class="${item.simulado ? "estoque-rastreio-temporario" : ""}">
+      <td>${_escHtml(item.nota_compra || "-")}</td>
+      <td>${_escHtml(item.materia_prima_nome || "-")}</td>
+      <td>${_escHtml(item.codigo || "-")}</td>
+      <td>${_escHtml(item.fornecedor_nome || "-")}</td>
+      <td>${_escHtml(_estoqueFormatQtd(item.quantidade || 0))}</td>
+      <td>R$ ${_escHtml(_fmtMoney(item.valor_unitario || 0))}</td>
+      <td>${_rastreioCorrecaoOrigemHtml(item, lote)}</td>
     </tr>
-  `).join("") : `<tr><td colspan="10">Sem lotes para os filtros selecionados.</td></tr>`;
+  `).join("") : `<tr><td colspan="7">Nenhuma nota de compra vinculada.</td></tr>`;
+
+  const saidas = Array.isArray(result.notas_saida) ? result.notas_saida : [];
+  saidasBody.innerHTML = saidas.length ? saidas.map((item) => `
+    <tr class="${item.simulado ? "estoque-rastreio-temporario" : ""}">
+      <td>${_escHtml(item.nota_saida || "-")}</td>
+      <td>${_escHtml(_rastreioFmtData(item.data))}</td>
+      <td>${_escHtml(item.transportadora || "-")}</td>
+      <td>${_escHtml(item.frete_nome || item.carga_nome || "-")}</td>
+      <td>${_escHtml(item.rota || "-")}</td>
+      <td>${_escHtml(_estoqueFormatQtd(item.quantidade_total || 0))}</td>
+      <td>R$ ${_escHtml(_fmtMoney(item.valor_total_nota || 0))}</td>
+      <td>${_rastreioCorrecaoOrigemHtml(item, lote)}</td>
+    </tr>
+  `).join("") : `<tr><td colspan="8">Nenhuma nota de saida vinculada.</td></tr>`;
+
+  const clientes = Array.isArray(result.clientes) ? result.clientes : [];
+  clientesBody.innerHTML = clientes.length ? clientes.map((item) => `
+    <tr class="${item.simulado ? "estoque-rastreio-temporario" : ""}">
+      <td>${_escHtml(item.cliente || "-")}</td>
+      <td>${_escHtml(item.cidade || "-")}</td>
+      <td>${_escHtml(item.nota_saida || "-")}</td>
+      <td>${_escHtml(item.produto || "-")}</td>
+      <td>${_escHtml(_estoqueFormatQtd(item.quantidade || 0))}</td>
+      <td>R$ ${_escHtml(_fmtMoney(item.valor_venda || 0))}</td>
+      <td>${_escHtml(_rastreioOrigemLabel(item))}</td>
+    </tr>
+  `).join("") : `<tr><td colspan="7">Nenhum cliente vinculado.</td></tr>`;
+  _rastreioAtivarBotoesCorrecao(comprasBody);
+  _rastreioAtivarBotoesCorrecao(saidasBody);
 }
 
 async function editarMovimentoEstoque(id){
@@ -15672,6 +18726,8 @@ async function editarMovimentoEstoque(id){
 
   const numero_nota = prompt("Numero da nota:", item.numero_nota || "");
   if (numero_nota == null) return;
+  const lote_codigo = prompt("Codigo do lote:", item.lote_codigo || "");
+  if (lote_codigo == null) return;
   const codigoReferencia = prompt("Codigo:", item.codigo_produto_nfe || item.codigo_barras || "");
   if (codigoReferencia == null) return;
   const nome_produto = prompt("Produto:", item.nome_produto || "");
@@ -15686,6 +18742,7 @@ async function editarMovimentoEstoque(id){
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       numero_nota,
+      lote_codigo,
       codigo_barras: item.codigo_barras ? codigoReferencia : "",
       codigo_produto_nfe: item.codigo_produto_nfe || !item.codigo_barras ? codigoReferencia : "",
       nome_produto,
@@ -15931,7 +18988,14 @@ window.onload = async () => {
       }
       const secEstoque = document.getElementById("estoque");
       if (secEstoque && secEstoque.classList.contains("activeSection")) {
-        tarefas.push(carregarEstoque());
+        const estoqueViewAtual = window.__estoqueView || estoqueState.view || "lancar";
+        if (estoqueViewAtual === "posicao") {
+          tarefas.push(carregarSaldoEstoque(), carregarMovimentosEstoque());
+        } else if (estoqueViewAtual === "cadastrar") {
+          tarefas.push(carregarSaldoEstoque(), carregarProdutosEstoqueCadastro());
+        } else if (estoqueViewAtual === "rastreio") {
+          tarefas.push(inicializarRastreabilidadeEstoque());
+        }
       }
       await Promise.all(tarefas);
     } catch (e) {

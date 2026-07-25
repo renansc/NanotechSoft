@@ -906,7 +906,12 @@ def _import_xml_file(path, original_name):
                         item["ncm"], item["unidade"], item["quantidade"],
                         item["valor_unitario"], item["valor_total_item"],
                         cab["valor_total_nota"], _now(),
-                        json.dumps(item, ensure_ascii=False),
+                        json.dumps({
+                            **item,
+                            "emitente_fantasia": cab.get("emitente_fantasia", ""),
+                            "destinatario_cidade": cab.get("destinatario_cidade", ""),
+                            "destinatario_uf": cab.get("destinatario_uf", ""),
+                        }, ensure_ascii=False),
                     ),
                 )
                 total += 1

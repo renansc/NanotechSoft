@@ -51,6 +51,11 @@ class EstoqueXmlLotesTests(unittest.TestCase):
                 "_estoque_xml_referencias_lancadas",
                 return_value=set(),
             ),
+            mock.patch.object(
+                server,
+                "_estoque_xml_destinos_manutencao",
+                return_value={},
+            ),
             server.app.test_client() as client,
         ):
             response = client.post(
@@ -73,6 +78,14 @@ class EstoqueXmlLotesTests(unittest.TestCase):
         self.assertIn("_dividirImportacoesXmlEmLotes(chaves, tamanhoLote)", script)
         self.assertIn("lote ${loteIndex + 1} de ${totalLotes}", script)
         self.assertIn('id="estoqueXmlLoteProgresso"', page)
+
+    def test_interface_remove_notas_ja_consolidadas_sem_exigir_revisao(self):
+        with open("script.js", "r", encoding="utf-8") as source:
+            script = source.read()
+
+        self.assertIn('=== "nota ja consolidada no estoque"', script)
+        self.assertIn("chavesConsolidadas.has(String(row?.nota_key || \"\"))", script)
+        self.assertIn("notasJaConsolidadas.length ? \"concluido\" : \"pendente\"", script)
 
 
 if __name__ == "__main__":

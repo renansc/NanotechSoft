@@ -32,6 +32,7 @@ import re
 import unicodedata
 import xml.etree.ElementTree as ET
 import zlib
+import zipfile
 import importlib.util
 from html.parser import HTMLParser
 from urllib.parse import urlparse, unquote
@@ -60,16 +61,18 @@ def _load_env_file(path):
 
 
 # =========================================================
-# (0.5) EVITAR CACHE DO NAVEGADOR NAS ROTAS /api
-# (isso evita ver cadastros "antigos" depois de excluir/editar)
+# (0.5) EVITAR CACHE DO NAVEGADOR NAS ROTAS /api E FRONTEND
+# (isso evita ver cadastros "antigos" e assets antigos apos deploy)
 # =========================================================
 @app.after_request
 def add_no_cache_headers(resp):
     try:
-        if (
+        cache_sensitive = (
             request.path.startswith("/api/")
-            or request.path in {"/", "/RioBranco.html", "/script.js", "/style.css"}
-        ):
+            or request.path in ("/", "/RioBranco.html")
+            or request.path.endswith((".js", ".css"))
+        )
+        if cache_sensitive:
             resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
             resp.headers["Pragma"] = "no-cache"
             resp.headers["Expires"] = "0"
@@ -90,6 +93,27 @@ _AGENT_IA_MODULE = None
 # Carrega variaveis de ambiente automaticamente (sem export manual)
 _load_env_file(os.path.join(BASE_DIR, ".env"))
 app.secret_key = os.environ.get("FLASK_SECRET") or "troque-esta-chave-agora-123"
+
+
+def _frontend_asset_version():
+    configured = os.environ.get("RB_BUILD_VERSION", "").strip()
+    if configured:
+        return re.sub(r"[^0-9A-Za-z_.-]", "", configured) or str(int(time.time()))
+
+    digest = hashlib.sha256()
+    for rel_path in ("RioBranco.html", "script.js", "style.css", "vendor/jssip.min.js"):
+        path = os.path.join(BASE_DIR, rel_path)
+        try:
+            st = os.stat(path)
+            digest.update(rel_path.encode("utf-8"))
+            digest.update(str(st.st_size).encode("ascii"))
+            digest.update(str(st.st_mtime_ns).encode("ascii"))
+        except OSError:
+            continue
+    return digest.hexdigest()[:12]
+
+
+FRONTEND_ASSET_VERSION = _frontend_asset_version()
 
 DATA_ROOT = os.environ.get("RB_DATA_DIR", BASE_DIR)
 FOTOS_DIR = os.path.join(DATA_ROOT, "FotosDevolucoes")
@@ -382,9 +406,9 @@ def _env_int(name, default):
         return int(default)
 
 db_config = {
-    "host": _env("DB_HOST", "127.0.0.1"),
+    "host": _env("DB_HOST", "172.19.92.122"),
     "user": _env("DB_USER", "root"),
-    "password": _env("DB_PASSWORD", ""),
+    "password": _env("DB_PASSWORD", "desde51@"),
     "database": _env("DB_NAME", "riobranco"),
     "port": _env_int("DB_PORT", 3306),
 }
@@ -401,147 +425,6 @@ def ensure_schema():
     try:
         conn = get_conn()
         cur = conn.cursor()
-
-        # Base minima para bancos novos. As migracoes abaixo continuam
-        # adicionando/ajustando colunas quando a base ja vem de uma versao antiga.
-        cur.execute("""
-        CREATE TABLE IF NOT EXISTS veiculos (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            nome VARCHAR(180) NOT NULL,
-            placa VARCHAR(20) DEFAULT '',
-            modelo VARCHAR(180) DEFAULT '',
-            km_atual INT DEFAULT 0,
-            intervalo_manut_km INT DEFAULT 10000,
-            intervalo_oleo_km INT DEFAULT 5000,
-            combustivel_padrao VARCHAR(20) DEFAULT 'diesel_500',
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-            INDEX idx_veiculos_nome (nome),
-            INDEX idx_veiculos_placa (placa)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-        """)
-
-        cur.execute("""
-        CREATE TABLE IF NOT EXISTS motoristas (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            nome VARCHAR(255) NOT NULL,
-            is_motorista TINYINT(1) NOT NULL DEFAULT 0,
-            is_entregador TINYINT(1) NOT NULL DEFAULT 0,
-            is_ajudante TINYINT(1) NOT NULL DEFAULT 0,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-            INDEX idx_motoristas_nome (nome)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-        """)
-
-        cur.execute("""
-        CREATE TABLE IF NOT EXISTS conferentes (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            nome VARCHAR(255) NOT NULL,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-            INDEX idx_conferentes_nome (nome)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-        """)
-
-        cur.execute("""
-        CREATE TABLE IF NOT EXISTS cargas (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            nome VARCHAR(255) NOT NULL,
-            cidade VARCHAR(180) DEFAULT '',
-            rota VARCHAR(220) DEFAULT '',
-            veiculo_numero VARCHAR(40) DEFAULT '',
-            origem_csv VARCHAR(255) DEFAULT '',
-            registros_importados INT DEFAULT 0,
-            clientes_distintos INT DEFAULT 0,
-            quantidade_total DECIMAL(12,3) DEFAULT 0,
-            litros_total DECIMAL(12,3) DEFAULT 0,
-            peso_total DECIMAL(12,3) DEFAULT 0,
-            valor_total DECIMAL(14,2) DEFAULT 0,
-            arquivo_origem VARCHAR(255) DEFAULT '',
-            tipo_importacao VARCHAR(30) DEFAULT 'manual',
-            mapa_numero VARCHAR(80) DEFAULT '',
-            data_carga DATE NULL,
-            numero_entregas INT DEFAULT 0,
-            volumes_total DECIMAL(12,3) DEFAULT 0,
-            valor_bonificacao DECIMAL(14,2) DEFAULT 0,
-            estoque_baixado_em DATETIME NULL,
-            estoque_baixado_por VARCHAR(180) DEFAULT '',
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            atualizado_em DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-            INDEX idx_cargas_nome (nome),
-            INDEX idx_cargas_cidade (cidade),
-            INDEX idx_cargas_veiculo_numero (veiculo_numero),
-            INDEX idx_cargas_tipo_importacao (tipo_importacao),
-            INDEX idx_cargas_mapa_numero (mapa_numero),
-            INDEX idx_cargas_estoque_baixado_em (estoque_baixado_em)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-        """)
-
-        cur.execute("""
-        CREATE TABLE IF NOT EXISTS fretes (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            nome VARCHAR(255) NOT NULL,
-            cidade VARCHAR(180) DEFAULT '',
-            data_carga DATE NULL,
-            status VARCHAR(40) DEFAULT 'liberado',
-            motorista_id INT NULL,
-            entregador_id INT NULL,
-            colaborador_motorista_id INT NULL,
-            colaborador_entregador_id INT NULL,
-            veiculo_id INT NULL,
-            carga_id INT NULL,
-            observacao VARCHAR(1000) DEFAULT '',
-            km_atual INT DEFAULT 0,
-            peso DECIMAL(10,3) DEFAULT 0,
-            qtd_entregas INT DEFAULT 0,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-            finalizado_em DATETIME NULL,
-            arquivado TINYINT(1) NOT NULL DEFAULT 0,
-            INDEX idx_fretes_status (status),
-            INDEX idx_fretes_motorista (motorista_id),
-            INDEX idx_fretes_entregador (entregador_id),
-            INDEX idx_fretes_colaborador_motorista (colaborador_motorista_id),
-            INDEX idx_fretes_colaborador_entregador (colaborador_entregador_id),
-            INDEX idx_fretes_veiculo (veiculo_id),
-            INDEX idx_fretes_carga (carga_id),
-            INDEX idx_fretes_finalizado_em (finalizado_em)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-        """)
-
-        cur.execute("""
-        CREATE TABLE IF NOT EXISTS devolucoes (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            frete_id INT NULL,
-            veiculo_id INT NULL,
-            conferente_id INT NULL,
-            colaborador_conferente_id INT NULL,
-            c24 DECIMAL(12,3) DEFAULT 0,
-            c48 DECIMAL(12,3) DEFAULT 0,
-            pet2l DECIMAL(12,3) DEFAULT 0,
-            pet600 DECIMAL(12,3) DEFAULT 0,
-            pet200 DECIMAL(12,3) DEFAULT 0,
-            agua_com_gas DECIMAL(12,3) DEFAULT 0,
-            agua_sem_gas DECIMAL(12,3) DEFAULT 0,
-            cx_600 DECIMAL(12,3) DEFAULT 0,
-            obs_c24 VARCHAR(255) DEFAULT '',
-            obs_c48 VARCHAR(255) DEFAULT '',
-            obs_pet2l VARCHAR(255) DEFAULT '',
-            obs_pet600 VARCHAR(255) DEFAULT '',
-            obs_pet200 VARCHAR(255) DEFAULT '',
-            obs_agua_com_gas VARCHAR(255) DEFAULT '',
-            obs_agua_sem_gas VARCHAR(255) DEFAULT '',
-            obs_cx_600 VARCHAR(255) DEFAULT '',
-            fotos LONGTEXT NULL,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-            INDEX idx_devolucoes_frete (frete_id),
-            INDEX idx_devolucoes_veiculo (veiculo_id),
-            INDEX idx_devolucoes_conferente (conferente_id),
-            INDEX idx_devolucoes_colaborador_conferente (colaborador_conferente_id)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-        """)
 
         # 1) Novas colunas em veiculos para intervalos (se não existirem)
         # - intervalo_manut_km: quantos KM entre manutenções
@@ -594,18 +477,6 @@ def ensure_schema():
             pass
         try:
             cur.execute("ALTER TABLE motoristas ADD COLUMN is_ajudante TINYINT(1) NOT NULL DEFAULT 0")
-        except Exception:
-            pass
-        try:
-            cur.execute(
-                """
-                UPDATE motoristas
-                SET is_motorista = 1, is_entregador = 1
-                WHERE COALESCE(is_motorista, 0) = 0
-                  AND COALESCE(is_entregador, 0) = 0
-                  AND COALESCE(is_ajudante, 0) = 0
-                """
-            )
         except Exception:
             pass
 
@@ -798,6 +669,7 @@ def ensure_schema():
             id INT AUTO_INCREMENT PRIMARY KEY,
             codigo_barras VARCHAR(120) DEFAULT '',
             codigo_produto_nfe VARCHAR(120) DEFAULT '',
+            lote_codigo VARCHAR(120) DEFAULT '',
             numero_nota VARCHAR(120) DEFAULT '',
             nome_produto VARCHAR(255) NOT NULL,
             quantidade DECIMAL(12,3) DEFAULT 0,
@@ -811,6 +683,7 @@ def ensure_schema():
             data_registro DATETIME DEFAULT CURRENT_TIMESTAMP,
             INDEX (codigo_barras),
             INDEX (codigo_produto_nfe),
+            INDEX (lote_codigo),
             INDEX (numero_nota),
             INDEX (nome_produto),
             INDEX (tipo_movimento),
@@ -884,6 +757,18 @@ def ensure_schema():
         )
         """)
         cur.execute("""
+        CREATE TABLE IF NOT EXISTS cargas_rotas (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            nome VARCHAR(220) NOT NULL,
+            cidades TEXT NULL,
+            ativo TINYINT(1) NOT NULL DEFAULT 1,
+            criado_em DATETIME DEFAULT CURRENT_TIMESTAMP,
+            atualizado_em DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uq_cargas_rotas_nome (nome),
+            INDEX idx_cargas_rotas_ativo (ativo)
+        )
+        """)
+        cur.execute("""
         CREATE TABLE IF NOT EXISTS estoque_produtos (
             id INT AUTO_INCREMENT PRIMARY KEY,
             codigo_barras VARCHAR(120) DEFAULT '',
@@ -893,7 +778,7 @@ def ensure_schema():
             produto_base_nome VARCHAR(255) DEFAULT '',
             unidade VARCHAR(30) DEFAULT '',
             embalagem_tipo_padrao VARCHAR(30) DEFAULT '',
-            fator_embalagem_padrao DECIMAL(12,3) DEFAULT 0,
+            fator_embalagem_padrao DECIMAL(12,3) DEFAULT 1,
             origem_cadastro VARCHAR(40) DEFAULT 'manual',
             criado_em DATETIME DEFAULT CURRENT_TIMESTAMP,
             atualizado_em DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -904,6 +789,116 @@ def ensure_schema():
             INDEX (produto_base_nome)
         )
         """)
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS estoque_xml_fornecedor_regras (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            emitente_hash CHAR(40) NOT NULL,
+            emitente_chave VARCHAR(255) DEFAULT '',
+            emitente_cnpj VARCHAR(32) DEFAULT '',
+            emitente_nome VARCHAR(255) DEFAULT '',
+            destino_importacao VARCHAR(30) NOT NULL DEFAULT 'manutencao',
+            motivo VARCHAR(500) DEFAULT '',
+            usuario_registro VARCHAR(180) DEFAULT '',
+            criado_em DATETIME DEFAULT CURRENT_TIMESTAMP,
+            atualizado_em DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uq_estoque_xml_fornecedor_hash (emitente_hash),
+            INDEX idx_estoque_xml_fornecedor_destino (destino_importacao)
+        )
+        """)
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS estoque_xml_classificacao_regras (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            escopo VARCHAR(20) NOT NULL,
+            regra_chave VARCHAR(255) NOT NULL,
+            regra_rotulo VARCHAR(255) DEFAULT '',
+            destino_importacao VARCHAR(30) NOT NULL,
+            ativo TINYINT(1) NOT NULL DEFAULT 1,
+            usuario_registro VARCHAR(180) DEFAULT '',
+            criado_em DATETIME DEFAULT CURRENT_TIMESTAMP,
+            atualizado_em DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uq_estoque_xml_classificacao (escopo, regra_chave),
+            INDEX idx_estoque_xml_classificacao_destino (destino_importacao, ativo)
+        )
+        """)
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS estoque_xml_fator_regras (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            regra_hash CHAR(40) NOT NULL,
+            emitente_hash CHAR(40) NOT NULL,
+            emitente_chave VARCHAR(255) DEFAULT '',
+            emitente_cnpj VARCHAR(32) DEFAULT '',
+            emitente_nome VARCHAR(255) DEFAULT '',
+            codigo_produto_nfe VARCHAR(120) DEFAULT '',
+            nome_produto_key VARCHAR(180) DEFAULT '',
+            nome_produto VARCHAR(255) DEFAULT '',
+            embalagem_tipo VARCHAR(30) DEFAULT '',
+            fator_embalagem DECIMAL(12,3) DEFAULT 0,
+            grupo_estoque VARCHAR(30) DEFAULT '',
+            produto_base_nome VARCHAR(255) DEFAULT '',
+            usuario_registro VARCHAR(180) DEFAULT '',
+            criado_em DATETIME DEFAULT CURRENT_TIMESTAMP,
+            atualizado_em DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uq_estoque_xml_fator_hash (regra_hash),
+            INDEX idx_estoque_xml_fator_emitente (emitente_hash),
+            INDEX idx_estoque_xml_fator_codigo (codigo_produto_nfe),
+            INDEX idx_estoque_xml_fator_nome (nome_produto_key)
+        )
+        """)
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS rastreabilidade_lancamento_vinculos (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            lote_codigo VARCHAR(40) NOT NULL DEFAULT '',
+            data_lote DATE NOT NULL,
+            serial INT NOT NULL,
+            origem_tipo VARCHAR(40) NOT NULL DEFAULT 'estoque_movimento',
+            estoque_movimento_id INT NULL,
+            tipo_movimento VARCHAR(20) DEFAULT '',
+            numero_nota VARCHAR(120) DEFAULT '',
+            codigo_barras VARCHAR(120) DEFAULT '',
+            codigo_produto_nfe VARCHAR(120) DEFAULT '',
+            nome_produto VARCHAR(255) DEFAULT '',
+            quantidade DECIMAL(14,3) DEFAULT 0,
+            valor_unitario DECIMAL(14,2) DEFAULT 0,
+            referencia_tipo VARCHAR(60) DEFAULT '',
+            referencia_id INT NULL,
+            vinculo_origem VARCHAR(40) DEFAULT 'bootstrap_simulado',
+            simulado TINYINT(1) NOT NULL DEFAULT 1,
+            criado_em DATETIME DEFAULT CURRENT_TIMESTAMP,
+            atualizado_em DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uq_rastreio_vinculo_movimento (origem_tipo, estoque_movimento_id),
+            INDEX idx_rastreio_vinculo_lote (data_lote, serial),
+            INDEX idx_rastreio_vinculo_codigo (lote_codigo),
+            INDEX idx_rastreio_vinculo_tipo (tipo_movimento),
+            INDEX idx_rastreio_vinculo_nota (numero_nota)
+        )
+        """)
+        for ddl in (
+            "ALTER TABLE rastreabilidade_lancamento_vinculos ADD COLUMN lote_codigo VARCHAR(40) NOT NULL DEFAULT ''",
+            "ALTER TABLE rastreabilidade_lancamento_vinculos ADD COLUMN data_lote DATE NOT NULL",
+            "ALTER TABLE rastreabilidade_lancamento_vinculos ADD COLUMN serial INT NOT NULL DEFAULT 0",
+            "ALTER TABLE rastreabilidade_lancamento_vinculos ADD COLUMN origem_tipo VARCHAR(40) NOT NULL DEFAULT 'estoque_movimento'",
+            "ALTER TABLE rastreabilidade_lancamento_vinculos ADD COLUMN estoque_movimento_id INT NULL",
+            "ALTER TABLE rastreabilidade_lancamento_vinculos ADD COLUMN tipo_movimento VARCHAR(20) DEFAULT ''",
+            "ALTER TABLE rastreabilidade_lancamento_vinculos ADD COLUMN numero_nota VARCHAR(120) DEFAULT ''",
+            "ALTER TABLE rastreabilidade_lancamento_vinculos ADD COLUMN codigo_barras VARCHAR(120) DEFAULT ''",
+            "ALTER TABLE rastreabilidade_lancamento_vinculos ADD COLUMN codigo_produto_nfe VARCHAR(120) DEFAULT ''",
+            "ALTER TABLE rastreabilidade_lancamento_vinculos ADD COLUMN nome_produto VARCHAR(255) DEFAULT ''",
+            "ALTER TABLE rastreabilidade_lancamento_vinculos ADD COLUMN quantidade DECIMAL(14,3) DEFAULT 0",
+            "ALTER TABLE rastreabilidade_lancamento_vinculos ADD COLUMN valor_unitario DECIMAL(14,2) DEFAULT 0",
+            "ALTER TABLE rastreabilidade_lancamento_vinculos ADD COLUMN referencia_tipo VARCHAR(60) DEFAULT ''",
+            "ALTER TABLE rastreabilidade_lancamento_vinculos ADD COLUMN referencia_id INT NULL",
+            "ALTER TABLE rastreabilidade_lancamento_vinculos ADD COLUMN vinculo_origem VARCHAR(40) DEFAULT 'bootstrap_simulado'",
+            "ALTER TABLE rastreabilidade_lancamento_vinculos ADD COLUMN simulado TINYINT(1) NOT NULL DEFAULT 1",
+            "ALTER TABLE rastreabilidade_lancamento_vinculos ADD UNIQUE KEY uq_rastreio_vinculo_movimento (origem_tipo, estoque_movimento_id)",
+            "ALTER TABLE rastreabilidade_lancamento_vinculos ADD INDEX idx_rastreio_vinculo_lote (data_lote, serial)",
+            "ALTER TABLE rastreabilidade_lancamento_vinculos ADD INDEX idx_rastreio_vinculo_codigo (lote_codigo)",
+            "ALTER TABLE rastreabilidade_lancamento_vinculos ADD INDEX idx_rastreio_vinculo_tipo (tipo_movimento)",
+            "ALTER TABLE rastreabilidade_lancamento_vinculos ADD INDEX idx_rastreio_vinculo_nota (numero_nota)",
+        ):
+            try:
+                cur.execute(ddl)
+            except Exception:
+                pass
         cur.execute("""
         CREATE TABLE IF NOT EXISTS estoque_conferencias (
             id INT AUTO_INCREMENT PRIMARY KEY,
@@ -1038,18 +1033,19 @@ def ensure_schema():
         except Exception:
             pass
 
-        # Migrar motoristas para colaboradores (se ainda não migrados)
         try:
             cur.execute("""
-            INSERT INTO colaboradores (nome, is_motorista, is_entregador, is_ajudante, created_at)
-            SELECT m.nome, m.is_motorista, m.is_entregador, m.is_ajudante, m.created_at
-            FROM motoristas m
-            WHERE NOT EXISTS (
-                SELECT 1 FROM colaboradores c
-                WHERE c.nome = m.nome
-                  AND c.is_motorista = m.is_motorista
-                  AND c.is_entregador = m.is_entregador
-                  AND c.is_ajudante = m.is_ajudante
+            CREATE TABLE IF NOT EXISTS escala_sorteio_regras (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                motorista_id INT NOT NULL,
+                apoio_id INT NOT NULL,
+                criado_em DATETIME DEFAULT CURRENT_TIMESTAMP,
+                atualizado_em DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE KEY uq_escala_sorteio_dupla (motorista_id, apoio_id),
+                INDEX idx_escala_sorteio_motorista (motorista_id),
+                INDEX idx_escala_sorteio_apoio (apoio_id),
+                CONSTRAINT fk_escala_sorteio_motorista FOREIGN KEY (motorista_id) REFERENCES colaboradores(id) ON DELETE CASCADE,
+                CONSTRAINT fk_escala_sorteio_apoio FOREIGN KEY (apoio_id) REFERENCES colaboradores(id) ON DELETE CASCADE
             )
             """)
         except Exception:
@@ -1067,21 +1063,6 @@ def ensure_schema():
                 c.sip_senha = COALESCE(u.sip_senha, c.sip_senha),
                 c.sip_ramal = COALESCE(u.sip_ramal, c.sip_ramal),
                 c.codbar_modo = COALESCE(u.codbar_modo, c.codbar_modo)
-            """)
-        except Exception:
-            pass
-
-        # Migrar conferentes para colaboradores (se ainda não migrados)
-        try:
-            cur.execute("""
-            INSERT INTO colaboradores (nome, is_conferente, created_at)
-            SELECT c.nome, 1, c.created_at
-            FROM conferentes c
-            WHERE NOT EXISTS (
-                SELECT 1 FROM colaboradores x
-                WHERE x.nome = c.nome
-                  AND x.is_conferente = 1
-            )
             """)
         except Exception:
             pass
@@ -1541,6 +1522,18 @@ def ensure_schema():
         except Exception:
             pass
         try:
+            cur.execute("ALTER TABLE fretes ADD COLUMN lote_manual VARCHAR(500) DEFAULT ''")
+        except Exception:
+            pass
+        try:
+            cur.execute("ALTER TABLE fretes MODIFY COLUMN lote_manual VARCHAR(500) DEFAULT ''")
+        except Exception:
+            pass
+        try:
+            cur.execute("ALTER TABLE fretes ADD INDEX idx_fretes_lote_manual (lote_manual)")
+        except Exception:
+            pass
+        try:
             cur.execute("ALTER TABLE fretes ADD INDEX idx_fretes_status (status)")
         except Exception:
             pass
@@ -1813,6 +1806,10 @@ def ensure_schema():
         except Exception:
             pass
         try:
+            cur.execute("ALTER TABLE estoque_movimentos ADD COLUMN lote_codigo VARCHAR(120) DEFAULT ''")
+        except Exception:
+            pass
+        try:
             cur.execute("ALTER TABLE estoque_movimentos ADD COLUMN numero_nota VARCHAR(120) DEFAULT ''")
         except Exception:
             pass
@@ -1858,6 +1855,10 @@ def ensure_schema():
             pass
         try:
             cur.execute("ALTER TABLE estoque_movimentos ADD INDEX idx_estoque_movimentos_codigo_produto_nfe (codigo_produto_nfe)")
+        except Exception:
+            pass
+        try:
+            cur.execute("ALTER TABLE estoque_movimentos ADD INDEX idx_estoque_movimentos_lote_codigo (lote_codigo)")
         except Exception:
             pass
         try:
@@ -1923,7 +1924,15 @@ def ensure_schema():
         except Exception:
             pass
         try:
-            cur.execute("ALTER TABLE estoque_produtos ADD COLUMN fator_embalagem_padrao DECIMAL(12,3) DEFAULT 0")
+            cur.execute("ALTER TABLE estoque_produtos ADD COLUMN fator_embalagem_padrao DECIMAL(12,3) DEFAULT 1")
+        except Exception:
+            pass
+        try:
+            cur.execute("ALTER TABLE estoque_produtos MODIFY COLUMN fator_embalagem_padrao DECIMAL(12,3) DEFAULT 1")
+        except Exception:
+            pass
+        try:
+            cur.execute("UPDATE estoque_produtos SET fator_embalagem_padrao=1 WHERE fator_embalagem_padrao IS NULL OR fator_embalagem_padrao <= 0")
         except Exception:
             pass
         try:
@@ -2344,6 +2353,28 @@ def _as_str(v):
         return v.strip()
     return str(v).strip()
 
+def _lotes_frete_tokens(v):
+    partes = re.split(r"[,;\n]+", _as_str(v))
+    vistos = set()
+    out = []
+    for parte in partes:
+        lote = _as_str(parte)[:120]
+        chave = lote.lower()
+        if not lote or chave in vistos:
+            continue
+        vistos.add(chave)
+        out.append(lote)
+    return out
+
+def _normalizar_lotes_frete(v):
+    return ", ".join(_lotes_frete_tokens(v))[:500]
+
+def _frete_lote_match(lote_manual, lote_codigo):
+    lote_codigo = _as_str(lote_codigo)
+    if not lote_codigo:
+        return False
+    return any(token.lower() == lote_codigo.lower() for token in _lotes_frete_tokens(lote_manual))
+
 def _as_date(v):
     s = _as_str(v)
     if not s:
@@ -2661,6 +2692,40 @@ def _resolver_veiculo_id_por_numero(cur, veiculo_numero):
     row = cur.fetchone() or {}
     return _as_int(row.get("id"), 0) or None
 
+def _buscar_km_atual_veiculo(cur, veiculo_id):
+    veiculo_id = _as_int(veiculo_id, 0)
+    if veiculo_id <= 0:
+        return 0
+    cur.execute(
+        "SELECT km_atual FROM veiculos WHERE id=%s",
+        (veiculo_id,),
+    )
+    return _as_int((cur.fetchone() or {}).get("km_atual"), 0)
+
+def _buscar_equipe_atual_veiculo(cur, veiculo_id):
+    veiculo_id = _as_int(veiculo_id, 0)
+    if veiculo_id <= 0:
+        return {}
+    cur.execute(
+        """
+        SELECT colaborador_motorista_id, colaborador_entregador_id
+        FROM fretes
+        WHERE veiculo_id=%s
+          AND (
+              colaborador_motorista_id IS NOT NULL
+              OR colaborador_entregador_id IS NOT NULL
+          )
+        ORDER BY COALESCE(data_carga, DATE(created_at)) DESC, id DESC
+        LIMIT 1
+        """,
+        (veiculo_id,),
+    )
+    row = cur.fetchone() or {}
+    return {
+        "motorista_id": _as_int(row.get("colaborador_motorista_id"), 0) or None,
+        "ajudante_id": _as_int(row.get("colaborador_entregador_id"), 0) or None,
+    }
+
 _MESES_PTBR = {
     "janeiro": 1,
     "fevereiro": 2,
@@ -2837,6 +2902,9 @@ def _estoque_base_nome_inferido(nome_produto="", grupo_estoque="", produto_base_
     return base or nome or "PRODUTO"
 
 def _estoque_produto_meta(row):
+    fator_padrao = _as_float(row.get("fator_embalagem_padrao"), 1.0)
+    if fator_padrao <= 0:
+        fator_padrao = 1.0
     grupo_exp = _estoque_grupo_normalizado(row.get("grupo_estoque"))
     grupo = grupo_exp or _estoque_grupo_inferido(
         nome_produto=row.get("nome_produto"),
@@ -2855,7 +2923,7 @@ def _estoque_produto_meta(row):
         "grupo_estoque": grupo or "OUTROS",
         "produto_base_nome": base_nome or _as_str(row.get("nome_produto")) or "Produto",
         "produto_base_key": f"{grupo or 'OUTROS'}:{base_key_raw}",
-        "cadastro_explicitado": bool(grupo_exp and base_exp and _as_float(row.get("fator_embalagem_padrao"), 0.0) > 0),
+        "cadastro_explicitado": bool(grupo_exp and base_exp and fator_padrao > 0),
     }
 
 def _extrair_codigo_produto_texto(valor):
@@ -3541,6 +3609,7 @@ def _importar_cargas_pdf_bytes(pdf_bytes, source_name="", veiculo_override="", u
                 ))
 
             veiculo_id_resolvido = _resolver_veiculo_id_por_numero(cur, pagina.get("veiculo_numero"))
+            km_atual_veiculo = _buscar_km_atual_veiculo(cur, veiculo_id_resolvido)
             cur.execute("SELECT id FROM fretes WHERE carga_id=%s ORDER BY id ASC LIMIT 1", (carga_id,))
             frete_existente = cur.fetchone()
             observacao = f"Mapa {mapa_numero or '-'} | {pagina.get('numero_entregas') or 0} entrega(s) | {round(_as_float(pagina.get('peso_total'), 0.0), 3)} kg"
@@ -3553,6 +3622,10 @@ def _importar_cargas_pdf_bytes(pdf_bytes, source_name="", veiculo_override="", u
                         cidade=%s,
                         data_carga=%s,
                         veiculo_id=%s,
+                        km_atual=CASE
+                            WHEN COALESCE(km_atual, 0) <= 0 THEN %s
+                            ELSE km_atual
+                        END,
                         observacao=%s,
                         peso=%s,
                         qtd_entregas=%s
@@ -3562,6 +3635,7 @@ def _importar_cargas_pdf_bytes(pdf_bytes, source_name="", veiculo_override="", u
                     pagina.get("cidade"),
                     pagina.get("data_carga"),
                     veiculo_id_resolvido,
+                    km_atual_veiculo,
                     observacao,
                     pagina.get("peso_total"),
                     pagina.get("numero_entregas"),
@@ -3585,7 +3659,7 @@ def _importar_cargas_pdf_bytes(pdf_bytes, source_name="", veiculo_override="", u
                     veiculo_id_resolvido,
                     carga_id,
                     observacao,
-                    0,
+                    km_atual_veiculo,
                     pagina.get("peso_total"),
                     pagina.get("numero_entregas"),
                 ))
@@ -3814,6 +3888,7 @@ def _importar_cargas_csv_texto(texto, source_name="", veiculo_override="") -> di
                 continue
 
             veiculo_id_resolvido = _resolver_veiculo_id_por_numero(cur, veiculo_numero)
+            km_atual_veiculo = _buscar_km_atual_veiculo(cur, veiculo_id_resolvido)
 
             cur.execute("DELETE FROM cargas_import_linhas WHERE carga_id=%s", (carga_id,))
             if grupo["itens"]:
@@ -3859,6 +3934,10 @@ def _importar_cargas_csv_texto(texto, source_name="", veiculo_override="") -> di
                         cidade=%s,
                         carga_id=%s,
                         veiculo_id=COALESCE(veiculo_id, %s),
+                        km_atual=CASE
+                            WHEN COALESCE(km_atual, 0) <= 0 THEN %s
+                            ELSE km_atual
+                        END,
                         data_carga=COALESCE(data_carga, %s)
                     WHERE id=%s
                     """,
@@ -3867,6 +3946,7 @@ def _importar_cargas_csv_texto(texto, source_name="", veiculo_override="") -> di
                         cidade,
                         carga_id,
                         veiculo_id_resolvido,
+                        km_atual_veiculo,
                         data_carga,
                         _as_int(frete_existente.get("id"), 0),
                     ),
@@ -3887,7 +3967,7 @@ def _importar_cargas_csv_texto(texto, source_name="", veiculo_override="") -> di
                         "liberado",
                         carga_id,
                         f"Importado de {source_name}" if source_name else "Importado de CSV",
-                        0,
+                        km_atual_veiculo,
                         round(float(grupo["peso"]), 3),
                         int(grupo["linhas"]),
                     ),
@@ -4386,6 +4466,7 @@ def _parse_nfe_xml_text(xml_text):
         "chave_acesso": chave_acesso,
         "data_emissao": _xml_text(ide, "dhEmi") or _xml_text(ide, "dEmi"),
         "emitente_nome": _xml_text(emit, "xNome"),
+        "emitente_fantasia": _xml_text(emit, "xFant"),
         "emitente_cnpj": _xml_text(emit, "CNPJ") or _xml_text(emit, "CPF"),
         "destinatario_nome": _xml_text(dest, "xNome"),
         "destinatario_cnpj": _xml_text(dest, "CNPJ") or _xml_text(dest, "CPF"),
@@ -6833,7 +6914,7 @@ def _obter_ou_criar_produto_estoque(cur, codigo_barras="", codigo_produto_nfe=""
         "",
         _as_str(unidade),
         "",
-        0.0,
+        1.0,
         _as_str(origem_cadastro) or "manual",
     ))
     produto_id = cur.lastrowid
@@ -6846,12 +6927,15 @@ def _obter_ou_criar_produto_estoque(cur, codigo_barras="", codigo_produto_nfe=""
         "produto_base_nome": "",
         "unidade": _as_str(unidade),
         "embalagem_tipo_padrao": "",
-        "fator_embalagem_padrao": 0.0,
+        "fator_embalagem_padrao": 1.0,
         "origem_cadastro": _as_str(origem_cadastro) or "manual",
     }, True
 
 def _produto_estoque_publico(row):
     meta = _estoque_produto_meta(row)
+    fator_padrao = _as_float(row.get("fator_embalagem_padrao"), 1.0)
+    if fator_padrao <= 0:
+        fator_padrao = 1.0
     return {
         "id": _as_int(row.get("id"), 0),
         "codigo_barras": _normalizar_codigo_barras(row.get("codigo_barras")),
@@ -6863,7 +6947,7 @@ def _produto_estoque_publico(row):
         "cadastro_explicitado": 1 if meta.get("cadastro_explicitado") else 0,
         "unidade": _as_str(row.get("unidade")),
         "embalagem_tipo_padrao": _as_str(row.get("embalagem_tipo_padrao")),
-        "fator_embalagem_padrao": _as_float(row.get("fator_embalagem_padrao"), 0.0),
+        "fator_embalagem_padrao": fator_padrao,
         "origem_cadastro": _as_str(row.get("origem_cadastro")) or "manual",
         "criado_em": _fmt_dt(row.get("criado_em")),
         "atualizado_em": _fmt_dt(row.get("atualizado_em")),
@@ -7084,6 +7168,7 @@ FRETE_SELECT_SQL = """
         f.veiculo_id,
         f.carga_id,
         f.observacao,
+        f.lote_manual,
         f.km_atual,
         f.peso,
         f.qtd_entregas,
@@ -7091,6 +7176,7 @@ FRETE_SELECT_SQL = """
         f.updated_at,
         f.finalizado_em,
         f.arquivado,
+        TIMESTAMPDIFF(HOUR, f.finalizado_em, NOW()) AS horas_em_retornando,
         cm.nome AS colaborador_motorista_nome,
         ce.nome AS colaborador_entregador_nome,
         m.nome AS motorista_nome,
@@ -7137,6 +7223,14 @@ FRETE_SELECT_SQL = """
 def _serialize_frete_row(row):
     if not row:
         return None
+    colaborador_motorista_nome = _as_str(row.get("colaborador_motorista_nome"))
+    colaborador_entregador_nome = _as_str(row.get("colaborador_entregador_nome"))
+    colaborador_motorista_id = (
+        _as_int(row.get("colaborador_motorista_id"), 0) if colaborador_motorista_nome else 0
+    )
+    colaborador_entregador_id = (
+        _as_int(row.get("colaborador_entregador_id"), 0) if colaborador_entregador_nome else 0
+    )
     return {
         "id": _as_int(row.get("id"), 0),
         "nome": _as_str(row.get("nome")),
@@ -7145,18 +7239,21 @@ def _serialize_frete_row(row):
         "status": _as_str(row.get("status")),
         "motorista_id": _as_int(row.get("motorista_id"), 0) or None,
         "entregador_id": _as_int(row.get("entregador_id"), 0) or None,
-        "colaborador_motorista_id": _as_int(row.get("colaborador_motorista_id"), 0) or None,
-        "colaborador_entregador_id": _as_int(row.get("colaborador_entregador_id"), 0) or None,
+        "colaborador_motorista_id": colaborador_motorista_id or None,
+        "colaborador_entregador_id": colaborador_entregador_id or None,
         "veiculo_id": _as_int(row.get("veiculo_id_resolvido") if row.get("veiculo_id_resolvido") is not None else row.get("veiculo_id"), 0) or None,
         "carga_id": _as_int(row.get("carga_id"), 0) or None,
         "observacao": _as_str(row.get("observacao")),
+        "lote_manual": _normalizar_lotes_frete(row.get("lote_manual")),
         "km_atual": _as_int(row.get("km_atual"), 0),
         "peso": _as_float(row.get("peso"), 0.0),
         "qtd_entregas": _as_int(row.get("qtd_entregas"), 0),
-        "colaborador_motorista_nome": _as_str(row.get("colaborador_motorista_nome")),
-        "colaborador_entregador_nome": _as_str(row.get("colaborador_entregador_nome")),
-        "motorista_nome": _as_str(row.get("motorista_nome")),
-        "entregador_nome": _as_str(row.get("entregador_nome")),
+        "colaborador_motorista_nome": colaborador_motorista_nome,
+        "colaborador_entregador_nome": colaborador_entregador_nome,
+        "motorista_nome": colaborador_motorista_nome,
+        "entregador_nome": colaborador_entregador_nome,
+        "motorista_legacy_nome": _as_str(row.get("motorista_nome")),
+        "entregador_legacy_nome": _as_str(row.get("entregador_nome")),
         "veiculo_nome": _as_str(row.get("veiculo_nome_resolvido") if row.get("veiculo_nome_resolvido") is not None else row.get("veiculo_nome")),
         "veiculo_placa": _as_str(row.get("veiculo_placa_resolvida") if row.get("veiculo_placa_resolvida") is not None else row.get("veiculo_placa")),
         "carga_nome": _as_str(row.get("carga_nome")),
@@ -7177,6 +7274,12 @@ def _serialize_frete_row(row):
         "updated_at": _fmt_dt(row.get("updated_at")),
         "finalizado_em": _fmt_dt(row.get("finalizado_em")),
         "arquivado": bool(_as_int(row.get("arquivado"), 0)),
+        "horas_em_retornando": _as_int(row.get("horas_em_retornando"), 0),
+        "pode_arquivar_manual": (
+            _as_str(row.get("status")) == "retornando"
+            and not bool(_as_int(row.get("arquivado"), 0))
+            and _as_int(row.get("horas_em_retornando"), 0) >= FRETE_ARQUIVO_MANUAL_HORAS
+        ),
     }
 
 def _buscar_frete_detalhado(cur, frete_id):
@@ -7216,6 +7319,11 @@ def _montar_detalhes_historico_frete(acao, antes=None, depois=None):
             f"Frete {_frete_hist_val(ref.get('nome'))} removido automaticamente "
             f"apos 1 dia em Finalizado."
         )
+    if acao == "arquivado_automaticamente":
+        return (
+            f"Frete {_frete_hist_val(ref.get('nome'))} arquivado automaticamente "
+            f"apos 2 dias em Finalizado Retornando."
+        )
     if acao == "nota_saida_vinculada":
         return (
             f"NF-e de saida {_frete_hist_val(ref.get('numero_nota') or ref.get('chave_nfe'))} "
@@ -7224,6 +7332,23 @@ def _montar_detalhes_historico_frete(acao, antes=None, depois=None):
             f"Mapa {_frete_hist_val(ref.get('mapa_xml'))} | "
             f"Origem {_frete_hist_val(ref.get('vinculacao_origem'))} | "
             f"Itens {_frete_hist_num(ref.get('itens_total'))}"
+        )
+    if acao == "nota_saida_pre_vinculada":
+        return (
+            f"NF-e de saida {_frete_hist_val(ref.get('numero_nota') or ref.get('chave_nfe'))} "
+            f"pre-vinculada pelo Kanban | "
+            f"Placa XML {_frete_hist_val(ref.get('placa_xml'))} | "
+            f"Mapa {_frete_hist_val(ref.get('mapa_xml'))}"
+        )
+    if acao == "nota_saida_transferida_origem":
+        return (
+            f"NF-e de saida {_frete_hist_val(ref.get('numero_nota') or ref.get('chave_nfe'))} "
+            f"transferida deste frete para {_frete_hist_val(ref.get('frete_destino_nome') or ref.get('frete_destino_id'))}."
+        )
+    if acao == "nota_saida_transferida_destino":
+        return (
+            f"NF-e de saida {_frete_hist_val(ref.get('numero_nota') or ref.get('chave_nfe'))} "
+            f"transferida para este frete a partir de {_frete_hist_val(ref.get('frete_origem_nome') or ref.get('frete_origem_id'))}."
         )
     if acao == "criado_automaticamente_xml":
         return (
@@ -7245,6 +7370,7 @@ def _montar_detalhes_historico_frete(acao, antes=None, depois=None):
         ("km_atual", "KM", _frete_hist_num),
         ("peso", "Peso", _frete_hist_num),
         ("qtd_entregas", "Entregas", _frete_hist_num),
+        ("arquivado", "Arquivado", lambda v: "Sim" if _as_int(v, 0) else "Nao"),
         ("observacao", "Observacao", _frete_hist_val),
     ]
     mudancas = []
@@ -7285,10 +7411,94 @@ def _registrar_historico_frete(cur, frete_id, acao, usuario, antes=None, depois=
         )
     )
 
+FRETE_ARQUIVO_MANUAL_HORAS = 24
+FRETE_ARQUIVO_AUTOMATICO_HORAS = 48
+
+def _preencher_finalizado_em_retornando_pendente(cursor):
+    cursor.execute(
+        """
+        UPDATE fretes f
+        JOIN (
+            SELECT frete_id, MAX(criado_em) AS entrou_em
+            FROM fretes_historico
+            WHERE status_novo = 'retornando'
+              AND COALESCE(status_anterior, '') <> 'retornando'
+            GROUP BY frete_id
+        ) h ON h.frete_id = f.id
+        SET f.finalizado_em = h.entrou_em,
+            f.updated_at = f.updated_at
+        WHERE f.status = 'retornando'
+          AND f.finalizado_em IS NULL
+          AND h.entrou_em IS NOT NULL
+        """
+    )
+    cursor.execute(
+        """
+        UPDATE fretes
+        SET finalizado_em = COALESCE(updated_at, created_at, NOW()),
+            updated_at = updated_at
+        WHERE status = 'retornando'
+          AND finalizado_em IS NULL
+        """
+    )
+
 def _limpar_fretes_finalizados_expirados():
-    # Mantemos os fretes finalizados para consulta posterior no historico.
-    # A ocultacao do kanban acontece no frontend apos 24h, sem apagar dados.
-    return 0
+    conn = get_conn()
+    cursor = conn.cursor(dictionary=True)
+    arquivados = 0
+    try:
+        _preencher_finalizado_em_retornando_pendente(cursor)
+        cursor.execute(
+            """
+            SELECT id
+            FROM fretes
+            WHERE status = 'retornando'
+              AND COALESCE(arquivado, 0) = 0
+              AND finalizado_em IS NOT NULL
+              AND TIMESTAMPDIFF(HOUR, finalizado_em, NOW()) >= %s
+            ORDER BY finalizado_em ASC, id ASC
+            """,
+            (FRETE_ARQUIVO_AUTOMATICO_HORAS,),
+        )
+        ids = [_as_int(row.get("id"), 0) for row in (cursor.fetchall() or [])]
+        for frete_id in ids:
+            if frete_id <= 0:
+                continue
+            antes = _buscar_frete_detalhado(cursor, frete_id)
+            if not antes:
+                continue
+            cursor.execute(
+                """
+                UPDATE fretes
+                SET arquivado = 1
+                WHERE id = %s
+                  AND status = 'retornando'
+                  AND COALESCE(arquivado, 0) = 0
+                  AND finalizado_em IS NOT NULL
+                  AND TIMESTAMPDIFF(HOUR, finalizado_em, NOW()) >= %s
+                """,
+                (frete_id, FRETE_ARQUIVO_AUTOMATICO_HORAS),
+            )
+            if cursor.rowcount <= 0:
+                continue
+            depois = _buscar_frete_detalhado(cursor, frete_id)
+            _registrar_historico_frete(
+                cursor,
+                frete_id,
+                "arquivado_automaticamente",
+                "sistema",
+                antes,
+                depois,
+            )
+            arquivados += 1
+        conn.commit()
+        return arquivados
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cursor.close()
+        conn.close()
 
 def _as_bool(v, default=False):
     if v is None:
@@ -9453,6 +9663,9 @@ def _sincronizar_colaborador_por_usuario(cur, user_id, data=None):
         )
         col = cur.fetchone()
 
+    if not col:
+        return 0
+
     nome = _as_str(data.get("nome")) or _as_str((col or {}).get("nome"))
     login = _as_str(data.get("login")) or _as_str((col or {}).get("login"))
     senha_hash = _as_str((col or {}).get("senha"))
@@ -9493,34 +9706,7 @@ def _sincronizar_colaborador_por_usuario(cur, user_id, data=None):
             ),
         )
         return cur.rowcount or 0
-
-    cur.execute(
-        """
-        INSERT INTO colaboradores (
-            nome, email, cpf, login, senha, sip_habilitado, sip_usuario, sip_senha, sip_ramal, codbar_modo,
-            is_motorista, is_entregador, is_ajudante, is_conferente, is_vendedor, usuario_id
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        """,
-        (
-            nome,
-            "",
-            "",
-            login,
-            senha_hash,
-            sip_habilitado,
-            sip_usuario,
-            sip_senha,
-            sip_ramal,
-            codbar_modo,
-            0,
-            0,
-            0,
-            0,
-            0,
-            user_id,
-        ),
-    )
-    return cur.rowcount or 0
+    return 0
 
 def _usuario_sip_dict(row):
     return {
@@ -9835,6 +10021,15 @@ def _manutencao_xml_registrar_pre_lancamento(
             valor,
             json.dumps(itens, ensure_ascii=False),
         ),
+    )
+    _registrar_regra_fornecedor_manutencao_xml(
+        cur,
+        {
+            "emitente_cnpj": row.get("posto_cnpj"),
+            "emitente_nome": row.get("posto_nome"),
+        },
+        usuario="xml_abastecimento",
+        motivo="Fornecedor marcado como manutencao por classificacao de XML.",
     )
     return {
         "id": _as_int(existente.get("id"), 0) or _as_int(cur.lastrowid, 0),
@@ -10482,6 +10677,19 @@ def sincronizar_abastecimentos_xml(dry_run=False, source_id=0):
                                 abastecimento_id,
                             ),
                         )
+                        km_candidato = _as_int(candidato.get("km"), 0)
+                        if km_candidato > 0:
+                            cur.execute(
+                                """
+                                UPDATE veiculos
+                                SET km_atual=CASE
+                                    WHEN km_atual IS NULL OR km_atual < %s THEN %s
+                                    ELSE km_atual
+                                END
+                                WHERE id=%s
+                                """,
+                                (km_candidato, km_candidato, veiculo_id),
+                            )
                     else:
                         cur.execute(
                             """
@@ -10958,6 +11166,18 @@ def _build_report_header(styles):
     ]))
     return cabecalho
 
+def _draw_report_footer(canvas_obj, doc_obj, sistema="Sistema RioBranco"):
+    canvas_obj.saveState()
+    canvas_obj.setStrokeColor(colors.HexColor("#d1d5db"))
+    canvas_obj.setLineWidth(0.5)
+    y = 18
+    canvas_obj.line(doc_obj.leftMargin, y + 10, doc_obj.pagesize[0] - doc_obj.rightMargin, y + 10)
+    canvas_obj.setFont("Helvetica", 7)
+    canvas_obj.setFillColor(colors.HexColor("#475569"))
+    canvas_obj.drawString(doc_obj.leftMargin, y, f"Bebidas Rio Branco - {sistema}")
+    canvas_obj.drawRightString(doc_obj.pagesize[0] - doc_obj.rightMargin, y, f"Pagina {doc_obj.page}")
+    canvas_obj.restoreState()
+
 def _build_frota_report_pdf(titulo, headers, rows, slug, filtros=None):
     stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     arquivo = os.path.join("/tmp", f"frota_{slug}_{stamp}.pdf")
@@ -11012,6 +11232,113 @@ def _build_frota_report_pdf(titulo, headers, rows, slug, filtros=None):
     ]))
     elementos.append(tabela)
     doc.build(elementos)
+    return arquivo
+
+def _build_escala_pdf(rows):
+    stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    emissao = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+    arquivo = os.path.join("/tmp", f"escala_caminhoes_{stamp}.pdf")
+    doc = SimpleDocTemplate(
+        arquivo,
+        pagesize=A4,
+        topMargin=28,
+        leftMargin=32,
+        rightMargin=32,
+        bottomMargin=42,
+    )
+    styles = getSampleStyleSheet()
+    normal_style = styles["Normal"].clone("EscalaNormal")
+    normal_style.fontSize = 8.5
+    normal_style.leading = 10.5
+    table_style = styles["BodyText"].clone("EscalaTable")
+    table_style.fontSize = 7.5
+    table_style.leading = 9
+
+    logo_cell = ""
+    logo_path = os.path.join(BASE_DIR, "logo.png")
+    if os.path.isfile(logo_path):
+        try:
+            logo_cell = Image(logo_path, width=54, height=54)
+        except Exception:
+            logo_cell = ""
+
+    dados_empresa = [
+        Paragraph("<b>Bebidas Rio Branco</b>", styles["Heading3"]),
+        Paragraph("CNPJ: 20.984.401/0001-30", normal_style),
+        Paragraph("Rua João Nelson Arcipretti, 278 - Centro, Astorga - PR", normal_style),
+        Paragraph("refrigeranteriobranco.com.br | contato@refrigeranteriobranco.com.br", normal_style),
+    ]
+    cabecalho = Table([[logo_cell, dados_empresa]], colWidths=[64, doc.width - 64])
+    cabecalho.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ("TOPPADDING", (0, 0), (-1, -1), 0),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+        ("LINEBELOW", (0, 0), (-1, 0), 0.8, colors.HexColor("#1f4e78")),
+    ]))
+
+    def cell(value, bold=False):
+        text = _pdf_escape(value)
+        if bold:
+            text = f"<b>{text}</b>"
+        return Paragraph(text, table_style)
+
+    table_rows = [[
+        cell("Caminhão", True),
+        cell("Motorista", True),
+        cell("Ajudante", True),
+        cell("Frete", True),
+    ]]
+    for row in rows or []:
+        table_rows.append([
+            cell(row.get("caminhao")),
+            cell(row.get("motorista")),
+            cell(row.get("ajudante")),
+            cell(row.get("frete")),
+        ])
+    if len(table_rows) == 1:
+        table_rows.append([cell("Sem registros."), cell(""), cell(""), cell("")])
+
+    tabela = Table(
+        table_rows,
+        repeatRows=1,
+        colWidths=[70, 125, 125, doc.width - 320],
+    )
+    tabela.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f59e0b")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.black),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#d1d5db")),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 4),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+        ("TOPPADDING", (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#fff7ed")]),
+    ]))
+
+    elementos = [
+        cabecalho,
+        Spacer(1, 12),
+        Paragraph("Escala de Caminhões", styles["Heading2"]),
+        Paragraph(f"Emitido em: {emissao}", normal_style),
+        Spacer(1, 10),
+        tabela,
+    ]
+
+    def footer(canvas, doc_obj):
+        canvas.saveState()
+        canvas.setStrokeColor(colors.HexColor("#cbd5e1"))
+        canvas.setLineWidth(0.5)
+        canvas.line(doc_obj.leftMargin, 28, doc_obj.pagesize[0] - doc_obj.rightMargin, 28)
+        canvas.setFont("Helvetica", 7)
+        canvas.setFillColor(colors.HexColor("#475569"))
+        canvas.drawString(doc_obj.leftMargin, 16, "Bebidas Rio Branco - Escala de Caminhões")
+        canvas.drawRightString(doc_obj.pagesize[0] - doc_obj.rightMargin, 16, f"Página {doc_obj.page} | Emitido em {emissao}")
+        canvas.restoreState()
+
+    doc.build(elementos, onFirstPage=footer, onLaterPages=footer)
     return arquivo
 
 def _build_abastecimentos_report_pdf(
@@ -12889,7 +13216,976 @@ def _dashboard_estoque_data():
     return _estoque_resumo_produtos_data()
 
 
+_RASTREIO_SIMULACAO_ATE = datetime.date(2026, 7, 31)
+_RASTREIO_SERIAL_MAX = 100000
 _ESTOQUE_XML_REFERENCIA = "importar_xml"
+_RASTREIO_ORIGENS_AUTOMATICAS = {
+    "bootstrap_simulado",
+    "bootstrap_movimento",
+    "bootstrap_xml_importado",
+    "bootstrap",
+    "amarracao_inicial",
+    "simulacao",
+    "simulacao_cliente",
+    "auto_entrada_fabrica",
+    "auto_saida_semana",
+}
+_RASTREIO_ORIGEM_MANUAL = "manual_correcao"
+
+
+def _rastreio_parse_data_lote(value):
+    if isinstance(value, datetime.datetime):
+        return value.date()
+    if isinstance(value, datetime.date):
+        return value
+    texto = _as_str(value)
+    if not texto:
+        return None
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y"):
+        try:
+            return datetime.datetime.strptime(texto[:10], fmt).date()
+        except Exception:
+            continue
+    return None
+
+
+def _rastreio_sabor_norm(value):
+    return _normalizar_chave_texto(value)[:180]
+
+
+def _rastreio_lote_codigo(data_lote, serial):
+    if not data_lote:
+        return ""
+    serial = max(1, min(_RASTREIO_SERIAL_MAX, _as_int(serial, 1) or 1))
+    base = f"lote{data_lote.strftime('%d')}fab{data_lote.strftime('%d%m%Y')}"
+    if serial <= 1:
+        return base
+    return f"{base}-{str(serial).zfill(2)}"
+
+
+def _rastreio_data_from_registro(value):
+    if isinstance(value, datetime.datetime):
+        return value.date()
+    if isinstance(value, datetime.date):
+        return value
+    texto = _as_str(value)
+    if not texto:
+        return None
+    for fmt, size in (
+        ("%Y-%m-%d %H:%M:%S", 19),
+        ("%Y-%m-%d", 10),
+        ("%d/%m/%Y", 10),
+        ("%d-%m-%Y", 10),
+    ):
+        try:
+            return datetime.datetime.strptime(texto[:size], fmt).date()
+        except Exception:
+            continue
+    return None
+
+
+def _rastreio_tipo_movimento(value):
+    tipo = _as_str(value).lower()
+    return "saida" if tipo == "saida" else "entrada"
+
+
+def _rastreio_semana_inicio(data_ref):
+    if not data_ref:
+        return None
+    return data_ref - datetime.timedelta(days=data_ref.weekday())
+
+
+def _rastreio_semana_fim(data_ref):
+    inicio = _rastreio_semana_inicio(data_ref)
+    return inicio + datetime.timedelta(days=6) if inicio else None
+
+
+def _rastreio_adicionar_entrada_semana(entradas_por_semana, data_lote):
+    data_lote = _rastreio_data_from_registro(data_lote)
+    if not data_lote:
+        return
+    semana = _rastreio_semana_inicio(data_lote)
+    if not semana:
+        return
+    entradas_por_semana.setdefault(semana, set()).add(data_lote)
+
+
+def _rastreio_lote_data_saida(data_movimento, entradas_por_semana):
+    semana = _rastreio_semana_inicio(data_movimento)
+    if not semana:
+        return data_movimento
+    datas = sorted(entradas_por_semana.get(semana) or [])
+    anteriores = [d for d in datas if d <= data_movimento]
+    if anteriores:
+        return anteriores[-1]
+    if datas:
+        return datas[0]
+    return semana
+
+
+def _rastreio_carregar_entradas_por_semana(cur, data_inicio=None, data_fim=None):
+    entradas_por_semana = {}
+    where = ["tipo_movimento='entrada'"]
+    params = []
+    if data_inicio:
+        where.append("data_lote>=%s")
+        params.append(_rastreio_semana_inicio(data_inicio) or data_inicio)
+    if data_fim:
+        where.append("data_lote<=%s")
+        params.append(_rastreio_semana_fim(data_fim) or data_fim)
+    cur.execute(
+        f"""
+        SELECT DISTINCT data_lote
+        FROM rastreabilidade_lancamento_vinculos
+        WHERE {' AND '.join(where)}
+        """,
+        tuple(params),
+    )
+    for row in cur.fetchall() or []:
+        _rastreio_adicionar_entrada_semana(entradas_por_semana, row.get("data_lote"))
+    return entradas_por_semana
+
+
+def _rastreio_nota_key(value):
+    texto = _as_str(value).upper()
+    digits = re.sub(r"\D+", "", texto)
+    if digits:
+        return digits.lstrip("0") or "0"
+    return re.sub(r"\s+", "", texto)
+
+
+def _rastreio_item_combina_texto(row, termo):
+    termo_norm = _produto_nome_normalizado(termo)
+    if not termo_norm:
+        return True
+    valores = [
+        row.get("nome_produto"),
+        row.get("produto"),
+        row.get("produto_base_nome"),
+        row.get("materia_prima_nome"),
+    ]
+    texto_norm = _produto_nome_normalizado(" ".join(_as_str(v) for v in valores if _as_str(v)))
+    if not texto_norm:
+        return False
+    return termo_norm in texto_norm or texto_norm in termo_norm
+
+
+def _rastreio_normalizar_periodo(data_lote=None, data_inicio=None, data_fim=None):
+    data_ref = _rastreio_parse_data_lote(data_lote)
+    inicio = _rastreio_parse_data_lote(data_inicio)
+    fim = _rastreio_parse_data_lote(data_fim)
+    if data_ref and not (inicio or fim):
+        inicio = data_ref
+        fim = data_ref
+    if inicio and fim and inicio > fim:
+        inicio, fim = fim, inicio
+    return inicio, fim
+
+
+def _rastreio_regularizar_vinculos_automaticos(cur, data_inicio=None, data_fim=None, hoje=None, limit=200000):
+    hoje = hoje or datetime.date.today()
+    limite = hoje - datetime.timedelta(days=1)
+    if data_inicio and data_inicio > limite:
+        return {"regularizados": 0, "movimentos_lote_atualizados": 0}
+    if data_fim and data_fim > limite:
+        data_fim = limite
+
+    data_expr = "DATE(COALESCE(e.data_registro, NULLIF(xi.data_emissao, ''), xi.criado_em, v.data_lote))"
+    origem_placeholders = ", ".join(["%s"] * len(_RASTREIO_ORIGENS_AUTOMATICAS))
+    where = [
+        f"{data_expr}<=%s",
+        f"""(
+            COALESCE(v.vinculo_origem, '') IN ({origem_placeholders})
+            OR COALESCE(v.vinculo_origem, '') LIKE %s
+            OR COALESCE(v.lote_codigo, '') LIKE %s
+        )""",
+    ]
+    params = [limite, *_RASTREIO_ORIGENS_AUTOMATICAS, "bootstrap%", "LT-%"]
+    if data_inicio:
+        where.append(f"{data_expr}>=%s")
+        params.append(data_inicio)
+    if data_fim:
+        where.append(f"{data_expr}<=%s")
+        params.append(data_fim)
+
+    cur.execute(
+        f"""
+        SELECT
+            v.id,
+            v.origem_tipo,
+            v.estoque_movimento_id,
+            v.tipo_movimento,
+            v.lote_codigo,
+            v.data_lote,
+            v.serial,
+            v.vinculo_origem,
+            {data_expr} AS data_movimento
+        FROM rastreabilidade_lancamento_vinculos v
+        LEFT JOIN estoque_movimentos e
+            ON v.origem_tipo='estoque_movimento'
+           AND v.estoque_movimento_id=e.id
+        LEFT JOIN importar_xml_estoque_itens xi
+            ON v.referencia_tipo='importar_xml'
+           AND v.referencia_id=xi.id
+        WHERE {' AND '.join(where)}
+        ORDER BY {data_expr} ASC, v.id ASC
+        LIMIT %s
+        """,
+        tuple(params + [limit]),
+    )
+    rows = cur.fetchall() or []
+    if not rows:
+        return {"regularizados": 0, "movimentos_lote_atualizados": 0}
+
+    datas = [
+        d for d in (_rastreio_data_from_registro(row.get("data_movimento")) for row in rows)
+        if d
+    ]
+    entradas_por_semana = _rastreio_carregar_entradas_por_semana(
+        cur,
+        min(datas) if datas else data_inicio,
+        max(datas) if datas else data_fim,
+    )
+    for row in rows:
+        data_movimento = _rastreio_data_from_registro(row.get("data_movimento"))
+        if data_movimento and _rastreio_tipo_movimento(row.get("tipo_movimento")) == "entrada":
+            _rastreio_adicionar_entrada_semana(entradas_por_semana, data_movimento)
+
+    regularizados = 0
+    movimentos_lote_atualizados = 0
+    for row in rows:
+        data_movimento = _rastreio_data_from_registro(row.get("data_movimento"))
+        if not data_movimento or data_movimento >= hoje:
+            continue
+        tipo = _rastreio_tipo_movimento(row.get("tipo_movimento"))
+        lote_data = (
+            data_movimento
+            if tipo == "entrada"
+            else _rastreio_lote_data_saida(data_movimento, entradas_por_semana)
+        )
+        serial = 1
+        lote_codigo = _rastreio_lote_codigo(lote_data, serial)
+        origem = "auto_entrada_fabrica" if tipo == "entrada" else "auto_saida_semana"
+        if (
+            _as_str(row.get("lote_codigo")) != lote_codigo
+            or _rastreio_data_from_registro(row.get("data_lote")) != lote_data
+            or _as_int(row.get("serial"), 0) != serial
+            or _as_str(row.get("vinculo_origem")) != origem
+        ):
+            cur.execute(
+                """
+                UPDATE rastreabilidade_lancamento_vinculos
+                SET lote_codigo=%s,
+                    data_lote=%s,
+                    serial=%s,
+                    vinculo_origem=%s,
+                    simulado=0,
+                    atualizado_em=CURRENT_TIMESTAMP
+                WHERE id=%s
+                """,
+                (lote_codigo, lote_data, serial, origem, _as_int(row.get("id"), 0)),
+            )
+            regularizados += cur.rowcount
+
+        movimento_id = _as_int(row.get("estoque_movimento_id"), 0)
+        if _as_str(row.get("origem_tipo")) == "estoque_movimento" and movimento_id > 0:
+            cur.execute(
+                """
+                UPDATE estoque_movimentos
+                SET lote_codigo=%s
+                WHERE id=%s
+                  AND (COALESCE(lote_codigo, '')='' OR COALESCE(lote_codigo, '') LIKE %s)
+                """,
+                (lote_codigo, movimento_id, "LT-%"),
+            )
+            movimentos_lote_atualizados += cur.rowcount
+
+    return {
+        "regularizados": regularizados,
+        "movimentos_lote_atualizados": movimentos_lote_atualizados,
+    }
+
+
+def _rastreio_criar_amarracao_inicial(data_lote=None, data_inicio=None, data_fim=None, limit=50000):
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    lock_ok = False
+    resumo = {
+        "criados": 0,
+        "ignorados": 0,
+        "sem_data": 0,
+        "limite_serial": 0,
+        "movimentos": 0,
+        "xml_importados": 0,
+        "xml_ignorados": 0,
+        "saidas_manuais": 0,
+        "regularizados": 0,
+        "movimentos_lote_atualizados": 0,
+    }
+    try:
+        try:
+            cur.execute("SELECT GET_LOCK(%s, %s) AS ok", ("riob_rastreabilidade_bootstrap", 5))
+            lock_ok = _as_int((cur.fetchone() or {}).get("ok"), 0) == 1
+        except Exception:
+            lock_ok = True
+        if not lock_ok:
+            return {**resumo, "lock": False}
+
+        rows = []
+        periodo_inicio, periodo_fim = _rastreio_normalizar_periodo(data_lote, data_inicio, data_fim)
+
+        where = [
+            "v.id IS NULL",
+            "e.id IS NOT NULL",
+        ]
+        params = []
+        if periodo_inicio:
+            where.append("DATE(e.data_registro)>=%s")
+            params.append(periodo_inicio)
+        if periodo_fim:
+            where.append("DATE(e.data_registro)<=%s")
+            params.append(periodo_fim)
+        cur.execute(
+            f"""
+            SELECT
+                e.id,
+                e.codigo_barras,
+                e.codigo_produto_nfe,
+                e.numero_nota,
+                e.nome_produto,
+                e.quantidade,
+                e.valor_unitario,
+                e.tipo_movimento,
+                e.referencia_tipo,
+                e.referencia_id,
+                e.data_registro
+            FROM estoque_movimentos e
+            LEFT JOIN rastreabilidade_lancamento_vinculos v
+                ON v.origem_tipo='estoque_movimento'
+               AND v.estoque_movimento_id=e.id
+            WHERE {' AND '.join(where)}
+            ORDER BY DATE(e.data_registro) ASC, e.data_registro ASC, e.id ASC
+            LIMIT %s
+            """,
+            tuple(params + [limit]),
+        )
+        for row in cur.fetchall() or []:
+            rows.append(
+                {
+                    "origem_tipo": "estoque_movimento",
+                    "estoque_movimento_id": _as_int(row.get("id"), 0),
+                    "referencia_id": _as_int(row.get("referencia_id"), 0) or None,
+                    "data_registro": row.get("data_registro"),
+                    "codigo_barras": row.get("codigo_barras"),
+                    "codigo_produto_nfe": row.get("codigo_produto_nfe"),
+                    "numero_nota": row.get("numero_nota"),
+                    "nome_produto": row.get("nome_produto"),
+                    "quantidade": row.get("quantidade"),
+                    "valor_unitario": row.get("valor_unitario"),
+                    "tipo_movimento": row.get("tipo_movimento"),
+                    "referencia_tipo": row.get("referencia_tipo"),
+                    "vinculo_origem": "bootstrap_movimento",
+                    "simulado": 0,
+                }
+            )
+        resumo["movimentos"] = len(rows)
+
+        where_xml = [
+            "v.id IS NULL",
+            "xi.id IS NOT NULL",
+            "em.id IS NULL",
+        ]
+        params_xml = []
+        if periodo_inicio:
+            where_xml.append("DATE(COALESCE(NULLIF(xi.data_emissao, ''), xi.criado_em))>=%s")
+            params_xml.append(periodo_inicio)
+        if periodo_fim:
+            where_xml.append("DATE(COALESCE(NULLIF(xi.data_emissao, ''), xi.criado_em))<=%s")
+            params_xml.append(periodo_fim)
+        try:
+            cur.execute(
+                f"""
+                SELECT
+                    xi.id,
+                    xi.codigo_produto,
+                    xi.numero_nota,
+                    xi.descricao_produto,
+                    xi.quantidade,
+                    xi.valor_unitario,
+                    xi.tipo_movimento,
+                    xi.chave_nfe,
+                    xi.data_emissao,
+                    xi.criado_em
+                FROM importar_xml_estoque_itens xi
+                LEFT JOIN rastreabilidade_lancamento_vinculos v
+                    ON v.origem_tipo='importar_xml'
+                   AND v.referencia_id=xi.id
+                LEFT JOIN estoque_movimentos em
+                    ON em.referencia_tipo=%s
+                   AND em.referencia_id=xi.id
+                WHERE {' AND '.join(where_xml)}
+                ORDER BY DATE(COALESCE(NULLIF(xi.data_emissao, ''), xi.criado_em)) ASC, xi.id ASC
+                LIMIT %s
+                """,
+                tuple([_ESTOQUE_XML_REFERENCIA] + params_xml + [max(0, limit - len(rows))]),
+            )
+            xml_rows = cur.fetchall() or []
+        except Exception as exc:
+            xml_rows = []
+            resumo["xml_erro"] = str(exc)
+
+        for row in xml_rows:
+            tipo_xml = _as_str(row.get("tipo_movimento")).upper()
+            data_xml = (
+                _rastreio_data_from_registro(row.get("data_emissao"))
+                or _rastreio_data_from_registro(row.get("criado_em"))
+            )
+            rows.append(
+                {
+                    "origem_tipo": "importar_xml",
+                    "estoque_movimento_id": None,
+                    "referencia_id": _as_int(row.get("id"), 0),
+                    "data_registro": data_xml or row.get("data_emissao") or row.get("criado_em"),
+                    "codigo_barras": "",
+                    "codigo_produto_nfe": row.get("codigo_produto"),
+                    "numero_nota": row.get("numero_nota") or row.get("chave_nfe"),
+                    "nome_produto": row.get("descricao_produto"),
+                    "quantidade": row.get("quantidade"),
+                    "valor_unitario": row.get("valor_unitario"),
+                    "tipo_movimento": "saida" if tipo_xml == "SAIDA_ESTOQUE" else "entrada",
+                    "referencia_tipo": _ESTOQUE_XML_REFERENCIA,
+                    "vinculo_origem": "bootstrap_xml_importado",
+                    "simulado": 0,
+                }
+            )
+        resumo["xml_importados"] = len(xml_rows)
+
+        hoje = datetime.date.today()
+        datas = sorted({
+            d for d in (_rastreio_data_from_registro(row.get("data_registro")) for row in rows)
+            if d
+        })
+        entradas_por_semana = (
+            _rastreio_carregar_entradas_por_semana(
+                cur,
+                min(datas) if datas else periodo_inicio,
+                max(datas) if datas else periodo_fim,
+            )
+            if rows else {}
+        )
+        for row in rows:
+            d = _rastreio_data_from_registro(row.get("data_registro"))
+            if d and _rastreio_tipo_movimento(row.get("tipo_movimento")) == "entrada":
+                _rastreio_adicionar_entrada_semana(entradas_por_semana, d)
+
+        for row in rows:
+            d = _rastreio_data_from_registro(row.get("data_registro"))
+            if not d:
+                resumo["sem_data"] += 1
+                continue
+            tipo = _rastreio_tipo_movimento(row.get("tipo_movimento"))
+            if tipo == "saida" and d >= hoje:
+                resumo["saidas_manuais"] = _as_int(resumo.get("saidas_manuais"), 0) + 1
+                continue
+            lote_data = d if tipo == "entrada" else _rastreio_lote_data_saida(d, entradas_por_semana)
+            serial = 1
+            lote_codigo = _rastreio_lote_codigo(lote_data, serial)
+            vinculo_origem = "auto_entrada_fabrica" if tipo == "entrada" else "auto_saida_semana"
+            cur.execute(
+                """
+                INSERT IGNORE INTO rastreabilidade_lancamento_vinculos (
+                    lote_codigo, data_lote, serial, origem_tipo, estoque_movimento_id,
+                    tipo_movimento, numero_nota, codigo_barras, codigo_produto_nfe,
+                    nome_produto, quantidade, valor_unitario, referencia_tipo,
+                    referencia_id, vinculo_origem, simulado
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    lote_codigo,
+                    lote_data,
+                    serial,
+                    _as_str(row.get("origem_tipo")) or "estoque_movimento",
+                    _as_int(row.get("estoque_movimento_id"), 0) or None,
+                    tipo,
+                    _as_str(row.get("numero_nota")),
+                    _normalizar_codigo_barras(row.get("codigo_barras")),
+                    _as_str(row.get("codigo_produto_nfe")),
+                    _as_str(row.get("nome_produto")),
+                    _as_float(row.get("quantidade"), 0.0),
+                    _as_float(row.get("valor_unitario"), 0.0),
+                    _as_str(row.get("referencia_tipo")),
+                    _as_int(row.get("referencia_id"), 0) or None,
+                    vinculo_origem,
+                    1 if _as_int(row.get("simulado"), 0) else 0,
+                ),
+            )
+            if cur.rowcount:
+                resumo["criados"] += 1
+                movimento_id = _as_int(row.get("estoque_movimento_id"), 0)
+                if _as_str(row.get("origem_tipo")) == "estoque_movimento" and movimento_id > 0:
+                    cur.execute(
+                        """
+                        UPDATE estoque_movimentos
+                        SET lote_codigo=%s
+                        WHERE id=%s
+                          AND (COALESCE(lote_codigo, '')='' OR COALESCE(lote_codigo, '') LIKE %s)
+                        """,
+                        (lote_codigo, movimento_id, "LT-%"),
+                    )
+            else:
+                resumo["ignorados"] += 1
+        regularizacao = _rastreio_regularizar_vinculos_automaticos(
+            cur,
+            data_inicio=periodo_inicio,
+            data_fim=periodo_fim,
+            hoje=hoje,
+        )
+        resumo.update(regularizacao)
+        conn.commit()
+        return resumo
+    finally:
+        if lock_ok:
+            try:
+                cur.execute("SELECT RELEASE_LOCK(%s)", ("riob_rastreabilidade_bootstrap",))
+                cur.fetchone()
+            except Exception:
+                pass
+        cur.close()
+        conn.close()
+
+
+def _rastreio_buscar_notas_compra(cur, data_lote, serial, sabor=""):
+    cur.execute(
+        """
+        SELECT
+            v.id,
+            v.lote_codigo,
+            v.serial,
+            v.codigo_barras,
+            v.codigo_produto_nfe,
+            v.numero_nota,
+            v.nome_produto,
+            v.quantidade,
+            v.valor_unitario,
+            v.referencia_tipo,
+            v.referencia_id,
+            v.vinculo_origem,
+            v.simulado,
+            v.criado_em,
+            COALESCE(NULLIF(f.cnpj, ''), NULLIF(xi.emitente_cnpj, ''), NULLIF(c.emitente_cnpj, '')) AS fornecedor_cnpj,
+            COALESCE(NULLIF(f.nome, ''), NULLIF(xi.emitente_nome, ''), NULLIF(c.emitente_nome, '')) AS fornecedor_nome,
+            COALESCE(NULLIF(f.categoria, ''), CASE WHEN COALESCE(NULLIF(xi.emitente_cnpj, ''), NULLIF(c.emitente_cnpj, '')) IS NOT NULL THEN 'outros' ELSE '' END) AS fornecedor_categoria
+        FROM rastreabilidade_lancamento_vinculos v
+        LEFT JOIN estoque_movimentos e
+            ON v.origem_tipo='estoque_movimento'
+           AND v.estoque_movimento_id=e.id
+        LEFT JOIN importar_xml_estoque_itens xi
+            ON v.referencia_tipo='importar_xml'
+           AND v.referencia_id=xi.id
+        LEFT JOIN estoque_conferencias c
+            ON v.referencia_tipo='conferencia_nfe'
+           AND v.referencia_id=c.id
+        LEFT JOIN gestor_email_fornecedores f
+            ON BINARY f.cnpj = BINARY COALESCE(NULLIF(xi.emitente_cnpj, ''), NULLIF(c.emitente_cnpj, ''))
+        WHERE v.tipo_movimento='entrada'
+          AND v.data_lote=%s
+          AND v.serial=%s
+        ORDER BY v.serial ASC, v.id ASC
+        """,
+        (data_lote, serial),
+    )
+    rows = cur.fetchall() or []
+    if sabor:
+        rows = [row for row in rows if _rastreio_item_combina_texto(row, sabor)]
+
+    notas = []
+    for row in rows:
+        fornecedor = _estoque_fornecedor_publico(row) or {}
+        notas.append(
+            {
+                "id": _as_int(row.get("id"), 0),
+                "vinculo_id": _as_int(row.get("id"), 0),
+                "lote_codigo": _as_str(row.get("lote_codigo")),
+                "serial": _as_int(row.get("serial"), 0),
+                "nota_compra": _as_str(row.get("numero_nota")) or _as_str(row.get("lote_codigo")),
+                "materia_prima_nome": _as_str(row.get("nome_produto")),
+                "codigo": _as_str(row.get("codigo_produto_nfe") or row.get("codigo_barras")),
+                "fornecedor_nome": _as_str(fornecedor.get("nome")),
+                "fornecedor_cnpj": _as_str(fornecedor.get("cnpj")),
+                "fornecedor_categoria": _as_str(fornecedor.get("categoria")),
+                "quantidade": round(_as_float(row.get("quantidade"), 0.0), 6),
+                "valor_unitario": _as_float(row.get("valor_unitario"), 0.0),
+                "data": _fmt_date(data_lote),
+                "origem": _as_str(row.get("vinculo_origem")) or _as_str(row.get("referencia_tipo")) or "amarracao_inicial",
+                "simulado": bool(_as_int(row.get("simulado"), 1)),
+            }
+        )
+    return notas
+
+
+def _rastreio_buscar_notas_saida(cur, data_lote, serial, sabor=""):
+    notas = []
+    vistos = set()
+
+    cur.execute(
+        """
+        SELECT id, numero_nota, lote_codigo, data_lote, serial
+        FROM rastreabilidade_lancamento_vinculos
+        WHERE tipo_movimento='saida'
+          AND data_lote=%s
+          AND serial=%s
+        """,
+        (data_lote, serial),
+    )
+    vinculos_saida = cur.fetchall() or []
+    vinculos_por_key = {}
+    notas_serial_keys = set()
+    for row in vinculos_saida:
+        key = _rastreio_nota_key(row.get("numero_nota") or row.get("lote_codigo"))
+        if not key:
+            continue
+        notas_serial_keys.add(key)
+        vinculos_por_key.setdefault(key, row)
+
+    if notas_serial_keys:
+        semana_inicio = _rastreio_semana_inicio(data_lote) or data_lote
+        semana_fim = _rastreio_semana_fim(data_lote) or data_lote
+        cur.execute(
+            """
+            SELECT
+                v.id, v.nota_key, v.chave_nfe, v.numero_nota, v.frete_id,
+                v.veiculo_id, v.carga_id, v.rota_registrada, v.placa_xml,
+                v.mapa_xml, v.emitente_nome, v.destinatario_nome,
+                v.data_emissao, v.itens_total, v.quantidade_total,
+                v.valor_total_nota, v.vinculacao_origem, v.criado_em,
+                f.nome AS frete_nome,
+                f.cidade AS frete_cidade,
+                c.nome AS carga_nome
+            FROM estoque_xml_frete_vinculos v
+            LEFT JOIN fretes f ON f.id = v.frete_id
+            LEFT JOIN cargas c ON c.id = v.carga_id
+            WHERE DATE(COALESCE(v.data_emissao, v.criado_em)) BETWEEN %s AND %s
+            ORDER BY COALESCE(v.data_emissao, DATE(v.criado_em)) ASC, v.id ASC
+            """,
+            (semana_inicio, semana_fim),
+        )
+        for row in cur.fetchall() or []:
+            key = _rastreio_nota_key(row.get("numero_nota") or row.get("chave_nfe") or row.get("nota_key"))
+            if key not in notas_serial_keys:
+                continue
+            vistos.add(key)
+            vinculo = vinculos_por_key.get(key) or {}
+            notas.append(
+                {
+                    "id": _as_int(row.get("id"), 0),
+                    "vinculo_id": _as_int(vinculo.get("id"), 0),
+                    "lote_codigo": _as_str(vinculo.get("lote_codigo")),
+                    "serial": _as_int(vinculo.get("serial"), 0),
+                    "nota_saida": _as_str(row.get("numero_nota")) or _as_str(row.get("chave_nfe")),
+                    "chave_nfe": _as_str(row.get("chave_nfe")),
+                    "data": _fmt_date(row.get("data_emissao")) or _fmt_date(row.get("criado_em")),
+                    "transportadora": _as_str(row.get("emitente_nome")) or _as_str(row.get("frete_nome")),
+                    "destinatario_nome": _as_str(row.get("destinatario_nome")),
+                    "frete_id": _as_int(row.get("frete_id"), 0) or None,
+                    "frete_nome": _as_str(row.get("frete_nome")),
+                    "carga_id": _as_int(row.get("carga_id"), 0) or None,
+                    "carga_nome": _as_str(row.get("carga_nome")),
+                    "rota": _as_str(row.get("rota_registrada") or row.get("frete_cidade")),
+                    "placa": _as_str(row.get("placa_xml")),
+                    "mapa": _as_str(row.get("mapa_xml")),
+                    "quantidade_total": round(_as_float(row.get("quantidade_total"), 0.0), 3),
+                    "valor_total_nota": _as_float(row.get("valor_total_nota"), 0.0),
+                    "origem": _as_str(row.get("vinculacao_origem")) or "xml_frete",
+                    "simulado": False,
+                }
+            )
+
+    cur.execute(
+        """
+        SELECT
+            v.id, v.lote_codigo, v.serial, v.numero_nota, v.codigo_barras,
+            v.codigo_produto_nfe, v.nome_produto, v.quantidade, v.valor_unitario,
+            v.referencia_tipo, v.referencia_id, v.vinculo_origem, v.simulado, v.criado_em,
+            DATE(COALESCE(e.data_registro, NULLIF(xi.data_emissao, ''), xi.criado_em, v.data_lote)) AS data_movimento
+        FROM rastreabilidade_lancamento_vinculos v
+        LEFT JOIN estoque_movimentos e
+            ON v.origem_tipo='estoque_movimento'
+           AND v.estoque_movimento_id=e.id
+        LEFT JOIN importar_xml_estoque_itens xi
+            ON v.referencia_tipo='importar_xml'
+           AND v.referencia_id=xi.id
+        WHERE v.tipo_movimento='saida'
+          AND v.data_lote=%s
+          AND v.serial=%s
+        ORDER BY v.serial ASC, v.id ASC
+        """,
+        (data_lote, serial),
+    )
+    for row in cur.fetchall() or []:
+        if sabor and not _rastreio_item_combina_texto(row, sabor):
+            continue
+        key = _rastreio_nota_key(row.get("numero_nota")) or _as_str(row.get("lote_codigo")) or f"vinc:{row.get('id')}"
+        if key in vistos:
+            continue
+        vistos.add(key)
+        notas.append(
+            {
+                "id": _as_int(row.get("id"), 0),
+                "vinculo_id": _as_int(row.get("id"), 0),
+                "lote_codigo": _as_str(row.get("lote_codigo")),
+                "serial": _as_int(row.get("serial"), 0),
+                "nota_saida": _as_str(row.get("numero_nota")) or _as_str(row.get("lote_codigo")),
+                "chave_nfe": "",
+                "data": _fmt_date(row.get("data_movimento")) or _fmt_date(data_lote),
+                "transportadora": "Transportadora pendente",
+                "destinatario_nome": "Cliente pendente",
+                "frete_id": None,
+                "frete_nome": "",
+                "carga_id": None,
+                "carga_nome": "",
+                "rota": "Rota pendente",
+                "placa": "",
+                "mapa": "",
+                "produto": _as_str(row.get("nome_produto")),
+                "quantidade_total": round(_as_float(row.get("quantidade"), 0.0), 3),
+                "valor_total_nota": round(
+                    _as_float(row.get("quantidade"), 0.0)
+                    * _as_float(row.get("valor_unitario"), 0.0),
+                    2,
+                ),
+                "origem": _as_str(row.get("vinculo_origem")) or _as_str(row.get("referencia_tipo")) or "amarracao_inicial",
+                "simulado": bool(_as_int(row.get("simulado"), 1)),
+            }
+        )
+    return notas
+
+
+def _rastreio_buscar_clientes(cur, data_lote, sabor, notas_saida):
+    clientes = []
+    vistos = set()
+    carga_ids = sorted({_as_int(n.get("carga_id"), 0) for n in notas_saida if _as_int(n.get("carga_id"), 0) > 0})
+    nota_keys = {
+        _rastreio_nota_key(n.get("nota_saida"))
+        for n in notas_saida
+        if _rastreio_nota_key(n.get("nota_saida"))
+    }
+
+    if carga_ids:
+        placeholders = ", ".join(["%s"] * len(carga_ids))
+        cur.execute(
+            f"""
+            SELECT
+                carga_id,
+                cliente,
+                cidade,
+                rota,
+                numero_nf,
+                produto,
+                COALESCE(SUM(quantidade), 0) AS quantidade,
+                COALESCE(SUM(litro), 0) AS litros,
+                COALESCE(SUM(peso), 0) AS peso,
+                COALESCE(SUM(valor_venda), 0) AS valor_venda
+            FROM cargas_import_linhas
+            WHERE carga_id IN ({placeholders})
+            GROUP BY carga_id, cliente, cidade, rota, numero_nf, produto
+            ORDER BY cliente ASC, numero_nf ASC, produto ASC
+            """,
+            tuple(carga_ids),
+        )
+        for row in cur.fetchall() or []:
+            if sabor and not _rastreio_item_combina_texto(row, sabor):
+                continue
+            key = (
+                _as_str(row.get("cliente")).casefold(),
+                _rastreio_nota_key(row.get("numero_nf")),
+                _produto_nome_normalizado(row.get("produto")),
+            )
+            if key in vistos:
+                continue
+            vistos.add(key)
+            clientes.append(
+                {
+                    "cliente": _as_str(row.get("cliente")) or "Sem cliente",
+                    "cidade": _as_str(row.get("cidade")),
+                    "rota": _as_str(row.get("rota")),
+                    "nota_saida": _as_str(row.get("numero_nf")),
+                    "produto": _as_str(row.get("produto")),
+                    "quantidade": round(_as_float(row.get("quantidade"), 0.0), 3),
+                    "litros": round(_as_float(row.get("litros"), 0.0), 3),
+                    "peso": round(_as_float(row.get("peso"), 0.0), 3),
+                    "valor_venda": _as_float(row.get("valor_venda"), 0.0),
+                    "origem": "carga",
+                    "simulado": False,
+                }
+            )
+
+    cache_id = ""
+    try:
+        cache_entry, _source, _cfg = _vendas_obter_cache_ativo(force_refresh=False)
+        cache_id = _as_str((cache_entry or {}).get("id"))
+    except Exception:
+        cache_id = ""
+
+    if cache_id:
+        semana_inicio = _rastreio_semana_inicio(data_lote) or data_lote
+        semana_fim = _rastreio_semana_fim(data_lote) or data_lote
+        cur.execute(
+            """
+            SELECT
+                cliente,
+                cidade,
+                numero_nf,
+                produto,
+                COALESCE(SUM(quantidade), 0) AS quantidade,
+                COALESCE(SUM(litros), 0) AS litros,
+                COALESCE(SUM(caixas), 0) AS caixas,
+                COALESCE(SUM(valor_liquido), 0) AS valor_venda
+            FROM vendas_relatorio_itens
+            WHERE import_id=%s
+              AND data_ref BETWEEN %s AND %s
+            GROUP BY cliente, cidade, numero_nf, produto
+            ORDER BY cliente ASC, numero_nf ASC, produto ASC
+            LIMIT 800
+            """,
+            (cache_id, semana_inicio, semana_fim),
+        )
+        for row in cur.fetchall() or []:
+            nota_key = _rastreio_nota_key(row.get("numero_nf"))
+            if nota_keys and nota_key not in nota_keys:
+                if not (sabor and _rastreio_item_combina_texto(row, sabor)):
+                    continue
+            if sabor and not _rastreio_item_combina_texto(row, sabor):
+                continue
+            key = (
+                _as_str(row.get("cliente")).casefold(),
+                nota_key,
+                _produto_nome_normalizado(row.get("produto")),
+            )
+            if key in vistos:
+                continue
+            vistos.add(key)
+            clientes.append(
+                {
+                    "cliente": _as_str(row.get("cliente")) or "Sem cliente",
+                    "cidade": _as_str(row.get("cidade")),
+                    "rota": "",
+                    "nota_saida": _as_str(row.get("numero_nf")),
+                    "produto": _as_str(row.get("produto")),
+                    "quantidade": round(_as_float(row.get("quantidade"), 0.0), 3),
+                    "litros": round(_as_float(row.get("litros"), 0.0), 3),
+                    "peso": 0.0,
+                    "valor_venda": _as_float(row.get("valor_venda"), 0.0),
+                    "origem": "vendas",
+                    "simulado": False,
+                }
+            )
+    return clientes
+
+
+def _rastreio_simular_notas_compra(data_lote, serial, sabor=""):
+    return [
+        {
+            "id": None,
+            "lote_codigo": _rastreio_lote_codigo(data_lote, serial),
+            "serial": serial,
+            "nota_compra": f"TEMP-COMPRA-{data_lote.strftime('%d%m%y')}-{str(serial).zfill(2)}",
+            "materia_prima_nome": sabor or "Materia-prima pendente",
+            "codigo": "",
+            "fornecedor_nome": "Fornecedor pendente",
+            "fornecedor_cnpj": "",
+            "fornecedor_categoria": "temporario",
+            "quantidade": 1.0,
+            "valor_unitario": 0.0,
+            "data": _fmt_date(data_lote),
+            "origem": "amarracao_inicial",
+            "simulado": True,
+        }
+    ]
+
+
+def _rastreio_simular_notas_saida(data_lote, serial, sabor=""):
+    return [
+        {
+            "id": None,
+            "nota_saida": f"TEMP-SAIDA-{data_lote.strftime('%d%m%y')}-{str(serial).zfill(2)}",
+            "chave_nfe": "",
+            "data": _fmt_date(data_lote),
+            "transportadora": "Transportadora pendente",
+            "destinatario_nome": "Cliente pendente",
+            "frete_id": None,
+            "frete_nome": "Frete pendente",
+            "carga_id": None,
+            "carga_nome": "Carga pendente",
+            "rota": "Rota pendente",
+            "placa": "",
+            "mapa": "",
+            "quantidade_total": 1.0,
+            "valor_total_nota": 0.0,
+            "origem": "amarracao_inicial",
+            "simulado": True,
+        }
+    ]
+
+
+def _rastreio_simular_clientes(data_lote, serial, sabor="", notas_saida=None):
+    base = notas_saida or [
+        {
+            "nota_saida": f"TEMP-SAIDA-{data_lote.strftime('%d%m%y')}-{str(serial).zfill(2)}",
+            "produto": sabor or "Produto do lote",
+            "quantidade_total": 1.0,
+            "valor_total_nota": 0.0,
+            "rota": "Rota pendente",
+        }
+    ]
+    clientes = []
+    for idx, nota in enumerate(base, start=1):
+        produto = _as_str(nota.get("produto")) or sabor or "Produto do lote"
+        if sabor and not _rastreio_item_combina_texto({"produto": produto}, sabor):
+            continue
+        clientes.append(
+            {
+                "cliente": _as_str(nota.get("destinatario_nome")) or f"Cliente pendente {idx}",
+                "cidade": "",
+                "rota": _as_str(nota.get("rota")) or "Rota pendente",
+                "nota_saida": _as_str(nota.get("nota_saida")),
+                "produto": produto,
+                "quantidade": round(_as_float(nota.get("quantidade_total"), 1.0), 3),
+                "litros": 0.0,
+                "peso": 0.0,
+                "valor_venda": _as_float(nota.get("valor_total_nota"), 0.0),
+                "origem": "amarracao_inicial",
+                "simulado": True,
+            }
+        )
+    return clientes
+
+
+def _rastreio_modo_resultado(*listas):
+    tem_real = False
+    tem_simulado = False
+    for lista in listas:
+        for item in lista or []:
+            if item.get("simulado"):
+                tem_simulado = True
+            else:
+                tem_real = True
+    if tem_real and tem_simulado:
+        return "misto"
+    if tem_real:
+        return "real"
+    if tem_simulado:
+        return "temporario"
+    return "sem_dados"
+
+
+try:
+    if _as_bool(os.environ.get("RB_RASTREIO_BOOTSTRAP_STARTUP", "1"), True):
+        _rastreio_criar_amarracao_inicial()
+except Exception as exc:
+    app.logger.warning("Falha ao criar amarracao inicial de rastreabilidade: %s", exc)
+
+
 _ESTOQUE_XML_LOTE_MAXIMO = 500
 
 
@@ -13435,6 +14731,29 @@ def _estoque_xml_criar_frete_automatico(
         if identificador
         else f"NF-e {numero_nota} - Vincular veiculo"
     )[:150]
+    cidades = [
+        _estoque_xml_cidade_destinatario(row)
+        for row in canonicos
+    ]
+    cidades = [cidade for cidade in cidades if cidade]
+    cidade = ""
+    if cidades:
+        ocorrencias = Counter(cidades)
+        cidade = sorted(
+            ocorrencias,
+            key=lambda item: (-ocorrencias[item], cidades.index(item), item),
+        )[0]
+    veiculo_id = _as_int(veiculo_resolvido.get("veiculo_id"), 0)
+    equipe = _buscar_equipe_atual_veiculo(cur, veiculo_id)
+    motorista_id = _as_int(equipe.get("motorista_id"), 0) or None
+    ajudante_id = _as_int(equipe.get("ajudante_id"), 0) or None
+    legacy_motorista_id = _resolver_motorista_legacy_id_por_colaborador(
+        cur, motorista_id
+    )
+    legacy_ajudante_id = _resolver_motorista_legacy_id_por_colaborador(
+        cur, ajudante_id
+    )
+    km_atual = _buscar_km_atual_veiculo(cur, veiculo_id)
     partes_observacao = [
         "Card criado automaticamente pelo XML de saida.",
         f"Placa: {_as_str(transporte.get('placa')) or '-'}.",
@@ -13447,17 +14766,29 @@ def _estoque_xml_criar_frete_automatico(
     cur.execute(
         """
         INSERT INTO fretes (
-            nome, cidade, data_carga, status, veiculo_id, carga_id,
+            nome, cidade, data_carga, status,
+            motorista_id, entregador_id,
+            colaborador_motorista_id, colaborador_entregador_id,
+            veiculo_id, carga_id,
             observacao, km_atual, peso, qtd_entregas, arquivado
         )
-        VALUES (%s, %s, %s, 'liberado', %s, NULL, %s, 0, 0, 1, 0)
+        VALUES (
+            %s, %s, %s, 'liberado',
+            %s, %s, %s, %s,
+            %s, NULL, %s, %s, 0, 1, 0
+        )
         """,
         (
             nome,
-            "",
+            cidade,
             _as_date(base.get("data_emissao")) or datetime.date.today(),
-            _as_int(veiculo_resolvido.get("veiculo_id"), 0) or None,
+            legacy_motorista_id,
+            legacy_ajudante_id,
+            motorista_id,
+            ajudante_id,
+            veiculo_id or None,
             observacao,
+            km_atual,
         ),
     )
     frete_id = _as_int(cur.lastrowid, 0)
@@ -13765,6 +15096,79 @@ def _estoque_xml_item_seq(row):
     dados = _estoque_xml_dados_item(row.get("dados_json"))
     return _as_str(dados.get("nItem") or dados.get("item_seq"))
 
+def _estoque_xml_cidade_destinatario(row):
+    dados = _estoque_xml_dados_item((row or {}).get("dados_json"))
+    cab = dados.get("cab") if isinstance(dados.get("cab"), dict) else {}
+    return _normalizar_nome_local(
+        dados.get("destinatario_cidade")
+        or dados.get("cidade_destinatario")
+        or cab.get("destinatario_cidade")
+    )
+
+def _estoque_xml_emitente_fantasia(row):
+    dados = _estoque_xml_dados_item((row or {}).get("dados_json"))
+    cab = dados.get("cab") if isinstance(dados.get("cab"), dict) else {}
+    return _as_str(
+        dados.get("emitente_fantasia")
+        or cab.get("emitente_fantasia")
+    )
+
+def _estoque_xml_atualizar_cidade_frete(cur, frete_id, nota_atual=None):
+    frete_id = _as_int(frete_id, 0)
+    if frete_id <= 0:
+        return ""
+    cur.execute(
+        """
+        SELECT DISTINCT nota_key
+        FROM estoque_xml_frete_vinculos
+        WHERE frete_id=%s
+        """,
+        (frete_id,),
+    )
+    notas = {
+        _as_str(row.get("nota_key"))
+        for row in (cur.fetchall() or [])
+        if _as_str(row.get("nota_key"))
+    }
+    cidades = []
+    for nota_key in notas:
+        notas_xml = _estoque_xml_carregar_notas(cur, nota_key)
+        nota = notas_xml.get(nota_key)
+        canonicos = (nota or {}).get("canonicos") or []
+        cidade = next(
+            (
+                _estoque_xml_cidade_destinatario(row)
+                for row in canonicos
+                if _estoque_xml_cidade_destinatario(row)
+            ),
+            "",
+        )
+        if cidade:
+            cidades.append(cidade)
+    canonicos_atuais = (nota_atual or {}).get("canonicos") or []
+    cidade_atual = next(
+        (
+            _estoque_xml_cidade_destinatario(row)
+            for row in canonicos_atuais
+            if _estoque_xml_cidade_destinatario(row)
+        ),
+        "",
+    )
+    if cidade_atual and cidade_atual not in cidades:
+        cidades.append(cidade_atual)
+    if not cidades:
+        return ""
+    ocorrencias = Counter(cidades)
+    cidade_sugerida = sorted(
+        ocorrencias,
+        key=lambda item: (-ocorrencias[item], cidades.index(item), item),
+    )[0]
+    cur.execute(
+        "UPDATE fretes SET cidade=%s WHERE id=%s",
+        (cidade_sugerida, frete_id),
+    )
+    return cidade_sugerida
+
 
 def _estoque_xml_agrupar_notas(rows):
     notas = {}
@@ -13846,6 +15250,497 @@ def _estoque_xml_referencias_lancadas(cur):
     }
 
 
+def _estoque_xml_destinos_manutencao(cur, nota_keys=None):
+    keys = []
+    if nota_keys:
+        for valor in nota_keys:
+            key = _as_str(valor)
+            if key and key not in keys:
+                keys.append(key)
+
+    params = []
+    where = "WHERE COALESCE(status, '') NOT IN ('descartado', 'devolvido_estoque')"
+    if keys:
+        where += " AND nota_key IN (" + ",".join(["%s"] * len(keys)) + ")"
+        params.extend(keys)
+
+    cur.execute(
+        f"""
+        SELECT id, nota_key, status, manutencao_id
+        FROM manutencao_xml_pre_lancamentos
+        {where}
+        """,
+        tuple(params),
+    )
+    return {
+        _as_str(row.get("nota_key")): row
+        for row in (cur.fetchall() or [])
+        if _as_str(row.get("nota_key"))
+    }
+
+
+def _estoque_xml_pre_lancamentos_manutencao_status(cur, nota_keys=None):
+    keys = []
+    if nota_keys:
+        for valor in nota_keys:
+            key = _as_str(valor)
+            if key and key not in keys:
+                keys.append(key)
+
+    params = []
+    where = ""
+    if keys:
+        where = "WHERE nota_key IN (" + ",".join(["%s"] * len(keys)) + ")"
+        params.extend(keys)
+
+    cur.execute(
+        f"""
+        SELECT id, nota_key, status, manutencao_id
+        FROM manutencao_xml_pre_lancamentos
+        {where}
+        """,
+        tuple(params),
+    )
+    return {
+        _as_str(row.get("nota_key")): row
+        for row in (cur.fetchall() or [])
+        if _as_str(row.get("nota_key"))
+    }
+
+
+def _estoque_xml_regra_hash(*partes):
+    texto = "\x1f".join(_as_str(parte) for parte in partes)
+    return hashlib.sha1(texto.encode("utf-8", "ignore")).hexdigest()
+
+
+def _estoque_xml_emitente_info(row):
+    row = row or {}
+    cnpj = re.sub(r"\D+", "", _as_str(row.get("emitente_cnpj") or row.get("cnpj")))
+    nome = re.sub(r"\s+", " ", _as_str(row.get("emitente_nome") or row.get("nome"))).strip()
+    if cnpj:
+        chave = f"cnpj:{cnpj}"
+    elif nome:
+        chave = f"nome:{_normalizar_chave_texto(nome)}"
+    else:
+        chave = ""
+    return {
+        "emitente_cnpj": cnpj,
+        "emitente_nome": nome,
+        "emitente_chave": chave[:255],
+        "emitente_hash": _estoque_xml_regra_hash(chave) if chave else "",
+    }
+
+def _estoque_xml_item_classificacao_key(row):
+    return _estoque_xml_nome_produto_key(
+        (row or {}).get("descricao_produto")
+        or (row or {}).get("nome_produto")
+    )
+
+
+def _estoque_xml_carregar_regras_classificacao(cur):
+    cur.execute(
+        """
+        SELECT id, escopo, regra_chave, regra_rotulo,
+               destino_importacao, ativo
+        FROM estoque_xml_classificacao_regras
+        WHERE ativo=1
+        ORDER BY atualizado_em DESC, id DESC
+        """
+    )
+    return cur.fetchall() or []
+
+
+def _estoque_xml_sugestao_classificacao(nota, regras):
+    canonicos = (nota or {}).get("canonicos") or []
+    base = canonicos[0] if canonicos else {}
+    emitente_hash = _as_str(
+        _estoque_xml_emitente_info(base).get("emitente_hash")
+    )
+    itens_keys = {
+        _estoque_xml_item_classificacao_key(row)
+        for row in canonicos
+        if _estoque_xml_item_classificacao_key(row)
+    }
+    for regra in regras or []:
+        escopo = _as_str(regra.get("escopo"))
+        chave = _as_str(regra.get("regra_chave"))
+        corresponde = (
+            escopo == "empresa" and chave == emitente_hash
+        ) or (
+            escopo == "item" and chave in itens_keys
+        )
+        if corresponde:
+            return {
+                "regra_id": _as_int(regra.get("id"), 0),
+                "escopo": escopo,
+                "rotulo": _as_str(regra.get("regra_rotulo")),
+                "destino": _as_str(regra.get("destino_importacao")),
+            }
+    return {}
+
+
+def _estoque_xml_registrar_regras_classificacao(
+    cur,
+    notas,
+    destino,
+    escopo,
+    usuario="",
+):
+    destino = _as_str(destino).lower()
+    escopo = _as_str(escopo).lower()
+    if destino not in {"estoque", "manutencao"}:
+        raise ValueError("destino de classificacao invalido")
+    if escopo not in {"empresa", "item"}:
+        raise ValueError("escopo deve ser empresa ou item")
+    registradas = 0
+    for nota in notas or []:
+        canonicos = (nota or {}).get("canonicos") or []
+        base = canonicos[0] if canonicos else {}
+        regras_nota = []
+        if escopo == "empresa":
+            info = _estoque_xml_emitente_info(base)
+            chave = _as_str(info.get("emitente_hash"))
+            if chave:
+                regras_nota.append(
+                    (chave, _as_str(info.get("emitente_nome")))
+                )
+        else:
+            vistos = set()
+            for row in canonicos:
+                chave = _estoque_xml_item_classificacao_key(row)
+                if chave and chave not in vistos:
+                    vistos.add(chave)
+                    regras_nota.append(
+                        (chave, _as_str(row.get("descricao_produto")))
+                    )
+        for chave, rotulo in regras_nota:
+            cur.execute(
+                """
+                INSERT INTO estoque_xml_classificacao_regras (
+                    escopo, regra_chave, regra_rotulo,
+                    destino_importacao, ativo, usuario_registro,
+                    criado_em, atualizado_em
+                )
+                VALUES (%s,%s,%s,%s,1,%s,NOW(),NOW())
+                ON DUPLICATE KEY UPDATE
+                    regra_rotulo=VALUES(regra_rotulo),
+                    destino_importacao=VALUES(destino_importacao),
+                    ativo=1,
+                    usuario_registro=VALUES(usuario_registro),
+                    atualizado_em=NOW()
+                """,
+                (
+                    escopo,
+                    chave[:255],
+                    rotulo[:255],
+                    destino,
+                    _as_str(usuario)[:180],
+                ),
+            )
+            registradas += 1
+    return registradas
+
+
+def _estoque_xml_codigo_regra(valor):
+    return _as_str(_codigo_produto_nfe_saida(valor)).strip().upper()[:120]
+
+
+def _estoque_xml_nome_produto_key(valor):
+    return (_produto_nome_normalizado(valor) or _normalizar_chave_texto(valor)).strip()[:180]
+
+
+def _estoque_xml_embalagem_regra(*valores):
+    return (
+        _estoque_apresentacao_normalizada(*valores)
+        or _as_str(next((valor for valor in valores if _as_str(valor)), ""))
+    ).strip().upper()[:30]
+
+
+def _atualizar_fornecedor_categoria_manutencao(cur, emitente_info):
+    cnpj = _as_str((emitente_info or {}).get("emitente_cnpj"))
+    if not cnpj:
+        return False
+    nome = _as_str((emitente_info or {}).get("emitente_nome"))[:255]
+    try:
+        cur.execute(
+            """
+            UPDATE gestor_email_fornecedores
+            SET categoria='manutencao',
+                updated_at=NOW()
+            WHERE BINARY cnpj = BINARY %s
+            """,
+            (cnpj,),
+        )
+        if cur.rowcount > 0:
+            return True
+        cur.execute(
+            """
+            INSERT INTO gestor_email_fornecedores (
+                cnpj, nome, categoria, ativo, origem, created_at, updated_at
+            )
+            VALUES (%s, %s, 'manutencao', 1, 'xml_estoque', NOW(), NOW())
+            ON DUPLICATE KEY UPDATE
+                nome=COALESCE(NULLIF(nome, ''), VALUES(nome)),
+                categoria='manutencao',
+                ativo=1,
+                updated_at=NOW()
+            """,
+            (cnpj, nome),
+        )
+        return True
+    except Exception:
+        return False
+
+
+def _registrar_regra_fornecedor_manutencao_xml(
+    cur,
+    dados_emitente,
+    usuario="",
+    motivo="",
+):
+    info = _estoque_xml_emitente_info(dados_emitente)
+    emitente_hash = _as_str(info.get("emitente_hash"))
+    if not emitente_hash:
+        return False
+    motivo_final = (
+        _as_str(motivo)
+        or "Fornecedor marcado como manutencao ao direcionar uma NF-e."
+    )[:500]
+    cur.execute(
+        """
+        INSERT INTO estoque_xml_fornecedor_regras (
+            emitente_hash, emitente_chave, emitente_cnpj, emitente_nome,
+            destino_importacao, motivo, usuario_registro, criado_em, atualizado_em
+        )
+        VALUES (%s, %s, %s, %s, 'manutencao', %s, %s, NOW(), NOW())
+        ON DUPLICATE KEY UPDATE
+            emitente_chave=VALUES(emitente_chave),
+            emitente_cnpj=VALUES(emitente_cnpj),
+            emitente_nome=VALUES(emitente_nome),
+            destino_importacao='manutencao',
+            motivo=VALUES(motivo),
+            usuario_registro=VALUES(usuario_registro),
+            atualizado_em=NOW()
+        """,
+        (
+            emitente_hash,
+            _as_str(info.get("emitente_chave"))[:255],
+            _as_str(info.get("emitente_cnpj"))[:32],
+            _as_str(info.get("emitente_nome"))[:255],
+            motivo_final,
+            _as_str(usuario)[:180],
+        ),
+    )
+    _atualizar_fornecedor_categoria_manutencao(cur, info)
+    return True
+
+
+def _carregar_regras_fornecedor_manutencao_xml(cur):
+    try:
+        cur.execute(
+            """
+            SELECT emitente_hash
+            FROM estoque_xml_fornecedor_regras
+            WHERE destino_importacao='manutencao'
+            """
+        )
+        return {
+            _as_str(row.get("emitente_hash"))
+            for row in (cur.fetchall() or [])
+            if _as_str(row.get("emitente_hash"))
+        }
+    except Exception:
+        return set()
+
+
+def _registrar_regra_fator_fornecedor_xml(
+    cur,
+    dados_emitente,
+    codigo_produto_nfe="",
+    nome_produto="",
+    embalagem_tipo="",
+    fator_embalagem=0,
+    grupo_estoque="",
+    produto_base_nome="",
+    usuario="",
+):
+    info = _estoque_xml_emitente_info(dados_emitente)
+    emitente_hash = _as_str(info.get("emitente_hash"))
+    fator = _as_float(fator_embalagem, 0.0)
+    if not emitente_hash or fator <= 0:
+        return False
+
+    codigo = _estoque_xml_codigo_regra(codigo_produto_nfe)
+    nome_key = _estoque_xml_nome_produto_key(nome_produto)
+    embalagem = _estoque_xml_embalagem_regra(embalagem_tipo, nome_produto)
+    if not (codigo or nome_key):
+        return False
+    regra_hash = _estoque_xml_regra_hash(
+        emitente_hash,
+        codigo,
+        nome_key,
+        embalagem,
+    )
+    cur.execute(
+        """
+        INSERT INTO estoque_xml_fator_regras (
+            regra_hash, emitente_hash, emitente_chave, emitente_cnpj,
+            emitente_nome, codigo_produto_nfe, nome_produto_key, nome_produto,
+            embalagem_tipo, fator_embalagem, grupo_estoque, produto_base_nome,
+            usuario_registro, criado_em, atualizado_em
+        )
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+        ON DUPLICATE KEY UPDATE
+            emitente_chave=VALUES(emitente_chave),
+            emitente_cnpj=VALUES(emitente_cnpj),
+            emitente_nome=VALUES(emitente_nome),
+            codigo_produto_nfe=VALUES(codigo_produto_nfe),
+            nome_produto_key=VALUES(nome_produto_key),
+            nome_produto=VALUES(nome_produto),
+            embalagem_tipo=VALUES(embalagem_tipo),
+            fator_embalagem=VALUES(fator_embalagem),
+            grupo_estoque=VALUES(grupo_estoque),
+            produto_base_nome=VALUES(produto_base_nome),
+            usuario_registro=VALUES(usuario_registro),
+            atualizado_em=NOW()
+        """,
+        (
+            regra_hash,
+            emitente_hash,
+            _as_str(info.get("emitente_chave"))[:255],
+            _as_str(info.get("emitente_cnpj"))[:32],
+            _as_str(info.get("emitente_nome"))[:255],
+            codigo,
+            nome_key,
+            _as_str(nome_produto)[:255],
+            embalagem,
+            fator,
+            _estoque_grupo_normalizado(grupo_estoque) or "",
+            _as_str(produto_base_nome)[:255],
+            _as_str(usuario)[:180],
+        ),
+    )
+    return True
+
+
+def _carregar_regras_fator_fornecedor_xml(cur, dados_emitente):
+    info = _estoque_xml_emitente_info(dados_emitente)
+    emitente_hash = _as_str(info.get("emitente_hash"))
+    if not emitente_hash:
+        return []
+    try:
+        cur.execute(
+            """
+            SELECT
+                codigo_produto_nfe, nome_produto_key, nome_produto,
+                embalagem_tipo, fator_embalagem, grupo_estoque,
+                produto_base_nome
+            FROM estoque_xml_fator_regras
+            WHERE emitente_hash=%s AND fator_embalagem > 0
+            ORDER BY atualizado_em DESC, id DESC
+            """,
+            (emitente_hash,),
+        )
+        return cur.fetchall() or []
+    except Exception:
+        return []
+
+
+def _selecionar_regra_fator_xml(regras, row, item_preview):
+    if not regras:
+        return None
+    codigo = _estoque_xml_codigo_regra(
+        item_preview.get("codigo_produto_nfe") or row.get("codigo_produto")
+    )
+    nome_key = _estoque_xml_nome_produto_key(
+        item_preview.get("nome_produto") or row.get("descricao_produto")
+    )
+    embalagem = _estoque_xml_embalagem_regra(
+        item_preview.get("embalagem_tipo"),
+        row.get("unidade"),
+        item_preview.get("nome_produto"),
+    )
+    melhor = None
+    melhor_score = 0
+    for regra in regras:
+        score = 0
+        regra_codigo = _estoque_xml_codigo_regra(regra.get("codigo_produto_nfe"))
+        regra_nome_key = _as_str(regra.get("nome_produto_key"))
+        regra_embalagem = _estoque_xml_embalagem_regra(regra.get("embalagem_tipo"))
+        if codigo and regra_codigo and codigo == regra_codigo:
+            score += 6
+        if nome_key and regra_nome_key and nome_key == regra_nome_key:
+            score += 3
+        if score <= 0:
+            continue
+        if regra_embalagem and embalagem and regra_embalagem == embalagem:
+            score += 2
+        elif regra_embalagem and embalagem and regra_embalagem != embalagem:
+            score -= 1
+        if score > melhor_score:
+            melhor = regra
+            melhor_score = score
+    return melhor
+
+
+def _aplicar_regra_fator_item_xml(item_preview, regra):
+    if not regra:
+        return item_preview
+    fator = _as_float(regra.get("fator_embalagem"), 0.0)
+    if fator <= 0:
+        return item_preview
+    quantidade = _as_float(item_preview.get("quantidade_embalagem"), _as_float(item_preview.get("quantidade"), 0.0))
+    item = dict(item_preview or {})
+    grupo = _estoque_grupo_normalizado(regra.get("grupo_estoque"))
+    if grupo:
+        item["grupo_estoque"] = grupo
+    if _as_str(regra.get("produto_base_nome")):
+        item["produto_base_nome"] = _as_str(regra.get("produto_base_nome"))
+    item["embalagem_tipo"] = _as_str(regra.get("embalagem_tipo")) or item.get("embalagem_tipo") or item.get("unidade")
+    item["fator_embalagem"] = fator
+    item["fator_inferido"] = 0
+    item["quantidade_unidades"] = quantidade * fator if quantidade > 0 else _as_float(item.get("quantidade_unidades"), 0.0)
+    item["regra_fator_fornecedor"] = 1
+    return item
+
+
+def _aplicar_regras_fornecedor_manutencao_xml(cur, notas, referencias_lancadas, usuario=""):
+    regras = _carregar_regras_fornecedor_manutencao_xml(cur)
+    if not regras:
+        return 0
+    destinos = _estoque_xml_destinos_manutencao(cur)
+    pre_lancamentos = _estoque_xml_pre_lancamentos_manutencao_status(cur)
+    criados = 0
+    for nota in (notas or {}).values():
+        resumo = _estoque_xml_nota_publica(nota, referencias_lancadas)
+        nota_key = _as_str(resumo.get("nota_key"))
+        if not nota_key or destinos.get(nota_key):
+            continue
+        status_previo = _as_str((pre_lancamentos.get(nota_key) or {}).get("status"))
+        if status_previo in {"descartado", "devolvido_estoque", "confirmado"}:
+            continue
+        if resumo.get("status") != "pendente" or resumo.get("tipo_movimento") != "entrada":
+            continue
+        info = _estoque_xml_emitente_info(resumo)
+        if _as_str(info.get("emitente_hash")) not in regras:
+            continue
+        preview = _estoque_xml_preview(cur, nota, referencias_lancadas)
+        pre_lancamento_id = _registrar_pre_lancamento_manutencao_preview(
+            cur,
+            preview,
+            nota_key_override=nota_key,
+            origem_veiculo="fornecedor_manutencao",
+            motivo=(
+                "Nota enviada automaticamente para manutencao porque o "
+                "fornecedor foi classificado como manutencao."
+            ),
+        )
+        if pre_lancamento_id:
+            destinos[nota_key] = {"id": pre_lancamento_id, "nota_key": nota_key}
+            criados += 1
+    return criados
+
+
 def _estoque_xml_nota_publica(nota, referencias_lancadas):
     canonicos = nota.get("canonicos") or []
     base = canonicos[0] if canonicos else {}
@@ -13860,6 +15755,21 @@ def _estoque_xml_nota_publica(nota, referencias_lancadas):
     )
     tipo_origem = _as_str(base.get("tipo_movimento")).upper()
     tipo_movimento = "saida" if tipo_origem == "SAIDA_ESTOQUE" else "entrada"
+    emitente_fantasia = _estoque_xml_emitente_fantasia(base)
+    itens_preview = []
+    for row in canonicos:
+        nome_item = _as_str(row.get("descricao_produto"))
+        if not nome_item:
+            continue
+        itens_preview.append(
+            {
+                "nome": nome_item,
+                "quantidade": _as_float(row.get("quantidade"), 0.0),
+                "unidade": _as_str(row.get("unidade")),
+            }
+        )
+        if len(itens_preview) >= 4:
+            break
     return {
         "nota_key": nota.get("nota_key"),
         "chave_nfe": _as_str(base.get("chave_nfe")),
@@ -13867,6 +15777,7 @@ def _estoque_xml_nota_publica(nota, referencias_lancadas):
         "serie": _as_str(base.get("serie")),
         "data_emissao": _as_str(base.get("data_emissao")),
         "emitente_nome": _as_str(base.get("emitente_nome")),
+        "emitente_fantasia": emitente_fantasia or _as_str(base.get("emitente_nome")),
         "emitente_cnpj": _as_str(base.get("emitente_cnpj")),
         "destinatario_nome": _as_str(base.get("destinatario_nome")),
         "destinatario_cnpj": _as_str(base.get("destinatario_cnpj")),
@@ -13877,13 +15788,52 @@ def _estoque_xml_nota_publica(nota, referencias_lancadas):
         "total_itens": total,
         "itens_lancados": lancados,
         "itens_pendentes": max(0, total - lancados),
+        "itens_preview": itens_preview,
         "arquivos_repetidos": len(nota.get("arquivo_ids") or []),
         "valor_total_nota": _as_float(base.get("valor_total_nota"), 0.0),
         "arquivo_origem": _as_str(base.get("arquivo_origem")),
     }
 
 
-def migrar_importacoes_xml_fretes(dry_run=False):
+def _cargas_rota_cidades_lista(valor):
+    partes = []
+    if isinstance(valor, (list, tuple)):
+        candidatos = valor
+    else:
+        candidatos = re.split(r"(?:\r?\n|[;,|])+", _as_str(valor))
+    vistos = set()
+    for item in candidatos:
+        cidade = re.sub(r"\s+", " ", _as_str(item)).strip()
+        if not cidade:
+            continue
+        chave = cidade.lower()
+        if chave in vistos:
+            continue
+        vistos.add(chave)
+        partes.append(cidade)
+    return partes
+
+
+def _cargas_rota_publica(row):
+    row = row or {}
+    cidades = _cargas_rota_cidades_lista(row.get("cidades"))
+    return {
+        "id": _as_int(row.get("id"), 0),
+        "nome": _as_str(row.get("nome")),
+        "cidades": cidades,
+        "cidades_texto": "\n".join(cidades),
+        "ativo": bool(_as_int(row.get("ativo"), 1)),
+        "criado_em": _fmt_dt(row.get("criado_em")),
+        "atualizado_em": _fmt_dt(row.get("atualizado_em")),
+    }
+
+
+def migrar_importacoes_xml_fretes(
+    dry_run=False,
+    emitente_nome_filtro="",
+    criar_sem_veiculo=False,
+    importado_desde=None,
+):
     conn = get_conn()
     cur = conn.cursor(dictionary=True)
     resumo = {
@@ -13898,12 +15848,76 @@ def migrar_importacoes_xml_fretes(dry_run=False):
     }
     try:
         notas = _estoque_xml_carregar_notas(cur)
+        referencias_lancadas = _estoque_xml_referencias_lancadas(cur)
         for nota in notas.values():
             canonicos = nota.get("canonicos") or []
             base = canonicos[0] if canonicos else {}
             if _as_str(base.get("tipo_movimento")).upper() != "SAIDA_ESTOQUE":
                 continue
+            if importado_desde:
+                criado_em = base.get("criado_em")
+                data_importacao = (
+                    criado_em.date()
+                    if isinstance(criado_em, datetime.datetime)
+                    else _as_date(criado_em)
+                )
+                if not data_importacao or data_importacao < importado_desde:
+                    continue
+            if emitente_nome_filtro:
+                emitente = _normalizar_chave_texto(base.get("emitente_nome"))
+                filtro = _normalizar_chave_texto(emitente_nome_filtro)
+                if filtro not in emitente:
+                    continue
             resumo["notas_saida"] += 1
+            nota_key = _as_str(nota.get("nota_key"))
+            cur.execute(
+                """
+                SELECT id
+                FROM estoque_xml_frete_pre_vinculos
+                WHERE nota_key=%s
+                  AND frete_id IS NOT NULL
+                  AND COALESCE(status, 'pendente') NOT IN (
+                    'cancelado', 'cancelada',
+                    'descartado', 'descartada',
+                    'ignorado', 'ignorada',
+                    'dispensado', 'confirmado_sem_frete'
+                  )
+                LIMIT 1
+                """,
+                (nota_key,),
+            )
+            pre_ativo_com_frete = cur.fetchone()
+            cur.execute(
+                """
+                SELECT id
+                FROM estoque_xml_frete_vinculos
+                WHERE nota_key=%s
+                LIMIT 1
+                """,
+                (nota_key,),
+            )
+            vinculo_existente = cur.fetchone()
+            itens_consolidados = canonicos and all(
+                _as_int(row.get("id"), 0) in referencias_lancadas
+                for row in canonicos
+            )
+            if itens_consolidados:
+                if not pre_ativo_com_frete and not vinculo_existente:
+                    continue
+            elif not pre_ativo_com_frete and not vinculo_existente:
+                transporte = _estoque_xml_extrair_transporte(cur, nota)
+                decisao_automatica = _estoque_xml_detectar_dispensa_frete(transporte)
+                veiculo_resolvido = _estoque_xml_resolver_veiculo(cur, transporte)
+                veiculo_id = _as_int(veiculo_resolvido.get("veiculo_id"), 0)
+                sugestao = _estoque_xml_sugerir_frete(cur, transporte, veiculo_id)
+                if (
+                    not criar_sem_veiculo
+                    and
+                    not decisao_automatica.get("dispensa_frete")
+                    and veiculo_id <= 0
+                    and _as_int(sugestao.get("frete_id"), 0) <= 0
+                ):
+                    continue
             preparado = _estoque_xml_preparar_vinculo(
                 cur,
                 nota,
@@ -13934,8 +15948,26 @@ def migrar_importacoes_xml_fretes(dry_run=False):
     return resumo
 
 
+@app.route("/api/fretes/importar-xml-saidas-white-river", methods=["POST"])
+def importar_fretes_xml_saidas_white_river():
+    try:
+        resumo = migrar_importacoes_xml_fretes(
+            dry_run=False,
+            emitente_nome_filtro="BEBIDAS WHITE RIVER",
+            criar_sem_veiculo=True,
+            importado_desde=datetime.date.today(),
+        )
+        return jsonify({"ok": True, **resumo})
+    except Exception as exc:
+        app.logger.exception(
+            "Falha ao importar fretes das NF-e de saida da White River"
+        )
+        return jsonify({"erro": str(exc)}), 500
+
+
 def _estoque_xml_preview(cur, nota, referencias_lancadas):
     resumo = _estoque_xml_nota_publica(nota, referencias_lancadas)
+    regras_fator_fornecedor = _carregar_regras_fator_fornecedor_xml(cur, resumo)
     transporte_xml = {}
     frete_sugestao = {}
     frete_id = 0
@@ -13954,25 +15986,29 @@ def _estoque_xml_preview(cur, nota, referencias_lancadas):
         xml_item_id = _as_int(row.get("id"), 0)
         if xml_item_id in referencias_lancadas:
             continue
-        itens.append(
-            {
-                "xml_item_id": xml_item_id,
-                "item_seq": _estoque_xml_item_seq(row) or str(idx),
-                "produto_id": 0,
-                "codigo_produto_nfe": _as_str(row.get("codigo_produto")),
-                "codigo_barras": "",
-                "nome_produto": _as_str(row.get("descricao_produto")),
-                "unidade": _as_str(row.get("unidade")),
-                "embalagem_tipo": _as_str(row.get("unidade")),
-                "quantidade": _as_float(row.get("quantidade"), 0.0),
-                "quantidade_embalagem": _as_float(row.get("quantidade"), 0.0),
-                "fator_embalagem": 0,
-                "fator_inferido": 0,
-                "quantidade_unidades": _as_float(row.get("quantidade"), 0.0),
-                "valor_unitario": _as_float(row.get("valor_unitario"), 0.0),
-                "valor_total": _as_float(row.get("valor_total_item"), 0.0),
-            }
+        item_preview = {
+            "xml_item_id": xml_item_id,
+            "item_seq": _estoque_xml_item_seq(row) or str(idx),
+            "produto_id": 0,
+            "codigo_produto_nfe": _as_str(row.get("codigo_produto")),
+            "codigo_barras": "",
+            "nome_produto": _as_str(row.get("descricao_produto")),
+            "unidade": _as_str(row.get("unidade")),
+            "embalagem_tipo": _as_str(row.get("unidade")),
+            "quantidade": _as_float(row.get("quantidade"), 0.0),
+            "quantidade_embalagem": _as_float(row.get("quantidade"), 0.0),
+            "fator_embalagem": 1,
+            "fator_inferido": 0,
+            "quantidade_unidades": _as_float(row.get("quantidade"), 0.0),
+            "valor_unitario": _as_float(row.get("valor_unitario"), 0.0),
+            "valor_total": _as_float(row.get("valor_total_item"), 0.0),
+        }
+        regra_fator = _selecionar_regra_fator_xml(
+            regras_fator_fornecedor,
+            row,
+            item_preview,
         )
+        itens.append(_aplicar_regra_fator_item_xml(item_preview, regra_fator))
     repetidos = max(0, _as_int(resumo.get("arquivos_repetidos"), 0) - 1)
     warnings = [
         (
@@ -14054,17 +16090,100 @@ def listar_importacoes_xml_estoque():
     try:
         notas = _estoque_xml_carregar_notas(cur)
         referencias = _estoque_xml_referencias_lancadas(cur)
-        rows = [
-            _estoque_xml_nota_publica(nota, referencias)
-            for nota in notas.values()
-        ]
+        regras_classificacao = _estoque_xml_carregar_regras_classificacao(cur)
+        auto_manutencao = _aplicar_regras_fornecedor_manutencao_xml(
+            cur,
+            notas,
+            referencias,
+            usuario="regra_fornecedor",
+        )
+        if auto_manutencao:
+            conn.commit()
+        destinos_manutencao = _estoque_xml_destinos_manutencao(cur)
+        cur.execute(
+            """
+            SELECT
+                p.nota_key,
+                p.frete_id,
+                p.veiculo_id,
+                p.status AS pre_vinculo_status,
+                f.nome AS frete_nome,
+                f.status AS frete_status,
+                f.data_carga AS frete_data_carga,
+                c.rota AS carga_rota,
+                c.cidade AS carga_cidade,
+                cil.carga_cidades AS carga_cidades
+            FROM estoque_xml_frete_pre_vinculos p
+            LEFT JOIN fretes f ON f.id = p.frete_id
+            LEFT JOIN cargas c ON c.id = f.carga_id
+            LEFT JOIN (
+                SELECT x.carga_id, GROUP_CONCAT(x.cidade ORDER BY x.primeira_linha SEPARATOR ' - ') AS carga_cidades
+                FROM (
+                    SELECT carga_id, cidade, MIN(linha_num) AS primeira_linha
+                    FROM cargas_import_linhas
+                    WHERE TRIM(COALESCE(cidade, '')) <> ''
+                    GROUP BY carga_id, cidade
+                ) x
+                GROUP BY x.carga_id
+            ) cil ON cil.carga_id = c.id
+            WHERE COALESCE(p.status, 'pendente') NOT IN ('confirmado', 'confirmado_sem_frete')
+            """
+        )
+        pre_vinculos_por_nota = {
+            _as_str(row.get("nota_key")): row
+            for row in (cur.fetchall() or [])
+            if _as_str(row.get("nota_key"))
+        }
+        rows = []
+        for nota in notas.values():
+            row = _estoque_xml_nota_publica(nota, referencias)
+            sugestao_classificacao = _estoque_xml_sugestao_classificacao(
+                nota, regras_classificacao
+            )
+            grupos_itens = sorted(
+                {
+                    _estoque_xml_item_classificacao_key(item)
+                    for item in (nota.get("canonicos") or [])
+                    if _estoque_xml_item_classificacao_key(item)
+                }
+            )
+            pre_vinculo_frete = pre_vinculos_por_nota.get(_as_str(row.get("nota_key"))) or {}
+            rota_sugerida = (
+                _as_str(pre_vinculo_frete.get("carga_rota"))
+                or _as_str(pre_vinculo_frete.get("carga_cidades"))
+                or _as_str(pre_vinculo_frete.get("carga_cidade"))
+            )
+            row.update(
+                {
+                    "data_emissao_normalizada": _normalizar_data_documento(row.get("data_emissao")),
+                    "frete_sugerido_id": _as_int(pre_vinculo_frete.get("frete_id"), 0) or None,
+                    "frete_sugerido_nome": _as_str(pre_vinculo_frete.get("frete_nome")),
+                    "frete_sugerido_status": _as_str(pre_vinculo_frete.get("frete_status")),
+                    "rota_sugerida": rota_sugerida,
+                    "pre_vinculo_status": _as_str(pre_vinculo_frete.get("pre_vinculo_status")),
+                    "classificacao_sugerida": sugestao_classificacao,
+                    "grupos_itens": grupos_itens,
+                }
+            )
+            destino_manutencao = destinos_manutencao.get(_as_str(row.get("nota_key")))
+            if destino_manutencao:
+                row["status"] = "direcionado_manutencao"
+                row["destino_importacao"] = "manutencao"
+                row["pre_lancamento_manutencao_id"] = _as_int(
+                    destino_manutencao.get("id"),
+                    0,
+                )
+            rows.append(row)
     finally:
         cur.close()
         conn.close()
 
     if status_filtro == "pendente":
-        rows = [row for row in rows if row.get("status") != "consolidado"]
-    elif status_filtro in {"parcial", "consolidado"}:
+        rows = [
+            row for row in rows
+            if row.get("status") not in {"consolidado", "direcionado_manutencao"}
+        ]
+    elif status_filtro in {"parcial", "consolidado", "direcionado_manutencao"}:
         rows = [row for row in rows if row.get("status") == status_filtro]
     rows.sort(
         key=lambda row: (
@@ -14083,9 +16202,87 @@ def listar_importacoes_xml_estoque():
                 "saidas": sum(1 for row in rows if row.get("tipo_movimento") == "saida"),
                 "itens_pendentes": sum(_as_int(row.get("itens_pendentes"), 0) for row in rows),
                 "lote_maximo": _ESTOQUE_XML_LOTE_MAXIMO,
+                "auto_manutencao": auto_manutencao,
             },
         }
     )
+
+
+@app.route("/api/estoque/importacoes-xml/classificacao-regras", methods=["POST"])
+def criar_regras_classificacao_xml():
+    data = request.get_json(silent=True) or {}
+    chaves = [
+        _as_str(chave)
+        for chave in (data.get("chaves") or [])
+        if _as_str(chave)
+    ]
+    if not chaves:
+        return jsonify({"erro": "selecione ao menos uma NF-e"}), 400
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    try:
+        notas_map = _estoque_xml_carregar_notas(cur)
+        notas = [notas_map[chave] for chave in chaves if chave in notas_map]
+        registradas = _estoque_xml_registrar_regras_classificacao(
+            cur,
+            notas,
+            data.get("destino"),
+            data.get("escopo"),
+            usuario=_usuario_ator_req(),
+        )
+        conn.commit()
+        return jsonify({"ok": True, "regras_registradas": registradas})
+    except ValueError as exc:
+        conn.rollback()
+        return jsonify({"erro": str(exc)}), 400
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.route(
+    "/api/estoque/importacoes-xml/classificacao-regras/<int:regra_id>",
+    methods=["DELETE"],
+)
+def desativar_regra_classificacao_xml(regra_id):
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    cur.execute(
+        """
+        SELECT escopo, regra_chave, destino_importacao
+        FROM estoque_xml_classificacao_regras
+        WHERE id=%s
+        """,
+        (regra_id,),
+    )
+    regra = cur.fetchone() or {}
+    cur.execute(
+        """
+        UPDATE estoque_xml_classificacao_regras
+        SET ativo=0, atualizado_em=NOW()
+        WHERE id=%s
+        """,
+        (regra_id,),
+    )
+    alteradas = cur.rowcount
+    if (
+        _as_str(regra.get("escopo")) == "empresa"
+        and _as_str(regra.get("destino_importacao")) == "manutencao"
+    ):
+        cur.execute(
+            """
+            UPDATE estoque_xml_fornecedor_regras
+            SET destino_importacao='inativo', atualizado_em=NOW()
+            WHERE emitente_hash=%s
+            """,
+            (_as_str(regra.get("regra_chave")),),
+        )
+    conn.commit()
+    cur.close()
+    conn.close()
+    if not alteradas:
+        return jsonify({"erro": "regra nao encontrada"}), 404
+    return jsonify({"ok": True})
 
 
 @app.route("/api/estoque/importacoes-xml/detalhe", methods=["GET"])
@@ -14100,6 +16297,14 @@ def detalhar_importacao_xml_estoque():
         nota = notas.get(nota_key)
         if not nota:
             return jsonify({"erro": "importacao XML nao encontrada"}), 404
+        destino_manutencao = _estoque_xml_destinos_manutencao(cur, [nota_key]).get(nota_key)
+        if destino_manutencao:
+            return jsonify(
+                {
+                    "erro": "esta NF-e ja foi direcionada para manutencao",
+                    "pre_lancamento_id": _as_int(destino_manutencao.get("id"), 0),
+                }
+            ), 409
         referencias = _estoque_xml_referencias_lancadas(cur)
         preview = _estoque_xml_preview(cur, nota, referencias)
         if not preview.get("itens"):
@@ -14144,6 +16349,7 @@ def preparar_lote_importacoes_xml_estoque():
     try:
         notas = _estoque_xml_carregar_notas(cur)
         referencias = _estoque_xml_referencias_lancadas(cur)
+        destinos_manutencao = _estoque_xml_destinos_manutencao(cur, chaves)
         for nota_key in chaves:
             nota = notas.get(nota_key)
             if not nota:
@@ -14152,6 +16358,16 @@ def preparar_lote_importacoes_xml_estoque():
                         "chave": nota_key,
                         "numero_nota": "",
                         "erro": "importacao XML nao encontrada",
+                    }
+                )
+                continue
+            destino_manutencao = destinos_manutencao.get(nota_key)
+            if destino_manutencao:
+                erros.append(
+                    {
+                        "chave": nota_key,
+                        "numero_nota": _as_str((nota.get("canonicos") or [{}])[0].get("numero_nota")),
+                        "erro": "nota ja direcionada para manutencao",
                     }
                 )
                 continue
@@ -14309,6 +16525,966 @@ def listar_fretes_importacao_xml_estoque():
         conn.close()
 
 
+def _estoque_xml_nota_vinculo_frete_publica(cur, nota, referencias_lancadas, frete_contexto_id=0):
+    resumo = _estoque_xml_nota_publica(nota, referencias_lancadas)
+    nota_key = _as_str(resumo.get("nota_key"))
+    transporte = _estoque_xml_extrair_transporte(cur, nota)
+    veiculo_resolvido = _estoque_xml_resolver_veiculo(cur, transporte)
+    veiculo_id_xml = _as_int(veiculo_resolvido.get("veiculo_id"), 0)
+    cur.execute(
+        """
+        SELECT *
+        FROM estoque_xml_frete_pre_vinculos
+        WHERE nota_key=%s
+        LIMIT 1
+        """,
+        (nota_key,),
+    )
+    pre_vinculo = cur.fetchone() or {}
+    pre_frete_id = _as_int(pre_vinculo.get("frete_id"), 0)
+    frete_sugestao = {}
+    if pre_frete_id > 0:
+        frete_sugestao = {
+            "frete_id": pre_frete_id,
+            "confianca": "manual" if _as_str(pre_vinculo.get("origem_frete")).startswith("selecionado") else "alta",
+            "motivo": "Esta nota ja possui pre-vinculo com frete.",
+            "candidatos_total": 1,
+        }
+    else:
+        frete_sugestao = _estoque_xml_sugerir_frete(cur, transporte, veiculo_id_xml)
+
+    frete_sugerido_id = _as_int(frete_sugestao.get("frete_id"), 0)
+    frete_sugerido = _buscar_frete_detalhado(cur, frete_sugerido_id) if frete_sugerido_id > 0 else None
+    return {
+        **resumo,
+        "veiculo_id": (
+            _as_int(pre_vinculo.get("veiculo_id"), 0)
+            or veiculo_id_xml
+            or None
+        ),
+        "placa_xml": _as_str(transporte.get("placa")),
+        "mapa_xml": _as_str(transporte.get("mapa")),
+        "numero_caminhao_xml": _as_str(transporte.get("numero_caminhao")),
+        "transporte_xml": transporte,
+        "pre_vinculo": {
+            "id": _as_int(pre_vinculo.get("id"), 0) or None,
+            "frete_id": pre_frete_id or None,
+            "status": _as_str(pre_vinculo.get("status")) or "pendente",
+            "origem_frete": _as_str(pre_vinculo.get("origem_frete")),
+            "origem_veiculo": _as_str(pre_vinculo.get("origem_veiculo")),
+            "atualizado_em": _fmt_dt(pre_vinculo.get("atualizado_em")),
+        },
+        "frete_sugerido_id": frete_sugerido_id or None,
+        "sugestao_confianca": _as_str(frete_sugestao.get("confianca")),
+        "sugestao_motivo": _as_str(frete_sugestao.get("motivo")),
+        "frete_sugerido_nome": _as_str((frete_sugerido or {}).get("nome")),
+        "frete_sugerido_status": _as_str((frete_sugerido or {}).get("status")),
+        "sugerido_para_frete": bool(
+            frete_contexto_id and frete_sugerido_id == _as_int(frete_contexto_id, 0)
+        ),
+        "pre_vinculado_este_frete": bool(
+            frete_contexto_id and pre_frete_id == _as_int(frete_contexto_id, 0)
+        ),
+    }
+
+
+@app.route("/api/fretes/<int:id>/xml-pendentes", methods=["GET"])
+def listar_xml_pendentes_frete(id):
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    try:
+        frete = _buscar_frete_detalhado(cur, id)
+        if not frete:
+            return jsonify({"erro": "frete nao encontrado"}), 404
+
+        incluir_todas = _as_str(request.args.get("todas")).lower() in {"1", "true", "sim"}
+        limite_outras = max(0, min(_as_int(request.args.get("limite_outras"), 50), 1000))
+        filtro_vinculo = _as_str(request.args.get("vinculo") or "todos").lower()
+        if filtro_vinculo not in {
+            "todos",
+            "vinculados_frete",
+            "sugeridos",
+            "sem_vinculo",
+            "vinculados_outro",
+        }:
+            filtro_vinculo = "todos"
+        busca = _estoque_xml_normalizar_texto(
+            request.args.get("q") or request.args.get("busca")
+        )
+        filtro_data = _normalizar_data_documento(
+            request.args.get("data") or request.args.get("data_emissao")
+        )
+        filtro_rota = _estoque_xml_normalizar_texto(
+            request.args.get("rota") or request.args.get("frete") or request.args.get("rota_frete")
+        )
+        notas = _estoque_xml_carregar_notas(cur)
+        referencias = _estoque_xml_referencias_lancadas(cur)
+        destinos_manutencao = _estoque_xml_destinos_manutencao(cur, notas.keys())
+        cur.execute(
+            """
+            SELECT v.*, f.nome AS frete_nome, f.status AS frete_status
+            FROM estoque_xml_frete_vinculos v
+            LEFT JOIN fretes f ON f.id = v.frete_id
+            """
+        )
+        vinculadas_por_nota = {
+            _as_str(row.get("nota_key")): row
+            for row in (cur.fetchall() or [])
+            if _as_str(row.get("nota_key"))
+        }
+        cur.execute(
+            """
+            SELECT p.*, f.nome AS frete_nome, f.status AS frete_status
+            FROM estoque_xml_frete_pre_vinculos p
+            LEFT JOIN fretes f ON f.id = p.frete_id
+            WHERE COALESCE(p.status, 'pendente') NOT IN ('confirmado_sem_frete')
+            """
+        )
+        pre_por_nota = {
+            _as_str(row.get("nota_key")): row
+            for row in (cur.fetchall() or [])
+            if _as_str(row.get("nota_key"))
+        }
+
+        placa_frete = _estoque_xml_placa_normalizada(frete.get("veiculo_placa"))
+        numeros_frete = {
+            numero
+            for numero in (
+                _estoque_xml_numero_veiculo(frete.get("veiculo_nome")),
+                _estoque_xml_numero_veiculo(frete.get("carga_veiculo_numero")),
+            )
+            if numero
+        }
+        veiculo_id_frete = _as_int(frete.get("veiculo_id"), 0)
+
+        pendentes = []
+        outras = []
+        contadores_vinculo = {
+            "vinculado_frete": 0,
+            "sugerido_frete": 0,
+            "sem_vinculo": 0,
+            "vinculado_outro": 0,
+            "total": 0,
+        }
+        for nota_key, nota in notas.items():
+            if nota_key in destinos_manutencao:
+                continue
+            resumo = _estoque_xml_nota_publica(nota, referencias)
+            if resumo.get("tipo_movimento") != "saida":
+                continue
+            data_emissao_normalizada = _normalizar_data_documento(resumo.get("data_emissao"))
+            bate_data = bool(filtro_data and data_emissao_normalizada == filtro_data)
+            vinculo_final = vinculadas_por_nota.get(nota_key) or {}
+            final_frete_id = _as_int(vinculo_final.get("frete_id"), 0)
+            final_vinculado_este = final_frete_id == id
+            final_vinculado_outro = final_frete_id > 0 and final_frete_id != id
+            transporte = _estoque_xml_extrair_transporte(cur, nota)
+            placa_xml = _estoque_xml_placa_normalizada(transporte.get("placa"))
+            numero_xml = _estoque_xml_numero_veiculo(transporte.get("numero_caminhao"))
+            pre_vinculo = pre_por_nota.get(nota_key) or {}
+            pre_status = (_as_str(pre_vinculo.get("status")) or "pendente").lower()
+            pre_inativo = pre_status in {
+                "cancelado",
+                "cancelada",
+                "descartado",
+                "descartada",
+                "ignorado",
+                "ignorada",
+                "dispensado",
+            }
+            pre_frete_id_original = _as_int(pre_vinculo.get("frete_id"), 0)
+            pre_frete_id = 0 if pre_inativo else pre_frete_id_original
+            pre_vinculado_este = pre_frete_id == id
+            pre_vinculado_outro = pre_frete_id > 0 and pre_frete_id != id
+            xml_bate_frete = bool(
+                (placa_xml and placa_frete and placa_xml == placa_frete)
+                or (numero_xml and numero_xml in numeros_frete)
+                or (
+                    veiculo_id_frete > 0
+                    and _as_int(pre_vinculo.get("veiculo_id"), 0) == veiculo_id_frete
+                )
+            )
+            texto_busca = _estoque_xml_normalizar_texto(
+                " ".join(
+                    [
+                        _as_str(resumo.get("numero_nota")),
+                        _as_str(resumo.get("chave_nfe")),
+                        _as_str(resumo.get("emitente_nome")),
+                        _as_str(resumo.get("destinatario_nome")),
+                        _as_str(transporte.get("placa")),
+                        _as_str(transporte.get("mapa")),
+                        _as_str(transporte.get("numero_caminhao")),
+                    ]
+                )
+            )
+            bate_busca = bool(busca and busca in texto_busca)
+            if resumo.get("status") == "consolidado" and not (
+                final_vinculado_este
+                or final_vinculado_outro
+                or pre_vinculado_este
+                or pre_vinculado_outro
+                or xml_bate_frete
+                or bate_busca
+                or bate_data
+                or filtro_rota
+                or filtro_vinculo == "sem_vinculo"
+                or incluir_todas
+            ):
+                continue
+            vinculado_este = final_vinculado_este or pre_vinculado_este
+            vinculado_outro = final_vinculado_outro or pre_vinculado_outro
+            if vinculado_este:
+                vinculo_estado = "vinculado_frete"
+            elif vinculado_outro:
+                vinculo_estado = "vinculado_outro"
+            elif xml_bate_frete:
+                vinculo_estado = "sugerido_frete"
+            else:
+                vinculo_estado = "sem_vinculo"
+
+            frete_vinculado_id = final_frete_id or pre_frete_id
+            frete_vinculado_nome = (
+                _as_str(vinculo_final.get("frete_nome"))
+                or _as_str(pre_vinculo.get("frete_nome"))
+                or (_as_str(frete.get("nome")) if frete_vinculado_id == id else "")
+                or (f"Frete #{frete_vinculado_id}" if frete_vinculado_id > 0 else "")
+            )
+            frete_vinculado_status = (
+                _as_str(vinculo_final.get("frete_status"))
+                or _as_str(pre_vinculo.get("frete_status"))
+                or (_as_str(frete.get("status")) if frete_vinculado_id == id else "")
+            )
+            frete_sugerido_id = frete_vinculado_id if frete_vinculado_id > 0 else (id if xml_bate_frete else 0)
+            rota_sugerida = _as_str(frete.get("nome")) if frete_sugerido_id == id else (
+                frete_vinculado_nome if frete_vinculado_id > 0 else ""
+            )
+            texto_rota = _estoque_xml_normalizar_texto(
+                " ".join(
+                    [
+                        rota_sugerida,
+                        frete_vinculado_nome,
+                        _as_str(frete.get("carga_rota")),
+                        _as_str(frete.get("carga_cidades")),
+                        _as_str(frete.get("cidade")),
+                        _as_str(transporte.get("mapa")),
+                    ]
+                )
+            )
+            bate_rota = bool(filtro_rota and filtro_rota in texto_rota)
+            if filtro_data and not bate_data:
+                continue
+            if filtro_rota and not bate_rota:
+                continue
+
+            contadores_vinculo[vinculo_estado] = contadores_vinculo.get(vinculo_estado, 0) + 1
+            contadores_vinculo["total"] += 1
+
+            if filtro_vinculo == "vinculados_frete" and vinculo_estado != "vinculado_frete":
+                continue
+            if filtro_vinculo == "sugeridos" and vinculo_estado != "sugerido_frete":
+                continue
+            if filtro_vinculo == "sem_vinculo" and vinculo_estado != "sem_vinculo":
+                continue
+            if filtro_vinculo == "vinculados_outro" and vinculo_estado != "vinculado_outro":
+                continue
+
+            if not (
+                filtro_vinculo != "todos"
+                or vinculado_este
+                or xml_bate_frete
+                or bate_busca
+                or bate_data
+                or bate_rota
+                or incluir_todas
+                or len(outras) < limite_outras
+            ):
+                continue
+            if (
+                vinculo_estado in {"sem_vinculo", "vinculado_outro"}
+                and not bate_busca
+                and not bate_data
+                and not bate_rota
+                and filtro_vinculo == "todos"
+                and len(outras) >= limite_outras
+            ):
+                continue
+
+            if final_vinculado_este:
+                sugestao_motivo = "Esta nota ja esta vinculada definitivamente neste frete."
+            elif pre_vinculado_este:
+                sugestao_motivo = "Esta nota ja esta pre-vinculada neste frete."
+            elif final_vinculado_outro:
+                sugestao_motivo = (
+                    f"Esta nota ja esta vinculada no {frete_vinculado_nome or f'frete #{final_frete_id}'}."
+                )
+            elif pre_vinculado_outro:
+                sugestao_motivo = (
+                    f"Esta nota esta pre-vinculada no {frete_vinculado_nome or f'frete #{pre_frete_id}'}; "
+                    "vincular aqui move o pre-vinculo."
+                )
+            elif xml_bate_frete:
+                sugestao_motivo = "O XML informou placa, mapa ou caminhao compativel com este frete."
+            elif bate_busca:
+                sugestao_motivo = "Encontrada pela busca informada."
+            else:
+                sugestao_motivo = ""
+            info = {
+                **resumo,
+                "data_emissao_normalizada": data_emissao_normalizada,
+                "veiculo_id": _as_int(pre_vinculo.get("veiculo_id"), 0) or (veiculo_id_frete if xml_bate_frete else None),
+                "placa_xml": _as_str(transporte.get("placa")),
+                "mapa_xml": _as_str(transporte.get("mapa")),
+                "numero_caminhao_xml": _as_str(transporte.get("numero_caminhao")),
+                "transporte_xml": transporte,
+                "pre_vinculo": {
+                    "id": _as_int(pre_vinculo.get("id"), 0) or None,
+                    "frete_id": pre_frete_id_original or None,
+                    "status": pre_status or "pendente",
+                    "origem_frete": _as_str(pre_vinculo.get("origem_frete")),
+                    "origem_veiculo": _as_str(pre_vinculo.get("origem_veiculo")),
+                    "atualizado_em": _fmt_dt(pre_vinculo.get("atualizado_em")),
+                },
+                "frete_sugerido_id": frete_sugerido_id or None,
+                "sugestao_confianca": "alta" if (vinculado_este or xml_bate_frete) else "",
+                "sugestao_motivo": sugestao_motivo,
+                "frete_sugerido_nome": _as_str(frete.get("nome")) if frete_sugerido_id == id else (
+                    frete_vinculado_nome if frete_vinculado_id > 0 else ""
+                ),
+                "rota_sugerida": rota_sugerida,
+                "frete_sugerido_status": _as_str(frete.get("status")) if frete_sugerido_id == id else frete_vinculado_status,
+                "frete_vinculado_id": frete_vinculado_id or None,
+                "frete_vinculado_nome": frete_vinculado_nome,
+                "frete_vinculado_status": frete_vinculado_status,
+                "vinculo_estado": vinculo_estado,
+                "vinculo_final": bool(final_frete_id > 0),
+                "vinculo_final_este_frete": bool(final_vinculado_este),
+                "vinculo_final_outro_frete": bool(final_vinculado_outro),
+                "vinculado_este_frete": bool(vinculado_este),
+                "vinculado_outro_frete": bool(vinculado_outro),
+                "pode_desvincular": bool(vinculado_este),
+                "sugerido_para_frete": bool(xml_bate_frete and not vinculado_este and not vinculado_outro),
+                "pre_vinculado_este_frete": bool(pre_vinculado_este),
+                "pre_vinculado_outro_frete": bool(pre_vinculado_outro),
+                "pre_vinculo_inativo": bool(pre_inativo),
+                "busca_bateu": bool(bate_busca),
+            }
+            if vinculado_este or xml_bate_frete:
+                pendentes.append(info)
+            else:
+                outras.append(info)
+
+        pendentes.extend(outras)
+
+        pendentes.sort(
+            key=lambda row: (
+                {
+                    "vinculado_frete": 0,
+                    "sugerido_frete": 1,
+                    "sem_vinculo": 2,
+                    "vinculado_outro": 3,
+                }.get(_as_str(row.get("vinculo_estado")), 4),
+                row.get("data_emissao") or "",
+                row.get("numero_nota") or "",
+            )
+        )
+        return jsonify(
+            {
+                "ok": True,
+                "frete": frete,
+                "notas": pendentes,
+                "outras_limitadas": len(outras),
+                "busca": busca,
+                "incluindo_todas": bool(incluir_todas),
+                "filtro_vinculo": filtro_vinculo,
+                "filtro_data": filtro_data,
+                "filtro_rota": filtro_rota,
+                "contadores_vinculo": contadores_vinculo,
+            }
+        )
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.route("/api/fretes/<int:id>/xml-pendentes/vincular", methods=["POST"])
+def vincular_xml_pendente_frete(id):
+    usuario = _usuario_ator_req()
+    data = request.get_json(silent=True) or {}
+    nota_key = _as_str(data.get("nota_key") or data.get("chave"))
+    permitir_transferencia = _as_bool(
+        data.get("transferir", data.get("mover", data.get("forcar_transferencia"))),
+        False,
+    )
+    if not nota_key:
+        return jsonify({"erro": "nota XML nao informada"}), 400
+
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    try:
+        frete = _buscar_frete_detalhado(cur, id)
+        if not frete:
+            return jsonify({"erro": "frete nao encontrado"}), 404
+        if frete.get("arquivado"):
+            return jsonify({"erro": "o frete esta arquivado; escolha um frete ativo"}), 409
+
+        notas = _estoque_xml_carregar_notas(cur, nota_key)
+        nota = notas.get(nota_key)
+        if not nota:
+            chave = _normalizar_chave_acesso_nfe(nota_key)
+            nota = notas.get(chave)
+            if nota:
+                nota_key = chave
+        if not nota:
+            return jsonify({"erro": "nota XML nao encontrada"}), 404
+        nota_key = _as_str(nota.get("nota_key")) or nota_key
+
+        if _estoque_xml_destinos_manutencao(cur, [nota_key]).get(nota_key):
+            return jsonify({"erro": "esta NF-e ja foi direcionada para manutencao"}), 409
+
+        referencias = _estoque_xml_referencias_lancadas(cur)
+        resumo = _estoque_xml_nota_publica(nota, referencias)
+        if resumo.get("tipo_movimento") != "saida":
+            return jsonify({"erro": "somente XML de saida pode ser vinculado ao frete"}), 400
+
+        canonicos = nota.get("canonicos") or []
+        base = canonicos[0] if canonicos else {}
+        chave_nfe = _normalizar_chave_acesso_nfe(base.get("chave_nfe"))
+        numero_nota = _as_str(base.get("numero_nota"))
+        transporte = _estoque_xml_extrair_transporte(cur, nota)
+        veiculo_resolvido = _estoque_xml_resolver_veiculo(cur, transporte)
+        veiculo_id_xml = _as_int(veiculo_resolvido.get("veiculo_id"), 0)
+        veiculo_id_vinculo = _as_int(frete.get("veiculo_id"), 0) or veiculo_id_xml or None
+        origem_veiculo = "frete_existente" if _as_int(frete.get("veiculo_id"), 0) else (
+            _as_str(veiculo_resolvido.get("origem")) or "nao_identificado"
+        )
+        frete_sugestao = _estoque_xml_sugerir_frete(
+            cur,
+            transporte,
+            _as_int(veiculo_id_vinculo, 0),
+        )
+        pendentes = [
+            row
+            for row in canonicos
+            if _as_int(row.get("id"), 0) not in referencias
+        ]
+        rota_registrada = (
+            _as_str(frete.get("carga_rota"))
+            or _as_str(frete.get("carga_cidades"))
+            or _as_str(frete.get("cidade"))
+            or _as_str(frete.get("nome"))
+        )
+        quantidade_total = sum(
+            _as_float(row.get("quantidade"), 0.0)
+            for row in canonicos
+        )
+        valor_total_nota = _as_float(base.get("valor_total_nota"), 0.0)
+        chave_busca = chave_nfe or _normalizar_chave_acesso_nfe(nota_key)
+
+        cur.execute(
+            """
+            SELECT v.*, f.nome AS frete_nome, f.status AS frete_status
+            FROM estoque_xml_frete_vinculos v
+            LEFT JOIN fretes f ON f.id = v.frete_id
+            WHERE v.nota_key=%s OR (%s<>'' AND v.chave_nfe=%s)
+            LIMIT 1
+            FOR UPDATE
+            """,
+            (nota_key, chave_busca, chave_busca),
+        )
+        vinculo_final = cur.fetchone()
+        if vinculo_final:
+            frete_origem_id = _as_int(vinculo_final.get("frete_id"), 0)
+            if frete_origem_id == id:
+                info = _estoque_xml_nota_vinculo_frete_publica(
+                    cur,
+                    nota,
+                    referencias,
+                    frete_contexto_id=id,
+                )
+                return jsonify({"ok": True, "modo": "ja_vinculado", "nota": info})
+            if not permitir_transferencia:
+                return jsonify(
+                    {
+                        "erro": (
+                            "esta nota de saida ja esta vinculada ao frete "
+                            f"#{frete_origem_id}; confirme a transferencia para mover."
+                        ),
+                        "requer_transferencia": True,
+                        "frete_origem_id": frete_origem_id or None,
+                        "frete_origem_nome": _as_str(vinculo_final.get("frete_nome")),
+                    }
+                ), 409
+
+            frete_origem = (
+                _buscar_frete_detalhado(cur, frete_origem_id)
+                if frete_origem_id > 0
+                else None
+            )
+            cur.execute(
+                """
+                UPDATE estoque_xml_frete_vinculos
+                SET nota_key=%s,
+                    chave_nfe=%s,
+                    numero_nota=%s,
+                    frete_id=%s,
+                    veiculo_id=%s,
+                    carga_id=%s,
+                    rota_registrada=%s,
+                    placa_xml=%s,
+                    mapa_xml=%s,
+                    numero_caminhao_xml=%s,
+                    vinculacao_origem='kanban_transferido',
+                    frete_sugerido_id=%s,
+                    sugestao_confianca=%s,
+                    emitente_nome=%s,
+                    destinatario_nome=%s,
+                    data_emissao=%s,
+                    itens_total=%s,
+                    quantidade_total=%s,
+                    valor_total_nota=%s,
+                    usuario_registro=%s
+                WHERE id=%s
+                """,
+                (
+                    nota_key,
+                    chave_nfe,
+                    numero_nota,
+                    id,
+                    veiculo_id_vinculo,
+                    _as_int(frete.get("carga_id"), 0) or None,
+                    rota_registrada,
+                    _as_str(transporte.get("placa")),
+                    _as_str(transporte.get("mapa")),
+                    _as_str(transporte.get("numero_caminhao")),
+                    _as_int(frete_sugestao.get("frete_id"), 0) or None,
+                    _as_str(frete_sugestao.get("confianca")),
+                    _as_str(base.get("emitente_nome")),
+                    _as_str(base.get("destinatario_nome")),
+                    _as_date(base.get("data_emissao")),
+                    len(canonicos),
+                    quantidade_total,
+                    valor_total_nota,
+                    usuario,
+                    _as_int(vinculo_final.get("id"), 0),
+                ),
+            )
+            cur.execute(
+                """
+                INSERT INTO estoque_xml_frete_pre_vinculos (
+                    nota_key, chave_nfe, numero_nota, veiculo_id, frete_id,
+                    placa_xml, mapa_xml, numero_caminhao_xml,
+                    origem_veiculo, origem_frete, status, detalhes,
+                    dispensa_frete, criado_em, atualizado_em, confirmado_em
+                )
+                VALUES (
+                    %s, %s, %s, %s, %s, %s, %s, %s,
+                    %s, 'transferido_kanban', 'confirmado', %s,
+                    0, NOW(), NOW(), NOW()
+                )
+                ON DUPLICATE KEY UPDATE
+                    chave_nfe=VALUES(chave_nfe),
+                    numero_nota=VALUES(numero_nota),
+                    veiculo_id=VALUES(veiculo_id),
+                    frete_id=VALUES(frete_id),
+                    placa_xml=VALUES(placa_xml),
+                    mapa_xml=VALUES(mapa_xml),
+                    numero_caminhao_xml=VALUES(numero_caminhao_xml),
+                    origem_veiculo=VALUES(origem_veiculo),
+                    origem_frete='transferido_kanban',
+                    status='confirmado',
+                    detalhes=VALUES(detalhes),
+                    dispensa_frete=0,
+                    atualizado_em=NOW(),
+                    confirmado_em=COALESCE(confirmado_em, NOW())
+                """,
+                (
+                    nota_key,
+                    chave_nfe,
+                    numero_nota,
+                    veiculo_id_vinculo,
+                    id,
+                    _as_str(transporte.get("placa")),
+                    _as_str(transporte.get("mapa")),
+                    _as_str(transporte.get("numero_caminhao")),
+                    origem_veiculo,
+                    f"Vinculo transferido pelo Kanban do frete #{frete_origem_id} para o frete #{id}.",
+                ),
+            )
+            if frete_origem:
+                _registrar_historico_frete(
+                    cur,
+                    frete_origem_id,
+                    "nota_saida_transferida_origem",
+                    usuario,
+                    frete_origem,
+                    {
+                        **frete_origem,
+                        "numero_nota": numero_nota,
+                        "chave_nfe": chave_nfe,
+                        "frete_destino_id": id,
+                        "frete_destino_nome": _as_str(frete.get("nome")) or f"Frete #{id}",
+                    },
+                )
+            historico_depois = {
+                **frete,
+                "numero_nota": numero_nota,
+                "chave_nfe": chave_nfe,
+                "rota_registrada": rota_registrada,
+                "itens_total": len(canonicos),
+                "placa_xml": _as_str(transporte.get("placa")),
+                "mapa_xml": _as_str(transporte.get("mapa")),
+                "vinculacao_origem": "kanban_transferido",
+                "frete_origem_id": frete_origem_id,
+                "frete_origem_nome": _as_str((frete_origem or {}).get("nome")) or _as_str(vinculo_final.get("frete_nome")) or f"Frete #{frete_origem_id}",
+            }
+            _registrar_historico_frete(
+                cur,
+                id,
+                "nota_saida_transferida_destino",
+                usuario,
+                frete,
+                historico_depois,
+            )
+            conn.commit()
+            info = _estoque_xml_nota_vinculo_frete_publica(
+                cur,
+                nota,
+                referencias,
+                frete_contexto_id=id,
+            )
+            return jsonify(
+                {
+                    "ok": True,
+                    "modo": "vinculo_transferido",
+                    "nota": info,
+                    "frete_origem_id": frete_origem_id or None,
+                }
+            )
+
+        if pendentes:
+            cur.execute(
+                """
+                INSERT INTO estoque_xml_frete_pre_vinculos (
+                    nota_key, chave_nfe, numero_nota, veiculo_id, frete_id,
+                    placa_xml, mapa_xml, numero_caminhao_xml,
+                    origem_veiculo, origem_frete, status, detalhes,
+                    criado_em, atualizado_em
+                )
+                VALUES (
+                    %s, %s, %s, %s, %s, %s, %s, %s,
+                    %s, 'selecionado_kanban', 'pendente', %s,
+                    NOW(), NOW()
+                )
+                ON DUPLICATE KEY UPDATE
+                    chave_nfe=VALUES(chave_nfe),
+                    numero_nota=VALUES(numero_nota),
+                    veiculo_id=VALUES(veiculo_id),
+                    frete_id=VALUES(frete_id),
+                    placa_xml=VALUES(placa_xml),
+                    mapa_xml=VALUES(mapa_xml),
+                    numero_caminhao_xml=VALUES(numero_caminhao_xml),
+                    origem_veiculo=VALUES(origem_veiculo),
+                    origem_frete='selecionado_kanban',
+                    status='pendente',
+                    detalhes=VALUES(detalhes),
+                    dispensa_frete=0,
+                    atualizado_em=NOW()
+                """,
+                (
+                    nota_key,
+                    chave_nfe,
+                    numero_nota,
+                    veiculo_id_vinculo,
+                    id,
+                    _as_str(transporte.get("placa")),
+                    _as_str(transporte.get("mapa")),
+                    _as_str(transporte.get("numero_caminhao")),
+                    origem_veiculo,
+                    f"Pre-vinculo realizado pelo Kanban no frete #{id}.",
+                ),
+            )
+            modo = "pre_vinculo"
+        else:
+            cur.execute(
+                """
+                INSERT INTO estoque_xml_frete_vinculos (
+                    nota_key, chave_nfe, numero_nota, frete_id, veiculo_id, carga_id,
+                    rota_registrada, placa_xml, mapa_xml,
+                    numero_caminhao_xml, vinculacao_origem,
+                    frete_sugerido_id, sugestao_confianca,
+                    emitente_nome, destinatario_nome, data_emissao,
+                    itens_total, quantidade_total, valor_total_nota,
+                    usuario_registro, criado_em
+                )
+                VALUES (
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    'kanban_manual', %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW()
+                )
+                """,
+                (
+                    nota_key,
+                    chave_nfe,
+                    numero_nota,
+                    id,
+                    veiculo_id_vinculo,
+                    _as_int(frete.get("carga_id"), 0) or None,
+                    rota_registrada,
+                    _as_str(transporte.get("placa")),
+                    _as_str(transporte.get("mapa")),
+                    _as_str(transporte.get("numero_caminhao")),
+                    _as_int(frete_sugestao.get("frete_id"), 0) or None,
+                    _as_str(frete_sugestao.get("confianca")),
+                    _as_str(base.get("emitente_nome")),
+                    _as_str(base.get("destinatario_nome")),
+                    _as_date(base.get("data_emissao")),
+                    len(canonicos),
+                    quantidade_total,
+                    valor_total_nota,
+                    usuario,
+                ),
+            )
+            cur.execute(
+                """
+                INSERT INTO estoque_xml_frete_pre_vinculos (
+                    nota_key, chave_nfe, numero_nota, veiculo_id, frete_id,
+                    placa_xml, mapa_xml, numero_caminhao_xml,
+                    origem_veiculo, origem_frete, status,
+                    criado_em, atualizado_em, confirmado_em
+                )
+                VALUES (
+                    %s, %s, %s, %s, %s, %s, %s, %s,
+                    %s, 'selecionado_kanban', 'confirmado',
+                    NOW(), NOW(), NOW()
+                )
+                ON DUPLICATE KEY UPDATE
+                    veiculo_id=VALUES(veiculo_id),
+                    frete_id=VALUES(frete_id),
+                    origem_veiculo=VALUES(origem_veiculo),
+                    origem_frete='selecionado_kanban',
+                    status='confirmado',
+                    atualizado_em=NOW(),
+                    confirmado_em=COALESCE(confirmado_em, NOW())
+                """,
+                (
+                    nota_key,
+                    chave_nfe,
+                    numero_nota,
+                    veiculo_id_vinculo,
+                    id,
+                    _as_str(transporte.get("placa")),
+                    _as_str(transporte.get("mapa")),
+                    _as_str(transporte.get("numero_caminhao")),
+                    origem_veiculo,
+                ),
+            )
+            modo = "vinculo_definitivo"
+
+        if modo == "vinculo_definitivo":
+            _estoque_xml_atualizar_cidade_frete(cur, id, nota)
+        historico_depois = {
+            **frete,
+            "numero_nota": numero_nota,
+            "chave_nfe": chave_nfe,
+            "placa_xml": _as_str(transporte.get("placa")),
+            "mapa_xml": _as_str(transporte.get("mapa")),
+            "rota_registrada": rota_registrada,
+            "itens_total": len(canonicos),
+        }
+        _registrar_historico_frete(
+            cur,
+            id,
+            "nota_saida_pre_vinculada" if modo == "pre_vinculo" else "nota_saida_vinculada",
+            usuario,
+            frete,
+            historico_depois,
+        )
+        conn.commit()
+
+        info = _estoque_xml_nota_vinculo_frete_publica(
+            cur,
+            nota,
+            referencias,
+            frete_contexto_id=id,
+        )
+        return jsonify({"ok": True, "modo": modo, "nota": info})
+    except mysql.connector.IntegrityError:
+        conn.rollback()
+        return jsonify({"erro": "esta nota ja foi vinculada por outro processo"}), 409
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.route("/api/fretes/<int:id>/xml-pendentes/desvincular", methods=["POST"])
+def desvincular_xml_pendente_frete(id):
+    usuario = _usuario_ator_req()
+    data = request.get_json(silent=True) or {}
+    nota_key_req = _as_str(data.get("nota_key") or data.get("chave"))
+    if not nota_key_req:
+        return jsonify({"erro": "nota XML nao informada"}), 400
+
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    try:
+        frete = _buscar_frete_detalhado(cur, id)
+        if not frete:
+            return jsonify({"erro": "frete nao encontrado"}), 404
+
+        nota_key = nota_key_req
+        nota = {}
+        notas = _estoque_xml_carregar_notas(cur, nota_key_req)
+        if nota_key_req in notas:
+            nota = notas[nota_key_req]
+        else:
+            chave_req = _normalizar_chave_acesso_nfe(nota_key_req)
+            if chave_req:
+                notas = _estoque_xml_carregar_notas(cur, chave_req)
+                nota = notas.get(chave_req) or {}
+        if nota:
+            nota_key = _as_str(nota.get("nota_key")) or nota_key
+
+        chave_busca = _normalizar_chave_acesso_nfe(nota_key_req)
+        cur.execute(
+            """
+            SELECT *
+            FROM estoque_xml_frete_vinculos
+            WHERE nota_key=%s OR (%s<>'' AND chave_nfe=%s)
+            LIMIT 1
+            FOR UPDATE
+            """,
+            (nota_key, chave_busca, chave_busca),
+        )
+        vinculo_final = cur.fetchone() or {}
+        if vinculo_final:
+            nota_key = _as_str(vinculo_final.get("nota_key")) or nota_key
+
+        cur.execute(
+            """
+            SELECT *
+            FROM estoque_xml_frete_pre_vinculos
+            WHERE nota_key=%s OR (%s<>'' AND chave_nfe=%s)
+            LIMIT 1
+            FOR UPDATE
+            """,
+            (nota_key, chave_busca, chave_busca),
+        )
+        pre_vinculo = cur.fetchone() or {}
+        if pre_vinculo:
+            nota_key = _as_str(pre_vinculo.get("nota_key")) or nota_key
+
+        final_este = _as_int(vinculo_final.get("frete_id"), 0) == id
+        pre_este = _as_int(pre_vinculo.get("frete_id"), 0) == id and (
+            _as_str(pre_vinculo.get("status")).lower()
+            not in {"cancelado", "cancelada", "descartado", "descartada", "ignorado", "ignorada", "dispensado"}
+        )
+        if not final_este and not pre_este:
+            frete_atual = (
+                _as_int(vinculo_final.get("frete_id"), 0)
+                or _as_int(pre_vinculo.get("frete_id"), 0)
+            )
+            if frete_atual > 0:
+                return jsonify({"erro": f"esta nota esta vinculada ao frete #{frete_atual}"}), 409
+            return jsonify({"erro": "esta nota nao esta vinculada a este frete"}), 404
+
+        canonicos = nota.get("canonicos") or []
+        base = canonicos[0] if canonicos else {}
+        chave_nfe = (
+            _normalizar_chave_acesso_nfe(base.get("chave_nfe"))
+            or _as_str(vinculo_final.get("chave_nfe"))
+            or _as_str(pre_vinculo.get("chave_nfe"))
+            or chave_busca
+        )
+        numero_nota = (
+            _as_str(base.get("numero_nota"))
+            or _as_str(vinculo_final.get("numero_nota"))
+            or _as_str(pre_vinculo.get("numero_nota"))
+        )
+
+        cur.execute(
+            """
+            DELETE FROM estoque_xml_frete_vinculos
+            WHERE nota_key=%s AND frete_id=%s
+            """,
+            (nota_key, id),
+        )
+        vinculo_removido = cur.rowcount > 0
+        cur.execute(
+            """
+            INSERT INTO estoque_xml_frete_pre_vinculos (
+                nota_key, chave_nfe, numero_nota, veiculo_id, frete_id,
+                placa_xml, mapa_xml, numero_caminhao_xml,
+                origem_veiculo, origem_frete, status, detalhes,
+                dispensa_frete, criado_em, atualizado_em, confirmado_em
+            )
+            VALUES (
+                %s, %s, %s, NULL, NULL, %s, %s, %s,
+                'desvinculado_kanban', 'desvinculado_kanban', 'cancelado', %s,
+                0, NOW(), NOW(), NULL
+            )
+            ON DUPLICATE KEY UPDATE
+                chave_nfe=VALUES(chave_nfe),
+                numero_nota=VALUES(numero_nota),
+                veiculo_id=NULL,
+                frete_id=NULL,
+                placa_xml=COALESCE(NULLIF(placa_xml, ''), VALUES(placa_xml)),
+                mapa_xml=COALESCE(NULLIF(mapa_xml, ''), VALUES(mapa_xml)),
+                numero_caminhao_xml=COALESCE(NULLIF(numero_caminhao_xml, ''), VALUES(numero_caminhao_xml)),
+                origem_veiculo='desvinculado_kanban',
+                origem_frete='desvinculado_kanban',
+                status='cancelado',
+                detalhes=VALUES(detalhes),
+                dispensa_frete=0,
+                atualizado_em=NOW(),
+                confirmado_em=NULL
+            """,
+            (
+                nota_key,
+                chave_nfe,
+                numero_nota,
+                _as_str(vinculo_final.get("placa_xml") or pre_vinculo.get("placa_xml")),
+                _as_str(vinculo_final.get("mapa_xml") or pre_vinculo.get("mapa_xml")),
+                _as_str(vinculo_final.get("numero_caminhao_xml") or pre_vinculo.get("numero_caminhao_xml")),
+                f"Vinculo removido pelo Kanban no frete #{id}.",
+            ),
+        )
+
+        historico_depois = {
+            **frete,
+            "nota_key": nota_key,
+            "numero_nota": numero_nota,
+            "chave_nfe": chave_nfe,
+            "vinculo_removido": vinculo_removido,
+            "pre_vinculo_cancelado": True,
+        }
+        _registrar_historico_frete(
+            cur,
+            id,
+            "nota_saida_desvinculada",
+            usuario,
+            frete,
+            historico_depois,
+        )
+        conn.commit()
+        return jsonify(
+            {
+                "ok": True,
+                "nota_key": nota_key,
+                "numero_nota": numero_nota,
+                "vinculo_removido": bool(vinculo_removido),
+                "pre_vinculo_cancelado": True,
+            }
+        )
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        conn.close()
+
+
 @app.route("/api/estoque/importacoes-xml/confirmar", methods=["POST"])
 def confirmar_importacao_xml_estoque():
     usuario = _usuario_ator_req()
@@ -14331,6 +17507,14 @@ def confirmar_importacao_xml_estoque():
         nota = notas.get(nota_key)
         if not nota:
             return jsonify({"erro": "importacao XML nao encontrada"}), 404
+        destino_manutencao = _estoque_xml_destinos_manutencao(cur, [nota_key]).get(nota_key)
+        if destino_manutencao:
+            return jsonify(
+                {
+                    "erro": "esta NF-e ja foi direcionada para manutencao",
+                    "pre_lancamento_id": _as_int(destino_manutencao.get("id"), 0),
+                }
+            ), 409
 
         referencias = _estoque_xml_referencias_lancadas(cur)
         pendentes = [
@@ -14440,6 +17624,7 @@ def confirmar_importacao_xml_estoque():
 
         movimentos = []
         produtos_criados = 0
+        regras_fator_atualizadas = 0
         for row in pendentes:
             xml_item_id = _as_int(row.get("id"), 0)
             item_payload = payload_por_id[xml_item_id]
@@ -14450,14 +17635,7 @@ def confirmar_importacao_xml_estoque():
 
             fator_embalagem = _as_float(item_payload.get("fator_embalagem"), 0.0)
             if fator_embalagem <= 0:
-                return jsonify(
-                    {
-                        "erro": (
-                            f"informe o fator de conversao do item {xml_item_id}: "
-                            "quantas unidades existem em cada embalagem"
-                        )
-                    }
-                ), 400
+                fator_embalagem = 1.0
             quantidade = _as_float(item_payload.get("quantidade"), 0.0)
             if quantidade <= 0:
                 return jsonify({"erro": f"quantidade invalida no item {xml_item_id}"}), 400
@@ -14570,6 +17748,18 @@ def confirmar_importacao_xml_estoque():
                     _as_int(produto.get("id"), 0),
                 ),
             )
+            if _registrar_regra_fator_fornecedor_xml(
+                cur,
+                base,
+                codigo_produto_nfe=codigo_produto,
+                nome_produto=nome_produto,
+                embalagem_tipo=embalagem_tipo,
+                fator_embalagem=fator_embalagem,
+                grupo_estoque=grupo_estoque,
+                produto_base_nome=produto_base_nome,
+                usuario=usuario,
+            ):
+                regras_fator_atualizadas += 1
 
             origem_setor = (
                 _as_str(row.get("emitente_nome")) or
@@ -14592,6 +17782,7 @@ def confirmar_importacao_xml_estoque():
                         _as_float(row.get("valor_unitario"), 0.0),
                     ),
                     "tipo_movimento": tipo_movimento,
+                    "lote_codigo": _rastreio_lote_codigo(datetime.date.today(), 1) if tipo_movimento == "entrada" else "",
                     "origem_setor": origem_setor,
                     "destino_setor": destino_setor,
                 }
@@ -14602,17 +17793,18 @@ def confirmar_importacao_xml_estoque():
                 """
                 INSERT INTO estoque_movimentos
                     (
-                        codigo_barras, codigo_produto_nfe, numero_nota,
+                        codigo_barras, codigo_produto_nfe, lote_codigo, numero_nota,
                         nome_produto, quantidade, valor_unitario,
                         tipo_movimento, origem_setor, destino_setor,
                         referencia_tipo, referencia_id, usuario_registro
                     )
                 VALUES
-                    (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     movimento["codigo_barras"],
                     movimento["codigo_produto"],
+                    movimento["lote_codigo"],
                     movimento["numero_nota"],
                     movimento["nome_produto"],
                     movimento["quantidade"],
@@ -14707,6 +17899,7 @@ def confirmar_importacao_xml_estoque():
                     nota_key,
                 ),
             )
+            _estoque_xml_atualizar_cidade_frete(cur, frete_id, nota)
             historico_depois = {
                 **frete_vinculado,
                 "numero_nota": numero_nota,
@@ -14748,6 +17941,7 @@ def confirmar_importacao_xml_estoque():
             "ok": True,
             "movimentos_criados": len(movimentos),
             "produtos_criados": produtos_criados,
+            "regras_fator_atualizadas": regras_fator_atualizadas,
             "tipo_movimento": movimentos[0]["tipo_movimento"] if movimentos else "",
             "frete": (
                 {
@@ -14772,6 +17966,7 @@ def criar_movimento_estoque():
     produto_id = _as_int(data.get("produto_id"), 0)
     codigo_barras = _normalizar_codigo_barras(data.get("codigo_barras"))
     codigo_produto_nfe = _codigo_produto_nfe_saida(data.get("codigo_produto_nfe"))
+    lote_codigo = _as_str(data.get("lote_codigo"))[:120]
     numero_nota = _as_str(data.get("numero_nota"))
     nome_produto = _as_str(data.get("nome_produto"))
     quantidade = _as_float(data.get("quantidade"), 0.0)
@@ -14784,6 +17979,8 @@ def criar_movimento_estoque():
     unidade = _as_str(data.get("unidade"))
     if tipo_movimento not in ("entrada", "saida"):
         tipo_movimento = "entrada"
+    if tipo_movimento == "entrada" and not lote_codigo:
+        lote_codigo = _rastreio_lote_codigo(datetime.date.today(), 1)
 
     if not numero_nota and codigo_barras:
         numero_nota = codigo_barras
@@ -14817,15 +18014,16 @@ def criar_movimento_estoque():
             """
             INSERT INTO estoque_movimentos
                 (
-                    codigo_barras, codigo_produto_nfe, numero_nota, nome_produto, quantidade, valor_unitario, tipo_movimento,
+                    codigo_barras, codigo_produto_nfe, lote_codigo, numero_nota, nome_produto, quantidade, valor_unitario, tipo_movimento,
                     origem_setor, destino_setor, referencia_tipo, referencia_id, usuario_registro
                 )
             VALUES
-                (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 codigo_barras,
                 codigo_produto_nfe,
+                lote_codigo,
                 numero_nota,
                 nome_produto,
                 quantidade,
@@ -14846,6 +18044,7 @@ def criar_movimento_estoque():
     return jsonify({
         "ok": True,
         "id": movimento_id,
+        "lote_codigo": lote_codigo,
         "produto": _produto_estoque_publico(produto),
         "produto_criado": bool(produto_criado),
     })
@@ -14860,6 +18059,7 @@ def listar_movimentos_estoque():
             e.id,
             e.codigo_barras,
             e.codigo_produto_nfe,
+            e.lote_codigo,
             e.numero_nota,
             e.nome_produto,
             e.quantidade,
@@ -14894,6 +18094,7 @@ def listar_movimentos_estoque():
             "id": _as_int(r.get("id"), 0),
             "codigo_barras": _as_str(r.get("codigo_barras")),
             "codigo_produto_nfe": _as_str(r.get("codigo_produto_nfe")),
+            "lote_codigo": _as_str(r.get("lote_codigo")),
             "numero_nota": _as_str(r.get("numero_nota")),
             "nome_produto": _as_str(r.get("nome_produto")),
             "quantidade": _as_float(r.get("quantidade"), 0.0),
@@ -14921,7 +18122,7 @@ def atualizar_movimento_estoque(movimento_id):
     cur = conn.cursor(dictionary=True)
     try:
         cur.execute("""
-            SELECT id, codigo_barras, codigo_produto_nfe, numero_nota, nome_produto, quantidade, valor_unitario,
+            SELECT id, codigo_barras, codigo_produto_nfe, lote_codigo, numero_nota, nome_produto, quantidade, valor_unitario,
                    tipo_movimento, origem_setor, destino_setor, referencia_tipo
             FROM estoque_movimentos
             WHERE id=%s
@@ -14942,6 +18143,7 @@ def atualizar_movimento_estoque(movimento_id):
 
         codigo_barras = _normalizar_codigo_barras(data.get("codigo_barras")) if "codigo_barras" in data else _as_str(row.get("codigo_barras"))
         codigo_produto_nfe = _codigo_produto_nfe_saida(data.get("codigo_produto_nfe")) if "codigo_produto_nfe" in data else _as_str(row.get("codigo_produto_nfe"))
+        lote_codigo = _as_str(data.get("lote_codigo"))[:120] if "lote_codigo" in data else _as_str(row.get("lote_codigo"))[:120]
         numero_nota = _as_str(data.get("numero_nota")) if "numero_nota" in data else _as_str(row.get("numero_nota"))
         nome_produto = _as_str(data.get("nome_produto")) if "nome_produto" in data else _as_str(row.get("nome_produto"))
         quantidade = _as_float(data.get("quantidade"), _as_float(row.get("quantidade"), 0.0)) if "quantidade" in data else _as_float(row.get("quantidade"), 0.0)
@@ -14959,12 +18161,13 @@ def atualizar_movimento_estoque(movimento_id):
 
         cur.execute("""
             UPDATE estoque_movimentos
-            SET codigo_barras=%s, codigo_produto_nfe=%s, numero_nota=%s, nome_produto=%s, quantidade=%s, valor_unitario=%s,
+            SET codigo_barras=%s, codigo_produto_nfe=%s, lote_codigo=%s, numero_nota=%s, nome_produto=%s, quantidade=%s, valor_unitario=%s,
                 tipo_movimento=%s, origem_setor=%s, destino_setor=%s, usuario_registro=%s
             WHERE id=%s
         """, (
             codigo_barras,
             codigo_produto_nfe,
+            lote_codigo,
             numero_nota,
             nome_produto,
             quantidade,
@@ -15048,6 +18251,434 @@ def listar_produtos_estoque():
     conn.close()
     return jsonify([_produto_estoque_publico(r) for r in rows])
 
+
+def _estoque_lote_publico_base(lote_codigo):
+    return {
+        "lote_codigo": _as_str(lote_codigo),
+        "nome_produto": "",
+        "codigo_barras": "",
+        "notas": "",
+        "quantidade_atual": 0.0,
+        "total_movimentos": 0,
+        "fretes_vinculados": 0,
+        "ultima_movimentacao": "",
+    }
+
+@app.route("/api/estoque/lotes", methods=["GET"])
+def listar_lotes_estoque():
+    q = _as_str(request.args.get("q") or request.args.get("busca")).lower()
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    lotes = {}
+    try:
+        cur.execute(
+            """
+            SELECT
+                lote_codigo,
+                GROUP_CONCAT(DISTINCT NULLIF(nome_produto, '') ORDER BY nome_produto SEPARATOR ', ') AS produtos,
+                GROUP_CONCAT(DISTINCT NULLIF(codigo_barras, '') ORDER BY codigo_barras SEPARATOR ', ') AS codigos,
+                GROUP_CONCAT(DISTINCT NULLIF(numero_nota, '') ORDER BY numero_nota SEPARATOR ', ') AS notas,
+                COALESCE(SUM(CASE WHEN tipo_movimento='saida' THEN -quantidade ELSE quantidade END), 0) AS quantidade_atual,
+                COUNT(*) AS total_movimentos,
+                MAX(data_registro) AS ultima_movimentacao
+            FROM estoque_movimentos
+            WHERE COALESCE(lote_codigo, '') <> ''
+            GROUP BY lote_codigo
+            ORDER BY ultima_movimentacao DESC, lote_codigo ASC
+            LIMIT 1000
+            """
+        )
+        for row in cur.fetchall() or []:
+            codigo = _as_str(row.get("lote_codigo"))
+            if not codigo:
+                continue
+            if q and q not in codigo.lower() and q not in _as_str(row.get("produtos")).lower():
+                continue
+            item = _estoque_lote_publico_base(codigo)
+            item.update(
+                {
+                    "nome_produto": _as_str(row.get("produtos")) or "Sem produto informado",
+                    "codigo_barras": _as_str(row.get("codigos")),
+                    "notas": _as_str(row.get("notas")),
+                    "quantidade_atual": _as_float(row.get("quantidade_atual"), 0.0),
+                    "total_movimentos": _as_int(row.get("total_movimentos"), 0),
+                    "ultima_movimentacao": _fmt_dt(row.get("ultima_movimentacao")),
+                }
+            )
+            lotes[codigo.lower()] = item
+
+        cur.execute(
+            """
+            SELECT id, nome, data_carga, lote_manual
+            FROM fretes
+            WHERE COALESCE(lote_manual, '') <> ''
+            ORDER BY id DESC
+            LIMIT 5000
+            """
+        )
+        fretes_rows = cur.fetchall() or []
+        for frete in fretes_rows:
+            for codigo in _lotes_frete_tokens(frete.get("lote_manual")):
+                if q and q not in codigo.lower():
+                    continue
+                key = codigo.lower()
+                item = lotes.get(key) or _estoque_lote_publico_base(codigo)
+                if not item.get("nome_produto"):
+                    item["nome_produto"] = "Sem movimento de estoque"
+                item["fretes_vinculados"] = _as_int(item.get("fretes_vinculados"), 0) + 1
+                if not item.get("ultima_movimentacao"):
+                    item["ultima_movimentacao"] = _fmt_date(frete.get("data_carga"))
+                lotes[key] = item
+    finally:
+        cur.close()
+        conn.close()
+
+    rows = sorted(
+        lotes.values(),
+        key=lambda item: (_as_str(item.get("ultima_movimentacao")), _as_str(item.get("lote_codigo")).lower()),
+        reverse=True,
+    )
+    return jsonify(rows[:1000])
+
+@app.route("/api/estoque/lotes/<path:lote_codigo>", methods=["GET"])
+def detalhe_lote_estoque(lote_codigo):
+    lote_codigo = _as_str(lote_codigo)
+    if not lote_codigo:
+        return jsonify({"erro": "lote nao informado"}), 400
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute(
+            """
+            SELECT
+                id, lote_codigo, codigo_barras, codigo_produto_nfe, numero_nota,
+                nome_produto, quantidade, valor_unitario, tipo_movimento,
+                origem_setor, destino_setor, referencia_tipo, referencia_id,
+                usuario_registro, data_registro
+            FROM estoque_movimentos
+            WHERE LOWER(COALESCE(lote_codigo, '')) = LOWER(%s)
+            ORDER BY data_registro DESC, id DESC
+            LIMIT 1000
+            """,
+            (lote_codigo,),
+        )
+        movimentos = cur.fetchall() or []
+        cur.execute(FRETE_SELECT_SQL + " WHERE COALESCE(f.lote_manual, '') <> '' ORDER BY f.id DESC LIMIT 5000")
+        fretes = [
+            _serialize_frete_row(row)
+            for row in (cur.fetchall() or [])
+            if _frete_lote_match(row.get("lote_manual"), lote_codigo)
+        ]
+    finally:
+        cur.close()
+        conn.close()
+
+    return jsonify(
+        {
+            "lote_codigo": lote_codigo,
+            "movimentos": [
+                {
+                    "id": _as_int(row.get("id"), 0),
+                    "lote_codigo": _as_str(row.get("lote_codigo")),
+                    "codigo_barras": _as_str(row.get("codigo_barras")),
+                    "codigo_produto_nfe": _as_str(row.get("codigo_produto_nfe")),
+                    "numero_nota": _as_str(row.get("numero_nota")),
+                    "nome_produto": _as_str(row.get("nome_produto")),
+                    "quantidade": _as_float(row.get("quantidade"), 0.0),
+                    "valor_unitario": _as_float(row.get("valor_unitario"), 0.0),
+                    "tipo_movimento": _as_str(row.get("tipo_movimento")) or "entrada",
+                    "origem_setor": _as_str(row.get("origem_setor")),
+                    "destino_setor": _as_str(row.get("destino_setor")),
+                    "referencia_tipo": _as_str(row.get("referencia_tipo")),
+                    "referencia_id": _as_int(row.get("referencia_id"), 0),
+                    "usuario_registro": _as_str(row.get("usuario_registro")),
+                    "data_registro": _fmt_dt(row.get("data_registro")),
+                }
+                for row in movimentos
+            ],
+            "fretes": fretes,
+        }
+    )
+
+
+def _rastreio_lote_publico(row):
+    data_lote = _fmt_date(row.get("data_lote"))
+    serial = _as_int(row.get("serial"), 0)
+    codigo = _as_str(row.get("lote_codigo"))
+    if data_lote and not codigo:
+        parsed = _rastreio_parse_data_lote(data_lote)
+        if parsed and serial > 0:
+            codigo = _rastreio_lote_codigo(parsed, serial)
+    notas = [
+        item.strip()
+        for item in _as_str(row.get("notas")).split(",")
+        if item.strip()
+    ]
+    produtos = [
+        item.strip()
+        for item in _as_str(row.get("produtos")).split("||")
+        if item.strip()
+    ]
+    return {
+        "lote_codigo": codigo,
+        "data": data_lote,
+        "serial": serial,
+        "total": _as_int(row.get("total"), 0),
+        "entradas": _as_int(row.get("entradas"), 0),
+        "saidas": _as_int(row.get("saidas"), 0),
+        "notas": notas[:5],
+        "produtos": produtos[:5],
+        "ultima_atualizacao": _fmt_dt(row.get("ultima_atualizacao")),
+    }
+
+
+@app.route("/api/estoque/rastreabilidade/lotes", methods=["GET"])
+def listar_lotes_rastreabilidade():
+    data_lote = _rastreio_parse_data_lote(request.args.get("data"))
+    data_inicio, data_fim = _rastreio_normalizar_periodo(
+        data_lote=data_lote,
+        data_inicio=request.args.get("data_inicio") or request.args.get("inicio"),
+        data_fim=request.args.get("data_fim") or request.args.get("fim"),
+    )
+    tem_periodo = bool(data_inicio or data_fim)
+    limit_max = 20000 if tem_periodo else 5000
+    limit = max(50, min(_as_int(request.args.get("limit"), 500), limit_max))
+    bootstrap = {}
+    try:
+        bootstrap = _rastreio_criar_amarracao_inicial(
+            data_inicio=data_inicio,
+            data_fim=data_fim,
+            limit=max(limit, 100000),
+        )
+    except Exception as exc:
+        app.logger.exception("Falha ao verificar amarracao de lotes")
+        bootstrap = {"erro": str(exc)}
+
+    where = []
+    params = []
+    if data_inicio:
+        where.append("data_lote>=%s")
+        params.append(data_inicio)
+    if data_fim:
+        where.append("data_lote<=%s")
+        params.append(data_fim)
+    where_sql = f"WHERE {' AND '.join(where)}" if where else ""
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute(
+            f"""
+            SELECT
+                data_lote,
+                serial,
+                MIN(lote_codigo) AS lote_codigo,
+                COUNT(*) AS total,
+                SUM(CASE WHEN tipo_movimento='entrada' THEN 1 ELSE 0 END) AS entradas,
+                SUM(CASE WHEN tipo_movimento='saida' THEN 1 ELSE 0 END) AS saidas,
+                GROUP_CONCAT(DISTINCT NULLIF(numero_nota, '') ORDER BY numero_nota SEPARATOR ', ') AS notas,
+                GROUP_CONCAT(DISTINCT NULLIF(nome_produto, '') ORDER BY nome_produto SEPARATOR '||') AS produtos,
+                MAX(atualizado_em) AS ultima_atualizacao
+            FROM rastreabilidade_lancamento_vinculos
+            {where_sql}
+            GROUP BY data_lote, serial
+            ORDER BY data_lote DESC, serial DESC
+            LIMIT %s
+            """,
+            tuple(params + [limit]),
+        )
+        rows = [_rastreio_lote_publico(row) for row in (cur.fetchall() or [])]
+    finally:
+        cur.close()
+        conn.close()
+    return jsonify({"ok": True, "lotes": rows, "bootstrap": bootstrap})
+
+
+@app.route("/api/estoque/rastreabilidade/verificar", methods=["POST"])
+def verificar_lotes_rastreabilidade():
+    data = request.get_json(silent=True) or {}
+    data_lote = _rastreio_parse_data_lote(data.get("data"))
+    data_inicio, data_fim = _rastreio_normalizar_periodo(
+        data_lote=data_lote,
+        data_inicio=data.get("data_inicio") or data.get("inicio"),
+        data_fim=data.get("data_fim") or data.get("fim"),
+    )
+    limit = max(1000, min(_as_int(data.get("limit"), 100000), 200000))
+    try:
+        bootstrap = _rastreio_criar_amarracao_inicial(
+            data_inicio=data_inicio,
+            data_fim=data_fim,
+            limit=limit,
+        )
+    except Exception as exc:
+        app.logger.exception("Falha ao verificar XMLs de rastreabilidade")
+        return jsonify({"erro": str(exc)}), 500
+    return jsonify({"ok": True, "bootstrap": bootstrap})
+
+
+@app.route("/api/estoque/rastreabilidade/vinculos/<int:vinculo_id>", methods=["PUT"])
+def atualizar_vinculo_rastreabilidade(vinculo_id):
+    data = request.get_json(silent=True) or {}
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute(
+            """
+            SELECT id, lote_codigo, data_lote, serial, origem_tipo, estoque_movimento_id
+            FROM rastreabilidade_lancamento_vinculos
+            WHERE id=%s
+            LIMIT 1
+            """,
+            (vinculo_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return jsonify({"erro": "vinculo de rastreio nao encontrado"}), 404
+
+        data_lote = (
+            _rastreio_parse_data_lote(data.get("data_lote") or data.get("data"))
+            or _rastreio_parse_data_lote(row.get("data_lote"))
+        )
+        serial = _as_int(data.get("serial"), _as_int(row.get("serial"), 1)) or 1
+        if not data_lote:
+            return jsonify({"erro": "data do lote invalida"}), 400
+        if serial < 1 or serial > _RASTREIO_SERIAL_MAX:
+            return jsonify({"erro": "serial deve estar entre 1 e 100000"}), 400
+
+        lote_codigo = (
+            _as_str(data.get("lote_codigo"))[:40]
+            if "lote_codigo" in data
+            else _as_str(row.get("lote_codigo"))[:40]
+        )
+        if not lote_codigo:
+            lote_codigo = _rastreio_lote_codigo(data_lote, serial)
+
+        cur.execute(
+            """
+            UPDATE rastreabilidade_lancamento_vinculos
+            SET lote_codigo=%s,
+                data_lote=%s,
+                serial=%s,
+                vinculo_origem=%s,
+                simulado=0,
+                atualizado_em=CURRENT_TIMESTAMP
+            WHERE id=%s
+            """,
+            (lote_codigo, data_lote, serial, _RASTREIO_ORIGEM_MANUAL, vinculo_id),
+        )
+        movimento_id = _as_int(row.get("estoque_movimento_id"), 0)
+        if _as_str(row.get("origem_tipo")) == "estoque_movimento" and movimento_id > 0:
+            cur.execute(
+                """
+                UPDATE estoque_movimentos
+                SET lote_codigo=%s
+                WHERE id=%s
+                """,
+                (lote_codigo, movimento_id),
+            )
+        conn.commit()
+        return jsonify(
+            {
+                "ok": True,
+                "vinculo": {
+                    "id": vinculo_id,
+                    "lote_codigo": lote_codigo,
+                    "data_lote": _fmt_date(data_lote),
+                    "serial": serial,
+                    "vinculo_origem": _RASTREIO_ORIGEM_MANUAL,
+                },
+            }
+        )
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.route("/api/estoque/rastreabilidade/lote", methods=["GET"])
+def consultar_lote_rastreabilidade():
+    data_lote = _rastreio_parse_data_lote(request.args.get("data"))
+    serial = _as_int(request.args.get("serial"), 0)
+    sabor = _as_str(request.args.get("sabor"))
+
+    if not data_lote:
+        return jsonify({"erro": "informe uma data valida para o lote"}), 400
+    if serial < 1 or serial > _RASTREIO_SERIAL_MAX:
+        return jsonify({"erro": "serial deve estar entre 1 e 100000"}), 400
+
+    data_sistema = datetime.date.today()
+    simulacao_habilitada = data_sistema <= _RASTREIO_SIMULACAO_ATE and data_lote <= _RASTREIO_SIMULACAO_ATE
+    bootstrap = {}
+    try:
+        bootstrap = _rastreio_criar_amarracao_inicial(data_lote=data_lote)
+    except Exception as exc:
+        app.logger.exception("Falha ao criar amarracao inicial de rastreabilidade")
+        bootstrap = {"erro": str(exc)}
+
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    try:
+        notas_compra = _rastreio_buscar_notas_compra(cur, data_lote, serial, sabor=sabor)
+        notas_saida = _rastreio_buscar_notas_saida(cur, data_lote, serial, sabor=sabor)
+        clientes = _rastreio_buscar_clientes(cur, data_lote, sabor, notas_saida)
+    finally:
+        cur.close()
+        conn.close()
+
+    avisos = []
+    if bootstrap.get("erro"):
+        avisos.append("Nao foi possivel atualizar a amarracao inicial automaticamente.")
+    elif _as_int(bootstrap.get("criados"), 0) > 0:
+        avisos.append(f"Amarracao inicial criou {_as_int(bootstrap.get('criados'), 0)} vinculo(s) para esta data.")
+    if simulacao_habilitada:
+        if not notas_compra:
+            notas_compra = _rastreio_simular_notas_compra(data_lote, serial, sabor=sabor)
+            avisos.append("Notas de compra geradas temporariamente porque este serial ainda nao possui lancamento de entrada amarrado.")
+        if not notas_saida:
+            notas_saida = _rastreio_simular_notas_saida(data_lote, serial, sabor=sabor)
+            avisos.append("Notas de saida geradas temporariamente porque este serial ainda nao possui lancamento de saida amarrado.")
+        if not clientes:
+            clientes = _rastreio_simular_clientes(data_lote, serial, sabor=sabor, notas_saida=notas_saida)
+            avisos.append("Clientes gerados temporariamente porque este serial ainda nao possui cliente amarrado.")
+    elif not (notas_compra and notas_saida and clientes):
+        avisos.append(
+            "Periodo temporario encerrado em 31/07/2026; complete as amarracoes reais para rastrear este lote."
+        )
+
+    modo = _rastreio_modo_resultado(notas_compra, notas_saida, clientes)
+    return jsonify(
+        {
+            "ok": True,
+            "lote": {
+                "data": _fmt_date(data_lote),
+                "serial": serial,
+                "codigo": _rastreio_lote_codigo(data_lote, serial),
+                "simulacao_ate": _fmt_date(_RASTREIO_SIMULACAO_ATE),
+                "data_sistema": _fmt_date(data_sistema),
+                "simulacao_habilitada": simulacao_habilitada,
+                "modo": modo,
+            },
+            "sabor": sabor,
+            "notas_compra": notas_compra,
+            "notas_saida": notas_saida,
+            "clientes": clientes,
+            "bootstrap": bootstrap,
+            "resumo": {
+                "notas_compra": len(notas_compra),
+                "notas_saida": len(notas_saida),
+                "clientes": len({
+                    _normalizar_chave_texto(item.get("cliente"))
+                    for item in clientes
+                    if _as_str(item.get("cliente"))
+                }),
+                "quantidade_saida": round(
+                    sum(_as_float(item.get("quantidade_total"), 0.0) for item in notas_saida),
+                    3,
+                ),
+            },
+            "avisos": avisos,
+        }
+    )
+
+
 @app.route("/api/estoque/produtos", methods=["POST"])
 def criar_produto_estoque():
     data = request.json or {}
@@ -15057,14 +18688,13 @@ def criar_produto_estoque():
     grupo_estoque = _estoque_grupo_normalizado(data.get("grupo_estoque"))
     produto_base_nome = _as_str(data.get("produto_base_nome") or data.get("produto_base"))
     embalagem_tipo_padrao = _as_str(data.get("embalagem_tipo_padrao") or data.get("embalagem_tipo"))
-    fator_embalagem_padrao = _as_float(data.get("fator_embalagem_padrao"), _as_float(data.get("fator_embalagem"), 0.0))
+    fator_embalagem_padrao = _as_float(data.get("fator_embalagem_padrao"), _as_float(data.get("fator_embalagem"), 1.0))
+    if fator_embalagem_padrao <= 0:
+        fator_embalagem_padrao = 1.0
     if not (codigo_barras or codigo_produto_nfe or nome_produto):
         return jsonify({"erro": "informe ao menos codigo de barras, codigo NF-e ou nome do produto"}), 400
     if not embalagem_tipo_padrao:
         return jsonify({"erro": "embalagem padrao e obrigatoria"}), 400
-    if fator_embalagem_padrao <= 0:
-        return jsonify({"erro": "unidades por embalagem deve ser maior que zero"}), 400
-
     conn = get_conn()
     cur = conn.cursor(dictionary=True)
     try:
@@ -15125,14 +18755,14 @@ def atualizar_produto_estoque(produto_id):
         grupo_estoque = _estoque_grupo_normalizado(data.get("grupo_estoque")) if "grupo_estoque" in data else _as_str(row.get("grupo_estoque"))
         produto_base_nome = _as_str(data.get("produto_base_nome") or data.get("produto_base")) if ("produto_base_nome" in data or "produto_base" in data) else _as_str(row.get("produto_base_nome"))
         embalagem_tipo_padrao = _as_str(data.get("embalagem_tipo_padrao") or data.get("embalagem_tipo")) if ("embalagem_tipo_padrao" in data or "embalagem_tipo" in data) else _as_str(row.get("embalagem_tipo_padrao"))
-        fator_embalagem_padrao = _as_float(data.get("fator_embalagem_padrao"), _as_float(data.get("fator_embalagem"), 0.0)) if ("fator_embalagem_padrao" in data or "fator_embalagem" in data) else _as_float(row.get("fator_embalagem_padrao"), 0.0)
+        fator_embalagem_padrao = _as_float(data.get("fator_embalagem_padrao"), _as_float(data.get("fator_embalagem"), 1.0)) if ("fator_embalagem_padrao" in data or "fator_embalagem" in data) else _as_float(row.get("fator_embalagem_padrao"), 1.0)
+        if fator_embalagem_padrao <= 0:
+            fator_embalagem_padrao = 1.0
 
         if not (codigo_barras or codigo_produto_nfe or nome_produto):
             return jsonify({"erro": "informe ao menos codigo de barras, codigo NF-e ou nome do produto"}), 400
         if not embalagem_tipo_padrao:
             return jsonify({"erro": "embalagem padrao e obrigatoria"}), 400
-        if fator_embalagem_padrao <= 0:
-            return jsonify({"erro": "unidades por embalagem deve ser maior que zero"}), 400
 
         cur.execute("""
             UPDATE estoque_produtos
@@ -15573,6 +19203,463 @@ def ocr_preview_manutencao():
         "warnings": preview.get("warnings") or [],
     })
 
+
+def _manutencao_xml_pre_lancamento_publico(row):
+    row = row or {}
+    return {
+        "id": _as_int(row.get("id"), 0),
+        "nota_key": _as_str(row.get("nota_key")),
+        "xml_id": _as_int(row.get("importar_xml_abastecimento_id"), 0),
+        "chave_nfe": _normalizar_chave_acesso_nfe(row.get("chave_nfe")),
+        "numero_nota": _as_str(row.get("numero_nota")),
+        "veiculo_id": _as_int(row.get("veiculo_id"), 0),
+        "veiculo_nome": _as_str(row.get("veiculo_nome")),
+        "veiculo_placa": _as_str(row.get("veiculo_placa")),
+        "veiculo_modelo": _as_str(row.get("veiculo_modelo")),
+        "placa_xml": _as_str(row.get("placa_xml")),
+        "sugestao_confianca": _as_float(row.get("sugestao_confianca"), 0.0),
+        "origem_veiculo": _as_str(row.get("origem_veiculo")),
+        "status": _as_str(row.get("status")),
+        "motivo": _as_str(row.get("motivo")),
+        "emitente_nome": _as_str(row.get("emitente_nome")),
+        "data_documento": _fmt_date(row.get("data_documento")),
+        "km": _as_int(row.get("km"), 0),
+        "valor": _as_float(row.get("valor"), 0.0),
+        "itens": _normalizar_itens_manutencao_payload(
+            _json_list_or_empty(row.get("itens_json"))
+        ),
+        "manutencao_id": _as_int(row.get("manutencao_id"), 0),
+        "atualizado_em": _fmt_dt(row.get("atualizado_em")),
+    }
+
+
+def _buscar_pre_lancamento_manutencao_publico(cur, pre_lancamento_id):
+    cur.execute(
+        """
+        SELECT
+            p.*,
+            v.nome AS veiculo_nome,
+            v.placa AS veiculo_placa,
+            v.modelo AS veiculo_modelo
+        FROM manutencao_xml_pre_lancamentos p
+        LEFT JOIN veiculos v ON v.id=p.veiculo_id
+        WHERE p.id=%s
+        LIMIT 1
+        """,
+        (_as_int(pre_lancamento_id, 0),),
+    )
+    row = cur.fetchone()
+    return _manutencao_xml_pre_lancamento_publico(row) if row else {}
+
+
+def _manutencao_nfe_nota_key(preview, nota_key_override=""):
+    override = _as_str(nota_key_override).strip()
+    chave_override = _normalizar_chave_acesso_nfe(override)
+    if len(chave_override) == 44:
+        return chave_override
+    if override and ("|" in override or override.startswith("sem-chave")):
+        return override[:255]
+
+    chave = _normalizar_chave_acesso_nfe((preview or {}).get("chave_acesso"))
+    if len(chave) == 44:
+        return chave
+
+    partes = [
+        "manual",
+        _normalizar_chave_acesso_nfe((preview or {}).get("emitente_cnpj")),
+        _as_str((preview or {}).get("numero_nota")),
+        _as_str((preview or {}).get("serie")),
+        _as_str((preview or {}).get("data_emissao"))[:10],
+        _as_str((preview or {}).get("arquivo_origem"))[:80],
+    ]
+    if not any(partes[1:]):
+        return ""
+    return "|".join(partes)[:255]
+
+
+def _preview_nfe_itens_manutencao(preview):
+    itens = []
+    for index, item in enumerate((preview or {}).get("itens") or []):
+        quantidade = (
+            item.get("quantidade_embalagem")
+            if item.get("quantidade_embalagem") not in (None, "")
+            else item.get("quantidade")
+        )
+        valor_unitario = _as_float(item.get("valor_unitario"), 0.0)
+        valor_total = _as_float(item.get("valor_total"), 0.0)
+        if valor_total <= 0:
+            valor_total = _as_float(quantidade, 0.0) * valor_unitario
+        normalizado = _normalizar_item_manutencao_payload(
+            {
+                "item_seq": item.get("item_seq") or str(index + 1),
+                "codigo_produto_nfe": item.get("codigo_produto_nfe"),
+                "codigo_barras": item.get("codigo_barras"),
+                "nome_produto": item.get("nome_produto"),
+                "unidade": item.get("unidade") or item.get("embalagem_tipo"),
+                "quantidade": quantidade,
+                "valor_unitario": valor_unitario,
+                "valor_total": valor_total,
+            },
+            index,
+        )
+        if normalizado:
+            itens.append(normalizado)
+    return itens
+
+
+def _registrar_pre_lancamento_manutencao_preview(
+    cur,
+    preview_payload,
+    nota_key_override="",
+    origem_veiculo="direcionado_estoque",
+    motivo="",
+):
+    preview_payload = preview_payload if isinstance(preview_payload, dict) else {}
+    nfe = _normalizar_preview_nfe(preview_payload)
+    nota_key = _manutencao_nfe_nota_key(nfe, nota_key_override)
+    if not nota_key:
+        raise ValueError("informe numero da nota, chave de acesso ou emitente para direcionar a manutencao")
+
+    cur.execute(
+        """
+        SELECT id, status
+        FROM manutencao_xml_pre_lancamentos
+        WHERE nota_key=%s
+        LIMIT 1
+        """,
+        (nota_key,),
+    )
+    existente = cur.fetchone() or {}
+    if _as_str(existente.get("status")) == "confirmado":
+        raise ValueError("esta nota ja foi confirmada na manutencao")
+
+    itens = _preview_nfe_itens_manutencao(nfe)
+    valor = _as_float(nfe.get("valor_total"), 0.0)
+    if valor <= 0:
+        valor = sum(_as_float(item.get("valor_total"), 0.0) for item in itens)
+    if not itens and not (
+        _as_str(nfe.get("numero_nota"))
+        or _normalizar_chave_acesso_nfe(nfe.get("chave_acesso"))
+        or _as_str(nfe.get("emitente_nome"))
+    ):
+        raise ValueError("a nota precisa ter dados basicos ou itens para ser enviada a manutencao")
+
+    motivo_final = (
+        _as_str(motivo)
+        or "Nota direcionada manualmente do estoque para manutencao."
+    )[:500]
+    cur.execute(
+        """
+        INSERT INTO manutencao_xml_pre_lancamentos (
+            nota_key, importar_xml_abastecimento_id, chave_nfe, numero_nota,
+            veiculo_id, placa_xml, sugestao_confianca, origem_veiculo,
+            status, motivo, emitente_nome, data_documento, km, valor,
+            itens_json, criado_em, atualizado_em
+        )
+        VALUES (
+            %s, NULL, %s, %s, NULL, '', 0, %s,
+            'pendente', %s, %s, %s, 0, %s, %s, NOW(), NOW()
+        )
+        ON DUPLICATE KEY UPDATE
+            chave_nfe=VALUES(chave_nfe),
+            numero_nota=VALUES(numero_nota),
+            origem_veiculo=VALUES(origem_veiculo),
+            status=CASE
+                WHEN status='confirmado' THEN status
+                ELSE 'pendente'
+            END,
+            motivo=VALUES(motivo),
+            emitente_nome=VALUES(emitente_nome),
+            data_documento=VALUES(data_documento),
+            km=VALUES(km),
+            valor=VALUES(valor),
+            itens_json=VALUES(itens_json),
+            manutencao_id=CASE
+                WHEN status='confirmado' THEN manutencao_id
+                ELSE NULL
+            END,
+            confirmado_em=CASE
+                WHEN status='confirmado' THEN confirmado_em
+                ELSE NULL
+            END,
+            atualizado_em=NOW()
+        """,
+        (
+            nota_key,
+            _normalizar_chave_acesso_nfe(nfe.get("chave_acesso")),
+            _as_str(nfe.get("numero_nota"))[:120],
+            _as_str(origem_veiculo)[:80],
+            motivo_final,
+            _as_str(nfe.get("emitente_nome"))[:255],
+            _normalizar_data_documento(nfe.get("data_emissao")) or None,
+            valor,
+            json.dumps(itens, ensure_ascii=False),
+        ),
+    )
+    cur.execute(
+        """
+        SELECT id
+        FROM manutencao_xml_pre_lancamentos
+        WHERE nota_key=%s
+        LIMIT 1
+        """,
+        (nota_key,),
+    )
+    row = cur.fetchone() or {}
+    return _as_int(row.get("id"), 0)
+
+
+@app.route("/api/estoque/nfe/direcionar/lote", methods=["POST"])
+def direcionar_lote_nfe_estoque():
+    data = request.get_json(silent=True) or {}
+    destino = _as_str(data.get("destino") or data.get("destino_importacao")).lower()
+    if destino != "manutencao":
+        return jsonify({"erro": "destino de importacao nao suportado"}), 400
+
+    chaves_brutas = data.get("chaves") if isinstance(data.get("chaves"), list) else []
+    chaves = []
+    for valor in chaves_brutas:
+        chave = _as_str(valor)
+        if chave and chave not in chaves:
+            chaves.append(chave)
+    if not chaves:
+        return jsonify({"erro": "selecione ao menos uma importacao XML"}), 400
+    if len(chaves) > _ESTOQUE_XML_LOTE_MAXIMO:
+        return jsonify(
+            {
+                "erro": (
+                    "o lote tecnico pode conter no maximo "
+                    f"{_ESTOQUE_XML_LOTE_MAXIMO} notas"
+                ),
+                "lote_maximo": _ESTOQUE_XML_LOTE_MAXIMO,
+            }
+        ), 400
+
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    direcionados = []
+    erros = []
+    regras_fornecedor = 0
+    auto_manutencao = 0
+    try:
+        notas = _estoque_xml_carregar_notas(cur)
+        referencias = _estoque_xml_referencias_lancadas(cur)
+        destinos_manutencao = _estoque_xml_destinos_manutencao(cur, chaves)
+        for nota_key in chaves:
+            nota = notas.get(nota_key)
+            numero_nota = ""
+            if nota:
+                numero_nota = _as_str((nota.get("canonicos") or [{}])[0].get("numero_nota"))
+            if not nota:
+                erros.append(
+                    {
+                        "chave": nota_key,
+                        "numero_nota": "",
+                        "erro": "importacao XML nao encontrada",
+                    }
+                )
+                continue
+            if destinos_manutencao.get(nota_key):
+                erros.append(
+                    {
+                        "chave": nota_key,
+                        "numero_nota": numero_nota,
+                        "erro": "nota ja direcionada para manutencao",
+                    }
+                )
+                continue
+            ids_lancados = [
+                _as_int(row.get("id"), 0)
+                for row in (nota.get("canonicos") or [])
+                if _as_int(row.get("id"), 0) in referencias
+            ]
+            if ids_lancados:
+                erros.append(
+                    {
+                        "chave": nota_key,
+                        "numero_nota": numero_nota,
+                        "erro": (
+                            "esta NF-e ja comecou a ser contabilizada no estoque; "
+                            "nao e possivel direcionar para manutencao"
+                        ),
+                    }
+                )
+                continue
+            try:
+                preview = _estoque_xml_preview(cur, nota, referencias)
+                pre_lancamento_id = _registrar_pre_lancamento_manutencao_preview(
+                    cur,
+                    preview,
+                    nota_key_override=nota_key,
+                    origem_veiculo="direcionado_estoque",
+                    motivo="Nota direcionada manualmente do estoque para manutencao.",
+                )
+                base_emitente = (nota.get("canonicos") or [{}])[0]
+                if _registrar_regra_fornecedor_manutencao_xml(
+                    cur,
+                    base_emitente,
+                    usuario=_usuario_ator_req(),
+                    motivo="Fornecedor marcado como manutencao a partir de direcionamento em lote.",
+                ):
+                    regras_fornecedor += 1
+                pre_lancamento = _buscar_pre_lancamento_manutencao_publico(
+                    cur,
+                    pre_lancamento_id,
+                )
+                direcionados.append(
+                    {
+                        "chave": nota_key,
+                        "numero_nota": numero_nota or _as_str(pre_lancamento.get("numero_nota")),
+                        "pre_lancamento": pre_lancamento,
+                    }
+                )
+            except ValueError as exc:
+                erros.append(
+                    {
+                        "chave": nota_key,
+                        "numero_nota": numero_nota,
+                        "erro": str(exc),
+                    }
+                )
+        if direcionados:
+            auto_manutencao = _aplicar_regras_fornecedor_manutencao_xml(
+                cur,
+                notas,
+                referencias,
+                usuario="regra_fornecedor",
+            )
+        conn.commit()
+        return jsonify(
+            {
+                "ok": not erros,
+                "destino": "manutencao",
+                "direcionados": direcionados,
+                "erros": erros,
+                "meta": {
+                    "selecionadas": len(chaves),
+                    "direcionadas": len(direcionados),
+                    "com_erro": len(erros),
+                    "regras_fornecedor": regras_fornecedor,
+                    "auto_manutencao": auto_manutencao,
+                },
+            }
+        )
+    except mysql.connector.IntegrityError:
+        conn.rollback()
+        return jsonify({"erro": "uma das notas ja foi direcionada ou confirmada"}), 409
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.route("/api/estoque/nfe/direcionar", methods=["POST"])
+def direcionar_nfe_estoque():
+    usuario = _usuario_ator_req()
+    data = request.get_json(silent=True) or {}
+    destino = _as_str(data.get("destino") or data.get("destino_importacao")).lower()
+    if destino != "manutencao":
+        return jsonify({"erro": "destino de importacao nao suportado"}), 400
+
+    preview_payload = data.get("preview") if isinstance(data.get("preview"), dict) else {}
+    if not preview_payload:
+        return jsonify({"erro": "preview da NF-e nao informado"}), 400
+
+    source_type = _as_str(preview_payload.get("source_type")).lower()
+    nota_key = _as_str(
+        data.get("chave")
+        or preview_payload.get("importar_xml_chave")
+        or preview_payload.get("chave_acesso")
+    )
+
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    try:
+        nota = None
+        referencias = set()
+        if source_type == "importar_xml" or _as_str(preview_payload.get("importar_xml_chave")):
+            if not nota_key:
+                conn.rollback()
+                return jsonify({"erro": "chave da importacao XML nao informada"}), 400
+            notas = _estoque_xml_carregar_notas(cur, nota_key)
+            nota = notas.get(nota_key)
+            if not nota:
+                conn.rollback()
+                return jsonify({"erro": "importacao XML nao encontrada"}), 404
+            referencias = _estoque_xml_referencias_lancadas(cur)
+            ids_lancados = [
+                _as_int(row.get("id"), 0)
+                for row in (nota.get("canonicos") or [])
+                if _as_int(row.get("id"), 0) in referencias
+            ]
+            if ids_lancados:
+                conn.rollback()
+                return jsonify(
+                    {
+                        "erro": (
+                            "esta NF-e ja comecou a ser contabilizada no estoque; "
+                            "nao e possivel direcionar para manutencao"
+                        )
+                    }
+                ), 409
+
+        pre_lancamento_id = _registrar_pre_lancamento_manutencao_preview(
+            cur,
+            preview_payload,
+            nota_key_override=nota_key,
+            origem_veiculo="direcionado_estoque",
+            motivo="Nota direcionada manualmente do estoque para manutencao.",
+        )
+        pre_lancamento = _buscar_pre_lancamento_manutencao_publico(
+            cur,
+            pre_lancamento_id,
+        )
+        dados_emitente_regra = (
+            (nota.get("canonicos") or [{}])[0]
+            if isinstance(nota, dict)
+            else preview_payload
+        )
+        regra_fornecedor = _registrar_regra_fornecedor_manutencao_xml(
+            cur,
+            dados_emitente_regra,
+            usuario=usuario,
+            motivo="Fornecedor marcado como manutencao a partir de direcionamento individual.",
+        )
+        auto_manutencao = 0
+        if isinstance(nota, dict):
+            notas_todas = _estoque_xml_carregar_notas(cur)
+            auto_manutencao = _aplicar_regras_fornecedor_manutencao_xml(
+                cur,
+                notas_todas,
+                referencias,
+                usuario="regra_fornecedor",
+            )
+        conn.commit()
+        return jsonify(
+            {
+                "ok": True,
+                "destino": "manutencao",
+                "pre_lancamento": pre_lancamento,
+                "regra_fornecedor": bool(regra_fornecedor),
+                "auto_manutencao": auto_manutencao,
+            }
+        )
+    except ValueError as exc:
+        conn.rollback()
+        return jsonify({"erro": str(exc)}), 400
+    except mysql.connector.IntegrityError:
+        conn.rollback()
+        return jsonify({"erro": "esta nota ja foi direcionada ou confirmada"}), 409
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        conn.close()
+
+
 @app.route("/api/estoque/nfe/import", methods=["POST"])
 def importar_nfe_estoque():
     try:
@@ -15672,14 +19759,15 @@ def confirmar_conferencia_estoque(conferencia_id):
             cur.execute("""
                 INSERT INTO estoque_movimentos
                     (
-                        codigo_barras, codigo_produto_nfe, numero_nota, nome_produto, quantidade, valor_unitario, tipo_movimento,
+                        codigo_barras, codigo_produto_nfe, lote_codigo, numero_nota, nome_produto, quantidade, valor_unitario, tipo_movimento,
                         origem_setor, destino_setor, referencia_tipo, referencia_id, usuario_registro
                     )
                 VALUES
-                    (%s, %s, %s, %s, %s, %s, 'entrada', %s, %s, 'conferencia_nfe', %s, %s)
+                    (%s, %s, %s, %s, %s, %s, %s, 'entrada', %s, %s, 'conferencia_nfe', %s, %s)
             """, (
                 codigo_barras_final,
                 codigo_produto_nfe_final,
+                _rastreio_lote_codigo(datetime.date.today(), 1),
                 _as_str(conferencia.get("numero_nota")),
                 nome_produto_final,
                 quantidade_conferida,
@@ -16020,12 +20108,27 @@ def criar_frete():
     veiculo_id = _as_int(data.get("veiculo_id"), 0) or None
     carga_id = _as_int(data.get("carga_id"), 0) or None
     observacao = _as_str(data.get("observacao"))
+    lote_manual = _normalizar_lotes_frete(data.get("lote_manual"))
     km_atual = _as_int(data.get("km_atual"), 0)
     peso = _as_float(data.get("peso"), 0.0)
     qtd_entregas = _as_int(data.get("qtd_entregas"), 0)
 
     conn = get_conn()
     cursor = conn.cursor(dictionary=True)
+    if not veiculo_id and carga_id:
+        cursor.execute("SELECT veiculo_numero FROM cargas WHERE id=%s", (carga_id,))
+        carga_ref = cursor.fetchone() or {}
+        veiculo_id = _resolver_veiculo_id_por_numero(cursor, carga_ref.get("veiculo_numero"))
+    if veiculo_id and not colaborador_motorista_id:
+        equipe_atual = _buscar_equipe_atual_veiculo(cursor, veiculo_id)
+        colaborador_motorista_id = (
+            _as_int(equipe_atual.get("motorista_id"), 0) or None
+        )
+        colaborador_entregador_id = (
+            _as_int(equipe_atual.get("ajudante_id"), 0) or None
+        )
+        motorista_id = colaborador_motorista_id
+        entregador_id = colaborador_entregador_id
     legacy_motorista_id = _resolver_motorista_legacy_id_por_colaborador(cursor, colaborador_motorista_id)
     legacy_entregador_id = _resolver_motorista_legacy_id_por_colaborador(cursor, colaborador_entregador_id)
     erro_equipe = _validar_colaboradores_frete(cursor, motorista_id, entregador_id)
@@ -16039,19 +20142,17 @@ def criar_frete():
         conn.close()
         return jsonify({"erro": erro_escala}), 400
 
-    if not veiculo_id and carga_id:
-        cursor.execute("SELECT veiculo_numero FROM cargas WHERE id=%s", (carga_id,))
-        carga_ref = cursor.fetchone() or {}
-        veiculo_id = _resolver_veiculo_id_por_numero(cursor, carga_ref.get("veiculo_numero"))
+    if veiculo_id and km_atual <= 0:
+        km_atual = _buscar_km_atual_veiculo(cursor, veiculo_id)
 
     cursor.execute(
         """
         INSERT INTO fretes
-            (nome, cidade, data_carga, status, motorista_id, entregador_id, colaborador_motorista_id, colaborador_entregador_id, veiculo_id, carga_id, observacao, km_atual, peso, qtd_entregas, arquivado)
+            (nome, cidade, data_carga, status, motorista_id, entregador_id, colaborador_motorista_id, colaborador_entregador_id, veiculo_id, carga_id, observacao, lote_manual, km_atual, peso, qtd_entregas, arquivado)
         VALUES
-            (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
-        (nome, cidade, data_carga, "liberado", legacy_motorista_id, legacy_entregador_id, colaborador_motorista_id, colaborador_entregador_id, veiculo_id, carga_id, observacao, km_atual, peso, qtd_entregas, 0)
+        (nome, cidade, data_carga, "liberado", legacy_motorista_id, legacy_entregador_id, colaborador_motorista_id, colaborador_entregador_id, veiculo_id, carga_id, observacao, lote_manual, km_atual, peso, qtd_entregas, 0)
     )
     frete_id = cursor.lastrowid
     if veiculo_id and km_atual > 0:
@@ -16129,7 +20230,25 @@ def atualizar_frete(id):
         if "data_carga" in data else _as_date(antes.get("data_carga"))
     )
     status = _as_str(data.get("status")) if ("status" in data and data.get("status") is not None) else _as_str(antes.get("status"))
-    arquivado = _as_int(data.get("arquivado"), 0) if ("arquivado" in data) else (_as_int(antes.get("arquivado"), 0) or 0)
+    if "arquivado" in data:
+        arquivado = 1 if _as_bool(data.get("arquivado"), False) else 0
+    else:
+        arquivado = _as_int(antes.get("arquivado"), 0) or 0
+    solicitou_arquivamento = (
+        arquivado == 1
+        and _as_int(antes.get("arquivado"), 0) == 0
+    )
+    if solicitou_arquivamento and not bool(antes.get("pode_arquivar_manual")):
+        cursor.close()
+        conn.close()
+        return jsonify(
+            {
+                "erro": (
+                    "o card so pode ser arquivado manualmente depois de "
+                    f"{FRETE_ARQUIVO_MANUAL_HORAS} horas no status retornando"
+                )
+            }
+        ), 409
     colaborador_motorista_id = (
         _as_int(data.get("colaborador_motorista_id"), 0) or _as_int(data.get("motorista_id"), 0) or None
         if "colaborador_motorista_id" in data else (_as_int(antes.get("colaborador_motorista_id"), 0) or None)
@@ -16151,6 +20270,7 @@ def atualizar_frete(id):
         if "carga_id" in data else (_as_int(antes.get("carga_id"), 0) or None)
     )
     observacao = _as_str(data.get("observacao")) if ("observacao" in data and data.get("observacao") is not None) else _as_str(antes.get("observacao"))
+    lote_manual = _normalizar_lotes_frete(data.get("lote_manual")) if ("lote_manual" in data and data.get("lote_manual") is not None) else _normalizar_lotes_frete(antes.get("lote_manual"))
     km_atual = _as_int(data.get("km_atual"), 0) if ("km_atual" in data and data.get("km_atual") is not None) else _as_int(antes.get("km_atual"), 0)
     peso = _as_float(data.get("peso"), 0.0) if ("peso" in data and data.get("peso") is not None) else _as_float(antes.get("peso"), 0.0)
     qtd_entregas = _as_int(data.get("qtd_entregas"), 0) if ("qtd_entregas" in data and data.get("qtd_entregas") is not None) else _as_int(antes.get("qtd_entregas"), 0)
@@ -16178,6 +20298,7 @@ def atualizar_frete(id):
         "veiculo_id": _as_int(antes.get("veiculo_id"), 0) or None,
         "carga_id": _as_int(antes.get("carga_id"), 0) or None,
         "observacao": _as_str(antes.get("observacao")),
+        "lote_manual": _normalizar_lotes_frete(antes.get("lote_manual")),
         "km_atual": _as_int(antes.get("km_atual"), 0),
         "peso": _as_float(antes.get("peso"), 0.0),
         "qtd_entregas": _as_int(antes.get("qtd_entregas"), 0),
@@ -16195,6 +20316,7 @@ def atualizar_frete(id):
         "veiculo_id": veiculo_id,
         "carga_id": carga_id,
         "observacao": observacao,
+        "lote_manual": lote_manual,
         "km_atual": km_atual,
         "peso": peso,
         "qtd_entregas": qtd_entregas,
@@ -16246,6 +20368,11 @@ def atualizar_frete(id):
           nome = %s,
           cidade = %s,
           data_carga = %s,
+          finalizado_em = CASE
+            WHEN %s = 'retornando' AND finalizado_em IS NULL THEN NOW()
+            WHEN %s <> 'retornando' THEN NULL
+            ELSE finalizado_em
+          END,
           status = %s,
           arquivado = %s,
           motorista_id = %s,
@@ -16255,19 +20382,17 @@ def atualizar_frete(id):
           veiculo_id = %s,
           carga_id = %s,
           observacao = %s,
+          lote_manual = %s,
           km_atual = %s,
           peso = %s,
-          qtd_entregas = %s,
-          finalizado_em = CASE
-            WHEN %s = 'retornando' AND status <> 'retornando' THEN NOW()
-            WHEN status = 'retornando' AND %s <> 'retornando' THEN NULL
-            ELSE finalizado_em
-          END
+          qtd_entregas = %s
         WHERE id = %s
     """, (
         nome,
         cidade,
         data_carga,
+        status,
+        status,
         status,
         arquivado,
         legacy_motorista_id,
@@ -16277,11 +20402,10 @@ def atualizar_frete(id):
         veiculo_id,
         carga_id,
         observacao,
+        lote_manual,
         km_atual,
         peso,
         qtd_entregas,
-        status,
-        status,
         id
     ))
 
@@ -16372,7 +20496,182 @@ def listar_notas_saida_frete(id):
                     "criado_em": _fmt_dt(row.get("criado_em")),
                 }
             )
-        return jsonify({"ok": True, "frete": frete, "notas": notas})
+
+        cursor.execute(
+            """
+            SELECT
+                id, nota_key, chave_nfe, numero_nota, frete_id, veiculo_id,
+                placa_xml, mapa_xml, numero_caminhao_xml,
+                origem_veiculo, origem_frete, status, detalhes,
+                criado_em, atualizado_em
+            FROM estoque_xml_frete_pre_vinculos p
+            WHERE p.frete_id=%s
+              AND COALESCE(p.status, 'pendente') NOT IN ('confirmado', 'confirmado_sem_frete')
+              AND NOT EXISTS (
+                SELECT 1
+                FROM estoque_xml_frete_vinculos v
+                WHERE v.nota_key = p.nota_key
+              )
+            ORDER BY p.atualizado_em DESC, p.id DESC
+            """,
+            (id,),
+        )
+        pre_rows = cursor.fetchall() or []
+        pendentes = []
+        if pre_rows:
+            notas_xml = _estoque_xml_carregar_notas(cursor)
+            referencias = _estoque_xml_referencias_lancadas(cursor)
+            for row in pre_rows:
+                nota_key = _as_str(row.get("nota_key"))
+                resumo = {}
+                if nota_key in notas_xml:
+                    resumo = _estoque_xml_nota_publica(notas_xml[nota_key], referencias)
+                pendentes.append(
+                    {
+                        "id": _as_int(row.get("id"), 0),
+                        "nota_key": nota_key,
+                        "chave_nfe": _as_str(row.get("chave_nfe") or resumo.get("chave_nfe")),
+                        "numero_nota": _as_str(row.get("numero_nota") or resumo.get("numero_nota")),
+                        "frete_id": _as_int(row.get("frete_id"), 0),
+                        "veiculo_id": _as_int(row.get("veiculo_id"), 0) or None,
+                        "placa_xml": _as_str(row.get("placa_xml")),
+                        "mapa_xml": _as_str(row.get("mapa_xml")),
+                        "numero_caminhao_xml": _as_str(row.get("numero_caminhao_xml")),
+                        "origem_veiculo": _as_str(row.get("origem_veiculo")),
+                        "origem_frete": _as_str(row.get("origem_frete")),
+                        "status": _as_str(row.get("status")) or "pendente",
+                        "detalhes": _as_str(row.get("detalhes")),
+                        "emitente_nome": _as_str(resumo.get("emitente_nome")),
+                        "destinatario_nome": _as_str(resumo.get("destinatario_nome")),
+                        "data_emissao": _as_str(resumo.get("data_emissao")),
+                        "itens_total": _as_int(resumo.get("total_itens"), 0),
+                        "itens_pendentes": _as_int(resumo.get("itens_pendentes"), 0),
+                        "valor_total_nota": _as_float(resumo.get("valor_total_nota"), 0.0),
+                        "criado_em": _fmt_dt(row.get("criado_em")),
+                        "atualizado_em": _fmt_dt(row.get("atualizado_em")),
+                    }
+                )
+        chaves_carga = {
+            _normalizar_chave_acesso_nfe(item.get("chave_nfe"))
+            for item in [*notas, *pendentes]
+            if len(_normalizar_chave_acesso_nfe(item.get("chave_nfe"))) == 44
+        }
+        carga_xml = {
+            "notas_total": len(notas) + len(pendentes),
+            "itens": [],
+            "total_embalagens": 0.0,
+            "total_unidades": 0.0,
+            "total_pets": 0.0,
+            "total_retornaveis": 0.0,
+            "total_litros": 0.0,
+            "valor_total": sum(
+                _as_float(item.get("valor_total_nota"), 0.0)
+                for item in [*notas, *pendentes]
+            ),
+            "pets_por_tamanho": {},
+        }
+        if chaves_carga:
+            placeholders = ",".join(["%s"] * len(chaves_carga))
+            cursor.execute(
+                f"""
+                SELECT chave_nfe, codigo_produto, descricao_produto,
+                       unidade, quantidade, valor_total_item
+                FROM importar_xml_estoque_itens
+                WHERE chave_nfe IN ({placeholders})
+                ORDER BY descricao_produto, id
+                """,
+                tuple(sorted(chaves_carga)),
+            )
+            grupos = {}
+            for item in cursor.fetchall() or []:
+                nome = _as_str(item.get("descricao_produto")) or "Item sem descricao"
+                nome_norm = _normalizar_chave_texto(nome)
+                quantidade = _as_float(item.get("quantidade"), 0.0)
+                fator = _fator_base_produto(
+                    nome_produto=nome,
+                    embalagem=item.get("unidade"),
+                    unidade_ref=item.get("unidade"),
+                )
+                fator = fator if fator > 0 else 1.0
+                if fator <= 1:
+                    embalagem_nome = re.search(
+                        r"(\d{1,3})\s*[Xx]\s*\d",
+                        nome,
+                    )
+                    if embalagem_nome:
+                        fator_nome = _as_float(embalagem_nome.group(1), 1.0)
+                        if fator_nome > 1:
+                            fator = fator_nome
+                unidades = quantidade * fator
+                texto = _normalizar_chave_texto(nome).upper()
+                eh_pet = "PET" in texto
+                eh_retornavel = any(
+                    termo in texto
+                    for termo in ("RETORN", "GARRAFA", "GFA", "VIDRO")
+                ) and not eh_pet
+                litros_unidade = 0.0
+                medidas = re.findall(
+                    r"(\d+(?:[.,]\d+)?)\s*(ML|LITROS?|LTS?|LT)\b",
+                    texto,
+                    re.I,
+                )
+                if medidas:
+                    valor_medida, unidade_medida = medidas[-1]
+                    litros_unidade = _as_float(
+                        str(valor_medida).replace(",", "."),
+                        0.0,
+                    )
+                    if unidade_medida.upper() == "ML":
+                        litros_unidade /= 1000.0
+                grupo = grupos.setdefault(
+                    nome_norm,
+                    {
+                        "nome": nome,
+                        "codigo_produto": _as_str(item.get("codigo_produto")),
+                        "unidade": _as_str(item.get("unidade")),
+                        "fator": fator,
+                        "embalagens": 0.0,
+                        "unidades": 0.0,
+                        "litros": 0.0,
+                        "valor": 0.0,
+                        "tipo": "PET" if eh_pet else (
+                            "Retornavel" if eh_retornavel else "Outros"
+                        ),
+                    },
+                )
+                grupo["embalagens"] += quantidade
+                grupo["unidades"] += unidades
+                grupo["litros"] += unidades * litros_unidade
+                grupo["valor"] += _as_float(item.get("valor_total_item"), 0.0)
+                carga_xml["total_embalagens"] += quantidade
+                carga_xml["total_unidades"] += unidades
+                carga_xml["total_litros"] += unidades * litros_unidade
+                if eh_pet:
+                    carga_xml["total_pets"] += unidades
+                    tamanho = (
+                        f"{litros_unidade:g} L"
+                        if litros_unidade >= 1
+                        else f"{round(litros_unidade * 1000):g} ml"
+                    ) if litros_unidade > 0 else "Tamanho nao identificado"
+                    carga_xml["pets_por_tamanho"][tamanho] = (
+                        _as_float(carga_xml["pets_por_tamanho"].get(tamanho), 0.0)
+                        + unidades
+                    )
+                elif eh_retornavel:
+                    carga_xml["total_retornaveis"] += unidades
+            carga_xml["itens"] = sorted(
+                grupos.values(),
+                key=lambda item: _as_str(item.get("nome")).lower(),
+            )
+        return jsonify(
+            {
+                "ok": True,
+                "frete": frete,
+                "notas": notas,
+                "pendentes": pendentes,
+                "carga_xml": carga_xml,
+            }
+        )
     finally:
         cursor.close()
         conn.close()
@@ -18334,16 +22633,253 @@ def _vendas_source_signature(path):
     regras_assinatura = _vendas_import_regras_assinatura()
     return f"{os.path.abspath(path)}|{int(stat.st_mtime)}|{int(stat.st_size)}|{regras_assinatura}"
 
-def _vendas_csv_nome_valido(nome):
+_VENDAS_RELATORIO_EXTENSOES = {".csv", ".xlsx"}
+
+
+def _vendas_relatorio_extensao(nome):
+    return os.path.splitext(_as_str(nome))[1].lower()
+
+
+def _vendas_relatorio_e_xlsx(path):
+    return _vendas_relatorio_extensao(path) == ".xlsx"
+
+
+def _vendas_relatorio_nome_valido(nome):
     texto = _as_str(nome)
     if not texto:
+        return False
+    base = os.path.basename(texto)
+    if base.startswith("~$"):
         return False
     nome_upper = texto.upper()
     if ":" in texto:
         return False
-    if not nome_upper.endswith(".CSV"):
+    if _vendas_relatorio_extensao(nome_upper) not in _VENDAS_RELATORIO_EXTENSOES:
         return False
     return True
+
+
+def _vendas_csv_nome_valido(nome):
+    return _vendas_relatorio_nome_valido(nome)
+
+
+def _vendas_xlsx_col_index(ref):
+    match = re.match(r"([A-Z]+)", _as_str(ref).upper())
+    if not match:
+        return None
+    idx = 0
+    for char in match.group(1):
+        idx = idx * 26 + (ord(char) - ord("A") + 1)
+    return idx - 1
+
+
+def _vendas_xlsx_numero_texto(valor):
+    texto = _as_str(valor)
+    if not texto:
+        return ""
+    try:
+        numero = float(texto)
+    except Exception:
+        return texto
+    if abs(numero - int(numero)) < 0.0000001:
+        return str(int(numero))
+    return ("%f" % numero).rstrip("0").rstrip(".")
+
+
+def _vendas_excel_serial_para_data_texto(valor, date1904=False):
+    try:
+        serial = float(_as_str(valor).replace(",", "."))
+    except Exception:
+        return _as_str(valor)
+    if serial <= 0:
+        return _as_str(valor)
+    base = datetime.datetime(1904, 1, 1) if date1904 else datetime.datetime(1899, 12, 30)
+    try:
+        data = base + datetime.timedelta(days=serial)
+        return data.strftime("%d/%m/%Y")
+    except Exception:
+        return _as_str(valor)
+
+
+def _vendas_xlsx_xml_root(zf, name):
+    try:
+        return ET.fromstring(zf.read(name))
+    except KeyError:
+        return None
+
+
+def _vendas_xlsx_primeira_planilha_path(zf):
+    workbook = _vendas_xlsx_xml_root(zf, "xl/workbook.xml")
+    rels = _vendas_xlsx_xml_root(zf, "xl/_rels/workbook.xml.rels")
+    if workbook is None or rels is None:
+        return "xl/worksheets/sheet1.xml"
+
+    ns_main = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+    ns_rel = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
+    rels_map = {}
+    for rel in rels:
+        rid = _as_str(rel.attrib.get("Id"))
+        target = _as_str(rel.attrib.get("Target"))
+        if rid and target:
+            rels_map[rid] = target
+
+    for sheet in workbook.findall(f"{ns_main}sheets/{ns_main}sheet"):
+        rid = _as_str(sheet.attrib.get(f"{ns_rel}id"))
+        target = rels_map.get(rid)
+        if not target:
+            continue
+        target = target.replace("\\", "/")
+        if target.startswith("/"):
+            target = target.lstrip("/")
+        elif not target.startswith("xl/"):
+            target = "xl/" + target
+        return re.sub(r"/+", "/", target)
+    return "xl/worksheets/sheet1.xml"
+
+
+def _vendas_xlsx_date1904(zf):
+    workbook = _vendas_xlsx_xml_root(zf, "xl/workbook.xml")
+    if workbook is None:
+        return False
+    ns_main = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+    props = workbook.find(f"{ns_main}workbookPr")
+    return _as_str((props.attrib if props is not None else {}).get("date1904")).lower() in {"1", "true"}
+
+
+def _vendas_xlsx_shared_strings(zf):
+    root = _vendas_xlsx_xml_root(zf, "xl/sharedStrings.xml")
+    if root is None:
+        return []
+    ns_main = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+    strings = []
+    for item in root.findall(f"{ns_main}si"):
+        partes = [
+            texto.text or ""
+            for texto in item.iter(f"{ns_main}t")
+        ]
+        strings.append("".join(partes))
+    return strings
+
+
+def _vendas_xlsx_estilos_data(zf):
+    root = _vendas_xlsx_xml_root(zf, "xl/styles.xml")
+    if root is None:
+        return set()
+    ns_main = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+    ids_data = {
+        14, 15, 16, 17, 22,
+        27, 28, 29, 30, 31, 32, 33, 34, 35, 36,
+        45, 46, 47, 50, 51, 52, 53, 54, 55, 56, 57, 58,
+    }
+    num_fmts = root.find(f"{ns_main}numFmts")
+    if num_fmts is not None:
+        for fmt in num_fmts.findall(f"{ns_main}numFmt"):
+            fmt_id = _as_int(fmt.attrib.get("numFmtId"), -1)
+            code = _as_str(fmt.attrib.get("formatCode")).lower()
+            if fmt_id < 0 or not code:
+                continue
+            if any(token in code for token in ("yy", "dd", "mmm", "mm/", "/mm", "h:mm")):
+                ids_data.add(fmt_id)
+    estilos_data = set()
+    cell_xfs = root.find(f"{ns_main}cellXfs")
+    if cell_xfs is not None:
+        for idx, xf in enumerate(cell_xfs.findall(f"{ns_main}xf")):
+            if _as_int(xf.attrib.get("numFmtId"), -1) in ids_data:
+                estilos_data.add(idx)
+    return estilos_data
+
+
+def _vendas_xlsx_cell_text(cell, shared_strings, estilos_data, date1904=False):
+    ns_main = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+    tipo = _as_str(cell.attrib.get("t"))
+    style_id = _as_int(cell.attrib.get("s"), -1)
+    value_el = cell.find(f"{ns_main}v")
+    valor = _as_str(value_el.text if value_el is not None else "")
+
+    if tipo == "s":
+        idx = _as_int(valor, -1)
+        return shared_strings[idx] if 0 <= idx < len(shared_strings) else ""
+    if tipo == "inlineStr":
+        return "".join(texto.text or "" for texto in cell.iter(f"{ns_main}t")).strip()
+    if tipo == "b":
+        return "1" if valor in {"1", "true", "TRUE"} else "0"
+    if tipo in {"str", "e"}:
+        return valor
+    if style_id in estilos_data and valor:
+        return _vendas_excel_serial_para_data_texto(valor, date1904=date1904)
+    return _vendas_xlsx_numero_texto(valor)
+
+
+def _vendas_xlsx_iter_rows(path):
+    ns_main = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+    with zipfile.ZipFile(path) as zf:
+        sheet_path = _vendas_xlsx_primeira_planilha_path(zf)
+        shared_strings = _vendas_xlsx_shared_strings(zf)
+        estilos_data = _vendas_xlsx_estilos_data(zf)
+        date1904 = _vendas_xlsx_date1904(zf)
+        with zf.open(sheet_path) as sheet:
+            for _, row in ET.iterparse(sheet, events=("end",)):
+                if row.tag != f"{ns_main}row":
+                    continue
+                valores = []
+                proximo_idx = 0
+                for cell in row.findall(f"{ns_main}c"):
+                    idx = _vendas_xlsx_col_index(cell.attrib.get("r"))
+                    if idx is None:
+                        idx = proximo_idx
+                    while len(valores) <= idx:
+                        valores.append("")
+                    valores[idx] = _vendas_xlsx_cell_text(
+                        cell,
+                        shared_strings,
+                        estilos_data,
+                        date1904=date1904,
+                    )
+                    proximo_idx = idx + 1
+                row.clear()
+                yield valores
+
+
+def _vendas_xlsx_dict_rows(path):
+    row_iter = _vendas_xlsx_iter_rows(path)
+    fieldnames = []
+    for row in row_iter:
+        if any(_as_str(valor) for valor in row):
+            fieldnames = [_as_str(valor) for valor in row]
+            break
+
+    def _iter():
+        for row in row_iter:
+            if not any(_as_str(valor) for valor in row):
+                continue
+            raw = {}
+            for idx, campo in enumerate(fieldnames):
+                if not campo:
+                    continue
+                valor = row[idx] if idx < len(row) else ""
+                if _normalizar_chave_texto(campo) == "data" and re.fullmatch(r"\d+(\.\d+)?", _as_str(valor)):
+                    valor = _vendas_excel_serial_para_data_texto(valor)
+                raw[campo] = _as_str(valor)
+            yield raw
+
+    return fieldnames, _iter()
+
+
+def _vendas_relatorio_dict_rows(path):
+    if _vendas_relatorio_e_xlsx(path):
+        return _vendas_xlsx_dict_rows(path)
+    handle = _vendas_relatorio_open(path)
+    leitor = csv.DictReader(handle, delimiter=";")
+
+    def _iter():
+        try:
+            for raw in leitor:
+                yield raw
+        finally:
+            handle.close()
+
+    return leitor.fieldnames, _iter()
+
 
 def _vendas_source_descriptor(cfg=None):
     cfg = cfg or _carregar_vendas_config()
@@ -18364,12 +22900,12 @@ def _vendas_source_descriptor(cfg=None):
     candidatos = []
     for nome in os.listdir(csv_dir):
         path = os.path.join(csv_dir, nome)
-        if os.path.isfile(path) and _vendas_csv_nome_valido(nome):
+        if os.path.isfile(path) and _vendas_relatorio_nome_valido(nome):
             candidatos.append(path)
     if not candidatos:
         for raiz, _, arquivos in os.walk(csv_dir):
             for nome in arquivos:
-                if not _vendas_csv_nome_valido(nome):
+                if not _vendas_relatorio_nome_valido(nome):
                     continue
                 path = os.path.join(raiz, nome)
                 if os.path.isfile(path):
@@ -18378,7 +22914,7 @@ def _vendas_source_descriptor(cfg=None):
         return {
             "source_type": source_type,
             "ready": False,
-            "message": f"Nenhum CSV valido encontrado em {csv_dir}. A busca tambem percorre subpastas, mas arquivos auxiliares como :Zone.Identifier sao ignorados.",
+            "message": f"Nenhum CSV ou XLSX valido encontrado em {csv_dir}. A busca tambem percorre subpastas, mas arquivos auxiliares como :Zone.Identifier sao ignorados.",
             "path": "",
             "signature": "",
         }
@@ -18409,18 +22945,23 @@ def _vendas_cache_imports_publicos(cfg=None):
         itens.append(_vendas_cache_entry_publico(row))
     return itens
 
-def _vendas_normalizar_linha(raw):
-    vendedor_raw = ""
-    for campo in (
-        "Vendedor Pedido",
-        "Vendedor Cadastro",
-        "Supervisor Pedido",
-        "Supervisor Cadastro",
-    ):
+def _vendas_primeiro_campo_vendedor(raw):
+    if not isinstance(raw, dict):
+        return ""
+    primeiro_valor = ""
+    for campo in ("Vendedor Pedido", "Vendedor Cadastro", "Vendedor 2"):
         valor = _as_str(raw.get(campo))
-        if valor:
-            vendedor_raw = valor
-            break
+        if not valor:
+            continue
+        if not primeiro_valor:
+            primeiro_valor = valor
+        info = _split_codigo_nome(valor)
+        if _as_str(info.get("nome")):
+            return valor
+    return primeiro_valor
+
+def _vendas_normalizar_linha(raw):
+    vendedor_raw = _vendas_primeiro_campo_vendedor(raw)
     vendedor_info = _split_codigo_nome(vendedor_raw)
     vendedor_key = " - ".join(part for part in (vendedor_info["codigo"], vendedor_info["nome"]) if part) or "SEM VENDEDOR"
     caixa_fisica = _as_float_br(raw.get("Caixa Física"), 0.0)
@@ -18538,67 +23079,66 @@ def _vendas_importar_csv_para_cache(source_path, source_type="csv_relatorios_dir
         conn = get_conn()
         cur = conn.cursor()
         cur.execute("DELETE FROM vendas_relatorio_itens WHERE import_id=%s", (cache_id,))
-        with _vendas_relatorio_open(source_path) as handle:
-            leitor = csv.DictReader(handle, delimiter=";")
-            colunas_efetivas = _vendas_import_colunas_efetivas(leitor.fieldnames, regras_importacao)
-            for raw_bruto in leitor:
-                raw = _vendas_import_reter_colunas(raw_bruto, colunas_efetivas)
-                grupo_raw = _as_str(raw.get("Grupo"))
-                categoria_raw = _as_str(raw.get("Categoria"))
-                produto_raw = _as_str(raw.get("Produto"))
-                marca_raw = _as_str(raw.get("Marca"))
-                if _vendas_grupo_deve_descartar(grupo_raw, categoria_raw, produto_raw, regras_importacao):
-                    continue
+        fieldnames, linhas_relatorio = _vendas_relatorio_dict_rows(source_path)
+        colunas_efetivas = _vendas_import_colunas_efetivas(fieldnames, regras_importacao)
+        for raw_bruto in linhas_relatorio:
+            raw = _vendas_import_reter_colunas(raw_bruto, colunas_efetivas)
+            grupo_raw = _as_str(raw.get("Grupo"))
+            categoria_raw = _as_str(raw.get("Categoria"))
+            produto_raw = _as_str(raw.get("Produto"))
+            marca_raw = _as_str(raw.get("Marca"))
+            if _vendas_grupo_deve_descartar(grupo_raw, categoria_raw, produto_raw, regras_importacao):
+                continue
 
-                row = _vendas_normalizar_linha(raw)
-                grupo_norm = _vendas_grupo_normalizado(grupo_raw, categoria_raw, produto_raw, marca_raw, regras_importacao)
-                categoria_norm = grupo_norm or _vendas_texto_sem_acentos(categoria_raw).upper().strip()
-                valor_liquido = round(
-                    _as_float(row.get("valor_venda"), 0.0)
-                    - _as_float(row.get("valor_devolvido"), 0.0)
-                    - _as_float(row.get("bonificacao"), 0.0),
-                    2,
-                )
-                data_ref = _parse_data_br(row.get("data"))
-                vendedor_key = _as_str(row.get("vendedor_key")) or "SEM VENDEDOR"
-                cliente = _as_str(row.get("cliente"))
-                cliente_norm = _as_str(raw.get("Cliente"))[:255].strip().upper()
-                if not cliente_norm:
-                    cliente_norm = cliente.upper()
-                data_texto = _as_str(row.get("data"))
-                lote.append((
-                    cache_id,
-                    data_ref,
-                    data_texto,
-                    vendedor_key,
-                    vendedor_key.upper(),
-                    _as_str(row.get("vendedor_codigo")),
-                    _as_str(row.get("vendedor_nome")) or vendedor_key,
-                    _as_str(row.get("numero_nf")),
-                    cliente,
-                    cliente_norm,
-                    _as_str(row.get("cidade")),
-                    grupo_raw,
-                    grupo_norm,
-                    categoria_norm,
-                    _as_str(row.get("produto")),
-                    _as_str(row.get("tipo_operacao")),
-                    _as_str(row.get("condicao")),
-                    _as_int(row.get("tab_venda"), 0),
-                    round(_as_float(row.get("quantidade"), 0.0), 3),
-                    round(_as_float(row.get("litros"), 0.0), 3),
-                    round(_as_float(row.get("caixas"), 0.0), 3),
-                    round(_as_float(row.get("caixa_fisica"), 0.0), 3),
-                    round(_as_float(row.get("valor_venda"), 0.0), 2),
-                    round(_as_float(row.get("valor_devolvido"), 0.0), 2),
-                    round(_as_float(row.get("bonificacao"), 0.0), 2),
-                    valor_liquido,
-                    round(_as_float(row.get("quantidade_devolvida"), 0.0), 3),
-                    round(_as_float(row.get("litro_devolvido"), 0.0), 3),
-                    round(_as_float(row.get("caixa_devolvida"), 0.0), 3),
-                ))
-                if len(lote) >= 500:
-                    _flush_rows()
+            row = _vendas_normalizar_linha(raw)
+            grupo_norm = _vendas_grupo_normalizado(grupo_raw, categoria_raw, produto_raw, marca_raw, regras_importacao)
+            categoria_norm = grupo_norm or _vendas_texto_sem_acentos(categoria_raw).upper().strip()
+            valor_liquido = round(
+                _as_float(row.get("valor_venda"), 0.0)
+                - _as_float(row.get("valor_devolvido"), 0.0)
+                - _as_float(row.get("bonificacao"), 0.0),
+                2,
+            )
+            data_ref = _parse_data_br(row.get("data"))
+            vendedor_key = _as_str(row.get("vendedor_key")) or "SEM VENDEDOR"
+            cliente = _as_str(row.get("cliente"))
+            cliente_norm = _as_str(raw.get("Cliente"))[:255].strip().upper()
+            if not cliente_norm:
+                cliente_norm = cliente.upper()
+            data_texto = _as_str(row.get("data"))
+            lote.append((
+                cache_id,
+                data_ref,
+                data_texto,
+                vendedor_key,
+                vendedor_key.upper(),
+                _as_str(row.get("vendedor_codigo")),
+                _as_str(row.get("vendedor_nome")) or vendedor_key,
+                _as_str(row.get("numero_nf")),
+                cliente,
+                cliente_norm,
+                _as_str(row.get("cidade")),
+                grupo_raw,
+                grupo_norm,
+                categoria_norm,
+                _as_str(row.get("produto")),
+                _as_str(row.get("tipo_operacao")),
+                _as_str(row.get("condicao")),
+                _as_int(row.get("tab_venda"), 0),
+                round(_as_float(row.get("quantidade"), 0.0), 3),
+                round(_as_float(row.get("litros"), 0.0), 3),
+                round(_as_float(row.get("caixas"), 0.0), 3),
+                round(_as_float(row.get("caixa_fisica"), 0.0), 3),
+                round(_as_float(row.get("valor_venda"), 0.0), 2),
+                round(_as_float(row.get("valor_devolvido"), 0.0), 2),
+                round(_as_float(row.get("bonificacao"), 0.0), 2),
+                valor_liquido,
+                round(_as_float(row.get("quantidade_devolvida"), 0.0), 3),
+                round(_as_float(row.get("litro_devolvido"), 0.0), 3),
+                round(_as_float(row.get("caixa_devolvida"), 0.0), 3),
+            ))
+            if len(lote) >= 500:
+                _flush_rows()
         _flush_rows()
         conn.commit()
     except Exception:
@@ -18676,8 +23216,8 @@ def _vendas_importar_csv_assincrono(source_path, source_type="csv_relatorios_dir
 
 def _vendas_salvar_upload_csv(file_storage):
     nome = secure_filename(getattr(file_storage, "filename", "") or "relatorio_vendas.csv") or "relatorio_vendas.csv"
-    if not nome.lower().endswith(".csv"):
-        nome = f"{nome}.csv"
+    if not _vendas_relatorio_nome_valido(nome):
+        raise RuntimeError("Envie um relatorio de vendas em CSV ou XLSX.")
     stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     destino = os.path.join(VENDAS_UPLOADS_DIR, f"{stamp}_{nome}")
     file_storage.save(destino)
@@ -19004,17 +23544,28 @@ def _vendas_import_regras_carregar(force=False):
 
 def _vendas_import_regras_publicas():
     regras = _vendas_import_regras_carregar()
-    colunas_ignoradas = list(regras.get("colunas_ignoradas") or [])
+    obrigatorias_norm = _vendas_import_colunas_obrigatorias_norm()
+    colunas_ignoradas = [
+        item
+        for item in list(regras.get("colunas_ignoradas") or [])
+        if _vendas_import_coluna_canonica(item) not in obrigatorias_norm
+    ]
     ignoradas_norm = {
-        re.sub(r"\s+", " ", _vendas_texto_sem_acentos(item).casefold().replace("_", " ").replace("-", " ")).strip()
+        _vendas_import_coluna_canonica(item)
         for item in colunas_ignoradas
         if _as_str(item)
     }
     colunas_utilizadas = [
         item
         for item in (regras.get("colunas_utilizadas") or [])
-        if re.sub(r"\s+", " ", _vendas_texto_sem_acentos(item).casefold().replace("_", " ").replace("-", " ")).strip() not in ignoradas_norm
+        if _vendas_import_coluna_canonica(item) not in ignoradas_norm
     ]
+    utilizadas_norm = {_vendas_import_coluna_canonica(item) for item in colunas_utilizadas if _as_str(item)}
+    for item in _VENDAS_IMPORT_COLUNAS_OBRIGATORIAS:
+        canon = _vendas_import_coluna_canonica(item)
+        if canon and canon not in utilizadas_norm:
+            colunas_utilizadas.append(item)
+            utilizadas_norm.add(canon)
     return {
         "arquivo": _as_str(regras.get("arquivo")),
         "arquivo_relativo": _as_str(regras.get("arquivo_relativo")) or "Relatorios/config-rel-vendas",
@@ -19036,23 +23587,39 @@ def _vendas_import_regras_publicas():
         "colunas_utilizadas": colunas_utilizadas,
     }
 
+_VENDAS_IMPORT_COLUNAS_OBRIGATORIAS = (
+    "Vendedor Pedido",
+    "Vendedor Cadastro",
+    "Vendedor 2",
+)
+
+
 def _vendas_import_coluna_canonica(nome):
     texto = _vendas_texto_sem_acentos(nome).casefold().replace("_", " ").replace("-", " ")
     return re.sub(r"\s+", " ", texto).strip()
 
+
+def _vendas_import_colunas_obrigatorias_norm():
+    return {
+        _vendas_import_coluna_canonica(item)
+        for item in _VENDAS_IMPORT_COLUNAS_OBRIGATORIAS
+        if _as_str(item)
+    }
+
 def _vendas_import_colunas_efetivas(fieldnames, regras=None):
     regras = regras or _vendas_import_regras_carregar()
     nomes = [nome for nome in (fieldnames or []) if _as_str(nome)]
+    obrigatorias = _vendas_import_colunas_obrigatorias_norm()
     ignoradas = {
         _vendas_import_coluna_canonica(item)
         for item in (regras.get("colunas_ignoradas") or [])
         if _as_str(item)
-    }
+    } - obrigatorias
     utilizadas = {
         _vendas_import_coluna_canonica(item)
         for item in (regras.get("colunas_utilizadas") or [])
         if _as_str(item)
-    }
+    } | obrigatorias
     efetivas = []
     for nome in nomes:
         canon = _vendas_import_coluna_canonica(nome)
@@ -19069,9 +23636,18 @@ def _vendas_import_colunas_efetivas(fieldnames, regras=None):
 def _vendas_import_reter_colunas(raw, colunas_efetivas):
     if not isinstance(raw, dict):
         return {}
+    nomes = list(colunas_efetivas or raw.keys())
+    vistos = set(nomes)
+    obrigatorias = _vendas_import_colunas_obrigatorias_norm()
+    for nome in raw.keys():
+        if nome in vistos:
+            continue
+        if _vendas_import_coluna_canonica(nome) in obrigatorias:
+            nomes.append(nome)
+            vistos.add(nome)
     return {
         nome: raw.get(nome)
-        for nome in (colunas_efetivas or raw.keys())
+        for nome in nomes
         if nome in raw
     }
 
@@ -20409,15 +24985,68 @@ def _vendas_relatorio_publico_totais(totais):
         "caixa_devolvida": round(_as_float(data.get("caixa_devolvida"), 0.0), 3),
     }
 
-def _vendas_classificar_embalagem_tipo(produto):
-    texto = _as_str(produto).upper()
+def _vendas_classificar_embalagem_tipo(produto, grupo=""):
+    texto = _vendas_texto_sem_acentos(" ".join([_as_str(grupo), _as_str(produto)])).upper()
     if not texto:
         return "outros"
     if "PET" in texto or "DESCART" in texto:
         return "pet"
-    if "RETORN" in texto or "VIDRO" in texto:
+    if "GRF" in texto or "GARRAF" in texto or "RETORN" in texto or "VIDRO" in texto:
         return "retornavel"
     return "outros"
+
+
+def _vendas_sql_categoria_preco_medio_expr(alias=""):
+    prefixo = f"{alias}." if alias else ""
+    texto = (
+        f"UPPER(CONCAT_WS(' ', COALESCE({prefixo}grupo_norm, ''), "
+        f"COALESCE({prefixo}grupo_raw, ''), COALESCE({prefixo}produto, '')))"
+    )
+    return (
+        f"CASE "
+        f"WHEN {texto} LIKE '%AGUA%' AND ({texto} LIKE '%C/GAS%' OR {texto} LIKE '%COM GAS%') THEN 'Agua c/ gas' "
+        f"WHEN {texto} LIKE '%AGUA%' AND ({texto} LIKE '%S/GAS%' OR {texto} LIKE '%SEM GAS%') THEN 'Agua s/ gas' "
+        f"WHEN {texto} LIKE '%PET2L%' OR {texto} LIKE '%PET 2L%' OR {texto} LIKE '%PET 6X2%' OR {texto} LIKE '%2LITRO%' OR {texto} LIKE '%2LT%' THEN 'Pet 2L' "
+        f"WHEN {texto} LIKE '%PET600ML%' OR {texto} LIKE '%PET 600ML%' THEN 'Pet 600ml' "
+        f"WHEN {texto} LIKE '%PET200ML%' OR {texto} LIKE '%PET 200ML%' THEN 'Pet 200ml' "
+        f"WHEN {texto} LIKE '%GRF600ML%' OR {texto} LIKE '%GRF 600ML%' OR {texto} LIKE '%600ML GFA%' OR {texto} LIKE '%600ML GAR%' THEN 'Garrafa 600ml' "
+        f"WHEN {texto} LIKE '%GRF200ML%' OR {texto} LIKE '%GRF 200ML%' OR {texto} LIKE '%200ML GFA%' OR {texto} LIKE '%200ML GAR%' THEN 'Garrafa 200ml' "
+        f"ELSE 'Outros' END"
+    )
+
+
+def _vendas_preco_medio_categoria_ordem(categoria):
+    ordem = {
+        "Garrafa 600ml": 10,
+        "Garrafa 200ml": 20,
+        "Pet 2L": 30,
+        "Pet 600ml": 40,
+        "Pet 200ml": 50,
+        "Agua s/ gas": 60,
+        "Agua c/ gas": 70,
+        "Outros": 999,
+    }
+    return ordem.get(_as_str(categoria), 900)
+
+
+def _vendas_formatar_lista_precos(precos_raw, limite=8):
+    valores = []
+    if isinstance(precos_raw, str):
+        partes = re.split(r"[|,;]+", precos_raw)
+    else:
+        partes = precos_raw or []
+    for item in partes:
+        valor = round(_as_float(item, 0.0), 2)
+        if valor > 0 and valor not in valores:
+            valores.append(valor)
+    valores.sort()
+    if not valores:
+        return "-", []
+    exibidos = valores[:limite]
+    texto = ", ".join(_fmt_money_br(valor) for valor in exibidos)
+    if len(valores) > limite:
+        texto += f" +{len(valores) - limite}"
+    return texto, valores
 
 def _vendas_texto_sem_acentos(texto):
     base = unicodedata.normalize("NFKD", _as_str(texto))
@@ -21119,6 +25748,30 @@ def _vendas_relatorio_row_publico(row):
         "valor_venda": financeiro["valor_venda"],
         "valor_devolvido": financeiro["valor_devolvido"],
         "valor_liquido": financeiro["valor_liquido"],
+    }
+
+def _vendas_relatorio_preco_medio_publico(row):
+    totais = _vendas_relatorio_publico_totais(row)
+    quantidade = _as_float(totais.get("quantidade"), 0.0)
+    quantidade_devolvida = _as_float(totais.get("quantidade_devolvida"), 0.0)
+    quantidade_liquida = round(quantidade - quantidade_devolvida, 3)
+    valor_base_preco = round(_as_float(totais.get("valor_venda"), 0.0) - _as_float(totais.get("valor_devolvido"), 0.0), 2)
+    valor_venda = _as_float(totais.get("valor_venda"), 0.0)
+    if quantidade_liquida > 0:
+        preco_medio = valor_base_preco / quantidade_liquida
+    elif quantidade > 0:
+        preco_medio = valor_venda / quantidade
+    else:
+        preco_medio = 0.0
+    return {
+        "vendedor_chave": _as_str(row.get("vendedor_chave")) or "SEM VENDEDOR",
+        "codigo": _as_str(row.get("vendedor_codigo")),
+        "vendedor": _as_str(row.get("vendedor_nome")) or _as_str(row.get("vendedor_chave")) or "SEM VENDEDOR",
+        "cidade": _as_str(row.get("cidade")) or "SEM CIDADE",
+        "quantidade_liquida": quantidade_liquida,
+        "valor_base_preco": valor_base_preco,
+        "preco_medio": round(preco_medio, 2),
+        **totais,
     }
 
 def _vendas_lista_resumida(valores, limite=3):
@@ -23366,6 +28019,480 @@ def _coletar_relatorio_vendas_bonificacao_percentual(filtro_vendedor="", filtro_
         "clientes_disponiveis": clientes_disponiveis,
     }
 
+def _coletar_relatorio_vendas_preco_medio(filtro_vendedor="", data_inicio=None, data_fim=None):
+    cache_entry, source, cfg = _vendas_obter_cache_ativo(force_refresh=False)
+
+    filtro_vendedor = _as_str(filtro_vendedor).upper()
+    if isinstance(data_inicio, str):
+        data_inicio = _parse_data_br(data_inicio)
+    if isinstance(data_fim, str):
+        data_fim = _parse_data_br(data_fim)
+
+    where = ["import_id=%s"]
+    params = [_as_str(cache_entry.get("id"))]
+    if data_inicio:
+        where.append("data_ref IS NOT NULL AND data_ref >= %s")
+        params.append(data_inicio)
+    if data_fim:
+        where.append("data_ref IS NOT NULL AND data_ref <= %s")
+        params.append(data_fim)
+    if filtro_vendedor:
+        where.append("vendedor_key_upper = %s")
+        params.append(filtro_vendedor)
+
+    where_sql = " AND ".join(where)
+    categoria_expr = _vendas_sql_categoria_preco_medio_expr()
+    tab_venda_expr = _vendas_sql_tab_venda_expr()
+    quantidade_precificacao_expr = "COALESCE(NULLIF(quantidade, 0), NULLIF(caixa_fisica, 0), NULLIF(caixas, 0), NULLIF(litros, 0))"
+    preco_praticado_expr = (
+        f"CASE WHEN {quantidade_precificacao_expr} > 0 AND COALESCE(valor_venda, 0) > 0 "
+        f"THEN ROUND(COALESCE(valor_venda, 0) / {quantidade_precificacao_expr}, 2) ELSE NULL END"
+    )
+    quantidade_liquida_expr = "(COALESCE(quantidade, 0) - COALESCE(quantidade_devolvida, 0))"
+    valor_base_preco_expr = "(COALESCE(valor_venda, 0) - COALESCE(valor_devolvido, 0))"
+    where_sql_preco = f"{where_sql} AND ({tab_venda_expr} <> 91) AND ({categoria_expr} <> 'Outros')"
+    cidade_expr = "COALESCE(NULLIF(cidade, ''), 'SEM CIDADE')"
+    cliente_chave_expr = "COALESCE(NULLIF(cliente_norm, ''), NULLIF(cliente, ''), 'SEM CLIENTE')"
+    cliente_nome_expr = "COALESCE(NULLIF(cliente, ''), NULLIF(cliente_norm, ''), 'SEM CLIENTE')"
+
+    def _categoria_payload(row):
+        quantidade_liquida = round(_as_float(row.get("quantidade_liquida"), 0.0), 3)
+        valor_base_preco = round(_as_float(row.get("valor_base_preco"), 0.0), 2)
+        preco_medio = round(valor_base_preco / quantidade_liquida, 2) if quantidade_liquida > 0 else 0.0
+        precos_texto, precos_valores = _vendas_formatar_lista_precos(row.get("precos_praticados"))
+        return {
+            "itens": _as_int(row.get("itens"), 0),
+            "notas": _as_int(row.get("notas"), 0),
+            "quantidade": round(_as_float(row.get("quantidade"), 0.0), 3),
+            "quantidade_devolvida": round(_as_float(row.get("quantidade_devolvida"), 0.0), 3),
+            "quantidade_liquida": quantidade_liquida,
+            "valor_venda": round(_as_float(row.get("valor_venda"), 0.0), 2),
+            "valor_devolvido": round(_as_float(row.get("valor_devolvido"), 0.0), 2),
+            "bonificacao": round(_as_float(row.get("bonificacao"), 0.0), 2),
+            "valor_base_preco": valor_base_preco,
+            "preco_medio": preco_medio,
+            "precos_praticados": precos_texto,
+            "precos_praticados_valores": precos_valores,
+            "precos_distintos": len(precos_valores),
+            "preco_min": round(_as_float(row.get("preco_min"), 0.0), 2),
+            "preco_max": round(_as_float(row.get("preco_max"), 0.0), 2),
+        }
+
+    conn = None
+    cur = None
+    try:
+        conn = get_conn()
+        cur = conn.cursor(dictionary=True)
+        try:
+            cur.execute("SET SESSION group_concat_max_len = 8192")
+        except Exception:
+            pass
+
+        cur.execute(f"""
+            SELECT
+                COUNT(*) AS itens,
+                COUNT(DISTINCT NULLIF(cliente_norm, '')) AS clientes,
+                COUNT(DISTINCT NULLIF(numero_nf, '')) AS notas,
+                COUNT(DISTINCT NULLIF(vendedor_key_upper, '')) AS vendedores,
+                COUNT(DISTINCT NULLIF(cidade, '')) AS cidades,
+                COUNT(DISTINCT {categoria_expr}) AS categorias,
+                COUNT(DISTINCT {preco_praticado_expr}) AS precos_distintos,
+                MIN({preco_praticado_expr}) AS preco_min,
+                MAX({preco_praticado_expr}) AS preco_max,
+                COALESCE(SUM(quantidade), 0) AS quantidade,
+                COALESCE(SUM(litros), 0) AS litros,
+                COALESCE(SUM(caixas), 0) AS caixas,
+                COALESCE(SUM(valor_venda), 0) AS valor_venda,
+                COALESCE(SUM(valor_devolvido), 0) AS valor_devolvido,
+                COALESCE(SUM(bonificacao), 0) AS bonificacao,
+                COALESCE(SUM({valor_base_preco_expr}), 0) AS valor_base_preco,
+                COALESCE(SUM(quantidade_devolvida), 0) AS quantidade_devolvida,
+                COALESCE(SUM({quantidade_liquida_expr}), 0) AS quantidade_liquida,
+                COALESCE(SUM(litro_devolvido), 0) AS litro_devolvido,
+                COALESCE(SUM(caixa_devolvida), 0) AS caixa_devolvida
+            FROM vendas_relatorio_itens
+            WHERE {where_sql_preco}
+        """, tuple(params))
+        total = cur.fetchone() or {}
+        resumo = _vendas_relatorio_publico_totais(total)
+        quantidade_liquida_total = round(_as_float(total.get("quantidade_liquida"), 0.0), 3)
+        valor_base_total = round(_as_float(total.get("valor_base_preco"), 0.0), 2)
+        resumo.update({
+            "grupos": 0,
+            "categorias": _as_int(total.get("categorias"), 0),
+            "precos_distintos": _as_int(total.get("precos_distintos"), 0),
+            "preco_min": round(_as_float(total.get("preco_min"), 0.0), 2),
+            "preco_max": round(_as_float(total.get("preco_max"), 0.0), 2),
+            "valor_base_preco": valor_base_total,
+            "quantidade_liquida": quantidade_liquida_total,
+            "preco_medio": round(valor_base_total / quantidade_liquida_total, 2) if quantidade_liquida_total > 0 else 0.0,
+        })
+
+        cur.execute(f"""
+            SELECT
+                vendedor_key AS vendedor_chave,
+                MAX(vendedor_codigo) AS vendedor_codigo,
+                MAX(vendedor_nome) AS vendedor_nome,
+                {cidade_expr} AS cidade,
+                {categoria_expr} AS categoria,
+                COUNT(*) AS itens,
+                COUNT(DISTINCT NULLIF(cliente_norm, '')) AS clientes,
+                COUNT(DISTINCT NULLIF(numero_nf, '')) AS notas,
+                COALESCE(SUM(quantidade), 0) AS quantidade,
+                COALESCE(SUM(valor_venda), 0) AS valor_venda,
+                COALESCE(SUM(valor_devolvido), 0) AS valor_devolvido,
+                COALESCE(SUM(bonificacao), 0) AS bonificacao,
+                COALESCE(SUM(quantidade_devolvida), 0) AS quantidade_devolvida,
+                COALESCE(SUM({quantidade_liquida_expr}), 0) AS quantidade_liquida,
+                COALESCE(SUM({valor_base_preco_expr}), 0) AS valor_base_preco,
+                COUNT(DISTINCT {preco_praticado_expr}) AS precos_distintos,
+                GROUP_CONCAT(DISTINCT {preco_praticado_expr} ORDER BY {preco_praticado_expr} SEPARATOR '||') AS precos_praticados,
+                MIN({preco_praticado_expr}) AS preco_min,
+                MAX({preco_praticado_expr}) AS preco_max
+            FROM vendas_relatorio_itens
+            WHERE {where_sql_preco}
+            GROUP BY vendedor_key, {cidade_expr}, {categoria_expr}
+        """, tuple(params))
+        medias_cidade = {}
+        cidade_categorias = {}
+        for row in (cur.fetchall() or []):
+            vendedor_chave = _as_str(row.get("vendedor_chave")) or "SEM VENDEDOR"
+            cidade = _as_str(row.get("cidade")) or "SEM CIDADE"
+            categoria = _as_str(row.get("categoria"))
+            payload_categoria = _categoria_payload(row)
+            payload_categoria.update({
+                "vendedor_chave": vendedor_chave,
+                "codigo": _as_str(row.get("vendedor_codigo")),
+                "vendedor": _as_str(row.get("vendedor_nome")) or vendedor_chave,
+                "cidade": cidade,
+                "categoria": categoria,
+                "categoria_ordem": _vendas_preco_medio_categoria_ordem(categoria),
+            })
+            medias_cidade[(vendedor_chave, cidade, categoria)] = payload_categoria
+            cidade_categorias.setdefault((vendedor_chave, cidade), set()).add(categoria)
+
+        cur.execute(f"""
+            SELECT
+                vendedor_key AS vendedor_chave,
+                MAX(vendedor_codigo) AS vendedor_codigo,
+                MAX(vendedor_nome) AS vendedor_nome,
+                {cidade_expr} AS cidade,
+                {cliente_chave_expr} AS cliente_chave,
+                MAX({cliente_nome_expr}) AS cliente,
+                {categoria_expr} AS categoria,
+                COUNT(*) AS itens,
+                COUNT(DISTINCT NULLIF(numero_nf, '')) AS notas,
+                COALESCE(SUM(quantidade), 0) AS quantidade,
+                COALESCE(SUM(valor_venda), 0) AS valor_venda,
+                COALESCE(SUM(valor_devolvido), 0) AS valor_devolvido,
+                COALESCE(SUM(bonificacao), 0) AS bonificacao,
+                COALESCE(SUM(quantidade_devolvida), 0) AS quantidade_devolvida,
+                COALESCE(SUM({quantidade_liquida_expr}), 0) AS quantidade_liquida,
+                COALESCE(SUM({valor_base_preco_expr}), 0) AS valor_base_preco,
+                COUNT(DISTINCT {preco_praticado_expr}) AS precos_distintos,
+                GROUP_CONCAT(DISTINCT {preco_praticado_expr} ORDER BY {preco_praticado_expr} SEPARATOR '||') AS precos_praticados,
+                MIN({preco_praticado_expr}) AS preco_min,
+                MAX({preco_praticado_expr}) AS preco_max
+            FROM vendas_relatorio_itens
+            WHERE {where_sql_preco}
+            GROUP BY vendedor_key, {cidade_expr}, {cliente_chave_expr}, {categoria_expr}
+            ORDER BY MAX(vendedor_nome) ASC, {cidade_expr} ASC, MAX({cliente_nome_expr}) ASC, {categoria_expr} ASC
+        """, tuple(params))
+        linhas_clientes_map = {}
+        vendedores_map = {}
+        for row in (cur.fetchall() or []):
+            vendedor_chave = _as_str(row.get("vendedor_chave")) or "SEM VENDEDOR"
+            cidade = _as_str(row.get("cidade")) or "SEM CIDADE"
+            cliente_chave = _as_str(row.get("cliente_chave")) or _as_str(row.get("cliente")) or "SEM CLIENTE"
+            cliente = _as_str(row.get("cliente")) or cliente_chave
+            categoria = _as_str(row.get("categoria"))
+            payload_categoria = _categoria_payload(row)
+            media_cidade = medias_cidade.get((vendedor_chave, cidade, categoria), {})
+            chave_linha = (vendedor_chave, cidade, cliente_chave)
+            linha_cliente = linhas_clientes_map.setdefault(chave_linha, {
+                "tipo_linha": "detalhe",
+                "vendedor_chave": vendedor_chave,
+                "codigo": _as_str(row.get("vendedor_codigo")),
+                "vendedor": _as_str(row.get("vendedor_nome")) or vendedor_chave,
+                "cidade": cidade,
+                "cliente_chave": cliente_chave,
+                "cliente": cliente,
+                "categorias": {},
+            })
+            linha_cliente["categorias"][categoria] = {
+                "categoria": categoria,
+                "categoria_ordem": _vendas_preco_medio_categoria_ordem(categoria),
+                "precos_praticados": payload_categoria["precos_praticados"],
+                "precos_praticados_valores": payload_categoria["precos_praticados_valores"],
+                "preco_medio": payload_categoria["preco_medio"],
+                "media_cidade": _as_float(media_cidade.get("preco_medio"), 0.0),
+            }
+            vendedor_entry = vendedores_map.setdefault(vendedor_chave, {
+                "chave": vendedor_chave,
+                "codigo": _as_str(row.get("vendedor_codigo")),
+                "nome": _as_str(row.get("vendedor_nome")) or vendedor_chave,
+                "clientes_set": set(),
+                "cidades_set": set(),
+                "notas": 0,
+                "valor_base_preco": 0.0,
+                "quantidade_liquida": 0.0,
+            })
+            vendedor_entry["clientes_set"].add(cliente_chave)
+            vendedor_entry["cidades_set"].add(cidade)
+            vendedor_entry["notas"] += _as_int(row.get("notas"), 0)
+            vendedor_entry["valor_base_preco"] += _as_float(row.get("valor_base_preco"), 0.0)
+            vendedor_entry["quantidade_liquida"] += _as_float(row.get("quantidade_liquida"), 0.0)
+    finally:
+        try:
+            if cur:
+                cur.close()
+        except Exception:
+            pass
+        try:
+            if conn:
+                conn.close()
+        except Exception:
+            pass
+
+    def _resumos_cidade(chave_cidade):
+        vendedor_chave, cidade = chave_cidade
+        categorias = sorted(
+            cidade_categorias.get(chave_cidade, set()),
+            key=lambda categoria: (_vendas_preco_medio_categoria_ordem(categoria), _as_str(categoria)),
+        )
+        categorias_payload = {}
+        vendedor = vendedor_chave
+        codigo = ""
+        for categoria in categorias:
+            media = medias_cidade.get((vendedor_chave, cidade, categoria), {})
+            if not media:
+                continue
+            vendedor = _as_str(media.get("vendedor")) or vendedor
+            codigo = _as_str(media.get("codigo")) or codigo
+            categorias_payload[categoria] = {
+                "categoria": categoria,
+                "categoria_ordem": _vendas_preco_medio_categoria_ordem(categoria),
+                "preco_medio": _as_float(media.get("preco_medio"), 0.0),
+                "precos_praticados": media.get("precos_praticados") or "-",
+                "precos_praticados_valores": media.get("precos_praticados_valores") or [],
+                "media_cidade": _as_float(media.get("preco_medio"), 0.0),
+            }
+        if not categorias_payload:
+            return []
+        return [{
+            "tipo_linha": "resumo_cidade",
+            "vendedor_chave": vendedor_chave,
+            "codigo": codigo,
+            "vendedor": vendedor,
+            "cidade": cidade,
+            "cliente_chave": "",
+            "cliente": "Subtotal da cidade",
+            "categorias": categorias_payload,
+        }]
+
+    linhas_clientes = list(linhas_clientes_map.values())
+    linhas_clientes.sort(key=lambda item: (
+        _as_str(item.get("vendedor")),
+        _as_str(item.get("cidade")),
+        _as_str(item.get("cliente")),
+    ))
+    linhas = []
+    cidade_atual = None
+    for item in linhas_clientes:
+        chave_cidade = (_as_str(item.get("vendedor_chave")) or "SEM VENDEDOR", _as_str(item.get("cidade")) or "SEM CIDADE")
+        if cidade_atual is not None and chave_cidade != cidade_atual:
+            linhas.extend(_resumos_cidade(cidade_atual))
+        linhas.append(item)
+        cidade_atual = chave_cidade
+    if cidade_atual is not None:
+        linhas.extend(_resumos_cidade(cidade_atual))
+
+    vendedores = []
+    for row in vendedores_map.values():
+        quantidade = _as_float(row.get("quantidade_liquida"), 0.0)
+        valor = _as_float(row.get("valor_base_preco"), 0.0)
+        vendedores.append({
+            "chave": row["chave"],
+            "codigo": row["codigo"],
+            "nome": row["nome"],
+            "clientes": len(row["clientes_set"]),
+            "cidades": len(row["cidades_set"]),
+            "notas": _as_int(row.get("notas"), 0),
+            "quantidade_liquida": round(quantidade, 3),
+            "valor_base_preco": round(valor, 2),
+            "preco_medio": round(valor / quantidade, 2) if quantidade > 0 else 0.0,
+        })
+    vendedores.sort(key=lambda item: (_as_str(item.get("nome")), _as_str(item.get("codigo"))))
+
+    categorias_lista = sorted(
+        {
+            _as_str(categoria)
+            for item in linhas_clientes
+            for categoria in (item.get("categorias") or {}).keys()
+            if _as_str(categoria)
+        },
+        key=lambda categoria: (_vendas_preco_medio_categoria_ordem(categoria), _as_str(categoria)),
+    )
+    resumo["grupos"] = len(linhas_clientes)
+    resumo["linhas"] = len(linhas_clientes)
+    resumo["linhas_exibidas"] = len(linhas)
+    resumo["linhas_resumo_cidade"] = len(linhas) - len(linhas_clientes)
+    resumo["vendedores"] = len({_as_str(item.get("vendedor_chave")) for item in linhas_clientes if _as_str(item.get("vendedor_chave"))})
+    resumo["cidades"] = len({_as_str(item.get("cidade")) for item in linhas_clientes if _as_str(item.get("cidade"))})
+    resumo["clientes"] = len({_as_str(item.get("cliente_chave")) for item in linhas_clientes if _as_str(item.get("cliente_chave"))})
+    resumo["categorias"] = len(categorias_lista)
+    resumo["categorias_lista"] = categorias_lista
+
+    return {
+        "arquivo": {
+            "nome": _as_str(source.get("name")) or os.path.basename(_as_str(cache_entry.get("source_path"))),
+            "tamanho_bytes": _as_int(source.get("size"), _as_int(cache_entry.get("source_size"), 0)),
+            "atualizado_em": _as_str(source.get("mtime")) or _fmt_dt(cache_entry.get("source_mtime")),
+        },
+        "filtros": {
+            "vendedor": filtro_vendedor,
+            "data_inicio": _fmt_date(data_inicio),
+            "data_fim": _fmt_date(data_fim),
+        },
+        "cache": _vendas_cache_entry_publico(cache_entry),
+        "fonte": {
+            "source_type": _as_str(cfg.get("source_type")),
+            "ready": bool(source.get("ready")),
+            "message": _as_str(source.get("message")),
+        },
+        "relatorio_tipo": "preco_medio",
+        "resumo_geral": resumo,
+        "vendedores": vendedores,
+        "categorias": categorias_lista,
+        "precos_medios_vendedor_cidade": linhas,
+    }
+
+def _build_vendas_preco_medio_pdf(rel):
+    stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    arquivo = os.path.join("/tmp", f"vendas_preco_medio_{stamp}.pdf")
+    doc = SimpleDocTemplate(
+        arquivo,
+        pagesize=landscape(A4),
+        topMargin=24,
+        leftMargin=18,
+        rightMargin=18,
+        bottomMargin=36,
+    )
+    styles = getSampleStyleSheet()
+    body_style = styles["BodyText"].clone("VendasPrecoMedioBody")
+    body_style.fontSize = 6.3
+    body_style.leading = 7.6
+
+    linhas = rel.get("precos_medios_vendedor_cidade", []) or []
+    resumo = rel.get("resumo_geral", {}) or {}
+    arquivo_info = rel.get("arquivo", {}) or {}
+    filtros = rel.get("filtros", {}) or {}
+    filtro_txt = []
+    if _as_str(filtros.get("data_inicio")):
+        filtro_txt.append(f"Data inicial: {_as_str(filtros.get('data_inicio'))}")
+    if _as_str(filtros.get("data_fim")):
+        filtro_txt.append(f"Data final: {_as_str(filtros.get('data_fim'))}")
+    if _as_str(filtros.get("vendedor")):
+        filtro_txt.append(f"Vendedor: {_as_str(filtros.get('vendedor'))}")
+    if not filtro_txt:
+        filtro_txt.append("Todos os registros do relatorio ativo")
+
+    elementos = [
+        _build_report_header(styles),
+        Spacer(1, 12),
+        Paragraph("Relatorio de Preco Medio por Cidade, Cliente e Categoria", styles["Heading2"]),
+        Paragraph(f"Gerado em {datetime.datetime.now().strftime('%d/%m/%Y %H:%M:%S')}", styles["Normal"]),
+        Paragraph(_pdf_escape("Filtros: " + " | ".join(filtro_txt)), styles["Normal"]),
+        Paragraph(_pdf_escape("Arquivo: " + (_as_str(arquivo_info.get("nome")) or "-") + " | Atualizado em: " + (_as_str(arquivo_info.get("atualizado_em")) or "-")), styles["Normal"]),
+        Spacer(1, 8),
+        Paragraph(
+            _pdf_escape(
+                f"Resumo: {_as_int(resumo.get('linhas') or resumo.get('grupos'), 0)} linhas | {_as_int(resumo.get('vendedores'), 0)} vendedores | "
+                f"{_as_int(resumo.get('cidades'), 0)} cidades | {_as_int(resumo.get('clientes'), 0)} clientes | "
+                f"{_as_int(resumo.get('categorias'), 0)} categorias"
+            ),
+            styles["Normal"],
+        ),
+        Spacer(1, 10),
+    ]
+
+    categorias = rel.get("categorias") or resumo.get("categorias_lista") or []
+    if not categorias:
+        categorias = sorted({
+            _as_str(categoria)
+            for item in linhas
+            for categoria in (item.get("categorias") or {}).keys()
+            if _as_str(categoria)
+        }, key=lambda categoria: (_vendas_preco_medio_categoria_ordem(categoria), _as_str(categoria)))
+
+    def _categoria_pdf_cell(item, categoria):
+        dados = (item.get("categorias") or {}).get(categoria) or {}
+        if not dados:
+            return Paragraph("-", body_style)
+        precos = _as_str(dados.get("precos_praticados")) or "-"
+        media = _fmt_money_br(dados.get("media_cidade") or dados.get("preco_medio"))
+        return Paragraph(
+            f"Precos: {_pdf_escape(precos)}<br/>Media cidade: {_pdf_escape(media)}",
+            body_style,
+        )
+
+    headers = ["Cliente"] + [_as_str(categoria) for categoria in categorias]
+    table_rows = [[Paragraph(f"<b>{_pdf_escape(h)}</b>", body_style) for h in headers]]
+    city_header_rows = []
+    resumo_rows = []
+    if linhas:
+        cidade_atual = None
+        for item in linhas:
+            cidade = _as_str(item.get("cidade")) or "SEM CIDADE"
+            vendedor = _as_str(item.get("vendedor"))
+            if cidade != cidade_atual:
+                rotulo_cidade = f"Cidade: {cidade}"
+                if not _as_str(filtros.get("vendedor")) and vendedor:
+                    rotulo_cidade += f" | Vendedor: {vendedor}"
+                table_rows.append([Paragraph(f"<b>{_pdf_escape(rotulo_cidade)}</b>", body_style)] + [Paragraph("", body_style) for _ in categorias])
+                city_header_rows.append(len(table_rows) - 1)
+                cidade_atual = cidade
+            table_rows.append([
+                Paragraph(_pdf_escape(item.get("cliente") or "-"), body_style),
+                *[_categoria_pdf_cell(item, categoria) for categoria in categorias],
+            ])
+            if _as_str(item.get("tipo_linha")) == "resumo_cidade":
+                resumo_rows.append(len(table_rows) - 1)
+    else:
+        table_rows.append([Paragraph("Sem registros para os filtros informados.", body_style)] + [Paragraph("", body_style) for _ in headers[1:]])
+
+    largura_cliente = 150
+    largura_total = 806
+    largura_categoria = max(72, (largura_total - largura_cliente) / max(1, len(categorias)))
+    tabela = Table(table_rows, repeatRows=1, colWidths=[largura_cliente] + [largura_categoria for _ in categorias])
+    style_cmds = [
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f59e0b")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.black),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#d1d5db")),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 3),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+        ("TOPPADDING", (0, 0), (-1, -1), 2),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#fff7ed")]),
+    ]
+    for idx in city_header_rows:
+        style_cmds.extend([
+            ("SPAN", (0, idx), (-1, idx)),
+            ("BACKGROUND", (0, idx), (-1, idx), colors.HexColor("#e0f2fe")),
+            ("FONTNAME", (0, idx), (-1, idx), "Helvetica-Bold"),
+        ])
+    for idx in resumo_rows:
+        style_cmds.extend([
+            ("BACKGROUND", (0, idx), (-1, idx), colors.HexColor("#fde68a")),
+            ("FONTNAME", (0, idx), (-1, idx), "Helvetica-Bold"),
+        ])
+    tabela.setStyle(TableStyle(style_cmds))
+    elementos.append(tabela)
+    doc.build(elementos, onFirstPage=_draw_report_footer, onLaterPages=_draw_report_footer)
+    return arquivo
+
 def _coletar_relatorio_vendas(filtro_vendedor="", data_inicio=None, data_fim=None, limite_detalhes=300):
     cache_entry, source, cfg = _vendas_obter_cache_ativo(force_refresh=False)
 
@@ -23778,6 +28905,12 @@ def relatorio_vendas():
                 data_inicio=request.args.get("data_inicio"),
                 data_fim=request.args.get("data_fim"),
             )
+        elif tipo_relatorio_norm in {"preco_medio", "preco_medio_vendedor_cidade", "preco_medio_cidade"}:
+            payload = _coletar_relatorio_vendas_preco_medio(
+                filtro_vendedor=request.args.get("vendedor"),
+                data_inicio=request.args.get("data_inicio"),
+                data_fim=request.args.get("data_fim"),
+            )
         else:
             payload = _vendas_bonificacoes_payload(
                 cache_entry,
@@ -23799,6 +28932,28 @@ def relatorio_vendas():
     except Exception as exc:
         return jsonify({"erro": f"Falha ao ler relatorio de vendas: {str(exc)}"}), 500
     return jsonify(payload)
+
+@app.route("/api/vendas/relatorio/preco-medio/pdf", methods=["GET"])
+def relatorio_vendas_preco_medio_pdf():
+    try:
+        payload = _coletar_relatorio_vendas_preco_medio(
+            filtro_vendedor=request.args.get("vendedor"),
+            data_inicio=request.args.get("data_inicio"),
+            data_fim=request.args.get("data_fim"),
+        )
+        arquivo = _build_vendas_preco_medio_pdf(payload)
+    except FileNotFoundError as exc:
+        return jsonify({"erro": str(exc)}), 404
+    except RuntimeError as exc:
+        return jsonify({"erro": str(exc)}), 409
+    except Exception as exc:
+        return jsonify({"erro": f"Falha ao gerar relatorio de preco medio: {str(exc)}"}), 500
+    return send_file(
+        arquivo,
+        as_attachment=False,
+        download_name="vendas_preco_medio_vendedor_cidade.pdf",
+        mimetype="application/pdf",
+    )
 
 @app.route("/api/vendas/dashboard", methods=["GET"])
 def dashboard_vendas():
@@ -23857,11 +29012,12 @@ def vendas_cache_importar():
         file_storage = request.files.get("arquivo") or request.files.get("csv")
         if file_storage and getattr(file_storage, "filename", ""):
             source_path = _vendas_salvar_upload_csv(file_storage)
-            cache_id, started = _vendas_importar_csv_assincrono(source_path, "csv_upload")
+            upload_source_type = "xlsx_upload" if _vendas_relatorio_e_xlsx(source_path) else "csv_upload"
+            cache_id, started = _vendas_importar_csv_assincrono(source_path, upload_source_type)
             cfg = _carregar_vendas_config()
             entry = _vendas_db_fetch_import(cache_id) if cache_id else None
             source = {
-                "source_type": "csv_upload",
+                "source_type": upload_source_type,
                 "ready": True,
                 "message": "Importacao iniciada em segundo plano.",
                 "path": _as_str(entry.get("source_path")) if entry else source_path,
@@ -23898,7 +29054,7 @@ def vendas_cache_importar():
                 processando = True
                 code = 202
             else:
-                source["message"] = "CSV ja esta importado e pronto para uso."
+                source["message"] = "Relatorio ja esta importado e pronto para uso."
                 cfg = _carregar_vendas_config()
                 mensagem = source["message"]
                 processando = False
@@ -23999,7 +29155,7 @@ def vendas_cache_excluir(cache_id):
         return jsonify({"erro": "cache de vendas nao encontrado"}), 404
 
     source_path = _as_str(removido.get("source_path"))
-    if _as_str(removido.get("source_type")) == "csv_upload" and source_path and os.path.exists(source_path):
+    if _as_str(removido.get("source_type")) in {"csv_upload", "xlsx_upload"} and source_path and os.path.exists(source_path):
         try:
             os.remove(source_path)
         except Exception:
@@ -24047,8 +29203,8 @@ def _normalizar_colaborador_payload(data, atual=None):
         is_conferente = False
         is_vendedor = False
     else:
-        is_motorista = True
-        is_entregador = True
+        is_motorista = False
+        is_entregador = False
         is_ajudante = False
         is_conferente = False
         is_vendedor = False
@@ -24075,6 +29231,50 @@ def _validar_colaborador_payload(payload):
         if not possui_usuario:
             return "marque pelo menos uma funcao para o colaborador ou informe os dados de acesso"
     return ""
+
+
+def _nome_cadastro_normalizado(nome):
+    return re.sub(r"\s+", " ", _as_str(nome).strip()).casefold()
+
+
+def _nome_cadastro_alterado(nome_atual, nome_novo):
+    return _nome_cadastro_normalizado(nome_atual) != _nome_cadastro_normalizado(nome_novo)
+
+
+def _buscar_nome_duplicado_cadastro(cur, tabela, nome, excluir_id=None):
+    if tabela not in ("colaboradores", "motoristas"):
+        return None
+    nome = _as_str(nome).strip()
+    if not nome:
+        return None
+    params = [nome]
+    filtro_id = ""
+    excluir_id = _as_int(excluir_id, 0)
+    if excluir_id:
+        filtro_id = " AND id<>%s"
+        params.append(excluir_id)
+    cur.execute(
+        f"""
+        SELECT id, nome
+        FROM {tabela}
+        WHERE LOWER(TRIM(nome)) = LOWER(TRIM(%s))
+        {filtro_id}
+        ORDER BY id
+        LIMIT 1
+        """,
+        tuple(params),
+    )
+    row = cur.fetchone()
+    if row and not isinstance(row, dict):
+        return {"id": row[0], "nome": row[1]}
+    return row
+
+
+def _validar_nome_unico_cadastro(cur, tabela, nome, excluir_id=None):
+    duplicado = _buscar_nome_duplicado_cadastro(cur, tabela, nome, excluir_id)
+    if not duplicado:
+        return ""
+    return f"ja existe cadastro com este nome: {_as_str(duplicado.get('nome'))} (id {duplicado.get('id')})"
 
 
 def _normalizar_usuario_colaborador_payload(data, atual=None):
@@ -24276,11 +29476,12 @@ def _validar_colaboradores_frete(cur, motorista_id, entregador_id):
 
     entregador = colaboradores.get(entregador_id)
     if not entregador:
-        return "entregador informado nao foi encontrado"
+        return "apoio informado nao foi encontrado"
     apoio_entregador = _as_bool(entregador.get("is_entregador"), False)
     apoio_ajudante = _as_bool(entregador.get("is_ajudante"), False)
-    if not apoio_entregador and not apoio_ajudante:
-        return f"{_as_str(entregador.get('nome')) or 'colaborador'} nao esta marcado como entregador nem ajudante"
+    apoio_motorista = _as_bool(entregador.get("is_motorista"), False)
+    if not apoio_entregador and not apoio_ajudante and not apoio_motorista:
+        return f"{_as_str(entregador.get('nome')) or 'colaborador'} nao esta marcado como entregador, ajudante nem motorista"
     if not motorista_entregador and not apoio_entregador:
         return f"{_as_str(entregador.get('nome')) or 'colaborador'} precisa estar marcado como entregador com este motorista"
 
@@ -24311,9 +29512,18 @@ def _resolver_motorista_legacy_id_por_colaborador(cur, colaborador_id, fallback_
     return _as_int(row.get("id"), 0) or None
 
 
+ESCALA_STATUS_ATIVOS = (
+    "liberado",
+    "paradoVasio",
+    "carregando",
+    "carregado",
+    "paradoCarregado",
+)
+
+
 def _validar_duplicidade_escala_frete(cur, frete_id, status, motorista_id, entregador_id):
     status = _as_str(status)
-    if status not in ("chegada", "descarregado", "liberado"):
+    if status not in ESCALA_STATUS_ATIVOS:
         return ""
 
     ids = sorted({
@@ -24329,8 +29539,9 @@ def _validar_duplicidade_escala_frete(cur, frete_id, status, motorista_id, entre
     )
     nomes = {int(r["id"]): _as_str(r.get("nome")) for r in (cur.fetchall() or []) if r.get("id") is not None}
 
-    params = ["chegada", "descarregado", "liberado"]
-    query = """
+    status_placeholders = ",".join(["%s"] * len(ESCALA_STATUS_ATIVOS))
+    params = list(ESCALA_STATUS_ATIVOS)
+    query = f"""
         SELECT
             f.id,
             f.colaborador_motorista_id AS motorista_id,
@@ -24338,7 +29549,8 @@ def _validar_duplicidade_escala_frete(cur, frete_id, status, motorista_id, entre
             COALESCE(v.nome, f.nome, CONCAT('frete ', f.id)) AS veiculo_nome
         FROM fretes f
         LEFT JOIN veiculos v ON v.id = f.veiculo_id
-        WHERE f.status IN (%s, %s, %s)
+        WHERE COALESCE(f.arquivado, 0) = 0
+          AND f.status IN ({status_placeholders})
     """
     if frete_id:
         query += " AND f.id <> %s"
@@ -24362,6 +29574,252 @@ def _validar_duplicidade_escala_frete(cur, frete_id, status, motorista_id, entre
             return f"{nome} ja esta escalado no veiculo {veiculo}"
 
     return ""
+
+
+def _normalizar_linhas_escala_pdf(linhas):
+    out = []
+    if not isinstance(linhas, list):
+        return out
+    for item in linhas[:300]:
+        if not isinstance(item, dict):
+            continue
+        row = {
+            "caminhao": _as_str(item.get("caminhao"))[:120] or "-",
+            "motorista": _as_str(item.get("motorista"))[:160] or "-",
+            "ajudante": _as_str(item.get("ajudante"))[:160] or "-",
+            "frete": _as_str(item.get("frete"))[:220] or "-",
+        }
+        if any(row.get(key) and row.get(key) != "-" for key in row):
+            out.append(row)
+    return out
+
+
+def _linha_escala_pdf_de_frete(frete):
+    veiculo = " / ".join([
+        _as_str(frete.get("veiculo_nome")),
+        _as_str(frete.get("veiculo_placa")),
+    ]).strip(" /")
+    caminhao = _as_str(frete.get("carga_veiculo_numero")) or veiculo or "-"
+    motorista = _as_str(frete.get("colaborador_motorista_nome")) or _as_str(frete.get("motorista_nome")) or "-"
+    ajudante = _as_str(frete.get("colaborador_entregador_nome")) or _as_str(frete.get("entregador_nome")) or "-"
+    frete_nome = (
+        _as_str(frete.get("carga_cidades")) or
+        _as_str(frete.get("carga_nome")) or
+        _as_str(frete.get("nome")) or
+        f"Frete {frete.get('id')}"
+    )
+    return {
+        "caminhao": caminhao,
+        "motorista": motorista,
+        "ajudante": ajudante,
+        "frete": frete_nome,
+    }
+
+
+def _linhas_escala_pdf_banco(cur):
+    status_where = ",".join(["%s"] * len(ESCALA_STATUS_ATIVOS))
+    status_order = ",".join(["%s"] * len(ESCALA_STATUS_ATIVOS))
+    cur.execute(
+        FRETE_SELECT_SQL + f"""
+        WHERE COALESCE(f.arquivado, 0) = 0
+          AND f.status IN ({status_where})
+        ORDER BY FIELD(f.status, {status_order}),
+                 COALESCE(v.nome, f.nome, CAST(f.id AS CHAR)) ASC,
+                 f.id ASC
+        """,
+        tuple(ESCALA_STATUS_ATIVOS) + tuple(ESCALA_STATUS_ATIVOS),
+    )
+    return [_linha_escala_pdf_de_frete(_serialize_frete_row(row)) for row in (cur.fetchall() or [])]
+
+
+@app.route("/api/escala/pdf", methods=["GET", "POST"])
+def escala_pdf():
+    linhas = []
+    if request.method == "POST":
+        payload = request.json or {}
+        linhas = _normalizar_linhas_escala_pdf(payload.get("linhas"))
+
+    if not linhas:
+        conn = get_conn()
+        cur = conn.cursor(dictionary=True)
+        try:
+            linhas = _linhas_escala_pdf_banco(cur)
+        finally:
+            cur.close()
+            conn.close()
+
+    arquivo = _build_escala_pdf(linhas)
+    return send_file(
+        arquivo,
+        mimetype="application/pdf",
+        as_attachment=False,
+        download_name="escala_caminhoes.pdf",
+    )
+
+
+def _escala_sorteio_regra_publica(row):
+    row = row or {}
+    return {
+        "id": _as_int(row.get("id"), 0),
+        "motoristaId": _as_int(row.get("motorista_id"), 0),
+        "apoioId": _as_int(row.get("apoio_id"), 0),
+        "motoristaNome": _as_str(row.get("motorista_nome")),
+        "apoioNome": _as_str(row.get("apoio_nome")),
+        "criadoEm": _fmt_dt(row.get("criado_em")),
+        "atualizadoEm": _fmt_dt(row.get("atualizado_em")),
+    }
+
+
+def _escala_sorteio_regra_select_sql():
+    return """
+        SELECT
+            r.id,
+            r.motorista_id,
+            r.apoio_id,
+            r.criado_em,
+            r.atualizado_em,
+            COALESCE(m.nome, '') AS motorista_nome,
+            COALESCE(a.nome, '') AS apoio_nome
+        FROM escala_sorteio_regras r
+        LEFT JOIN colaboradores m ON m.id = r.motorista_id
+        LEFT JOIN colaboradores a ON a.id = r.apoio_id
+    """
+
+
+def _validar_regra_sorteio_escala(cur, motorista_id, apoio_id):
+    motorista_id = _as_int(motorista_id, 0)
+    apoio_id = _as_int(apoio_id, 0)
+    if motorista_id <= 0 or apoio_id <= 0:
+        return "selecione motorista e apoio"
+    if motorista_id == apoio_id:
+        return "a regra precisa ter duas pessoas diferentes"
+
+    cur.execute(
+        """
+        SELECT
+            id,
+            nome,
+            COALESCE(is_motorista, 0) AS is_motorista,
+            COALESCE(is_entregador, 0) AS is_entregador,
+            COALESCE(is_ajudante, 0) AS is_ajudante
+        FROM colaboradores
+        WHERE id IN (%s, %s)
+        """,
+        (motorista_id, apoio_id),
+    )
+    pessoas = {int(row["id"]): row for row in (cur.fetchall() or []) if row.get("id") is not None}
+    motorista = pessoas.get(motorista_id)
+    apoio = pessoas.get(apoio_id)
+    if not motorista:
+        return "motorista informado nao foi encontrado"
+    if not apoio:
+        return "apoio informado nao foi encontrado"
+    if not _as_bool(motorista.get("is_motorista"), False):
+        return f"{_as_str(motorista.get('nome')) or 'colaborador'} nao esta marcado como motorista"
+    if (
+        not _as_bool(apoio.get("is_entregador"), False) and
+        not _as_bool(apoio.get("is_ajudante"), False) and
+        not _as_bool(apoio.get("is_motorista"), False)
+    ):
+        return f"{_as_str(apoio.get('nome')) or 'colaborador'} nao esta marcado como entregador, ajudante nem motorista"
+    return ""
+
+
+@app.route("/api/escala/sorteio-regras", methods=["GET"])
+def escala_sorteio_regras_listar():
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute(_escala_sorteio_regra_select_sql() + " ORDER BY motorista_nome, apoio_nome, r.id")
+        return jsonify({"ok": True, "regras": [_escala_sorteio_regra_publica(row) for row in (cur.fetchall() or [])]})
+    except Exception as exc:
+        return jsonify({"erro": f"Falha ao listar regras do sorteio: {str(exc)}"}), 500
+    finally:
+        try:
+            cur.close()
+        except Exception:
+            pass
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+@app.route("/api/escala/sorteio-regras", methods=["POST"])
+def escala_sorteio_regras_criar():
+    data = request.get_json(silent=True) or {}
+    motorista_id = _as_int(data.get("motoristaId") or data.get("motorista_id"), 0)
+    apoio_id = _as_int(data.get("apoioId") or data.get("apoio_id"), 0)
+
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    try:
+        erro = _validar_regra_sorteio_escala(cur, motorista_id, apoio_id)
+        if erro:
+            return jsonify({"erro": erro}), 400
+
+        cur.execute(
+            """
+            SELECT id
+            FROM escala_sorteio_regras
+            WHERE (motorista_id=%s AND apoio_id=%s)
+               OR (motorista_id=%s AND apoio_id=%s)
+            LIMIT 1
+            """,
+            (motorista_id, apoio_id, apoio_id, motorista_id),
+        )
+        if cur.fetchone():
+            return jsonify({"erro": "esta dupla ja esta bloqueada"}), 409
+
+        cur.execute(
+            "INSERT INTO escala_sorteio_regras (motorista_id, apoio_id) VALUES (%s, %s)",
+            (motorista_id, apoio_id),
+        )
+        regra_id = cur.lastrowid
+        conn.commit()
+
+        cur.execute(_escala_sorteio_regra_select_sql() + " WHERE r.id=%s", (regra_id,))
+        return jsonify({"ok": True, "regra": _escala_sorteio_regra_publica(cur.fetchone())})
+    except mysql.connector.IntegrityError:
+        conn.rollback()
+        return jsonify({"erro": "esta dupla ja esta bloqueada"}), 409
+    except Exception as exc:
+        conn.rollback()
+        return jsonify({"erro": f"Falha ao salvar regra do sorteio: {str(exc)}"}), 500
+    finally:
+        try:
+            cur.close()
+        except Exception:
+            pass
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+@app.route("/api/escala/sorteio-regras/<int:regra_id>", methods=["DELETE"])
+def escala_sorteio_regras_excluir(regra_id):
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        cur.execute("DELETE FROM escala_sorteio_regras WHERE id=%s", (regra_id,))
+        removidos = cur.rowcount
+        conn.commit()
+        if not removidos:
+            return jsonify({"erro": "regra nao encontrada"}), 404
+        return jsonify({"ok": True})
+    except Exception as exc:
+        conn.rollback()
+        return jsonify({"erro": f"Falha ao remover regra do sorteio: {str(exc)}"}), 500
+    finally:
+        try:
+            cur.close()
+        except Exception:
+            pass
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 @app.route("/api/cargas/importar_csv", methods=["POST"])
 def importar_cargas_csv():
@@ -24609,6 +30067,140 @@ def detalhes_carga_importada(carga_id):
         },
     })
 
+
+@app.route("/api/cargas/rotas", methods=["GET"])
+def listar_rotas_cargas():
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    try:
+        incluir_inativas = _as_str(request.args.get("incluir_inativas")).lower() in {"1", "true", "sim"}
+        where = "" if incluir_inativas else "WHERE ativo=1"
+        cur.execute(
+            f"""
+            SELECT id, nome, cidades, ativo, criado_em, atualizado_em
+            FROM cargas_rotas
+            {where}
+            ORDER BY nome
+            """
+        )
+        return jsonify({"ok": True, "rotas": [_cargas_rota_publica(row) for row in (cur.fetchall() or [])]})
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.route("/api/cargas/rotas", methods=["POST"])
+def criar_rota_carga():
+    data = request.get_json(silent=True) or {}
+    nome = _as_str(data.get("nome"))
+    cidades = _cargas_rota_cidades_lista(data.get("cidades") if "cidades" in data else data.get("cidades_texto"))
+    if not nome:
+        return jsonify({"erro": "informe o nome da rota"}), 400
+    if not cidades:
+        return jsonify({"erro": "informe ao menos uma cidade da rota"}), 400
+
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute(
+            """
+            INSERT INTO cargas_rotas (nome, cidades, ativo, criado_em, atualizado_em)
+            VALUES (%s, %s, 1, NOW(), NOW())
+            """,
+            (nome, "\n".join(cidades)),
+        )
+        rota_id = cur.lastrowid
+        conn.commit()
+        cur.execute(
+            """
+            SELECT id, nome, cidades, ativo, criado_em, atualizado_em
+            FROM cargas_rotas
+            WHERE id=%s
+            """,
+            (rota_id,),
+        )
+        return jsonify({"ok": True, "rota": _cargas_rota_publica(cur.fetchone())})
+    except mysql.connector.IntegrityError:
+        conn.rollback()
+        return jsonify({"erro": "ja existe uma rota com este nome"}), 409
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.route("/api/cargas/rotas/<int:rota_id>", methods=["PUT"])
+def atualizar_rota_carga(rota_id):
+    data = request.get_json(silent=True) or {}
+    nome = _as_str(data.get("nome"))
+    cidades = _cargas_rota_cidades_lista(data.get("cidades") if "cidades" in data else data.get("cidades_texto"))
+    if not nome:
+        return jsonify({"erro": "informe o nome da rota"}), 400
+    if not cidades:
+        return jsonify({"erro": "informe ao menos uma cidade da rota"}), 400
+
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute("SELECT id FROM cargas_rotas WHERE id=%s", (rota_id,))
+        if not cur.fetchone():
+            return jsonify({"erro": "rota nao encontrada"}), 404
+        cur.execute(
+            """
+            UPDATE cargas_rotas
+            SET nome=%s,
+                cidades=%s,
+                ativo=1,
+                atualizado_em=NOW()
+            WHERE id=%s
+            """,
+            (nome, "\n".join(cidades), rota_id),
+        )
+        conn.commit()
+        cur.execute(
+            """
+            SELECT id, nome, cidades, ativo, criado_em, atualizado_em
+            FROM cargas_rotas
+            WHERE id=%s
+            """,
+            (rota_id,),
+        )
+        return jsonify({"ok": True, "rota": _cargas_rota_publica(cur.fetchone())})
+    except mysql.connector.IntegrityError:
+        conn.rollback()
+        return jsonify({"erro": "ja existe uma rota com este nome"}), 409
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.route("/api/cargas/rotas/<int:rota_id>", methods=["DELETE"])
+def excluir_rota_carga(rota_id):
+    usuario = _usuario_ator_req()
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute("SELECT id, nome, cidades FROM cargas_rotas WHERE id=%s", (rota_id,))
+        rota = cur.fetchone()
+        if not rota:
+            return jsonify({"erro": "rota nao encontrada"}), 404
+        cur.execute("DELETE FROM cargas_rotas WHERE id=%s", (rota_id,))
+        _registrar_log_exclusao(cur, usuario, "cargas_rotas", rota_id, _as_str(rota.get("nome")))
+        conn.commit()
+        return jsonify({"ok": True})
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        conn.close()
+
+
 @app.route("/api/<tabela>", methods=["GET"])
 def listar_generico(tabela):
     permitidas = ["cargas", "motoristas", "veiculos", "conferentes", "colaboradores"]
@@ -24657,6 +30249,45 @@ def listar_generico(tabela):
             FROM colaboradores c
             LEFT JOIN usuarios u ON u.id = c.usuario_id
             ORDER BY c.nome
+            """
+        )
+    elif tabela == "veiculos":
+        cursor.execute(
+            """
+            SELECT
+                v.*,
+                (
+                    SELECT f.colaborador_motorista_id
+                    FROM fretes f
+                    WHERE f.veiculo_id=v.id
+                      AND f.colaborador_motorista_id IS NOT NULL
+                    ORDER BY COALESCE(f.data_carga, DATE(f.created_at)) DESC, f.id DESC
+                    LIMIT 1
+                ) AS motorista_atual_id,
+                (
+                    SELECT f.colaborador_entregador_id
+                    FROM fretes f
+                    WHERE f.veiculo_id=v.id
+                      AND f.colaborador_entregador_id IS NOT NULL
+                    ORDER BY COALESCE(f.data_carga, DATE(f.created_at)) DESC, f.id DESC
+                    LIMIT 1
+                ) AS ajudante_atual_id
+            FROM veiculos v
+            ORDER BY v.nome
+            """
+        )
+    elif tabela == "cargas":
+        cursor.execute(
+            """
+            SELECT
+                id, nome, cidade, rota, veiculo_numero, origem_csv,
+                registros_importados, clientes_distintos,
+                quantidade_total, litros_total, peso_total, valor_total,
+                atualizado_em, arquivo_origem, tipo_importacao, mapa_numero,
+                data_carga, numero_entregas, volumes_total, valor_bonificacao,
+                estoque_baixado_em, estoque_baixado_por, created_at
+            FROM cargas
+            ORDER BY nome
             """
         )
     else:
@@ -24710,6 +30341,11 @@ def criar_generico(tabela):
             cursor.close()
             conn.close()
             return jsonify({"erro": erro}), 400
+        erro_nome = _validar_nome_unico_cadastro(cursor, "motoristas", payload["nome"])
+        if erro_nome:
+            cursor.close()
+            conn.close()
+            return jsonify({"erro": erro_nome}), 409
         cursor.execute(
             """
             INSERT INTO motoristas (nome, is_motorista, is_entregador, is_ajudante)
@@ -24724,6 +30360,11 @@ def criar_generico(tabela):
             cursor.close()
             conn.close()
             return jsonify({"erro": erro}), 400
+        erro_nome = _validar_nome_unico_cadastro(cursor, "colaboradores", payload["nome"])
+        if erro_nome:
+            cursor.close()
+            conn.close()
+            return jsonify({"erro": erro_nome}), 409
         usuario_payload = _normalizar_usuario_colaborador_payload(data, payload)
         try:
             usuario_payload = _sincronizar_usuario_do_colaborador(cursor, None, {**payload, **usuario_payload}, {})
@@ -24768,10 +30409,15 @@ def criar_generico(tabela):
     elif tabela == "cargas":
         cursor.execute(
             """
-            INSERT INTO cargas (nome, veiculo_numero)
-            VALUES (%s, %s)
+            INSERT INTO cargas (nome, cidade, rota, veiculo_numero, tipo_importacao)
+            VALUES (%s, %s, %s, %s, 'manual')
             """,
-            (_as_str(data.get("nome")), _as_str(data.get("veiculo_numero"))),
+            (
+                _as_str(data.get("nome")),
+                _as_str(data.get("cidade")),
+                _as_str(data.get("rota")),
+                _as_str(data.get("veiculo_numero")),
+            ),
         )
     else:
         cursor.execute(f"INSERT INTO {tabela} (nome) VALUES (%s)", (data.get("nome"),))
@@ -24860,6 +30506,12 @@ def atualizar_generico(tabela, id):
             cursor.close()
             conn.close()
             return jsonify({"erro": erro}), 400
+        if _nome_cadastro_alterado(atual.get("nome"), payload["nome"]):
+            erro_nome = _validar_nome_unico_cadastro(cursor, "motoristas", payload["nome"], id)
+            if erro_nome:
+                cursor.close()
+                conn.close()
+                return jsonify({"erro": erro_nome}), 409
         cursor.execute(
             """
             UPDATE motoristas
@@ -24905,6 +30557,12 @@ def atualizar_generico(tabela, id):
             cursor.close()
             conn.close()
             return jsonify({"erro": erro}), 400
+        if _nome_cadastro_alterado(atual.get("nome"), payload["nome"]):
+            erro_nome = _validar_nome_unico_cadastro(cursor, "colaboradores", payload["nome"], id)
+            if erro_nome:
+                cursor.close()
+                conn.close()
+                return jsonify({"erro": erro_nome}), 409
         usuario_payload = _normalizar_usuario_colaborador_payload(data, atual)
         try:
             usuario_payload = _sincronizar_usuario_do_colaborador(cursor, id, {**payload, **usuario_payload}, atual)
@@ -24944,19 +30602,28 @@ def atualizar_generico(tabela, id):
         )
     elif tabela == "cargas":
         cursor.execute(
-            "SELECT veiculo_numero FROM cargas WHERE id=%s",
+            "SELECT nome, veiculo_numero, cidade, rota FROM cargas WHERE id=%s",
             (id,),
         )
-        atual = cursor.fetchone() or {}
+        atual = cursor.fetchone()
+        if not atual:
+            cursor.close()
+            conn.close()
+            return jsonify({"erro": "registro nao encontrado"}), 404
+        nome = _as_str(data.get("nome")) if "nome" in data else _as_str(atual.get("nome"))
         veiculo_numero = _as_str(data.get("veiculo_numero")) if "veiculo_numero" in data else _as_str(atual.get("veiculo_numero"))
+        cidade = _as_str(data.get("cidade")) if "cidade" in data else _as_str(atual.get("cidade"))
+        rota = _as_str(data.get("rota")) if "rota" in data else _as_str(atual.get("rota"))
         cursor.execute(
             """
             UPDATE cargas
             SET nome=%s,
+                cidade=%s,
+                rota=%s,
                 veiculo_numero=%s
             WHERE id=%s
             """,
-            (_as_str(data.get("nome")), veiculo_numero, id)
+            (nome, cidade, rota, veiculo_numero, id)
         )
     else:
         cursor.execute(f"UPDATE {tabela} SET nome=%s WHERE id=%s", (data.get("nome"), id))
@@ -24989,6 +30656,30 @@ def deletar_generico(tabela, id):
         cursor.close()
         conn.close()
         return jsonify({"erro": "registro nao encontrado"}), 404
+
+    if tabela == "colaboradores":
+        cursor.execute(
+            """
+            UPDATE fretes
+            SET colaborador_motorista_id = NULL,
+                motorista_id = NULL
+            WHERE colaborador_motorista_id = %s
+            """,
+            (id,),
+        )
+        cursor.execute(
+            """
+            UPDATE fretes
+            SET colaborador_entregador_id = NULL,
+                entregador_id = NULL
+            WHERE colaborador_entregador_id = %s
+            """,
+            (id,),
+        )
+        cursor.execute(
+            "DELETE FROM escala_sorteio_regras WHERE motorista_id=%s OR apoio_id=%s",
+            (id, id),
+        )
 
     cursor.execute(f"DELETE FROM {tabela} WHERE id=%s", (id,))
     if tabela == "veiculos":
@@ -25724,7 +31415,7 @@ def listar_pre_lancamentos_manutencao_xml():
     try:
         params = []
         where = ""
-        if status in {"pendente", "confirmado", "descartado"}:
+        if status in {"pendente", "confirmado", "descartado", "devolvido_estoque"}:
             where = "WHERE p.status=%s"
             params.append(status)
         cur.execute(
@@ -25747,45 +31438,7 @@ def listar_pre_lancamentos_manutencao_xml():
         conn.close()
     return jsonify(
         {
-            "rows": [
-                {
-                    "id": _as_int(row.get("id"), 0),
-                    "nota_key": _as_str(row.get("nota_key")),
-                    "xml_id": _as_int(
-                        row.get("importar_xml_abastecimento_id"),
-                        0,
-                    ),
-                    "chave_nfe": _normalizar_chave_acesso_nfe(
-                        row.get("chave_nfe")
-                    ),
-                    "numero_nota": _as_str(row.get("numero_nota")),
-                    "veiculo_id": _as_int(row.get("veiculo_id"), 0),
-                    "veiculo_nome": _as_str(row.get("veiculo_nome")),
-                    "veiculo_placa": _as_str(row.get("veiculo_placa")),
-                    "veiculo_modelo": _as_str(row.get("veiculo_modelo")),
-                    "placa_xml": _as_str(row.get("placa_xml")),
-                    "sugestao_confianca": _as_float(
-                        row.get("sugestao_confianca"),
-                        0.0,
-                    ),
-                    "origem_veiculo": _as_str(row.get("origem_veiculo")),
-                    "status": _as_str(row.get("status")),
-                    "motivo": _as_str(row.get("motivo")),
-                    "emitente_nome": _as_str(row.get("emitente_nome")),
-                    "data_documento": _fmt_date(row.get("data_documento")),
-                    "km": _as_int(row.get("km"), 0),
-                    "valor": _as_float(row.get("valor"), 0.0),
-                    "itens": _normalizar_itens_manutencao_payload(
-                        _json_list_or_empty(row.get("itens_json"))
-                    ),
-                    "manutencao_id": _as_int(
-                        row.get("manutencao_id"),
-                        0,
-                    ),
-                    "atualizado_em": _fmt_dt(row.get("atualizado_em")),
-                }
-                for row in rows
-            ],
+            "rows": [_manutencao_xml_pre_lancamento_publico(row) for row in rows],
             "meta": {
                 "total": len(rows),
                 "pendentes": sum(
@@ -25848,6 +31501,106 @@ def descartar_pre_lancamento_manutencao_xml(pre_lancamento_id):
         cur.close()
         conn.close()
     return jsonify({"ok": True})
+
+
+@app.route(
+    "/api/manutencoes/importacoes-xml/devolver-estoque",
+    methods=["POST"],
+)
+def devolver_pre_lancamentos_manutencao_estoque():
+    data = request.get_json(silent=True) or {}
+    ids_payload = data.get("ids") if isinstance(data.get("ids"), list) else []
+    ids = []
+    for valor in ids_payload:
+        item_id = _as_int(valor, 0)
+        if item_id > 0 and item_id not in ids:
+            ids.append(item_id)
+    if not ids:
+        return jsonify({"erro": "selecione ao menos uma nota para devolver ao estoque"}), 400
+    if len(ids) > 300:
+        return jsonify({"erro": "selecione no maximo 300 notas por vez"}), 400
+
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    devolvidos = []
+    erros = []
+    try:
+        placeholders = ",".join(["%s"] * len(ids))
+        cur.execute(
+            f"""
+            SELECT id, nota_key, numero_nota, status
+            FROM manutencao_xml_pre_lancamentos
+            WHERE id IN ({placeholders})
+            FOR UPDATE
+            """,
+            tuple(ids),
+        )
+        rows_por_id = {
+            _as_int(row.get("id"), 0): row
+            for row in (cur.fetchall() or [])
+        }
+        for pre_id in ids:
+            row = rows_por_id.get(pre_id)
+            if not row:
+                erros.append({"id": pre_id, "erro": "pre-lancamento nao encontrado"})
+                continue
+            status_atual = _as_str(row.get("status"))
+            numero_nota = _as_str(row.get("numero_nota"))
+            if status_atual == "confirmado":
+                erros.append(
+                    {
+                        "id": pre_id,
+                        "numero_nota": numero_nota,
+                        "erro": "nota ja confirmada em manutencao",
+                    }
+                )
+                continue
+            if status_atual == "devolvido_estoque":
+                devolvidos.append({"id": pre_id, "numero_nota": numero_nota})
+                continue
+            cur.execute(
+                """
+                UPDATE manutencao_xml_pre_lancamentos
+                SET status='devolvido_estoque',
+                    motivo='Nota devolvida ao estoque por classificacao incorreta em manutencao.',
+                    manutencao_id=NULL,
+                    confirmado_em=NULL,
+                    atualizado_em=NOW()
+                WHERE id=%s
+                """,
+                (pre_id,),
+            )
+            cur.execute(
+                """
+                UPDATE abastecimento_xml_vinculos
+                SET status='devolvido_estoque',
+                    vinculacao_origem='devolvido_estoque',
+                    motivo='Pre-lancamento de manutencao devolvido para lancamento no estoque.',
+                    atualizado_em=NOW()
+                WHERE nota_key=%s
+                """,
+                (_as_str(row.get("nota_key")),),
+            )
+            devolvidos.append({"id": pre_id, "numero_nota": numero_nota})
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        conn.close()
+    return jsonify(
+        {
+            "ok": not erros,
+            "devolvidos": devolvidos,
+            "erros": erros,
+            "meta": {
+                "selecionados": len(ids),
+                "devolvidos": len(devolvidos),
+                "com_erro": len(erros),
+            },
+        }
+    )
 
 
 @app.route("/api/manutencoes", methods=["POST"])
@@ -27218,8 +32971,11 @@ def agent_ia_chat():
 
 
 @app.route("/")
+@app.route("/RioBranco.html")
 def index():
-    return send_from_directory(BASE_DIR, "RioBranco.html")
+    with open(os.path.join(BASE_DIR, "RioBranco.html"), "r", encoding="utf-8") as f:
+        html = f.read().replace("__RB_ASSET_VERSION__", FRONTEND_ASSET_VERSION)
+    return Response(html, mimetype="text/html")
 
 @app.route("/docs")
 @app.route("/docs/")

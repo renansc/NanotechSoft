@@ -158,6 +158,7 @@ RISKY_PATTERNS=(
   'certs/**'
   'Relatorios/**'
   'DATA/**'
+  'bkp_drive/**'
   'cameras/cams/**'
   'cameras/cams.json'
   'cameras/cameras.db'
@@ -176,6 +177,7 @@ is_risky_path() {
   [[ "$path" == certs/* ]] && return 0
   [[ "$path" == Relatorios/* ]] && return 0
   [[ "$path" == DATA/* ]] && return 0
+  [[ "$path" == bkp_drive/* ]] && return 0
   [[ "$path" == cameras/cams/* ]] && return 0
   [[ "$path" == cameras/cams.json ]] && return 0
   [[ "$path" == cameras/cameras.db ]] && return 0

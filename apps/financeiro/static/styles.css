@@ -218,6 +218,29 @@ textarea{
 .dashboardTitulosCard{ grid-area: titulos; }
 .dashboardCategoriasCard{ grid-area: categorias; }
 
+.lancamentosTotals{
+  display:grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap:10px;
+  margin: 0 0 14px;
+}
+
+.lancamentosTotals div{
+  border:1px solid var(--line);
+  border-radius:12px;
+  background:rgba(17,26,51,.36);
+  padding:10px 12px;
+}
+
+.lancamentosTotals span,
+.lancamentosTotals b{ display:block; }
+.lancamentosTotals span{ color:var(--muted); font-size:12px; }
+.lancamentosTotals b{ margin-top:4px; overflow-wrap:anywhere; }
+
+@media (max-width: 700px){
+  .lancamentosTotals{ grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
 @media (max-width: 900px){
   .dashboardDesktopGrid{
     grid-template-columns: 1fr;

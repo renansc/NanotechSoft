@@ -14,18 +14,105 @@
       {
         "nome": "Painel RioB",
         "url": "/apps/riob#dashboard"
+      },
+      {
+        "nome": "Frota RioB",
+        "url": "/apps/riob#dashboard:frota"
+      },
+      {
+        "nome": "Estoque RioB",
+        "url": "/apps/riob#dashboard:estoque"
+      },
+      {
+        "nome": "Bonificacoes RioB",
+        "url": "/apps/riob#dashboard:bonificacoes"
+      },
+      {
+        "nome": "Variacao de Preco RioB",
+        "url": "/apps/riob#dashboard:variacao_preco"
+      },
+      {
+        "nome": "Grupos de Embalagem RioB",
+        "url": "/apps/riob#dashboard:grupos_embalagem"
+      }
+    ],
+    "workflow": [
+      {
+        "nome": "Kanban RioB",
+        "url": "/apps/riob#fretes"
+      },
+      {
+        "nome": "Devolucoes RioB",
+        "url": "/apps/riob#devolucoes"
+      },
+      {
+        "nome": "Gestao de Frota RioB",
+        "url": "/apps/riob#gestaofrota:registrar"
+      },
+      {
+        "nome": "Chat Interno RioB",
+        "url": "/apps/riob#comunicacao"
+      },
+      {
+        "nome": "Monitor Cameras RioB",
+        "url": "/apps/riob#monitor:cameras"
+      }
+    ],
+    "cadastros": [
+      {
+        "nome": "Colaboradores RioB",
+        "url": "/apps/riob#cadastros:colaboradores",
+        "grupo": "RioB"
+      },
+      {
+        "nome": "Veiculos RioB",
+        "url": "/apps/riob#cadastros:veiculos",
+        "grupo": "RioB"
+      },
+      {
+        "nome": "Comissoes RioB",
+        "url": "/apps/riob#cadastros:comissao",
+        "grupo": "RioB"
+      },
+      {
+        "nome": "Cargas RioB",
+        "url": "/apps/riob#gestaofrota:cargas",
+        "grupo": "RioB"
+      },
+      {
+        "nome": "Escala RioB",
+        "url": "/apps/riob#gestaofrota:escala",
+        "grupo": "RioB"
       }
     ],
     "compras": [
       {
         "nome": "Estoque RioB",
         "url": "/apps/riob#estoque"
+      },
+      {
+        "nome": "Importar XML RioB",
+        "url": "/apps/riob#monitor:importar_xml"
       }
     ],
     "relatorios": [
       {
         "nome": "Vendas RioB",
         "url": "/apps/riob#vendas"
+      },
+      {
+        "nome": "Comissao de Vendas RioB",
+        "url": "/apps/riob#vendas:comissao"
+      },
+      {
+        "nome": "Relatorios de Frota RioB",
+        "url": "/apps/riob#gestaofrota:relatorios"
+      }
+    ],
+    "import_export": [
+      {
+        "nome": "Gestor de E-mails RioB",
+        "url": "/apps/riob#monitor:gestor_emails"
       }
     ]
   },
@@ -34,6 +121,38 @@
       {
         "nome": "Status RioB",
         "url": "/apps/riob#config:status"
+      },
+      {
+        "nome": "Logs RioB",
+        "url": "/apps/riob#config:logs"
+      },
+      {
+        "nome": "Cameras RioB",
+        "url": "/apps/riob#config:cameras"
+      },
+      {
+        "nome": "SIP RioB",
+        "url": "/apps/riob#config:sip"
+      },
+      {
+        "nome": "NF-e RioB",
+        "url": "/apps/riob#config:nfe"
+      },
+      {
+        "nome": "Vendas RioB",
+        "url": "/apps/riob#config:vendas"
+      },
+      {
+        "nome": "Monitor ESXi RioB",
+        "url": "/apps/riob#monitor:esxi"
+      },
+      {
+        "nome": "Monitor Automacao RioB",
+        "url": "/apps/riob#monitor:automacao"
+      },
+      {
+        "nome": "Modo completo RioB",
+        "url": "/apps/riob/original"
       }
     ]
   }

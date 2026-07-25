@@ -36,7 +36,9 @@ load_env_file() {
           value="${value#\'}"
           value="${value%\'}"
         fi
-        export "$key=$value"
+        if [ -z "${!key+x}" ]; then
+          export "$key=$value"
+        fi
         ;;
     esac
   done < ./.env
@@ -57,6 +59,7 @@ SYNC_BRANCH="${RB_SYNC_BRANCH:-main}"
 BACKUP_DIR="${RB_SYNC_BACKUP_DIR:-$REPO_DIR/sync-backups}"
 RESET_NFE_CONFIG="${RB_SYNC_RESET_NFE_CONFIG:-1}"
 VALIDATE_DB_SYNC="${RB_SYNC_VALIDATE_DB:-1}"
+RESTART_SERVICES="${RB_SYNC_RESTART_SERVICES:-1}"
 DB_NAME="${RB_DB_NAME:-riobranco}"
 DB_APP_USER="${RB_DB_USER:-riobranco}"
 DB_APP_PASSWORD="${RB_DB_PASSWORD:-riobranco123}"
@@ -124,7 +127,7 @@ select_db_credentials() {
 
 cleanup_on_error() {
   local status=$?
-  if [ "$status" -ne 0 ] && [ "$services_stopped" = "1" ]; then
+  if [ "$status" -ne 0 ] && [ "$services_stopped" = "1" ] && [ "$RESTART_SERVICES" = "1" ]; then
     log "Erro detectado; subindo app e proxy novamente."
     docker compose up -d app proxy >/dev/null || true
   fi
@@ -467,9 +470,13 @@ if [ "$SYNC_CAMERAS_DATA" = "1" ]; then
   sync_remote_volume_to_local "riobranco-app" "/data/cameras" "riobranco-app" "/data/cameras" "$local_cameras_backup"
 fi
 
-log "Subindo servicos da homologacao"
-docker compose up -d --build app proxy
-services_stopped=0
+if [ "$RESTART_SERVICES" = "1" ]; then
+  log "Subindo servicos da homologacao"
+  docker compose up -d --build app proxy
+  services_stopped=0
+else
+  log "RB_SYNC_RESTART_SERVICES=0; mantendo app e proxy parados apos sincronizacao."
+fi
 
 log "Status final"
 docker compose ps

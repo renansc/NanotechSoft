@@ -160,13 +160,19 @@
 <script>
   const BASE_PREFIX = (() => {
     const p = window.location.pathname || "";
-    const i = p.indexOf("/monitor/cameras");
-    return i >= 0 ? "/monitor/cameras" : "";
+    const marker = "/" + ["monitor", "cameras"].join("/");
+    const i = p.indexOf(marker);
+    return i >= 0 ? p.slice(0, i) + marker : "";
   })();
   function withBase(path){
     if (!BASE_PREFIX) return path;
     if (typeof path !== "string") return path;
-    if (path.startsWith("/api/") || path.startsWith("/cams/")) return BASE_PREFIX + path;
+    const apiMarker = "/" + "api" + "/";
+    const camsMarker = "/" + "cams" + "/";
+    const apiIndex = path.indexOf(apiMarker);
+    const camsIndex = path.indexOf(camsMarker);
+    if (apiIndex >= 0) return BASE_PREFIX + path.slice(apiIndex);
+    if (camsIndex >= 0) return BASE_PREFIX + path.slice(camsIndex);
     return path;
   }
 

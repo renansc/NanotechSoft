@@ -132,7 +132,7 @@ NANOSTORE_BASE_URL = f"http://127.0.0.1:{NANOSTORE_PORT}"
 RAIOXPACS_PORT = int(os.environ.get("RAIOXPACS_PORT", "8899"))
 RAIOXPACS_BASE_URL = f"http://127.0.0.1:{RAIOXPACS_PORT}"
 RAIOXPACS_STARTUP_WAIT = float(os.environ.get("RAIOXPACS_STARTUP_WAIT", "90"))
-RIOB_BASE_URL = os.environ.get("RIOB_BASE_URL", "http://127.0.0.1:8898").rstrip("/")
+RIOB_BASE_URL = os.environ.get("RIOB_BASE_URL", "https://host.docker.internal:8899").rstrip("/")
 RIOB_SSL_VERIFY = str(os.environ.get("RIOB_SSL_VERIFY", "0")).strip().lower() in {"1", "true", "yes", "sim", "on"}
 RIOB_ROUTE_DEFAULTS = {
     "riob": "/",
@@ -669,13 +669,32 @@ def normalize_app(item, origem="filesystem"):
     }
 
 
-def menu_display_name(item, app_name):
+def menu_display_name(item, app_name, section=""):
     nome = str(item.get("nome") or "").strip()
     if not nome:
         return app_name
-    if app_name.lower() in nome.lower():
-        return nome
-    return f"{nome} {app_name}"
+
+    # O submenu ja informa a area funcional. Remove o nome do app e termos
+    # genericos repetidos para produzir itens curtos: em "Dashboards",
+    # "Dashboard Financeiro" vira "Financeiro" e "Painel RioB" vira "RioB".
+    short_name = re.sub(re.escape(app_name), "", nome, flags=re.I)
+    short_name = re.sub(r"\s*[-–—:/|]\s*", " ", short_name)
+    short_name = re.sub(r"\s+", " ", short_name).strip()
+    generic_by_section = {
+        "dashboards": {"dashboard", "painel"},
+        "cadastros": {"cadastro", "cadastros"},
+        "workflow": {"workflow", "kanban", "fluxo"},
+        "compras": {"compra", "compras"},
+        "financeiro": {"financeiro", "financas", "finanças"},
+        "relatorios": {"relatorio", "relatorios", "relatório", "relatórios"},
+        "import_export": {"import export", "importacao", "importação", "exportacao", "exportação"},
+        "config": {"config", "configuracao", "configuração", "configuracoes", "configurações"},
+    }
+    if not short_name or short_name.casefold() in {
+        value.casefold() for value in generic_by_section.get(section, set())
+    }:
+        return app_name
+    return short_name
 
 
 def current_theme_key():
@@ -1046,7 +1065,7 @@ def menu_sections(apps, usuario=None):
                     sections[section].append(
                         {
                             **item,
-                            "nome": menu_display_name(item, app_item["nome"]),
+                            "nome": menu_display_name(item, app_item["nome"], section),
                             "app": app_item["nome"],
                             "grupo": item.get("grupo") or "",
                         }
@@ -1057,7 +1076,7 @@ def menu_sections(apps, usuario=None):
                     sections["config"].append(
                         {
                             **item,
-                            "nome": menu_display_name(item, app_item["nome"]),
+                            "nome": menu_display_name(item, app_item["nome"], "config"),
                             "app": app_item["nome"],
                             "grupo": item.get("grupo") or "",
                         }
@@ -1390,12 +1409,16 @@ def rewrite_riob_html(content, prefix="/apps/riob"):
         "window.open('/": f"window.open('{prefix}/",
         '"/api/': f'"{prefix}/api/',
         "'/api/": f"'{prefix}/api/",
+        "`/api/": f"`{prefix}/api/",
         '"/monitor/': f'"{prefix}/monitor/',
         "'/monitor/": f"'{prefix}/monitor/",
+        "`/monitor/": f"`{prefix}/monitor/",
         '"/importar-xml/': f'"{prefix}/importar-xml/',
         "'/importar-xml/": f"'{prefix}/importar-xml/",
+        "`/importar-xml/": f"`{prefix}/importar-xml/",
         '"/gestor-emails/': f'"{prefix}/gestor-emails/',
         "'/gestor-emails/": f"'{prefix}/gestor-emails/",
+        "`/gestor-emails/": f"`{prefix}/gestor-emails/",
     }
     for source, target in replacements.items():
         text = text.replace(source, target)
@@ -1423,6 +1446,34 @@ def riob_hash_bridge_script():
         window.openMonitorView(null, view);
         return;
       }
+      if (section === "dashboard" && view && typeof window.openDashboardView === "function") {
+        window.openDashboardView(null, view);
+        return;
+      }
+      if (section === "cadastros" && view && typeof window.openCadastrosView === "function") {
+        window.openCadastrosView(null, view);
+        return;
+      }
+      if (section === "gestaofrota" && view && typeof window.openGestaoFrotaView === "function") {
+        if (view === "cargas" && typeof window.openGestaoFrotaCargas === "function") {
+          window.openGestaoFrotaCargas(null);
+          return;
+        }
+        if (view === "escala" && typeof window.openGestaoFrotaEscala === "function") {
+          window.openGestaoFrotaEscala(null);
+          return;
+        }
+        window.openGestaoFrotaView(null, view);
+        return;
+      }
+      if (section === "vendas" && view && typeof window.openVendasView === "function") {
+        if (view === "comissao" && typeof window.openVendasComissao === "function") {
+          window.openVendasComissao(null);
+          return;
+        }
+        window.openVendasView(null, view);
+        return;
+      }
       if (section && typeof window.showTab === "function") {
         window.showTab(section, document.querySelector('[data-tab="' + section + '"]'));
       }
@@ -1442,12 +1493,16 @@ def rewrite_riob_javascript(content, prefix="/apps/riob"):
     replacements = {
         '"/api/': f'"{prefix}/api/',
         "'/api/": f"'{prefix}/api/",
+        "`/api/": f"`{prefix}/api/",
         '"/monitor/': f'"{prefix}/monitor/',
         "'/monitor/": f"'{prefix}/monitor/",
+        "`/monitor/": f"`{prefix}/monitor/",
         '"/importar-xml/': f'"{prefix}/importar-xml/',
         "'/importar-xml/": f"'{prefix}/importar-xml/",
+        "`/importar-xml/": f"`{prefix}/importar-xml/",
         '"/gestor-emails/': f'"{prefix}/gestor-emails/',
         "'/gestor-emails/": f"'{prefix}/gestor-emails/",
+        "`/gestor-emails/": f"`{prefix}/gestor-emails/",
     }
     for source, target in replacements.items():
         text = text.replace(source, target)
@@ -1655,14 +1710,14 @@ def local_riob_proxy_response(app_key, subpath=""):
     return response
 
 
-def riob_proxy_response(app_key="riob", subpath=""):
+def riob_proxy_response(app_key="riob", subpath="", embedded=False):
     usuario = current_user_or_logout()
     if not usuario:
         return redirect(url_for("login_page"))
     if not app_visible_to_user({"app_key": app_key}, usuario):
         return jsonify({"erro": "app nao liberado para este usuario"}), 403
 
-    route = riob_app_path(app_key, subpath)
+    route = "/" if embedded else riob_app_path(app_key, subpath)
     parsed_default = urllib.parse.urlparse(route)
     upstream_path = parsed_default.path or "/"
     upstream_query = parsed_default.query
@@ -1708,6 +1763,43 @@ def riob_proxy_response(app_key="riob", subpath=""):
     content_type = resp_headers.get("Content-Type", "application/octet-stream")
     if "text/html" in content_type:
         body = rewrite_riob_html(body)
+        if embedded:
+            embedded_style = """
+<style id="nanotech-riob-embedded">
+  .topo,
+  .menu,
+  .menu-overlay,
+  .nanotech-badge,
+  #menuLogoutBtn {
+    display: none !important;
+  }
+  html,
+  body {
+    min-height: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+  html {
+    overflow-x: hidden !important;
+    overflow-y: scroll !important;
+    scrollbar-gutter: stable;
+  }
+  body:not(.modal-open):not(.login-active):not(.menu-open) {
+    overflow-y: auto !important;
+  }
+  body {
+    padding-top: 12px !important;
+  }
+  .kanban {
+    overflow-x: scroll !important;
+    overflow-y: visible !important;
+    padding-bottom: 16px !important;
+  }
+</style>
+"""
+            text = body.decode("utf-8", errors="replace")
+            text = text.replace("</head>", embedded_style + "</head>", 1)
+            body = text.encode("utf-8")
     elif "javascript" in content_type or upstream_path.endswith(".js"):
         body = rewrite_riob_javascript(body)
 
@@ -1739,10 +1831,19 @@ def riob_proxy_response(app_key="riob", subpath=""):
 @app.route("/apps/riob/<path:subpath>", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
 @login_required
 def riob_proxy(subpath=""):
-    if "riob" in LOCAL_RIOB_APPS:
-        if subpath == "riob" or subpath.startswith("riob/"):
-            subpath = subpath[4:].lstrip("/")
-        return local_riob_proxy_response("riob", subpath)
+    if request.method == "GET" and not subpath:
+        usuario = current_user_or_logout()
+        return render_template(
+            "integrated_frame.html",
+            active_page="dashboards",
+            app_nome="Rio Branco",
+            frame_url=url_for("riob_proxy", subpath="embed"),
+            **portal_context(usuario),
+        )
+    if subpath == "embed":
+        return riob_proxy_response("riob", "", embedded=True)
+    if subpath == "original":
+        return riob_proxy_response("riob", "")
     return riob_proxy_response("riob", subpath)
 
 
@@ -1751,13 +1852,15 @@ def riob_proxy(subpath=""):
 @app.route("/apps/<app_key>/riob/<path:subpath>", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
 @login_required
 def riob_module_proxy(app_key, subpath=""):
+    if app_key == "riob-cameras" and not subpath:
+        return redirect("/apps/riob-cameras")
     if app_key in LOCAL_RIOB_APPS:
         return local_riob_proxy_response(app_key, subpath)
     if app_key in LOCAL_RIOB_ALIASES:
         target_key, fragment = LOCAL_RIOB_ALIASES[app_key]
         if subpath:
             return local_riob_proxy_response(target_key, subpath)
-        return redirect(f"/apps/{target_key}/riob/{fragment}")
+        return redirect(f"/apps/{target_key}{fragment}")
     if app_key not in RIOB_ROUTE_DEFAULTS:
         return jsonify({"erro": "modulo RioB nao encontrado"}), 404
     return riob_proxy_response(app_key, subpath)
@@ -1766,11 +1869,22 @@ def riob_module_proxy(app_key, subpath=""):
 @app.route("/apps/<app_key>")
 @login_required
 def app_placeholder(app_key):
+    if app_key == "riob":
+        return redirect(url_for("riob_proxy"))
+    if app_key == "riob-cameras":
+        usuario = current_user_or_logout()
+        return render_template(
+            "integrated_frame.html",
+            active_page="config",
+            app_nome="Câmeras RioB",
+            frame_url=url_for("riob_proxy", subpath="monitor/cameras/"),
+            **portal_context(usuario),
+        )
     if app_key in LOCAL_RIOB_APPS:
         return local_riob_proxy_response(app_key, "")
     if app_key in LOCAL_RIOB_ALIASES:
         target_key, fragment = LOCAL_RIOB_ALIASES[app_key]
-        return redirect(f"/apps/{target_key}/riob/{fragment}")
+        return redirect(f"/apps/{target_key}{fragment}")
     if app_key in RIOB_ROUTE_DEFAULTS:
         return riob_proxy_response(app_key, "")
     selected = next((item for item in list_apps() if item["app_key"] == app_key), None)

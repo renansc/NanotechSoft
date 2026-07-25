@@ -304,6 +304,7 @@ def parse_nfe(path):
     ide = first(root, "ide")
     emit = first(root, "emit")
     dest = first(root, "dest")
+    ender_dest = first(dest, "enderDest") if dest is not None else None
     total = first(root, "ICMSTot")
     infadic = first(root, "infAdic")
 
@@ -319,8 +320,11 @@ def parse_nfe(path):
         "tpNF": child_text(ide, "tpNF"),
         "emitente_cnpj": so_num(child_text(emit, "CNPJ") or child_text(emit, "CPF")),
         "emitente_nome": child_text(emit, "xNome"),
+        "emitente_fantasia": child_text(emit, "xFant"),
         "destinatario_cnpj": so_num(child_text(dest, "CNPJ") or child_text(dest, "CPF")),
         "destinatario_nome": child_text(dest, "xNome"),
+        "destinatario_cidade": child_text(ender_dest, "xMun"),
+        "destinatario_uf": child_text(ender_dest, "UF"),
         "valor_total_nota": to_float(child_text(total, "vNF")),
         "valor_produtos": to_float(child_text(total, "vProd")),
         "valor_desconto": to_float(child_text(total, "vDesc")),

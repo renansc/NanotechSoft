@@ -206,8 +206,31 @@ def ensure_ca(cert_dir, ca_cn, ca_days):
 
 def ensure_server_cert(ca_cert_path, ca_key_path, ca_serial_path, common_name, hosts, cert_path, key_path, fullchain_path, days, force=False):
     if not force and os.path.exists(cert_path) and os.path.exists(key_path) and os.path.exists(fullchain_path):
-        log(f"reutilizando certificado existente para {common_name}: {fullchain_path}")
-        return False
+        inspect = subprocess.run(
+            ["openssl", "x509", "-in", cert_path, "-noout", "-ext", "subjectAltName"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        valid = subprocess.run(
+            ["openssl", "x509", "-in", cert_path, "-noout", "-checkend", "86400"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        san_text = inspect.stdout if inspect.returncode == 0 else ""
+        missing_hosts = []
+        for host in hosts:
+            marker = f"IP Address:{host}" if is_ip(host) else f"DNS:{host}"
+            if marker not in san_text:
+                missing_hosts.append(host)
+        if valid.returncode == 0 and not missing_hosts:
+            log(f"reutilizando certificado existente para {common_name}: {fullchain_path}")
+            return False
+        if missing_hosts:
+            log("reemitindo certificado; hosts ausentes no SAN: " + ", ".join(missing_hosts))
+        else:
+            log("reemitindo certificado ausente, invalido ou proximo do vencimento")
 
     tmpdir = tempfile.mkdtemp(prefix="riobranco-cert-")
     try:
@@ -322,13 +345,9 @@ def main():
     cert_dir = os.environ.get("RB_CERT_DIR", "/certs")
     os.makedirs(cert_dir, exist_ok=True)
 
-    if not cert_bootstrap:
-        log("bootstrap de certificados desabilitado; saindo")
-        return 0
-
     app_hosts = derive_app_hosts()
     pbx_hosts = derive_pbx_hosts()
-    if not https_enabled and not pbx_hosts:
+    if not https_enabled and (not cert_bootstrap or not pbx_hosts):
         log("HTTPS e FreePBX sem bootstrap; nada para fazer")
         return 0
 
@@ -338,7 +357,7 @@ def main():
     force_reissue = env_bool("RB_CERT_FORCE_REISSUE", False)
     ca_cert_path, ca_key_path, ca_serial_path = ensure_ca(cert_dir, ca_cn, ca_days)
 
-    if app_hosts:
+    if https_enabled and app_hosts:
         app_common_name = app_hosts[0]
         ensure_server_cert(
             ca_cert_path,
@@ -352,11 +371,11 @@ def main():
             server_days,
             force=force_reissue,
         )
-    else:
+    elif https_enabled:
         log("RB_SERVER_NAME/RB_PUBLIC_BASE_URL nao definidos; pulando certificado do app")
 
     pbx_host = (os.environ.get("RB_FREEPBX_HOST") or "").strip()
-    if pbx_hosts and pbx_host:
+    if cert_bootstrap and pbx_hosts and pbx_host:
         local_pbx_cert_path = os.path.join(cert_dir, "riobranco-freepbx.crt")
         local_pbx_key_path = os.path.join(cert_dir, "riobranco-freepbx.key")
         local_pbx_fullchain_path = os.path.join(cert_dir, "riobranco-freepbx-fullchain.pem")
@@ -385,8 +404,10 @@ def main():
             )
         else:
             log("certificado WSS do FreePBX ja existe localmente; pulando reinstalacao remota")
-    else:
+    elif cert_bootstrap:
         log("host do FreePBX nao configurado; pulando certificado WSS remoto")
+    else:
+        log("RB_CERT_BOOTSTRAP=0; certificado remoto do FreePBX nao sera alterado")
 
     log("bootstrap de certificados concluido")
     return 0

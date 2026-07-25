@@ -10,7 +10,7 @@ BASE_DIR = Path(__file__).resolve().parent
 
 # Caminho padrão atual. Pode ser trocado sem editar o script:
 # export KANBAN_TASKS_FILE="/caminho/kanban-tasks.json"
-TASKS_FILE = Path(os.environ.get("KANBAN_TASKS_FILE", str(BASE_DIR / "kanban-tasks.json"))).expanduser()
+TASKS_FILE = Path(os.environ.get("KANBAN_TASKS_FILE", "/srv/riob/kanban-tasks.json")).expanduser()
 LOCK_FILE = Path(os.environ.get("KANBAN_LOCK_FILE", str(TASKS_FILE) + ".lock")).expanduser()
 
 STATUSES = ("today", "todo", "waiting")

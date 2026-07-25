@@ -862,6 +862,10 @@ function emptyFinanceStatus(){
     receitasMes: 0,
     despesasMes: 0,
     saldoAtual: 0,
+    receitasFuturas: 0,
+    despesasFuturas: 0,
+    receitasFuturasMes: 0,
+    despesasFuturasMes: 0,
     apAbertoMes: 0,
     arAbertoMes: 0,
     apAbertoTotal: 0,
@@ -875,8 +879,17 @@ function finishFinanceStatus(status){
   return {
     ...status,
     resultadoRealizadoMes: status.receitasMes - status.despesasMes,
-    resultadoPrevistoMes: status.receitasMes + status.arAbertoMes - status.despesasMes - status.apAbertoMes,
-    saldoPrevisto: status.saldoAtual + status.arAbertoTotal - status.apAbertoTotal
+    resultadoPrevistoMes: status.receitasMes
+      + status.receitasFuturasMes
+      + status.arAbertoMes
+      - status.despesasMes
+      - status.despesasFuturasMes
+      - status.apAbertoMes,
+    saldoPrevisto: status.saldoAtual
+      + status.receitasFuturas
+      - status.despesasFuturas
+      + status.arAbertoTotal
+      - status.apAbertoTotal
   };
 }
 
@@ -894,12 +907,24 @@ function calcContaFinanceStatus(contaId, mes, todayISO=toISODate(new Date())){
     const valor = Number(lanc.valor || 0);
     const isReceita = lanc.tipo === "RECEITA";
     const isTransferencia = isTransferenciaLancamento(lanc);
+    const isLancamentoMes = isSameMonthISO(lanc.data, year, month);
 
-    if(isValidDateISO(lanc.data) && lanc.data <= todayISO){
-      status.saldoAtual += isReceita ? valor : -valor;
+    if(isLancamentoMes){
+      if(lanc.data <= todayISO){
+        status.saldoAtual += isReceita ? valor : -valor;
+      }else{
+        // No mes corrente, lancamentos posteriores a hoje entram apenas
+        // na previsao. Lancamentos de outros meses nao afetam este painel.
+        if(isReceita) status.receitasFuturas += valor;
+        else status.despesasFuturas += valor;
+        if(!isTransferencia){
+          if(isReceita) status.receitasFuturasMes += valor;
+          else status.despesasFuturasMes += valor;
+        }
+      }
     }
 
-    if(!isTransferencia && isSameMonthISO(lanc.data, year, month)){
+    if(!isTransferencia && isLancamentoMes && lanc.data <= todayISO){
       if(isReceita) status.receitasMes += valor;
       else status.despesasMes += valor;
     }
@@ -907,6 +932,7 @@ function calcContaFinanceStatus(contaId, mes, todayISO=toISODate(new Date())){
 
   for(const titulo of state.titulos){
     if(titulo.contaId !== contaId || !isTituloAberto(titulo)) continue;
+    if(!isSameMonthISO(titulo.vencimento, year, month)) continue;
     const valor = Number(titulo.valor || 0);
     const isAP = titulo.tipo === "AP";
 
@@ -918,10 +944,8 @@ function calcContaFinanceStatus(contaId, mes, todayISO=toISODate(new Date())){
       else status.arVencido += valor;
     }
 
-    if(isSameMonthISO(titulo.vencimento, year, month)){
-      if(isAP) status.apAbertoMes += valor;
-      else status.arAbertoMes += valor;
-    }
+    if(isAP) status.apAbertoMes += valor;
+    else status.arAbertoMes += valor;
   }
 
   return finishFinanceStatus(status);
@@ -933,6 +957,10 @@ function aggregateFinanceStatus(statuses){
     total.receitasMes += status.receitasMes;
     total.despesasMes += status.despesasMes;
     total.saldoAtual += status.saldoAtual;
+    total.receitasFuturas += status.receitasFuturas;
+    total.despesasFuturas += status.despesasFuturas;
+    total.receitasFuturasMes += status.receitasFuturasMes;
+    total.despesasFuturasMes += status.despesasFuturasMes;
     total.apAbertoMes += status.apAbertoMes;
     total.arAbertoMes += status.arAbertoMes;
     total.apAbertoTotal += status.apAbertoTotal;
@@ -1136,7 +1164,7 @@ $("#dashMes").addEventListener("change", renderDashboard);
 let editLancId = null;
 let editTransferenciaId = null;
 
-function renderLancamentos(){
+function filteredLancamentos(){
   const conta = $("#fConta").value || "ALL";
   const ini = $("#fIni").value;
   const fim = $("#fFim").value;
@@ -1149,8 +1177,126 @@ function renderLancamentos(){
   if(fim) list = list.filter(l => l.data <= fim);
   if(busca) list = list.filter(l => (l.desc || "").toLowerCase().includes(busca));
 
-  const contaById = new Map(state.contas.map(c=>[c.id,c]));
+  return list;
+}
+
+function lancamentosTotals(list){
+  let receitas = 0;
+  let despesas = 0;
+  for(const lanc of list){
+    if(isTransferenciaLancamento(lanc)) continue;
+    const valor = Math.abs(Number(lanc.valor || 0));
+    if(lanc.tipo === "RECEITA") receitas += valor;
+    else despesas += valor;
+  }
+  return { receitas, despesas, saldo: receitas - despesas };
+}
+
+function excelXmlText(value){
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
+function excelStringCell(value, style=""){
+  const styleAttr = style ? ` ss:StyleID="${style}"` : "";
+  return `<Cell${styleAttr}><Data ss:Type="String">${excelXmlText(value)}</Data></Cell>`;
+}
+
+function excelNumberCell(value, style="Money"){
+  const number = Number(value || 0);
+  return `<Cell ss:StyleID="${style}"><Data ss:Type="Number">${Number.isFinite(number) ? number : 0}</Data></Cell>`;
+}
+
+function exportarLancamentosExcel(){
+  const list = filteredLancamentos();
   const rows = buildLancamentoRows(list);
+  if(!rows.length){
+    alert("Não há lançamentos no filtro atual para exportar.");
+    return;
+  }
+
+  const contaById = new Map(state.contas.map(conta => [conta.id, conta]));
+  const totals = lancamentosTotals(list);
+  const detailRows = rows.map(row => {
+    if(row.kind === "transferencia"){
+      const origem = contaById.get(row.origem?.contaId)?.nome || "Origem";
+      const destino = contaById.get(row.destino?.contaId)?.nome || "Destino";
+      const conciliado = (row.entries || []).some(item => item?.conciliado || item?.bankTxId) ? "Sim" : "Não";
+      return `<Row>${[
+        excelStringCell(row.data),
+        excelStringCell(`${origem} -> ${destino}`),
+        excelStringCell("TRANSFERÊNCIA"),
+        excelStringCell(""),
+        excelStringCell(row.desc || "Transferência entre contas"),
+        excelNumberCell(row.valor),
+        excelStringCell(conciliado)
+      ].join("")}</Row>`;
+    }
+
+    const lanc = row.lanc;
+    return `<Row>${[
+      excelStringCell(lanc.data),
+      excelStringCell(contaById.get(lanc.contaId)?.nome || "-"),
+      excelStringCell(lanc.tipo === "RECEITA" ? "RECEITA" : "DESPESA"),
+      excelStringCell(categoriaNamesText(getLancCategoriaIds(lanc), "-")),
+      excelStringCell(lanc.desc || ""),
+      excelNumberCell(Math.abs(Number(lanc.valor || 0))),
+      excelStringCell(lanc.conciliado || lanc.bankTxId ? "Sim" : "Não")
+    ].join("")}</Row>`;
+  }).join("");
+
+  const summaryRows = [
+    ["Receitas", totals.receitas],
+    ["Despesas", totals.despesas],
+    ["Saldo", totals.saldo]
+  ].map(([label, value]) => `<Row>${excelStringCell(label, "Header")}${excelNumberCell(value)}</Row>`).join("");
+
+  const workbook = `<?xml version="1.0" encoding="UTF-8"?>
+<?mso-application progid="Excel.Sheet"?>
+<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
+ xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
+ <Styles>
+  <Style ss:ID="Header"><Font ss:Bold="1"/><Interior ss:Color="#D9EAF7" ss:Pattern="Solid"/></Style>
+  <Style ss:ID="Money"><NumberFormat ss:Format="Currency"/></Style>
+ </Styles>
+ <Worksheet ss:Name="Lancamentos"><Table>
+  <Column ss:Width="80"/><Column ss:Width="140"/><Column ss:Width="90"/>
+  <Column ss:Width="140"/><Column ss:Width="240"/><Column ss:Width="90"/><Column ss:Width="75"/>
+  <Row>${["Data", "Conta", "Tipo", "Categoria", "Descrição", "Valor", "Conciliado"].map(value => excelStringCell(value, "Header")).join("")}</Row>
+  ${detailRows}
+  <Row/>
+  ${summaryRows}
+ </Table></Worksheet>
+</Workbook>`;
+
+  const blob = new Blob([workbook], { type: "application/vnd.ms-excel;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  const periodo = $("#fIni").value || $("#fFim").value
+    ? `${$("#fIni").value || "inicio"}_${$("#fFim").value || "fim"}`
+    : toISODate(new Date()).slice(0, 7);
+  link.href = url;
+  link.download = `lancamentos_${periodo}.xls`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function renderLancamentos(){
+  const list = filteredLancamentos();
+  const totals = lancamentosTotals(list);
+  const rows = buildLancamentoRows(list);
+
+  $("#totalLancReceitas").textContent = brl(totals.receitas);
+  $("#totalLancDespesas").textContent = brl(totals.despesas);
+  $("#totalLancSaldo").textContent = brl(totals.saldo);
+  $("#totalLancSaldo").className = totals.saldo >= 0 ? "ok" : "bad";
+  $("#totalLancRegistros").textContent = String(rows.length);
+
+  const contaById = new Map(state.contas.map(c=>[c.id,c]));
 
   $("#tbLanc").innerHTML = rows.map(row=>{
     if(row.kind === "transferencia"){
@@ -1195,6 +1341,7 @@ function renderLancamentos(){
 }
 
 $("#btnFiltrar").addEventListener("click", renderLancamentos);
+$("#btnExportarLanc").addEventListener("click", exportarLancamentosExcel);
 $("#btnNovoLanc").addEventListener("click", ()=> openLancModal(null));
 
 $("#tbLanc").addEventListener("click", async (e)=>{

@@ -6,6 +6,7 @@ __pycache__/
 *.log
 .git/
 deploy/tmp/
+backups/
 *.db
 *.sqlite
 *.sqlite3
@@ -38,6 +39,8 @@ apps/riob-cameras/data/
 apps/riob-cameras/source/data/
 apps/riob-cameras/source/cams/
 apps/riob/source/backups sql/
+apps/riob/source/backupsSql/
+apps/riob/source/Relatorios/
 apps/riob/source/config
 apps/riob/source/cameras/cams/
 apps/riob/source/sync-backups/

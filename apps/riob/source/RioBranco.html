@@ -8,7 +8,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Sistema Rio Branco</title>
   <link rel="icon" href="data:,">
-  <link rel="stylesheet" href="/style.css?v=20260615-estoque-lotes">
+  <link rel="stylesheet" href="/style.css?v=__RB_ASSET_VERSION__">
   <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;600&display=swap" rel="stylesheet">
   <script>
     (function () {
@@ -344,9 +344,11 @@
     <!-- Se quiser manter este botão, garanta que toggleNovoFrete() exista no JS -->
     <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px;">
       <button class="btn-primary" onclick="toggleNovoFrete()">+ Novo Frete</button>
+      <button id="btnImportarFretesXmlWhiteRiver" class="btn-secondary" onclick="importarFretesXmlWhiteRiver()">Importar fretes White River (hoje)</button>
       <button class="btn-secondary" onclick="toggleArquivados()">📁 Arquivados</button>
       <input type="text" id="freteBuscaRapida" placeholder="Buscar por numero do veiculo, motorista ou ajudante" oninput="filtrarFretesKanban(this.value)" style="min-width:320px; flex:1 1 320px;">
     </div>
+    <div id="importarFretesXmlWhiteRiverStatus" class="hint" style="margin-bottom:8px;"></div>
 
     <!-- Card de novo frete -->
     <div id="cardNovoFrete" class="form-card hidden">
@@ -357,6 +359,7 @@
         <select id="novoFreteEntregador"></select>
         <select id="novoFreteVeiculo"></select>
         <select id="novoFreteCarga"></select>
+        <select id="novoFreteLoteManual" multiple size="4" aria-label="Lotes do frete"></select>
         <div class="novo-frete-grid">
           <input type="number" id="novoFreteKmAtual" min="0" placeholder="KM atual">
           <input type="number" id="novoFretePeso" min="0" step="0.001" placeholder="Peso">
@@ -457,7 +460,33 @@
             <option value="entrada">Somente entradas</option>
             <option value="saida">Somente saidas</option>
           </select>
-          <button type="button" id="estoqueXmlImportarLoteBtn" onclick="importarSelecionadasXmlEstoque()" disabled>Importar selecionadas (0)</button>
+          <select id="estoqueXmlPendentesOrigem" onchange="renderImportacoesXmlEstoque()">
+            <option value="">Todas as origens</option>
+          </select>
+          <select id="estoqueXmlPendentesDestino" onchange="renderImportacoesXmlEstoque()">
+            <option value="">Todos os destinos</option>
+          </select>
+          <select id="estoqueXmlPendentesData" onchange="renderImportacoesXmlEstoque()">
+            <option value="">Todas as datas</option>
+          </select>
+          <select id="estoqueXmlPendentesRota" onchange="renderImportacoesXmlEstoque()">
+            <option value="">Todas as rotas/fretes</option>
+          </select>
+          <select id="estoqueXmlPendentesGrupoItem" onchange="renderImportacoesXmlEstoque()">
+            <option value="">Todos os grupos de itens</option>
+          </select>
+          <select id="estoqueXmlAprenderEscopo" title="Como reaplicar esta classificacao nas proximas NF-e">
+            <option value="empresa">Aprender pela empresa</option>
+            <option value="item">Aprender pelo item</option>
+          </select>
+          <label class="config-check" title="Reaplica a classificacao como sugestao ate a regra ser pausada">
+            <input type="checkbox" id="estoqueXmlAprenderRegra" checked>
+            Automatizar proximas
+          </label>
+          <button type="button" onclick="selecionarImportacoesXmlPorFiltro('data')">Selecionar data</button>
+          <button type="button" onclick="selecionarImportacoesXmlPorFiltro('rota')">Selecionar rota/frete</button>
+          <button type="button" id="estoqueXmlImportarLoteBtn" onclick="importarSelecionadasXmlEstoque()" disabled>Contabilizar no estoque (0)</button>
+          <button type="button" id="estoqueXmlManutencaoLoteBtn" onclick="direcionarSelecionadasXmlManutencao()" disabled>Classificar como manutencao (0)</button>
           <button type="button" onclick="carregarImportacoesXmlEstoque()">Atualizar</button>
         </div>
       </div>
@@ -477,14 +506,17 @@
               <th>Emissao</th>
               <th>Nota</th>
               <th>Tipo</th>
-              <th>Origem / Destino</th>
+              <th>Empresa (fantasia)</th>
+              <th>Destino</th>
+              <th>Pre-lista de itens</th>
+              <th>Rota / Frete</th>
               <th>Itens</th>
               <th>Duplicatas ignoradas</th>
               <th>Acao</th>
             </tr>
           </thead>
           <tbody id="estoqueXmlPendentesBody">
-            <tr><td colspan="8">Carregando importacoes XML...</td></tr>
+            <tr><td colspan="11">Carregando importacoes XML...</td></tr>
           </tbody>
         </table>
       </div>
@@ -577,6 +609,10 @@
         </div>
       </div>
       <div class="estoque-import-grid">
+        <select id="estoquePreviewDestinoNota" onchange="alterarDestinoImportacaoEstoque()">
+          <option value="estoque">Destino da nota: Estoque</option>
+          <option value="manutencao">Destino da nota: Manutencao</option>
+        </select>
         <input type="text" id="estoquePreviewNumeroNota" placeholder="Numero da nota">
         <input type="text" id="estoquePreviewSerie" placeholder="Serie">
         <input type="text" id="estoquePreviewChaveAcesso" class="barcode-input" maxlength="44" placeholder="Chave de acesso (44 digitos)" oninput="normalizarChaveNfeCampo(this,false)">
@@ -625,7 +661,7 @@
       <small class="hint">Fator de conversao e quantas unidades de estoque existem em cada embalagem da nota. Exemplo: 1 caixa com 24 unidades usa fator 24. Para materia-prima, informe a quantidade real contida na caixa.</small>
       <div class="estoque-inline-actions">
         <button type="button" class="estoque-import-add-btn" onclick="adicionarItemImportacaoEstoque()">Adicionar Item</button>
-        <button type="button" onclick="confirmarImportacaoNfeEstoque()">Lancar NF-e no Estoque</button>
+        <button type="button" id="estoqueImportConfirmBtn" onclick="confirmarImportacaoNfeEstoque()">Lancar NF-e no Estoque</button>
       </div>
     </div>
     </div>
@@ -679,6 +715,7 @@
               <tr>
                 <th>Data</th>
                 <th>Nota</th>
+                <th>Lote</th>
                 <th>Codigo</th>
                 <th>Produto</th>
                 <th>Fornecedor</th>
@@ -753,36 +790,134 @@
     </div>
 
     <div id="estoqueViewRastreio" class="hidden">
-      <div class="boxFrota">
-        <h3>Rastreio de lotes</h3>
-        <div class="estoque-conferencia-resumo" id="estoqueRastreioResumo">Cruze produtos, notas e fornecedores para rastrear origem e movimentacao dos lotes.</div>
-        <div class="estoque-filtros">
-          <select id="estoqueFiltroCategoriaRastreio" onchange="aplicarFiltrosEstoque()">
-            <option value="">Todas as categorias de fornecedor</option>
-          </select>
-          <select id="estoqueFiltroFornecedorRastreio" multiple size="4" onchange="aplicarFiltrosEstoque()"></select>
-          <select id="estoqueFiltroProdutoRastreio" multiple size="4" onchange="aplicarFiltrosEstoque()"></select>
-          <input type="search" id="estoqueFiltroNotaRastreio" placeholder="Filtrar nota, código ou fornecedor" oninput="aplicarFiltrosEstoque()">
-          <button type="button" onclick="limparFiltrosEstoque()">Limpar filtros</button>
+      <div class="frotaGrid">
+        <div class="boxFrota">
+          <h3>Criar/Vincular Lote</h3>
+          <div class="estoque-import-grid">
+            <input type="text" id="estoqueLoteCriarCodigo" placeholder="lote23fab23062026">
+            <select id="estoqueLoteCriarTipo" onchange="atualizarFluxoCriarLoteEstoque()">
+              <option value="entrada">Entrada materia-prima</option>
+              <option value="saida">Saida operacional</option>
+            </select>
+            <input type="text" id="estoqueLoteCriarNota" placeholder="Nota/documento">
+            <select id="estoqueLoteCriarProduto" onchange="sincronizarProdutoCriarLoteEstoque()">
+              <option value="">Selecione um produto cadastrado</option>
+            </select>
+            <input type="number" id="estoqueLoteCriarQuantidade" min="0" step="0.001" placeholder="Quantidade">
+            <input type="number" id="estoqueLoteCriarValor" min="0" step="0.01" placeholder="Valor unitario">
+            <input type="text" id="estoqueLoteCriarOrigem" placeholder="Origem">
+            <input type="text" id="estoqueLoteCriarDestino" placeholder="Destino">
+          </div>
+          <div class="estoque-inline-actions">
+            <button type="button" onclick="criarMovimentoLoteEstoque()">Registrar lote</button>
+            <button type="button" onclick="carregarLotesOperacionaisEstoque()">Atualizar lotes</button>
+          </div>
+          <div id="estoqueLoteCriarStatus" class="hint">Selecione entrada para materia-prima ou saida para vincular um lote operacional.</div>
         </div>
-        <div style="overflow:auto; max-height:520px;">
+
+        <div class="boxFrota">
+          <h3>Lotes operacionais</h3>
+          <div style="overflow:auto; max-height:320px;">
+            <table>
+              <thead>
+                <tr>
+                  <th>Lote</th>
+                  <th>Produto</th>
+                  <th>Saldo</th>
+                  <th>Fretes</th>
+                  <th>Ultima mov.</th>
+                </tr>
+              </thead>
+              <tbody id="estoqueLotesOperacionaisBody">
+                <tr><td colspan="5">Carregando lotes...</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div id="estoqueLoteOperacionalDetalhe" class="estoque-conferencia-resumo">Selecione ou atualize para ver os lotes vinculados a estoque e fretes.</div>
+        </div>
+      </div>
+
+      <div class="boxFrota">
+        <div class="estoque-rastreio-topo">
+          <div>
+            <h3>Rastreio de lotes</h3>
+            <div class="estoque-conferencia-resumo" id="estoqueRastreioResumo">Selecione um lote para consultar.</div>
+          </div>
+          <span class="hint-chip" id="estoqueRastreioLoteChip">lote00fab00000000</span>
+        </div>
+
+        <div class="estoque-rastreio-barra">
+          <select id="estoqueRastreioLoteSelect" onchange="selecionarLoteRastreabilidade()">
+            <option value="">Carregando lotes amarrados...</option>
+          </select>
+          <input type="date" id="estoqueRastreioInicio" title="Data inicial" aria-label="Data inicial" onchange="atualizarLotesRastreabilidadePorPeriodo()">
+          <input type="date" id="estoqueRastreioFim" title="Data final" aria-label="Data final" onchange="atualizarLotesRastreabilidadePorPeriodo()">
+          <input type="date" id="estoqueRastreioData" title="Data do lote" aria-label="Data do lote" onchange="consultarRastreioLote()">
+          <input type="number" id="estoqueRastreioSerial" min="1" max="100000" step="1" value="1" placeholder="Serial" oninput="atualizarPreviewCodigoLote()">
+          <input type="text" id="estoqueRastreioSabor" list="estoqueRastreioSaboresList" placeholder="Sabor/produto" onchange="consultarRastreioLote()">
+          <datalist id="estoqueRastreioSaboresList"></datalist>
+          <button type="button" onclick="consultarRastreioLote()">Rastrear</button>
+          <button type="button" onclick="verificarLotesRastreabilidade()">Verificar XMLs</button>
+        </div>
+        <div class="estoque-rastreio-avisos" id="estoqueRastreioAvisos"></div>
+
+        <h4>Notas de compra vinculadas</h4>
+        <div class="estoque-rastreio-tabela-wrap">
           <table>
             <thead>
               <tr>
-                <th>Data</th>
                 <th>Nota</th>
-                <th>Produto</th>
+                <th>Materia-prima</th>
                 <th>Codigo</th>
                 <th>Fornecedor</th>
-                <th>Categoria</th>
-                <th>Tipo</th>
                 <th>Qtd</th>
                 <th>Valor</th>
                 <th>Origem</th>
               </tr>
             </thead>
-            <tbody id="estoqueRastreioBody">
-              <tr><td colspan="10">Carregando rastreio...</td></tr>
+            <tbody id="estoqueRastreioComprasBody">
+              <tr><td colspan="7">Informe um lote.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h4>Notas de saida da transportadora</h4>
+        <div class="estoque-rastreio-tabela-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Nota</th>
+                <th>Data</th>
+                <th>Transportadora</th>
+                <th>Frete</th>
+                <th>Rota</th>
+                <th>Qtd</th>
+                <th>Valor</th>
+                <th>Origem</th>
+              </tr>
+            </thead>
+            <tbody id="estoqueRastreioSaidasBody">
+              <tr><td colspan="8">Informe um lote.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h4>Clientes que receberam</h4>
+        <div class="estoque-rastreio-tabela-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Cliente</th>
+                <th>Cidade</th>
+                <th>Nota</th>
+                <th>Produto</th>
+                <th>Qtd</th>
+                <th>Valor</th>
+                <th>Origem</th>
+              </tr>
+            </thead>
+            <tbody id="estoqueRastreioClientesBody">
+              <tr><td colspan="7">Informe um lote.</td></tr>
             </tbody>
           </table>
         </div>
@@ -800,21 +935,56 @@
       <input type="text" id="nomeCarga" placeholder="Nome da carga">
       <button onclick="salvarCadastro('cargas','nomeCarga')">Adicionar</button>
       <input type="text" id="cargasVeiculoNumero" placeholder="Numero do veiculo (opcional)">
+      <select id="cargasRotaSelect" onchange="aplicarRotaSelecionadaCarga()">
+        <option value="">Sem rota cadastrada</option>
+      </select>
+      <textarea id="cargasCidadesManual" rows="3" placeholder="Cidades da carga (uma por linha ou separadas por virgula)"></textarea>
       <input type="file" id="cargasCsvFile" accept=".csv,text/csv">
       <button type="button" onclick="importarCargasCsv()">Importar CSV</button>
       <input type="file" id="cargasPdfFile" accept=".pdf,application/pdf">
       <button type="button" onclick="importarCargasPdf()">Importar PDF</button>
 
       <ul id="listaCargas"></ul>
+
+      <div class="carga-rotas-panel">
+        <h3>Rotas de carga</h3>
+        <input type="hidden" id="cargaRotaId">
+        <input type="text" id="cargaRotaNome" placeholder="Nome da rota">
+        <textarea id="cargaRotaCidades" rows="4" placeholder="Cidades da rota (uma por linha ou separadas por virgula)"></textarea>
+        <div class="carga-rotas-actions">
+          <button type="button" id="btnSalvarCargaRota" onclick="salvarCargaRota()">Salvar rota</button>
+          <button type="button" onclick="limparCargaRotaForm()">Limpar</button>
+        </div>
+        <ul id="listaCargasRotas"></ul>
+      </div>
     </div>
 
     <div id="cargasViewEscala" class="cargas-view hidden">
       <div class="escala-toolbar">
         <div>
           <h2>Escala de Caminhoes</h2>
-          <p class="escala-subtitle">Visualizacao dos veiculos que estao em chegou c/ vasilhames, descarregado aguardando carga e liberado para carregar.</p>
+          <p class="escala-subtitle">Visualizacao dos veiculos vazios, carregando e carregados. Fretes em viagem nao entram na escala.</p>
         </div>
-        <button type="button" onclick="renderEscala()">Atualizar escala</button>
+        <div class="escala-toolbar-actions">
+          <button type="button" onclick="renderEscala()">Atualizar escala</button>
+          <button type="button" onclick="imprimirEscalaPdf()">Imprimir PDF</button>
+        </div>
+      </div>
+
+      <div id="escalaDisponibilidadeTop" class="escala-disponibilidade" aria-label="Resumo de disponibilidade da escala"></div>
+
+      <div class="escala-sorteio-panel">
+        <div class="escala-sorteio-header">
+          <strong>Sorteio de equipes</strong>
+          <button type="button" onclick="sortearEscala()">Sortear ajudantes</button>
+        </div>
+        <div class="escala-sorteio-form">
+          <select id="escalaRegraMotorista"></select>
+          <select id="escalaRegraApoio"></select>
+          <button type="button" onclick="adicionarRegraSorteioEscala()">Bloquear dupla</button>
+        </div>
+        <div id="escalaRegrasSorteioLista" class="escala-regras-lista"></div>
+        <div id="escalaSorteioStatus" class="escala-sorteio-status"></div>
       </div>
 
       <div class="escala-resumo">
@@ -1171,11 +1341,18 @@
             <div class="gestao-ocr-preview-summary">
               <strong>Pre-lancamentos recebidos das NF-e</strong>
               <span id="manutXmlPendenciasResumo">Carregando pendencias...</span>
+              <select id="manutXmlOrdenacao" onchange="renderizarPreLancamentosManutencaoXml()">
+                <option value="recente">Ordenar por atualizacao</option>
+                <option value="itens_nome">Ordenar por nome dos itens</option>
+              </select>
+              <button type="button" id="manutXmlLancarSelecionadasBtn" onclick="lancarPreLancamentosManutencaoSelecionados()" disabled>Lancar selecionadas (0)</button>
+              <button type="button" id="manutXmlDevolverSelecionadasBtn" class="btn-secondary" onclick="devolverPreLancamentosManutencaoSelecionados()" disabled>Devolver ao estoque (0)</button>
             </div>
             <div class="manutencao-xml-pendencias-wrap">
               <table class="gestao-ocr-preview-table">
                 <thead>
                   <tr>
+                    <th><input type="checkbox" id="manutXmlSelecionarTodas" aria-label="Selecionar todas as notas de manutencao" onchange="selecionarTodasPendenciasManutencaoXml(this.checked)"></th>
                     <th>Nota</th>
                     <th>Placa XML</th>
                     <th>Veiculo sugerido</th>
@@ -1185,7 +1362,7 @@
                   </tr>
                 </thead>
                 <tbody id="manutXmlPendenciasBody">
-                  <tr><td colspan="6">Carregando...</td></tr>
+                  <tr><td colspan="7">Carregando...</td></tr>
                 </tbody>
               </table>
             </div>
@@ -1699,13 +1876,14 @@
   <section id="vendas" class="section">
     <div class="vendas-section-head">
       <h2>Vendas</h2>
-      <div id="vendasRelArquivoInfo" class="hint vendas-arquivo-info">Aguardando leitura e processamento do CSV em Relatorios.</div>
+      <div id="vendasRelArquivoInfo" class="hint vendas-arquivo-info">Aguardando leitura e processamento do relatorio em Relatorios.</div>
     </div>
 
     <div class="vendas-relatorio-tabs">
       <button type="button" class="active" id="vendasRelTabBonificacoes" onclick="setVendasRelatorioModo('bonificacoes')">Bonificações</button>
       <button type="button" id="vendasRelTabVariacao" onclick="setVendasRelatorioModo('variacao_preco')">Variação de Preço</button>
       <button type="button" id="vendasRelTabMix" onclick="setVendasRelatorioModo('grupos_embalagem')">Grupos Embalagem</button>
+      <button type="button" id="vendasRelTabPrecoMedio" onclick="setVendasRelatorioModo('preco_medio')">Preço Médio</button>
     </div>
 
     <div id="vendasViewRelatorio" class="dash-view">
@@ -1991,6 +2169,54 @@
         </div>
       </div>
     </div>
+
+    <div id="vendasViewRelatorioPrecoMedio" class="dash-view hidden">
+      <div class="vendas-variacao-layout">
+        <div class="boxFrota vendas-grupo-box">
+          <h3>Resumo Geral</h3>
+          <div id="vendasPrecoResumoCards" class="vendas-resumo-cards vendas-resumo-cards--wide"></div>
+        </div>
+
+        <div class="boxFrota vendas-filtros-box">
+          <div class="vendas-box-head">
+            <h3>Preço Médio</h3>
+            <div class="vendas-toolbar">
+              <button type="button" onclick="carregarRelatorioPrecoMedioVendas()">Atualizar Relatorio</button>
+              <button type="button" onclick="limparFiltrosRelatorioPrecoMedioVendas()">Limpar Filtros</button>
+              <button type="button" onclick="abrirPdfRelatorioPrecoMedioVendas()">PDF</button>
+            </div>
+          </div>
+          <div class="vendas-filtros-grid">
+            <label>
+              Data inicial
+              <input type="date" id="vendasPrecoDataInicio" onchange="carregarRelatorioPrecoMedioVendas()">
+            </label>
+            <label>
+              Data final
+              <input type="date" id="vendasPrecoDataFim" onchange="carregarRelatorioPrecoMedioVendas()">
+            </label>
+            <label class="vendas-filtros-grid--full">
+              Vendedor
+              <select id="vendasPrecoVendedor" onchange="carregarRelatorioPrecoMedioVendas()">
+                <option value="">Todos os vendedores</option>
+              </select>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div class="frotaGrid">
+        <div class="boxFrota">
+          <h3>Preço Médio por Cidade e Cliente</h3>
+          <div style="overflow:auto; max-height:520px;">
+            <table>
+              <thead id="vendasPrecoHead"></thead>
+              <tbody id="vendasPrecoBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
   </section>
 
   <!-- =====================================================
@@ -2269,14 +2495,14 @@
           <div class="sip-mode-row">
             <label for="vendasConfigSourceType">Origem dos dados</label>
             <select id="vendasConfigSourceType">
-              <option value="csv_relatorios_dir">CSV em Relatorios</option>
+              <option value="csv_relatorios_dir">CSV/XLSX em Relatorios</option>
             </select>
           </div>
-          <input type="text" id="vendasConfigCsvDir" placeholder="Diretorio dos CSVs de vendas">
-          <input type="file" id="vendasConfigArquivoCsv" accept=".csv,text/csv">
+          <input type="text" id="vendasConfigCsvDir" placeholder="Diretorio dos relatorios de vendas">
+          <input type="file" id="vendasConfigArquivoCsv" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
           <div class="sip-config-actions">
             <button type="button" onclick="salvarConfigVendas()">Salvar vendas</button>
-            <button type="button" onclick="importarRelatorioCsvVendas()">Importar relatorio CSV</button>
+            <button type="button" onclick="importarRelatorioCsvVendas()">Importar relatorio</button>
             <button type="button" onclick="importarCacheVendas()">Importar da pasta</button>
             <button type="button" onclick="processarRelatoriosVendas()">Processar relatórios</button>
             <button type="button" onclick="carregarConfigVendas()">Atualizar lista</button>
@@ -2286,7 +2512,7 @@
           <small id="vendasConfigFonte" class="hint">Fonte atual: -</small>
           <small id="vendasConfigRegras" class="hint">Arquivo de regras: Relatorios/config-rel-vendas.</small>
           <small id="vendasConfigGrupos" class="hint">Grupos normalizados e descartes de importacao serao exibidos aqui.</small>
-          <small class="hint">Fluxo atual: importa o CSV, processa o cache mensal e a tela passa a ler apenas o mês filtrado.</small>
+          <small class="hint">Fluxo atual: importa CSV ou XLSX, processa o cache mensal e a tela passa a ler apenas o mês filtrado.</small>
         </div>
       </div>
       <div class="frotaGrid">
@@ -2550,6 +2776,8 @@
         <button type="button" class="frete-detail-tab active" data-tab="dados">Dados</button>
         <button type="button" class="frete-detail-tab" data-tab="carga">Ver carga</button>
         <button type="button" class="frete-detail-tab" data-tab="notas_saida">Notas de saida</button>
+        <button type="button" class="frete-detail-tab" data-tab="vincular_xml">Vincular XML</button>
+        <button type="button" class="frete-detail-tab" data-tab="devolucoes">Lancar devolucoes</button>
       </div>
       <div id="freteDetalheBody" class="frota-historico-body frete-detail-body"></div>
     </div>
@@ -2684,8 +2912,8 @@
   <!-- =====================================================
        SCRIPTS
   ====================================================== -->
-  <script src="/vendor/jssip.min.js?v=f95fcdb"></script>
-  <script src="/script.js?v=20260615-estoque-lotes"></script>
+  <script src="/vendor/jssip.min.js?v=__RB_ASSET_VERSION__"></script>
+  <script src="/script.js?v=__RB_ASSET_VERSION__"></script>
   <script>
     (function () {
       function forceLoginUsable() {

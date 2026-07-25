@@ -7,7 +7,12 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from server import migrar_importacoes_xml_fretes
+
+
+def _carregar_migracao():
+    import server
+
+    return getattr(server, "migrar_importacoes_xml_fretes", None)
 
 
 def main():
@@ -24,7 +29,15 @@ def main():
         help="Executa toda a reconciliacao e desfaz a transacao ao final.",
     )
     args = parser.parse_args()
-    resultado = migrar_importacoes_xml_fretes(dry_run=args.dry_run)
+    migracao = _carregar_migracao()
+    if migracao is None:
+        resultado = {
+            "ignorado": True,
+            "motivo": "rotina legada migrar_importacoes_xml_fretes indisponivel",
+            "simulacao": bool(args.dry_run),
+        }
+    else:
+        resultado = migracao(dry_run=args.dry_run)
     print(json.dumps(resultado, ensure_ascii=False, indent=2))
 
 

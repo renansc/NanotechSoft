@@ -88,8 +88,8 @@ Resposta:
   "ok": true,
   "usuario": {
     "id": 1,
-    "nome": "Usuario",
-    "login": "usuario"
+    "nome": "Renan",
+    "login": "renan"
   }
 }
 ```
