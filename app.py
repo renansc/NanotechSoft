@@ -245,6 +245,7 @@ DB_CONFIG = {
     "database": os.environ.get("NS_DB_NAME", "notechsoft"),
     "charset": "utf8mb4",
     "collation": "utf8mb4_unicode_ci",
+    "connection_timeout": int(os.environ.get("NS_DB_CONNECT_TIMEOUT", "10")),
 }
 
 

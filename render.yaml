@@ -18,7 +18,7 @@ services:
     runtime: docker
     plan: starter
     autoDeployTrigger: commit
-    healthCheckPath: /login
+    healthCheckPath: /healthz
     envVars:
       - key: FLASK_SECRET
         generateValue: true
@@ -45,7 +45,7 @@ services:
       - key: NS_DEBUG
         value: "0"
       - key: WEB_CONCURRENCY
-        value: "2"
+        value: "1"
       - key: GUNICORN_THREADS
         value: "4"
       - key: GUNICORN_TIMEOUT
