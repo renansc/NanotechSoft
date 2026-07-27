@@ -83,6 +83,11 @@ No Render, importe o Blueprint a partir da branch `main`. Criar apenas um
 Web Service manual nao aplica as variaveis do `render.yaml`; nesse caso o app
 cai no padrao local `127.0.0.1:3307` e nao encontra o MySQL.
 
+O RioB roda como subprocesso no mesmo container do portal no Render, em
+`http://127.0.0.1:8898`. O portal detecta o ambiente Render e usa esse endereco
+mesmo se uma configuracao antiga apontar para `host.docker.internal`, nome que
+existe apenas no Docker local.
+
 O Render nao oferece MySQL gerenciado nativo como oferece Postgres; este projeto
 usa MySQL em private service com Render Disk. Para producao, faca backups
 periodicos com `mysqldump`, porque snapshot de disco nao substitui backup logico

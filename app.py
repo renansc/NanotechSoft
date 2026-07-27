@@ -132,7 +132,19 @@ NANOSTORE_BASE_URL = f"http://127.0.0.1:{NANOSTORE_PORT}"
 RAIOXPACS_PORT = int(os.environ.get("RAIOXPACS_PORT", "8899"))
 RAIOXPACS_BASE_URL = f"http://127.0.0.1:{RAIOXPACS_PORT}"
 RAIOXPACS_STARTUP_WAIT = float(os.environ.get("RAIOXPACS_STARTUP_WAIT", "90"))
-RIOB_BASE_URL = os.environ.get("RIOB_BASE_URL", "https://host.docker.internal:8899").rstrip("/")
+
+
+def resolve_riob_base_url():
+    configured = str(os.environ.get("RIOB_BASE_URL") or "").strip()
+    render_runtime = str(os.environ.get("RENDER") or "").strip().lower() == "true"
+    configured_host = urllib.parse.urlparse(configured).hostname if configured else ""
+    if render_runtime and (not configured or configured_host == "host.docker.internal"):
+        port = int(os.environ.get("RIOB_APP_PORT", "8898"))
+        return f"http://127.0.0.1:{port}"
+    return configured or "https://host.docker.internal:8899"
+
+
+RIOB_BASE_URL = resolve_riob_base_url().rstrip("/")
 RIOB_SSL_VERIFY = str(os.environ.get("RIOB_SSL_VERIFY", "0")).strip().lower() in {"1", "true", "yes", "sim", "on"}
 RIOB_ROUTE_DEFAULTS = {
     "riob": "/",
