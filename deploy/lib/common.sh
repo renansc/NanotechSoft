@@ -7,6 +7,12 @@ PROJECT_NAME="nanotechsoft"
 APP_SERVICE="app"
 DB_SERVICE="mysql"
 PACS_DB_SERVICE="pacs-postgres"
+RIOB_APP_SERVICE="riob-app"
+RIOB_PROXY_SERVICE="riob-proxy"
+RIOB_DB_SERVICE="riob-db"
+BUILD_SERVICES=("$APP_SERVICE" "$RIOB_APP_SERVICE")
+RUNTIME_SERVICES=("$RIOB_APP_SERVICE" "$RIOB_PROXY_SERVICE" "$APP_SERVICE")
+DATABASE_SERVICES=("$DB_SERVICE" "$PACS_DB_SERVICE" "$RIOB_DB_SERVICE")
 APP_URL="http://127.0.0.1:${NOTECHSOFT_APP_PORT:-5600}/login"
 COMPOSE_CMD=()
 
@@ -389,6 +395,25 @@ wait_for_app() {
     if compose exec -T "$APP_SERVICE" python - <<'PY' >/dev/null 2>&1
 import urllib.request
 urllib.request.urlopen("http://127.0.0.1:5600/login", timeout=5).read()
+PY
+    then
+      return 0
+    fi
+    sleep "$delay"
+  done
+
+  return 1
+}
+
+wait_for_riob() {
+  local tries="${1:-45}"
+  local delay="${2:-2}"
+  local attempt
+
+  for ((attempt=1; attempt<=tries; attempt+=1)); do
+    if compose exec -T "$RIOB_APP_SERVICE" python - <<'PY' >/dev/null 2>&1
+import urllib.request
+urllib.request.urlopen("http://127.0.0.1:8080/api/status", timeout=5).read()
 PY
     then
       return 0

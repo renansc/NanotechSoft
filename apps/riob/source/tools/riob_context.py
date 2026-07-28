@@ -1176,7 +1176,7 @@ def validation_steps(intent: str) -> list[str]:
         "pip check",
     ]
     if intent in {"ops", "change", "refactor", "debug"}:
-        steps.append("./up.sh ou ./update.sh apenas se a mudanca exigir deploy")
+        steps.append("usar ../../../up.sh ou ../../../update.sh apenas se a mudanca exigir deploy")
     return steps
 
 

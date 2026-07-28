@@ -23,8 +23,8 @@ Opcoes:
   -m, --message TEXTO   Mensagem do commit
   -y, --yes             Nao pedir confirmacao interativa
   --no-push             Commitar, mas nao enviar para origin
-  --skip-build          Pular docker compose build app
-  --skip-health         Pular checagem local do app
+  --skip-build          Pular build do portal e RioB
+  --skip-health         Pular checagem local do portal e RioB
   --skip-compose        Pular validacao/build/health com Docker Compose
                         Se Docker Compose nao existir, o script faz este pulo automaticamente
   --skip-whitespace     Pular git diff --check
@@ -36,7 +36,7 @@ O script:
   - bloqueia arquivos sensiveis/runtime do stage
   - adiciona somente arquivos seguros
   - valida Python, manifests dos apps, clientes e docker compose
-  - opcionalmente builda e testa o container app
+  - opcionalmente builda e testa portal e RioB
   - commita quando houver alteracoes seguras
   - envia a branch atual para origin quando houver commits pendentes
 EOF
@@ -50,8 +50,13 @@ is_risky_path() {
   [[ "$path" == ".venv/"* ]] && return 0
   [[ "$path" == "__pycache__/"* ]] && return 0
   [[ "$path" == *.log ]] && return 0
+  [[ "$path" == backups/* ]] && return 0
   [[ "$path" == deploy/tmp/* ]] && return 0
-  [[ "$path" == "apps/riob/source/config" ]] && return 0
+  [[ "$path" == "apps/riob/source/config" || "$path" == apps/riob/source/config/* ]] && return 0
+  [[ "$path" == apps/riob/source/.continue/* ]] && return 0
+  [[ "$path" == apps/riob/source/finalizados/* ]] && return 0
+  [[ "$path" == "apps/riob/source/kanban-tasks.json" ]] && return 0
+  [[ "$path" == "apps/riob/source/docker-compose.no-ai.yml" ]] && return 0
   return 1
 }
 
@@ -113,16 +118,21 @@ run_validations() {
   fi
 
   if [[ "$SKIP_BUILD" != "1" ]]; then
-    log "validando build da imagem app"
-    compose build "$APP_SERVICE"
+    log "validando build das imagens do portal e RioB"
+    compose build "${BUILD_SERVICES[@]}"
   fi
 
   if [[ "$SKIP_HEALTH" != "1" ]]; then
-    log "subindo app para checagem local"
-    compose up -d "$DB_SERVICE" "$PACS_DB_SERVICE" "$APP_SERVICE"
+    log "subindo bancos preservados, portal e RioB para checagem local"
+    compose up -d "${DATABASE_SERVICES[@]}"
+    compose up -d --no-deps "${RUNTIME_SERVICES[@]}"
     if ! wait_for_app 45 2; then
       compose logs --tail=120 "$APP_SERVICE" >&2 || true
-      die "falha ao consultar o app dentro do container"
+      die "falha ao consultar o portal dentro do container"
+    fi
+    if ! wait_for_riob 45 2; then
+      compose logs --tail=120 "$RIOB_APP_SERVICE" >&2 || true
+      die "falha ao consultar o RioB dentro do container"
     fi
   fi
 }

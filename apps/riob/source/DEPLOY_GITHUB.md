@@ -115,18 +115,19 @@ RB_CERT_FORCE_REISSUE=1 docker compose up -d --build cert-bootstrap app proxy
 Os atalhos principais agora sao:
 
 ```bash
-./up.sh
-./down.sh
-./update.sh
+../../../up.sh
+../../../down.sh
+../../../update.sh
 ./riob-agent.sh
 ./riob-agent-web.sh
 ```
 
 Uso recomendado:
 
-- `./up.sh` sobe `app`, `proxy`, Ollama/Qwen e Open WebUI sem tocar no banco
-- `./down.sh` para `app`, `proxy` e Open WebUI sem derrubar o banco ou o Ollama
-- `./update.sh` faz `git pull`, garante Ollama/Qwen e Open WebUI e aplica o deploy sem acionar `db-restore`
+- `../../../up.sh` reconstrói portal e RioB para teste sem substituir dados
+- `../../../down.sh` para portal, RioB e proxy sem parar ou sincronizar bancos
+- `../../../update.sh` faz `git pull` e recria somente portal e RioB, sem operar bancos
+- `../../../git-safe-push.sh` valida, commita e envia a branch atual ao GitHub
 - `./riob-agent.sh` abre um assistente para backup, Git, deploy, update, logs e diagnostico
 - `./riob-agent-web.sh` abre o mesmo assistente em formato de conversa no navegador
 
@@ -151,12 +152,10 @@ No sistema principal, o mesmo chat tambem aparece no menu `Agent IA` da pagina
 estiver configurado, o backend tenta usar o modelo definido em
 `RB_AGENT_OLLAMA_MODEL` antes de cair para o agente local.
 
-Nos deploys Docker, `./up.sh` e `./update.sh` sobem o servico
-`riobranco-ollama`, executam o bootstrap `ollama-model-init` e criam
-`riobranco-open-webui`. O WebUI usa `http://ollama:11434` pela rede interna do
-compose e recebe o mesmo `RB_AGENT_OLLAMA_MODEL` como modelo padrao. A logica
-compartilhada fica em `deploy/lib/ollama.sh`, e o pull/validacao do modelo fica
-em `deploy/ollama/pull-model.sh`.
+Os comandos canônicos não administram Ollama ou Open WebUI. Serviços de IA são
+opcionais e devem ser operados separadamente quando estiverem configurados.
+Consulte `../../../docs/AI_RESEARCH_MANUAL.md` antes de alterar o fluxo
+operacional.
 
 Para producao com o Qwen homologado, use:
 
@@ -197,10 +196,10 @@ openssl rand -hex 32
 
 No primeiro acesso a `http://192.168.200.254:3000`, a primeira conta criada se torna
 administradora. Depois desse cadastro, desative novos registros em `.env` com
-`RB_OPEN_WEBUI_ENABLE_SIGNUP=false` e execute `./update.sh`.
+`RB_OPEN_WEBUI_ENABLE_SIGNUP=false` e execute `../../../update.sh`.
 
 O sistema principal fica em `https://192.168.200.254`. O compose publica o
-proxy e o Open WebUI em `0.0.0.0`; `./up.sh` e `./update.sh` falham quando
+proxy e o Open WebUI em `0.0.0.0`; `../../../up.sh` e `../../../update.sh` falham quando
 `/api/status` nao responde pelo IP configurado. Em hosts com UFW ativo:
 
 ```bash
@@ -256,28 +255,26 @@ runtime. Se algum desses arquivos ja estiver staged, o assistente aborta antes d
 Se quiser seguir o fluxo manual:
 
 ```bash
-./update.sh
+../../../update.sh
 ```
 
 Ou para outra branch:
 
 ```bash
-./update.sh nome-da-branch
+../../../update.sh nome-da-branch
 ```
 
-Quando a atualizacao precisar evitar subir `db-restore`:
+O update canônico já evita qualquer operação de banco:
 
 ```bash
-git pull --ff-only origin main
-docker compose up -d --build --no-deps app proxy
+../../../update.sh main
 ```
 
 Observacao:
 
 - isso evita acionar `db-restore`, mas o backend ainda executa `ensure_schema()` no startup
-- `./up.sh` e `./update.sh` tambem executam a reconciliacao idempotente dos
-  XMLs de saida: vinculam o veiculo, reaproveitam um frete ativo ou criam um
-  card aberto no Kanban, sem contabilizar o estoque
+- reconciliações de XML e migrações operacionais não são executadas pelos
+  comandos canônicos; devem ser chamadas separadamente e de forma explícita
 
 Para conferir o resultado sem persistir alteracoes:
 

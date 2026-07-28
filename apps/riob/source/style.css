@@ -8,8 +8,7 @@ body{
   color:#333;
 }
 
-body.modal-open,
-body.login-active{
+body.modal-open{
   overflow:hidden !important;
   overscroll-behavior:none;
 }
@@ -58,13 +57,6 @@ input,select{
 }
 .menu-item:hover{ background:#e68900; }
 .menu-item.active{ background:#c66900; }
-.menu-item-logout{
-  margin-left:auto;
-  background:#c62828;
-}
-.menu-item-logout:hover{
-  background:#b71c1c;
-}
 
 /* Botão hamburguer (se existir no HTML) */
 .menu-toggle{ display:none; }
@@ -106,9 +98,6 @@ input,select{
 
   .menu-item{
     border-bottom:1px solid rgba(255,255,255,0.2);
-  }
-  .menu-item-logout{
-    margin-left:0;
   }
 
   body.menu-open{ overflow:hidden; }
@@ -2280,6 +2269,202 @@ button:hover{ background:#e68900; }
   border:1px solid #e5e7eb;
 }
 
+.comissao-page-head{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:16px;
+  margin-bottom:18px;
+}
+
+.comissao-page-head h2,
+.comissao-page-head p{
+  margin:0;
+}
+
+.comissao-page-head p{
+  margin-top:4px;
+}
+
+.comissao-modal-content{
+  width:min(1180px, 100%);
+  max-height:calc(100vh - 36px);
+}
+
+.comissao-modal-tabs{
+  display:flex;
+  gap:8px;
+  padding:12px 16px;
+  overflow-x:auto;
+  border-bottom:1px solid #e5e7eb;
+}
+
+.comissao-modal-tabs button{
+  flex:0 0 auto;
+  background:#eef2f7;
+  color:#374151;
+}
+
+.comissao-modal-tabs button.active{
+  background:var(--primary, #2563eb);
+  color:#fff;
+}
+
+.comissao-form-body{
+  flex:1 1 auto;
+  min-height:0;
+  overflow:auto;
+  padding:18px;
+}
+
+.comissao-form-pane{ display:none; }
+.comissao-form-pane.active{ display:block; }
+
+.comissao-fields-grid,
+.comissao-category-grid{
+  display:grid;
+  grid-template-columns:repeat(3, minmax(0, 1fr));
+  gap:14px;
+  margin-top:14px;
+}
+
+.comissao-fields-grid label,
+.comissao-category-grid label{
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+  font-weight:600;
+}
+
+.comissao-category-grid fieldset{
+  min-width:0;
+  margin:0;
+  padding:14px;
+  border:1px solid #dbe2ea;
+  border-radius:10px;
+}
+
+.comissao-category-grid legend{
+  padding:0 6px;
+  font-weight:700;
+}
+
+.comissao-modal-actions{
+  display:flex;
+  justify-content:flex-end;
+  gap:10px;
+  padding:12px 16px;
+  border-top:1px solid #e5e7eb;
+}
+
+.comissao-relatorio-identificacao{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  margin-bottom:10px;
+}
+
+.comissao-relatorio-identificacao strong{
+  font-size:1.05rem;
+}
+
+.comissao-devolucao-destaque{
+  display:grid;
+  grid-template-columns:1fr auto;
+  gap:2px 12px;
+  align-items:center;
+  padding:10px 12px;
+  margin-bottom:12px;
+  border-left:4px solid var(--primary, #1565c0);
+  border-radius:6px;
+  background:rgba(21, 101, 192, .08);
+}
+
+.comissao-devolucao-destaque strong{
+  grid-row:1 / span 2;
+  grid-column:2;
+  font-size:1.45rem;
+}
+
+.comissao-devolucao-destaque small{
+  opacity:.8;
+}
+
+.comissao-total-planilha{
+  width:100%;
+  border-collapse:collapse;
+}
+
+.comissao-total-planilha th,
+.comissao-total-planilha td{
+  padding:9px 12px;
+  border:1px solid rgba(127, 127, 127, .35);
+  text-align:right;
+  white-space:nowrap;
+}
+
+.comissao-total-planilha thead th{
+  text-align:center;
+  background:rgba(127, 127, 127, .12);
+}
+
+.comissao-total-planilha tbody th{
+  text-align:left;
+}
+
+.comissao-total-planilha .comissao-totais-label{
+  text-align:center;
+  vertical-align:top;
+  background:rgba(127, 127, 127, .08);
+}
+
+.comissao-total-planilha .comissao-total-final th,
+.comissao-total-planilha .comissao-total-final td{
+  font-weight:800;
+  border-top:2px solid currentColor;
+  background:rgba(127, 127, 127, .12);
+}
+
+.comissao-dashboard-head{
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:16px;
+  margin-bottom:14px;
+}
+
+.comissao-dashboard-head h2,
+.comissao-dashboard-head p{
+  margin:0;
+}
+
+.comissao-dashboard-head p{
+  margin-top:4px;
+}
+
+.comissao-ranking-top td{
+  font-weight:600;
+}
+
+.comissao-ranking-1 td{ background:rgba(250, 204, 21, .16); }
+.comissao-ranking-2 td{ background:rgba(148, 163, 184, .14); }
+.comissao-ranking-3 td{ background:rgba(180, 83, 9, .10); }
+
+@media (max-width: 900px){
+  .comissao-page-head{
+    align-items:flex-start;
+    flex-direction:column;
+  }
+  .comissao-page-head button{
+    width:100%;
+  }
+  .comissao-fields-grid,
+  .comissao-category-grid{
+    grid-template-columns:1fr;
+  }
+}
+
 .frota-historico-modal-content{
   width:min(1100px, 100%);
   max-height:90vh;
@@ -3957,55 +4142,6 @@ body.tv-mode #chatWidget{
 .chat-widget-subtitle{
   font-size:12px;
   color:rgba(255,255,255,0.86);
-}
-
-.login-modal{
-  position:fixed;
-  inset:0;
-  background:rgba(2,6,23,0.7);
-  z-index:40000;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  padding:16px;
-  overflow-y:auto;
-  overscroll-behavior:contain;
-}
-
-.login-modal.hidden{ display:none; }
-
-.login-card{
-  position:relative;
-  z-index:40001;
-  width:min(380px, 100%);
-  max-height:calc(100vh - 32px);
-  background:#fff;
-  border-radius:12px;
-  padding:16px;
-  box-shadow:0 20px 50px rgba(0,0,0,0.28);
-  display:flex;
-  flex-direction:column;
-  gap:10px;
-  overflow:auto;
-}
-
-/* Modo estrito de login: remove qualquer camada concorrente. */
-body.login-active .menu-overlay,
-body.login-active .foto-modal,
-body.login-active .chat-fab,
-body.login-active .chat-widget,
-body.login-active .dash-tooltip{
-  display:none !important;
-}
-
-body.login-active .login-modal{
-  display:flex !important;
-  pointer-events:auto;
-}
-
-body.login-active .login-card,
-body.login-active .login-card *{
-  pointer-events:auto;
 }
 
 .config-check{

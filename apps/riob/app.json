@@ -34,6 +34,11 @@
       {
         "nome": "Grupos de Embalagem RioB",
         "url": "/apps/riob#dashboard:grupos_embalagem"
+      },
+      {
+        "nome": "Comissões",
+        "url": "/apps/riob#dashboard:comissoes",
+        "grupo": "RioB"
       }
     ],
     "workflow": [
@@ -44,6 +49,11 @@
       {
         "nome": "Devolucoes RioB",
         "url": "/apps/riob#devolucoes"
+      },
+      {
+        "nome": "Comissoes",
+        "url": "/apps/riob#comissao",
+        "grupo": "RioB"
       },
       {
         "nome": "Gestao de Frota RioB",
@@ -70,7 +80,7 @@
         "grupo": "RioB"
       },
       {
-        "nome": "Comissoes RioB",
+        "nome": "Comissoes",
         "url": "/apps/riob#cadastros:comissao",
         "grupo": "RioB"
       },
@@ -101,8 +111,9 @@
         "url": "/apps/riob#vendas"
       },
       {
-        "nome": "Comissao de Vendas RioB",
-        "url": "/apps/riob#vendas:comissao"
+        "nome": "Comissões",
+        "url": "/apps/riob#comissao:relatorios",
+        "grupo": "RioB"
       },
       {
         "nome": "Relatorios de Frota RioB",

@@ -130,9 +130,6 @@ let estoqueState = {
   ocrContext: null,
 };
 let usuarioLogado = null;
-const LOGIN_STORAGE_KEY = "riobranco_usuario_logado";
-const LOGIN_MAX_AGE_MS = 8 * 60 * 60 * 1000; // 8 horas
-const LOGIN_BYPASS = new URLSearchParams(window.location.search).get("no_login") === "1";
 const NFE_PORTAL_PREVIEW_STORAGE_KEY = "riobranco_nfe_portal_preview";
 
 function _consumirRetornoPortalNfe(payload){
@@ -1673,8 +1670,10 @@ async function verificarStatus() {
 
     statusState.sip = s?.sip || null;
     statusState.nfe = s?.nfe || null;
-    if (s?.usuario_logado?.id && String(usuarioLogado?.id || "") === String(s.usuario_logado.id)) {
+    if (s?.usuario_logado?.id) {
       usuarioLogado = { ...(usuarioLogado || {}), ...s.usuario_logado };
+      chatState.usuarioId = String(usuarioLogado.id);
+      atualizarUsuarioLogadoUI();
     }
     atualizarStatusSipSistema(statusState.sip);
     atualizarStatusCodbarSistema(s?.usuario_logado || null);
@@ -2272,7 +2271,7 @@ function openDashboardView(ev, view){
 
   // marca submenu ativo
   document.querySelectorAll("#submenuDashboard .submenu-item").forEach(x=>x.classList.remove("active"));
-  const targetMap = { resumo: 0, frota: 1, estoque: 2, bonificacoes: 3, variacao_preco: 4, mix_embalagens: 5, grupos_embalagem: 5, vendas: 3 };
+  const targetMap = { resumo: 0, frota: 1, estoque: 2, bonificacoes: 3, variacao_preco: 4, mix_embalagens: 5, grupos_embalagem: 5, comissoes: 6, vendas: 3 };
   const target = targetMap[view] ?? 0;
   const items = document.querySelectorAll("#submenuDashboard .submenu-item");
   if (items && items[target]) items[target].classList.add("active");
@@ -2290,17 +2289,19 @@ function setDashboardView(view){
   const raw = String(view || "resumo").toLowerCase();
   const target = _dashboardVendasIsView(raw)
     ? _dashboardVendasNormalizeView(raw === "vendas" ? (window.__dashVendasView || dashboardVendasPainelState.view || "bonificacoes") : raw)
-    : ["resumo", "frota", "estoque"].includes(raw) ? raw : "resumo";
+    : ["resumo", "frota", "estoque", "comissoes"].includes(raw) ? raw : "resumo";
   const isVendasView = _dashboardVendasIsView(target);
   window.__dashView = target;
   const vResumo = document.getElementById("dashViewResumo");
   const vFrota = document.getElementById("dashViewFrota");
   const vEstoque = document.getElementById("dashViewEstoque");
   const vVendas = document.getElementById("dashViewVendas");
+  const vComissoes = document.getElementById("dashViewComissoes");
   if (vResumo) vResumo.classList.toggle("hidden", target !== "resumo");
   if (vFrota) vFrota.classList.toggle("hidden", target !== "frota");
   if (vEstoque) vEstoque.classList.toggle("hidden", target !== "estoque");
   if (vVendas) vVendas.classList.toggle("hidden", !isVendasView);
+  if (vComissoes) vComissoes.classList.toggle("hidden", target !== "comissoes");
 
   if (target === "frota") {
     renderDashboardFrota().catch(e=>console.warn("dash frota erro:", e));
@@ -2309,8 +2310,51 @@ function setDashboardView(view){
   } else if (isVendasView) {
     setDashboardVendasView(target);
     recarregarDashboardVendaAtual().catch(e=>console.warn("dash vendas erro:", e));
+  } else if (target === "comissoes") {
+    carregarDashboardComissoes().catch(e=>console.warn("dashboard comissoes erro:", e));
   } else {
     atualizarDash().catch(()=>{});
+  }
+}
+
+async function carregarDashboardComissoes(){
+  const resumoEl = document.getElementById("dashComissoesResumo");
+  const body = document.getElementById("dashComissoesRankingBody");
+  if (resumoEl) resumoEl.innerHTML = _resumoCardVendas("Status", "Carregando...");
+  const resp = await apiFetch("/api/comissao/relatorios");
+  if (!resp.ok){
+    if (resumoEl) resumoEl.innerHTML = _resumoCardVendas("Erro", "Falha ao carregar");
+    if (body) body.innerHTML = `<tr><td colspan="6">Não foi possível carregar o ranking.</td></tr>`;
+    return;
+  }
+  const data = await resp.json();
+  const ranking = Array.isArray(data?.ranking_devolucoes) ? data.ranking_devolucoes : [];
+  const geral = data?.resumo_geral || {};
+  const melhor = ranking[0] || {};
+  if (resumoEl){
+    resumoEl.innerHTML = _renderCardsVendasResumo([
+      ["Entregadores no ranking", _fmtNumber(ranking.length, 0)],
+      ["Volumes carregados", _fmtNumber(geral.volume_entregador_total || 0, 2)],
+      ["Devoluções", _fmtNumber(geral.devolucao_total || 0, 2)],
+      ["Percentual geral", `${_fmtNumber(geral.percentual_devolucao || 0, 2)}%`],
+      ["Melhor colocado", melhor.nome || "-"],
+      ["Melhor percentual", `${_fmtNumber(melhor.percentual_devolucao || 0, 2)}%`],
+    ]);
+  }
+  if (body){
+    body.innerHTML = ranking.length ? ranking.map((item)=>{
+      const posicao = Number(item.posicao || 0);
+      const medalha = posicao === 1 ? "🥇" : posicao === 2 ? "🥈" : posicao === 3 ? "🥉" : "";
+      const liquido = Number(item.volume_bruto_total || 0) - Number(item.devolucao_total || 0);
+      return `<tr class="${posicao <= 3 ? `comissao-ranking-top comissao-ranking-${posicao}` : ""}">
+        <td><strong>${medalha} ${_escHtml(String(posicao))}º</strong></td>
+        <td>${_escHtml(item.nome || "-")}</td>
+        <td>${_escHtml(_fmtNumber(item.volume_bruto_total || 0, 2))}</td>
+        <td>${_escHtml(_fmtNumber(item.devolucao_total || 0, 2))}</td>
+        <td><strong>${_escHtml(_fmtNumber(item.percentual_devolucao || 0, 2))}%</strong></td>
+        <td>${_escHtml(_fmtNumber(liquido, 2))}</td>
+      </tr>`;
+    }).join("") : `<tr><td colspan="6">Nenhum entregador com volumes lançados.</td></tr>`;
   }
 }
 
@@ -2585,6 +2629,25 @@ function setCargasView(view){
   }
 }
 
+function toggleWorkflowSubmenu(ev){
+  toggleExclusiveSubmenu(ev, () => openWorkflowView(null, window.__workflowView || "fretes"));
+}
+
+function openWorkflowView(ev, view){
+  if (ev){ ev.preventDefault(); ev.stopPropagation(); }
+  const menu = document.querySelector('.menu-item.has-submenu[data-tab="workflow"]');
+  const targetView = view === "comissao" ? "comissao" : "fretes";
+  window.__workflowView = targetView;
+  showTab(targetView, menu);
+  document.querySelectorAll("#submenuWorkflow .submenu-item").forEach((item) => {
+    item.classList.toggle("active", item.dataset.workflowView === targetView);
+  });
+  if (targetView === "comissao") carregarComissaoLancamentos().catch(()=>{});
+  const isMobile = window.matchMedia && window.matchMedia("(max-width: 768px)").matches;
+  if (isMobile && menu) menu.classList.remove("open");
+  try{ toggleMenuMobile(false); }catch{}
+}
+
 function toggleCadastrosSubmenu(ev){
   toggleExclusiveSubmenu(ev, () => openCadastrosView(null, window.__cadastrosView || "colaboradores"));
 }
@@ -2751,8 +2814,16 @@ function setComissaoView(view){
   window.__comissaoView = view;
   const vLanc = document.getElementById("comissaoViewLancamento");
   const vRel = document.getElementById("comissaoViewRelatorios");
+  const titulo = document.getElementById("comissaoPageTitle");
+  const hint = document.getElementById("comissaoPageHint");
+  const novoBtn = document.getElementById("comissaoNovoLancamentoBtn");
   if (vLanc) vLanc.classList.toggle("hidden", view !== "lancamento");
   if (vRel) vRel.classList.toggle("hidden", view !== "relatorios");
+  if (titulo) titulo.textContent = view === "relatorios" ? "Relatório de Comissões" : "Comissões";
+  if (hint) hint.textContent = view === "relatorios"
+    ? "Comissões de vendedores e entregadores, com percentuais e etapas de cálculo."
+    : "Lançamentos baseados na aba “Cargas Lançar” da planilha de comissões.";
+  if (novoBtn) novoBtn.classList.toggle("hidden", view === "relatorios");
   if (view === "lancamento") carregarComissaoLancamentos().catch(()=>{});
   if (view === "relatorios") carregarRelatoriosComissao().catch(()=>{});
 }
@@ -6030,9 +6101,6 @@ async function agentIaChat(payload){
   agentIaSetBusy(true);
   agentIaShowThinking();
   try {
-    if (!usuarioLogado && !LOGIN_BYPASS) {
-      await restaurarSessaoLogin().catch(() => false);
-    }
     const payloadFinal = { ...(payload || {}) };
     if (usuarioLogado?.id) {
       payloadFinal.usuario_id = usuarioLogado.id;
@@ -7804,22 +7872,11 @@ async function toggleChatPopup(force) {
 function atualizarUsuarioLogadoUI() {
   const label = document.getElementById("chatUserLabel");
   const avatar = document.getElementById("chatUserAvatar");
-  const logoutBtn = document.getElementById("logoutBtn");
-  const menuLogoutBtn = document.getElementById("menuLogoutBtn");
   if (label) {
-    label.textContent = usuarioLogado ? `${usuarioLogado.nome} (${usuarioLogado.login})` : "Nao logado";
+    label.textContent = usuarioLogado ? `${usuarioLogado.nome} (${usuarioLogado.login})` : "Usuário do portal";
   }
   if (avatar) {
     avatar.textContent = usuarioLogado ? _chatIniciais(usuarioLogado.nome) : "RB";
-  }
-  if (logoutBtn) {
-    logoutBtn.style.display = LOGIN_BYPASS ? "none" : "";
-    logoutBtn.disabled = !usuarioLogado;
-  }
-  if (menuLogoutBtn) {
-    menuLogoutBtn.style.display = LOGIN_BYPASS ? "none" : "";
-    menuLogoutBtn.style.opacity = usuarioLogado ? "1" : "0.65";
-    menuLogoutBtn.style.pointerEvents = usuarioLogado ? "auto" : "none";
   }
   atualizarEstadoSipChat();
   atualizarStatusCodbarSistema();
@@ -7828,7 +7885,7 @@ function atualizarUsuarioLogadoUI() {
 function _syncBlockingPopupState() {
   const body = document.body;
   if (!body) return;
-  const hasBlockingPopup = !!document.querySelector(".foto-modal:not(.hidden), .login-modal:not(.hidden)");
+  const hasBlockingPopup = !!document.querySelector(".foto-modal:not(.hidden)");
   body.classList.toggle("modal-open", hasBlockingPopup);
 }
 
@@ -7848,176 +7905,6 @@ function _fecharPopupBloqueante(modal) {
 
 if (document.readyState !== "loading") {
   _syncBlockingPopupState();
-}
-
-function abrirLoginModal(showMsg = "") {
-  const modal = document.getElementById("loginModal");
-  const msg = document.getElementById("loginMsg");
-  const loginInput = document.getElementById("loginUsuario");
-
-  // Failsafe: remove overlays que podem bloquear clique no card de login.
-  try { toggleMenuMobile(false); } catch {}
-  try { _hideDashTip(); } catch {}
-  try {
-    document.querySelectorAll(".foto-modal").forEach((m) => m.classList.add("hidden"));
-    document.body.classList.remove("menu-open");
-  } catch {}
-
-  document.body.classList.add("login-active");
-  _abrirPopupBloqueante(modal);
-  if (msg) msg.textContent = showMsg || "";
-  try { loginInput?.focus(); } catch {}
-  setTimeout(() => { try { loginInput?.focus(); } catch {} }, 40);
-}
-
-function fecharLoginModal() {
-  const modal = document.getElementById("loginModal");
-  _fecharPopupBloqueante(modal);
-  document.body.classList.remove("login-active");
-}
-
-function _sessaoObjFromStorage() {
-  const raw = localStorage.getItem(LOGIN_STORAGE_KEY);
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(raw);
-    // compatibilidade com formato antigo: objeto direto do usuário
-    if (parsed && parsed.id && !parsed.usuario) {
-      return {
-        usuario: { id: parsed.id, nome: parsed.nome, login: parsed.login, codbar_modo: parsed.codbar_modo || "bip" },
-        login_at: Date.now(),
-        expires_at: Date.now() + LOGIN_MAX_AGE_MS,
-      };
-    }
-    if (!parsed?.usuario?.id) return null;
-    return parsed;
-  } catch {
-    return null;
-  }
-}
-
-function _salvarSessaoLogin(usuario) {
-  const now = Date.now();
-  const sessao = {
-    usuario: {
-      id: usuario.id,
-      nome: usuario.nome,
-      login: usuario.login,
-      codbar_modo: usuario.codbar_modo || "bip",
-    },
-    login_at: now,
-    expires_at: now + LOGIN_MAX_AGE_MS,
-  };
-  localStorage.setItem(LOGIN_STORAGE_KEY, JSON.stringify(sessao));
-}
-
-function _logoutSessaoLocal(showLogin = true, msg = "Sessao expirada. Faca login novamente.") {
-  usuarioLogado = null;
-  chatState.usuarioId = "";
-  chatState.contatoId = "";
-  chatState.unreadByContato = {};
-  chatState.showExternalDialer = false;
-  chatState.lastSeenMessageId = 0;
-  localStorage.removeItem(LOGIN_STORAGE_KEY);
-  stopSipClient(true);
-  limparAnexoChat();
-  atualizarUsuarioLogadoUI();
-  renderListaContatosChat();
-  atualizarBadgeFab(0);
-  if (showLogin && !LOGIN_BYPASS) abrirLoginModal(msg);
-}
-
-async function forcarLogoutSistema() {
-  if (LOGIN_BYPASS) return;
-  _logoutSessaoLocal(true, "Logout realizado. Faca login novamente.");
-  await toggleChatPopup(false);
-  const u = document.getElementById("loginUsuario");
-  const s = document.getElementById("loginSenha");
-  if (u) u.value = "";
-  if (s) s.value = "";
-}
-
-function _sessaoExpirada(sessao) {
-  if (!sessao?.expires_at) return true;
-  return Date.now() > Number(sessao.expires_at);
-}
-
-function _aplicarUsuarioLogado(usuario, salvarSessao = false) {
-  if (!usuario?.id) return null;
-  usuarioLogado = {
-    id: usuario.id,
-    nome: usuario.nome,
-    login: usuario.login,
-    codbar_modo: usuario.codbar_modo || "bip",
-  };
-  chatState.usuarioId = String(usuarioLogado.id);
-  chatState.lastSeenMessageId = 0;
-  if (salvarSessao) _salvarSessaoLogin(usuarioLogado);
-  atualizarUsuarioLogadoUI();
-  return usuarioLogado;
-}
-
-async function fazerLoginSistema() {
-  if (LOGIN_BYPASS) {
-    fecharLoginModal();
-    return;
-  }
-  const login = (document.getElementById("loginUsuario")?.value || "").trim();
-  const senha = (document.getElementById("loginSenha")?.value || "").trim();
-  if (!login || !senha) {
-    abrirLoginModal("Informe login e senha.");
-    return;
-  }
-  const resp = await apiFetch("/api/login", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ login, senha }),
-  });
-  if (!resp.ok) {
-    const j = await resp.json().catch(() => null);
-    abrirLoginModal(j?.erro || "Falha no login.");
-    return;
-  }
-  const j = await resp.json();
-  _aplicarUsuarioLogado(j.usuario || null, true);
-  fecharLoginModal();
-  await initSipClient(true).catch(() => {});
-  await carregarUsuariosChat(false);
-  await carregarNaoLidasChat();
-  renderListaContatosChat();
-}
-
-async function restaurarSessaoLogin() {
-  if (LOGIN_BYPASS) return true;
-  const sessao = _sessaoObjFromStorage();
-  if (!sessao) return false;
-  if (_sessaoExpirada(sessao)) {
-    _logoutSessaoLocal(false, "");
-    return false;
-  }
-  const usuarioSessao = sessao?.usuario || null;
-  if (!usuarioSessao?.id) return false;
-  _aplicarUsuarioLogado(usuarioSessao, false);
-  fecharLoginModal();
-
-  const uid = usuarioSessao.id;
-  void (async () => {
-    try {
-      const resp = await apiFetch(`/api/me?usuario_id=${encodeURIComponent(uid)}`);
-      if (!resp.ok) throw new Error("sessao invalida");
-      const payload = await resp.json();
-      const user = payload?.usuario || payload;
-      if (String(usuarioLogado?.id || "") !== String(uid)) return;
-      _aplicarUsuarioLogado(user, true); // renova por mais 8h após revalidação
-      await initSipClient(true).catch(() => {});
-    } catch {
-      if (String(usuarioLogado?.id || "") === String(uid)) {
-        _logoutSessaoLocal(true, "Sessao expirada. Faca login novamente.");
-      }
-    }
-  })();
-
-  return true;
 }
 
 function initChatInterno() {
@@ -8043,13 +7930,6 @@ function initChatInterno() {
   chatState.pollHandle = setInterval(async () => {
     try {
       if (!chatState.usuarioId) return;
-      if (!LOGIN_BYPASS) {
-        const s = _sessaoObjFromStorage();
-        if (!s || _sessaoExpirada(s)) {
-          _logoutSessaoLocal(true, "Sessao expirada (8h). Faca login novamente.");
-          return;
-        }
-      }
       if (!sipState.ua && !sipState.initPromise) {
         initSipClient().catch(() => {});
       }
@@ -13462,6 +13342,175 @@ function _comissaoText(id){
   return (document.getElementById(id)?.value || "").trim();
 }
 
+const COMISSAO_ULTIMO_LANCAMENTO_KEY = "riob.comissao.ultimo-lancamento.v1";
+let comissaoLancamentoEditandoId = 0;
+let comissaoLancamentosCache = new Map();
+
+function _salvarPadroesUltimoLancamentoComissao(payload){
+  const padroes = {
+    cod_vendedor: payload.cod_vendedor || "",
+    entregador: payload.entregador || "",
+    rota: payload.rota || "",
+    usina: payload.usina || "",
+    data_faturamento: payload.data_faturamento || "",
+    data_saida: payload.data_saida || "",
+    data_chegada: payload.data_chegada || "",
+  };
+  try{
+    localStorage.setItem(COMISSAO_ULTIMO_LANCAMENTO_KEY, JSON.stringify(padroes));
+  }catch{}
+}
+
+function _aplicarPadroesUltimoLancamentoComissao(){
+  let padroes = {};
+  try{
+    padroes = JSON.parse(localStorage.getItem(COMISSAO_ULTIMO_LANCAMENTO_KEY) || "{}") || {};
+  }catch{
+    padroes = {};
+  }
+  const campos = {
+    com_cod_vendedor: String(padroes.cod_vendedor || ""),
+    com_entregador: String(padroes.entregador || ""),
+    com_rota: String(padroes.rota || ""),
+    com_usina: String(padroes.usina || ""),
+    com_data_faturamento: String(padroes.data_faturamento || ""),
+    com_data_saida: String(padroes.data_saida || ""),
+    com_data_chegada: String(padroes.data_chegada || ""),
+  };
+  Object.entries(campos).forEach(([id, valor]) => {
+    const campo = document.getElementById(id);
+    if (!campo || !valor) return;
+    if (campo.tagName === "SELECT" && ![...campo.options].some((option) => option.value === valor)) return;
+    campo.value = valor;
+  });
+}
+
+function _limparCamposComissaoLancamento(){
+  [
+    "com_cod_vendedor", "com_entregador", "com_rota", "com_usina",
+    "com_data_faturamento", "com_data_saida", "com_data_chegada",
+    "com_v_gf", "com_d_gf", "com_icms_gf", "com_v_pet", "com_d_pet", "com_icms_pet", "com_v_agua", "com_d_agua",
+    "com_gf_600", "com_gf_200", "com_gf_300", "com_dev_gf", "com_pet_2l", "com_pet_600", "com_dev_pet",
+    "com_agua_vol", "com_dev_agua", "com_total_pedidos", "com_acucar_qtd", "com_t_acucar"
+  ].forEach((id) => {
+    const campo = document.getElementById(id);
+    if (campo) campo.value = "";
+  });
+}
+
+function abrirComissaoLancamentoModal(){
+  comissaoLancamentoEditandoId = 0;
+  _limparCamposComissaoLancamento();
+  const titulo = document.getElementById("comissaoModalTitulo");
+  const salvarBtn = document.getElementById("comissaoModalSalvarBtn");
+  if (titulo) titulo.textContent = "Novo lançamento de comissão";
+  if (salvarBtn) salvarBtn.textContent = "Salvar lançamento";
+  const modal = document.getElementById("comissaoLancamentoModal");
+  mostrarAbaComissaoForm("identificacao");
+  _abrirPopupBloqueante(modal);
+  carregarOpcoesComissaoLancamento()
+    .then(() => _aplicarPadroesUltimoLancamentoComissao())
+    .catch((err) => console.warn("Falha ao carregar opções de comissão:", err))
+    .finally(() => setTimeout(() => document.getElementById("com_cod_vendedor")?.focus(), 40));
+}
+
+async function editarComissaoLancamento(id){
+  const lancamento = comissaoLancamentosCache.get(Number(id));
+  if (!lancamento) return alert("Não foi possível localizar o lançamento para edição.");
+  comissaoLancamentoEditandoId = Number(id);
+  const titulo = document.getElementById("comissaoModalTitulo");
+  const salvarBtn = document.getElementById("comissaoModalSalvarBtn");
+  if (titulo) titulo.textContent = `Editar lançamento #${comissaoLancamentoEditandoId}`;
+  if (salvarBtn) salvarBtn.textContent = "Salvar correções";
+  mostrarAbaComissaoForm("identificacao");
+  _abrirPopupBloqueante(document.getElementById("comissaoLancamentoModal"));
+  try{
+    await carregarOpcoesComissaoLancamento();
+    const campos = {
+      com_cod_vendedor: lancamento.cod_vendedor,
+      com_entregador: lancamento.entregador,
+      com_rota: lancamento.rota,
+      com_usina: lancamento.usina,
+      com_data_faturamento: String(lancamento.data_faturamento || "").slice(0, 10),
+      com_data_saida: String(lancamento.data_saida || "").slice(0, 10),
+      com_data_chegada: String(lancamento.data_chegada || "").slice(0, 10),
+      com_v_gf: lancamento.v_gf,
+      com_d_gf: lancamento.d_gf,
+      com_icms_gf: lancamento.icms_gf,
+      com_v_pet: lancamento.v_pet,
+      com_d_pet: lancamento.d_pet,
+      com_icms_pet: lancamento.icms_pet,
+      com_v_agua: lancamento.v_agua,
+      com_d_agua: lancamento.d_agua,
+      com_gf_600: lancamento.gf_600,
+      com_gf_200: lancamento.gf_200,
+      com_gf_300: lancamento.gf_300,
+      com_dev_gf: lancamento.dev_gf,
+      com_pet_2l: lancamento.pet_2l,
+      com_pet_600: lancamento.pet_600,
+      com_dev_pet: lancamento.dev_pet,
+      com_agua_vol: lancamento.agua_vol,
+      com_dev_agua: lancamento.dev_agua,
+      com_total_pedidos: lancamento.total_pedidos,
+      com_acucar_qtd: lancamento.acucar_qtd,
+      com_t_acucar: lancamento.t_acucar,
+    };
+    Object.entries(campos).forEach(([campoId, valor]) => {
+      const campo = document.getElementById(campoId);
+      if (campo) campo.value = valor ?? "";
+    });
+  }catch(err){
+    console.warn("Falha ao preparar edição da comissão:", err);
+    alert("Não foi possível carregar os cadastros para editar.");
+  }
+}
+
+function _preencherSelectComissao(id, placeholder, rows, valueFn, labelFn){
+  const select = document.getElementById(id);
+  if (!select) return;
+  const atual = select.value;
+  select.innerHTML = `<option value="">${_escHtml(placeholder)}</option>` + (rows || []).map((row) => {
+    const value = String(valueFn(row) ?? "");
+    const label = String(labelFn(row) ?? value);
+    return `<option value="${_escHtml(value)}">${_escHtml(label)}</option>`;
+  }).join("");
+  if ([...select.options].some((option) => option.value === atual)) select.value = atual;
+}
+
+async function carregarOpcoesComissaoLancamento(){
+  const [vendedores, entregadores, usinas, rotas] = await Promise.all([
+    _apiComissaoCadastros("vendedor"),
+    _apiComissaoCadastros("entregador"),
+    _apiComissaoCadastros("usina"),
+    apiFetch("/api/comissao/cidades").then(async (resp) => {
+      if (!resp.ok) throw new Error("falha ao carregar rotas");
+      return await resp.json();
+    }),
+  ]);
+  _preencherSelectComissao("com_cod_vendedor", "Selecione o vendedor", vendedores,
+    (row) => Number(row.codigo || 0), (row) => `${row.codigo || 0} - ${row.nome || ""} · GF ${_fmtNumber((row.pct_gf || 0) * 100, 2)}% · PET ${_fmtNumber((row.pct_pet || 0) * 100, 2)}% · Água ${_fmtNumber((row.pct_agua || 0) * 100, 2)}%`);
+  _preencherSelectComissao("com_entregador", "Selecione o entregador", entregadores,
+    (row) => row.nome || "", (row) => `${row.nome || ""} · GF ${_fmtNumber((row.pct_gf || 0) * 100, 2)}% · PET ${_fmtNumber((row.pct_pet || 0) * 100, 2)}% · Água ${_fmtNumber((row.pct_agua || 0) * 100, 2)}%`);
+  _preencherSelectComissao("com_usina", "Selecione a usina", usinas,
+    (row) => row.nome || "", (row) => row.nome || "");
+  _preencherSelectComissao("com_rota", "Selecione a rota", rotas,
+    (row) => row.rota || "", (row) => row.rota || "");
+}
+
+function mostrarAbaComissaoForm(nome, botao){
+  document.querySelectorAll("[data-comissao-form-pane]").forEach((pane) => {
+    pane.classList.toggle("active", pane.dataset.comissaoFormPane === nome);
+  });
+  document.querySelectorAll("[data-comissao-form-tab]").forEach((tab) => {
+    tab.classList.toggle("active", tab === botao || (!botao && tab.dataset.comissaoFormTab === nome));
+  });
+}
+
+function fecharComissaoLancamentoModal(event){
+  if (event && event.target !== event.currentTarget) return;
+  _fecharPopupBloqueante(document.getElementById("comissaoLancamentoModal"));
+}
+
 async function _apiComissaoCadastros(funcao = ""){
   const q = funcao ? `?funcao=${encodeURIComponent(funcao)}` : "";
   const resp = await apiFetch(`/api/comissao/cadastros${q}`);
@@ -13472,7 +13521,6 @@ async function _apiComissaoCadastros(funcao = ""){
 async function salvarComissaoLancamento(){
   const payload = {
     cod_vendedor: _comissaoNum("com_cod_vendedor", 0),
-    motorista: _comissaoText("com_motorista"),
     entregador: _comissaoText("com_entregador"),
     rota: _comissaoText("com_rota"),
     usina: _comissaoText("com_usina"),
@@ -13497,43 +13545,34 @@ async function salvarComissaoLancamento(){
     pet_600: _comissaoNum("com_pet_600", 0),
     dev_pet: _comissaoNum("com_dev_pet", 0),
     agua_vol: _comissaoNum("com_agua_vol", 0),
+    dev_agua: _comissaoNum("com_dev_agua", 0),
     total_pedidos: _comissaoNum("com_total_pedidos", 0),
     acucar_qtd: _comissaoNum("com_acucar_qtd", 0),
     t_acucar: _comissaoNum("com_t_acucar", 0),
 
-    pct_vend_gf: _comissaoNum("com_pct_vend_gf", 0.01),
-    pct_vend_pet: _comissaoNum("com_pct_vend_pet", 0.01),
-    pct_vend_agua: _comissaoNum("com_pct_vend_agua", 0.03),
-    pct_ent_gf: _comissaoNum("com_pct_ent_gf", 0.08),
-    pct_ent_pet: _comissaoNum("com_pct_ent_pet", 0.06),
-    pct_ent_agua: _comissaoNum("com_pct_ent_agua", 0.06),
-    taxa_ent_acucar: _comissaoNum("com_taxa_ent_acucar", 0),
   };
 
-  if (!payload.motorista) return alert("Informe o motorista.");
-  if (!payload.entregador) return alert("Informe o entregador.");
   if (!payload.rota) return alert("Informe a rota.");
+  if (!payload.cod_vendedor && !payload.entregador) {
+    return alert("Informe o vendedor ou o entregador.");
+  }
 
-  const resp = await apiFetch("/api/comissao/lancamentos", {
-    method: "POST",
+  const editandoId = comissaoLancamentoEditandoId;
+  const resp = await apiFetch(editandoId ? `/api/comissao/lancamentos/${editandoId}` : "/api/comissao/lancamentos", {
+    method: editandoId ? "PUT" : "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
   const data = await resp.json().catch(() => ({}));
   if (!resp.ok) return alert(data?.erro || "Erro ao salvar lancamento.");
 
-  [
-    "com_cod_vendedor", "com_motorista", "com_entregador", "com_rota", "com_usina",
-    "com_data_faturamento", "com_data_saida", "com_data_chegada",
-    "com_v_gf", "com_d_gf", "com_icms_gf", "com_v_pet", "com_d_pet", "com_icms_pet", "com_v_agua", "com_d_agua",
-    "com_gf_600", "com_gf_200", "com_gf_300", "com_dev_gf", "com_pet_2l", "com_pet_600", "com_dev_pet",
-    "com_agua_vol", "com_total_pedidos", "com_acucar_qtd", "com_t_acucar"
-  ].forEach((id) => {
-    const el = document.getElementById(id);
-    if (el) el.value = "";
-  });
+  _salvarPadroesUltimoLancamentoComissao(payload);
+  comissaoLancamentoEditandoId = 0;
+
+  _limparCamposComissaoLancamento();
 
   await carregarComissaoLancamentos();
+  fecharComissaoLancamentoModal();
 }
 
 async function excluirComissaoLancamento(id){
@@ -13550,30 +13589,34 @@ async function carregarComissaoLancamentos(){
 
   const resp = await apiFetch("/api/comissao/lancamentos");
   if (!resp.ok) {
-    body.innerHTML = `<tr><td colspan="10">Erro ao carregar lancamentos.</td></tr>`;
+    body.innerHTML = `<tr><td colspan="10">Erro ao carregar lançamentos.</td></tr>`;
     return;
   }
   const dados = await resp.json();
   if (!Array.isArray(dados) || dados.length === 0) {
-    body.innerHTML = `<tr><td colspan="10">Sem lancamentos de comissao.</td></tr>`;
+    body.innerHTML = `<tr><td colspan="10">Sem lançamentos de comissão.</td></tr>`;
     return;
   }
 
+  comissaoLancamentosCache = new Map(dados.map((item) => [Number(item.id), item]));
   body.innerHTML = dados.map((r) => {
     const vend = Number(r.base_vendedor_total || 0);
     const entBase = Number(r.base_ent_gf || 0) + Number(r.base_ent_pet || 0) + Number(r.base_ent_agua || 0);
     return `
       <tr>
         <td>${_escHtml(String(r.id || 0))}</td>
-        <td>${_escHtml(String(r.cod_vendedor || 0))}</td>
-        <td>${_escHtml(r.motorista || "-")}</td>
+        <td>${_escHtml(r.vendedor_nome ? `${r.cod_vendedor || 0} - ${r.vendedor_nome}` : String(r.cod_vendedor || "-"))}</td>
         <td>${_escHtml(r.entregador || "-")}</td>
         <td>${_escHtml(r.rota || "-")}</td>
+        <td>${_escHtml(_fmtDateBr(r.data_chegada) || "-")}</td>
         <td>R$ ${_escHtml(_fmtMoney(vend))}</td>
         <td>R$ ${_escHtml(_fmtMoney(r.comissao_vendedor || 0))}</td>
         <td>${_escHtml(_fmtNumber(entBase, 2))}</td>
         <td>R$ ${_escHtml(_fmtMoney(r.comissao_entregador || 0))}</td>
-        <td><button type="button" onclick="excluirComissaoLancamento(${Number(r.id || 0)})">Excluir</button></td>
+        <td>
+          <button type="button" onclick="editarComissaoLancamento(${Number(r.id || 0)})">Editar</button>
+          <button type="button" onclick="excluirComissaoLancamento(${Number(r.id || 0)})">Excluir</button>
+        </td>
       </tr>
     `;
   }).join("");
@@ -13733,6 +13776,14 @@ async function carregarComissaoCadastros(){
   }
 }
 
+function alterarFiltroRelatorioComissao(tipo){
+  const vendedor = document.getElementById("comrel_vendedor");
+  const entregador = document.getElementById("comrel_entregador");
+  if (tipo === "vendedor" && vendedor?.value && entregador) entregador.value = "";
+  if (tipo === "entregador" && entregador?.value && vendedor) vendedor.value = "";
+  atualizarBotaoImprimirComissao();
+}
+
 async function carregarRelatoriosComissao(){
   const prevVend = _comissaoText("comrel_vendedor");
   const prevEnt = _comissaoText("comrel_entregador");
@@ -13759,13 +13810,45 @@ async function carregarRelatoriosComissao(){
   const resumo = document.getElementById("comrelResumoGeral");
   if (resumo){
     const g = data?.resumo_geral || {};
-    resumo.innerHTML = `
-      Lancamentos: <b>${_escHtml(String(g.total_lancamentos || 0))}</b><br>
-      Base vendedor: <b>R$ ${_escHtml(_fmtMoney(g.base_vendedor_total || 0))}</b><br>
-      Comissao vendedor: <b>R$ ${_escHtml(_fmtMoney(g.comissao_vendedor_total || 0))}</b><br>
-      Comissao entregador: <b>R$ ${_escHtml(_fmtMoney(g.comissao_entregador_total || 0))}</b>
-    `;
+    const entregaResumo = Array.isArray(data?.total_entregadores) ? data.total_entregadores[0] : null;
+    if (data?.tipo_relatorio === "entregador" && entregaResumo){
+      resumo.innerHTML = `
+        <div class="comissao-relatorio-identificacao">
+          <strong>${_escHtml(entregaResumo.nome || "Entregador")}</strong>
+          <span>${_escHtml(String(g.total_lancamentos || 0))} lançamentos</span>
+        </div>
+        <div class="comissao-devolucao-destaque">
+          <span>Percentual geral de devolução</span>
+          <strong>${_escHtml(_fmtNumber(g.percentual_devolucao || 0, 2))}%</strong>
+          <small>${_escHtml(_fmtNumber(g.devolucao_total || 0, 2))} devolvidos ÷ ${_escHtml(_fmtNumber(g.volume_entregador_total || 0, 2))} carregados</small>
+        </div>
+        <table class="comissao-total-planilha">
+          <thead><tr><th colspan="2"></th><th>VOLUMES</th><th>COMISSÃO</th></tr></thead>
+          <tbody>
+            <tr><th class="comissao-totais-label" rowspan="5">TOTAIS</th><th>GF</th><td>${_escHtml(_fmtNumber(entregaResumo.volume_gf || 0, 2))}</td><td>R$ ${_escHtml(_fmtMoney(entregaResumo.comissao_gf || 0))}</td></tr>
+            <tr><th>PET</th><td>${_escHtml(_fmtNumber(entregaResumo.volume_pet || 0, 2))}</td><td>R$ ${_escHtml(_fmtMoney(entregaResumo.comissao_pet || 0))}</td></tr>
+            <tr><th>ADQ</th><td>${_escHtml(_fmtNumber(entregaResumo.volume_agua || 0, 2))}</td><td>R$ ${_escHtml(_fmtMoney(entregaResumo.comissao_agua || 0))}</td></tr>
+            <tr><th>AÇÚCAR</th><td>${_escHtml(_fmtNumber(entregaResumo.volume_acucar || 0, 2))}</td><td>R$ ${_escHtml(_fmtMoney(entregaResumo.comissao_acucar || 0))}</td></tr>
+            <tr class="comissao-total-final"><th>TOTAL</th><td>${_escHtml(_fmtNumber(entregaResumo.volume_total || 0, 2))}</td><td>R$ ${_escHtml(_fmtMoney(entregaResumo.comissao_total || 0))}</td></tr>
+          </tbody>
+        </table>`;
+    } else {
+      const linhas = [`Lançamentos: <b>${_escHtml(String(g.total_lancamentos || 0))}</b>`];
+      linhas.push(`Base vendedor: <b>R$ ${_escHtml(_fmtMoney(g.base_vendedor_total || 0))}</b>`);
+      linhas.push(`Comissão vendedor: <b>R$ ${_escHtml(_fmtMoney(g.comissao_vendedor_total || 0))}</b>`);
+      if (data?.tipo_relatorio !== "vendedor"){
+        linhas.push(`Comissão entregador: <b>R$ ${_escHtml(_fmtMoney(g.comissao_entregador_total || 0))}</b>`);
+        linhas.push(`Devolução geral: <b>${_escHtml(_fmtNumber(g.devolucao_total || 0, 2))} de ${_escHtml(_fmtNumber(g.volume_entregador_total || 0, 2))} volumes (${_escHtml(_fmtNumber(g.percentual_devolucao || 0, 2))}%)</b>`);
+      }
+      resumo.innerHTML = linhas.join("<br>");
+    }
   }
+
+  const tipoRelatorio = data?.tipo_relatorio || "geral";
+  document.getElementById("comrelVendedoresBox")?.classList.toggle("hidden", tipoRelatorio === "entregador");
+  document.getElementById("comrelEntregadoresBox")?.classList.toggle("hidden", tipoRelatorio === "vendedor");
+  document.getElementById("comrelRefugoBox")?.classList.toggle("hidden", tipoRelatorio === "vendedor");
+  document.getElementById("comrelAcucarBox")?.classList.toggle("hidden", tipoRelatorio === "vendedor");
 
   const vendBody = document.getElementById("comrelTotalVendedoresBody");
   if (vendBody){
@@ -13774,10 +13857,19 @@ async function carregarRelatoriosComissao(){
       <tr>
         <td>${_escHtml(String(r.codigo || 0))}</td>
         <td>${_escHtml(r.nome || "-")}</td>
+        <td>R$ ${_escHtml(_fmtMoney(r.base_gf || 0))}</td>
+        <td>${_escHtml(_fmtNumber((r.pct_gf || 0) * 100, 2))}%</td>
+        <td>R$ ${_escHtml(_fmtMoney(r.comissao_gf || 0))}</td>
+        <td>R$ ${_escHtml(_fmtMoney(r.base_pet || 0))}</td>
+        <td>${_escHtml(_fmtNumber((r.pct_pet || 0) * 100, 2))}%</td>
+        <td>R$ ${_escHtml(_fmtMoney(r.comissao_pet || 0))}</td>
+        <td>R$ ${_escHtml(_fmtMoney(r.base_agua || 0))}</td>
+        <td>${_escHtml(_fmtNumber((r.pct_agua || 0) * 100, 2))}%</td>
+        <td>R$ ${_escHtml(_fmtMoney(r.comissao_agua || 0))}</td>
         <td>R$ ${_escHtml(_fmtMoney(r.base_total || 0))}</td>
         <td>R$ ${_escHtml(_fmtMoney(r.comissao_total || 0))}</td>
       </tr>
-    `).join("") : `<tr><td colspan="4">Sem dados.</td></tr>`;
+    `).join("") : `<tr><td colspan="13">Sem dados.</td></tr>`;
   }
 
   const entBody = document.getElementById("comrelTotalEntregadoresBody");
@@ -13786,10 +13878,20 @@ async function carregarRelatoriosComissao(){
     entBody.innerHTML = rows.length ? rows.map((r)=>`
       <tr>
         <td>${_escHtml(r.nome || "-")}</td>
+        <td>${_escHtml(_fmtNumber(r.volume_gf || 0, 2))}</td>
+        <td>${_escHtml(_fmtNumber((r.pct_gf || 0) * 100, 2))}%</td>
+        <td>R$ ${_escHtml(_fmtMoney(r.comissao_gf || 0))}</td>
+        <td>${_escHtml(_fmtNumber(r.volume_pet || 0, 2))}</td>
+        <td>${_escHtml(_fmtNumber((r.pct_pet || 0) * 100, 2))}%</td>
+        <td>R$ ${_escHtml(_fmtMoney(r.comissao_pet || 0))}</td>
+        <td>${_escHtml(_fmtNumber(r.volume_agua || 0, 2))}</td>
+        <td>${_escHtml(_fmtNumber((r.pct_agua || 0) * 100, 2))}%</td>
+        <td>R$ ${_escHtml(_fmtMoney(r.comissao_agua || 0))}</td>
+        <td>${_escHtml(_fmtNumber(r.percentual_devolucao || 0, 2))}%</td>
         <td>${_escHtml(_fmtNumber(r.volume_total || 0, 2))}</td>
         <td>R$ ${_escHtml(_fmtMoney(r.comissao_total || 0))}</td>
       </tr>
-    `).join("") : `<tr><td colspan="3">Sem dados.</td></tr>`;
+    `).join("") : `<tr><td colspan="13">Sem dados.</td></tr>`;
   }
 
   const refBody = document.getElementById("comrelRefugoBody");
@@ -13798,10 +13900,18 @@ async function carregarRelatoriosComissao(){
     refBody.innerHTML = rows.length ? rows.map((r)=>`
       <tr>
         <td>${_escHtml(r.entregador || "-")}</td>
+        <td>${_escHtml(_fmtNumber(r.volume_gf || 0, 2))}</td>
         <td>${_escHtml(_fmtNumber(r.dev_gf || 0, 2))}</td>
+        <td>${_escHtml(_fmtNumber(r.pct_dev_gf || 0, 2))}%</td>
+        <td>${_escHtml(_fmtNumber(r.volume_pet || 0, 2))}</td>
         <td>${_escHtml(_fmtNumber(r.dev_pet || 0, 2))}</td>
+        <td>${_escHtml(_fmtNumber(r.pct_dev_pet || 0, 2))}%</td>
+        <td>${_escHtml(_fmtNumber(r.volume_agua || 0, 2))}</td>
+        <td>${_escHtml(_fmtNumber(r.dev_agua || 0, 2))}</td>
+        <td>${_escHtml(_fmtNumber(r.pct_dev_agua || 0, 2))}%</td>
+        <td>${_escHtml(_fmtNumber(r.pct_dev_total || 0, 2))}%</td>
       </tr>
-    `).join("") : `<tr><td colspan="3">Sem dados.</td></tr>`;
+    `).join("") : `<tr><td colspan="11">Sem dados.</td></tr>`;
   }
 
   const acuBody = document.getElementById("comrelAcucarBody");
@@ -13814,6 +13924,54 @@ async function carregarRelatoriosComissao(){
         <td>R$ ${_escHtml(_fmtMoney(r.comissao || 0))}</td>
       </tr>
     `).join("") : `<tr><td colspan="3">Sem dados.</td></tr>`;
+  }
+
+  const detalhes = Array.isArray(data?.lancamentos) ? data.lancamentos : [];
+  const detalhesEl = document.getElementById("comrelLancamentosDetalhe");
+  const detalhesTitulo = document.getElementById("comrelLancamentosTitulo");
+  if (detalhesTitulo) detalhesTitulo.textContent = `Lançamentos do relatório (${detalhes.length})`;
+  if (detalhesEl){
+    if (!detalhes.length){
+      detalhesEl.innerHTML = `<div class="hint">Nenhum lançamento encontrado.</div>`;
+    } else if (tipoRelatorio === "vendedor"){
+      detalhesEl.innerHTML = `<table>
+        <thead><tr>
+          <th>ID</th><th>Rota</th><th>Faturamento</th><th>Saída</th><th>Chegada</th>
+          <th>Base GF</th><th>% GF</th><th>Com. GF</th>
+          <th>Base PET</th><th>% PET</th><th>Com. PET</th>
+          <th>Base Água</th><th>% Água</th><th>Com. Água</th><th>Comissão Total</th>
+        </tr></thead><tbody>${detalhes.map((r)=>`<tr>
+          <td>${_escHtml(String(r.id || 0))}</td><td>${_escHtml(r.rota || "-")}</td>
+          <td>${_escHtml(_fmtDateBr(r.data_faturamento))}</td><td>${_escHtml(_fmtDateBr(r.data_saida))}</td><td>${_escHtml(_fmtDateBr(r.data_chegada))}</td>
+          <td>R$ ${_escHtml(_fmtMoney(r.base_gf || 0))}</td><td>${_escHtml(_fmtNumber((r.pct_vend_gf || 0) * 100, 2))}%</td><td>R$ ${_escHtml(_fmtMoney(r.comissao_vend_gf || 0))}</td>
+          <td>R$ ${_escHtml(_fmtMoney(r.base_pet || 0))}</td><td>${_escHtml(_fmtNumber((r.pct_vend_pet || 0) * 100, 2))}%</td><td>R$ ${_escHtml(_fmtMoney(r.comissao_vend_pet || 0))}</td>
+          <td>R$ ${_escHtml(_fmtMoney(r.base_agua || 0))}</td><td>${_escHtml(_fmtNumber((r.pct_vend_agua || 0) * 100, 2))}%</td><td>R$ ${_escHtml(_fmtMoney(r.comissao_vend_agua || 0))}</td>
+          <td>R$ ${_escHtml(_fmtMoney(r.comissao_vendedor || 0))}</td>
+        </tr>`).join("")}</tbody></table>`;
+    } else if (tipoRelatorio === "entregador"){
+      detalhesEl.innerHTML = `<table>
+        <thead><tr>
+          <th>ID</th><th>Rota</th><th>Faturamento</th><th>Saída</th><th>Chegada</th>
+          <th>GF carregado</th><th>Dev. GF</th><th>GF líquido</th><th>% GF</th><th>Com. GF</th>
+          <th>PET carregado</th><th>Dev. PET</th><th>PET líquido</th><th>% PET</th><th>Com. PET</th>
+          <th>Água líquida</th><th>% Água</th><th>Com. Água</th><th>% Devolução do frete</th><th>Comissão Total</th>
+        </tr></thead><tbody>${detalhes.map((r)=>{
+          const brutoGf = Number(r.gf_600 || 0) + Number(r.gf_200 || 0) + Number(r.gf_300 || 0);
+          const brutoPet = Number(r.pet_2l || 0) + Number(r.pet_600 || 0);
+          return `<tr>
+            <td>${_escHtml(String(r.id || 0))}</td><td>${_escHtml(r.rota || "-")}</td>
+            <td>${_escHtml(_fmtDateBr(r.data_faturamento))}</td><td>${_escHtml(_fmtDateBr(r.data_saida))}</td><td>${_escHtml(_fmtDateBr(r.data_chegada))}</td>
+            <td>${_escHtml(_fmtNumber(brutoGf, 2))}</td><td>${_escHtml(_fmtNumber(r.dev_gf || 0, 2))}</td><td>${_escHtml(_fmtNumber(r.base_ent_gf || 0, 2))}</td><td>${_escHtml(_fmtNumber((r.pct_ent_gf || 0) * 100, 2))}%</td><td>R$ ${_escHtml(_fmtMoney(r.comissao_ent_gf || 0))}</td>
+            <td>${_escHtml(_fmtNumber(brutoPet, 2))}</td><td>${_escHtml(_fmtNumber(r.dev_pet || 0, 2))}</td><td>${_escHtml(_fmtNumber(r.base_ent_pet || 0, 2))}</td><td>${_escHtml(_fmtNumber((r.pct_ent_pet || 0) * 100, 2))}%</td><td>R$ ${_escHtml(_fmtMoney(r.comissao_ent_pet || 0))}</td>
+            <td>${_escHtml(_fmtNumber(r.base_ent_agua || 0, 2))}</td><td>${_escHtml(_fmtNumber((r.pct_ent_agua || 0) * 100, 2))}%</td><td>R$ ${_escHtml(_fmtMoney(r.comissao_ent_agua || 0))}</td>
+            <td>${_escHtml(_fmtNumber(r.devolucao_entregador || 0, 2))} ÷ ${_escHtml(_fmtNumber(r.volume_bruto_entregador || 0, 2))} = <b>${_escHtml(_fmtNumber(r.percentual_devolucao || 0, 2))}%</b></td>
+            <td>R$ ${_escHtml(_fmtMoney(r.comissao_entregador || 0))}</td>
+          </tr>`;
+        }).join("")}</tbody></table>`;
+    } else {
+      detalhesEl.innerHTML = `<table><thead><tr><th>ID</th><th>Vendedor</th><th>Entregador</th><th>Rota</th><th>Chegada</th><th>Com. vendedor</th><th>Com. entregador</th></tr></thead>
+        <tbody>${detalhes.map((r)=>`<tr><td>${_escHtml(String(r.id || 0))}</td><td>${_escHtml(r.vendedor || "-")}</td><td>${_escHtml(r.entregador || "-")}</td><td>${_escHtml(r.rota || "-")}</td><td>${_escHtml(_fmtDateBr(r.data_chegada))}</td><td>R$ ${_escHtml(_fmtMoney(r.comissao_vendedor || 0))}</td><td>R$ ${_escHtml(_fmtMoney(r.comissao_entregador || 0))}</td></tr>`).join("")}</tbody></table>`;
+    }
   }
 }
 
@@ -18945,18 +19103,8 @@ window.onload = async () => {
   verificarStatus();
   setInterval(verificarStatus, 5000);
 
-  // 3) Sessão antes dos demais fetches, para o usuário logado aparecer imediatamente.
-  let okSessao = false;
-  try { okSessao = await restaurarSessaoLogin(); } catch {}
-  if (LOGIN_BYPASS) {
-    fecharLoginModal();
-    atualizarUsuarioLogadoUI();
-  } else if (!okSessao) {
-    abrirLoginModal();
-  } else {
-    fecharLoginModal();
-    atualizarUsuarioLogadoUI();
-  }
+  // 3) A identidade e a sessao sao fornecidas exclusivamente pelo portal.
+  atualizarUsuarioLogadoUI();
 
   // 4) Carregar dados EM PARALELO (não sequencial)
   Promise.allSettled([

@@ -9,19 +9,26 @@ cd_project
 require_compose
 validate_app_sources
 
-log "subindo mysql, postgres do pacs e app..."
-if [[ "${NO_CACHE:-0}" == "1" ]]; then
-  compose build --no-cache "$APP_SERVICE"
-  compose up -d "$DB_SERVICE" "$PACS_DB_SERVICE" "$APP_SERVICE"
-else
-  compose up -d --build "$DB_SERVICE" "$PACS_DB_SERVICE" "$APP_SERVICE"
-fi
+log "garantindo bancos locais sem apagar, restaurar ou sincronizar dados..."
+compose up -d "${DATABASE_SERVICES[@]}"
 
-log "aguardando app responder..."
+log "reconstruindo portal e RioB para teste..."
+if [[ "${NO_CACHE:-0}" == "1" ]]; then
+  compose build --no-cache "${BUILD_SERVICES[@]}"
+else
+  compose build "${BUILD_SERVICES[@]}"
+fi
+compose up -d --no-deps "${RUNTIME_SERVICES[@]}"
+
+log "aguardando portal e RioB responderem..."
 if ! wait_for_app 45 2; then
   compose logs --tail=120 "$APP_SERVICE" >&2 || true
-  die "app nao respondeu a tempo"
+  die "portal nao respondeu a tempo"
+fi
+if ! wait_for_riob 45 2; then
+  compose logs --tail=120 "$RIOB_APP_SERVICE" >&2 || true
+  die "RioB nao respondeu a tempo"
 fi
 
-compose ps "$DB_SERVICE" "$PACS_DB_SERVICE" "$APP_SERVICE"
-log "pronto em ${APP_URL}"
+compose ps "${DATABASE_SERVICES[@]}" "${RUNTIME_SERVICES[@]}"
+log "portal e RioB prontos; bancos preservados"

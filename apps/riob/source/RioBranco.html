@@ -10,22 +10,6 @@
   <link rel="icon" href="data:,">
   <link rel="stylesheet" href="/style.css?v=__RB_ASSET_VERSION__">
   <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;600&display=swap" rel="stylesheet">
-  <script>
-    (function () {
-      var LOGIN_IDS = { loginUsuario: true, loginSenha: true };
-      function isLoginTarget(t) {
-        return !!(t && t.id && LOGIN_IDS[t.id]);
-      }
-
-      // Captura ANTES do script principal para impedir bloqueios globais de clique/toque.
-      ["mousedown", "mouseup", "click", "touchstart"].forEach(function (evt) {
-        document.addEventListener(evt, function (e) {
-          if (!isLoginTarget(e.target)) return;
-          e.stopImmediatePropagation();
-        }, true);
-      });
-    })();
-  </script>
 </head>
 
 <body>
@@ -62,9 +46,16 @@
         <div class="submenu-item" onclick="openDashboardView(event,'bonificacoes')">Bonificações</div>
         <div class="submenu-item" onclick="openDashboardView(event,'variacao_preco')">Variação de Preço</div>
         <div class="submenu-item" onclick="openDashboardView(event,'grupos_embalagem')">Grupos Embalagem</div>
+        <div class="submenu-item" onclick="openDashboardView(event,'comissoes')">Comissões</div>
       </div>
     </div>
-    <div class="menu-item active" onclick="showTab('fretes',this)">Workflow</div>
+    <div class="menu-item has-submenu active" data-tab="workflow" onclick="toggleWorkflowSubmenu(event)">
+      Workflow <span class="submenu-caret">&#9662;</span>
+      <div class="submenu" id="submenuWorkflow">
+        <div class="submenu-item active" data-workflow-view="fretes" onclick="openWorkflowView(event,'fretes')">Fretes</div>
+        <div class="submenu-item" data-workflow-view="comissao" onclick="openWorkflowView(event,'comissao')">Comissões</div>
+      </div>
+    </div>
     <div class="menu-item" onclick="showTab('estoque',this); carregarEstoque().catch(()=>{});">Estoque</div>
     <div class="menu-item has-submenu" data-tab="cadastros" onclick="toggleCadastrosSubmenu(event)">
       Cadastros <span class="submenu-caret">&#9662;</span>
@@ -76,11 +67,10 @@
     </div>
     <div class="menu-item" onclick="showTab('devolucoes',this)">Devoluções</div>
     <div class="menu-item has-submenu" data-tab="gestaofrota" onclick="toggleGestaoFrotaSubmenu(event)">Gestao Frota <span class="submenu-caret">&#9662;</span><div class="submenu" id="submenuGestaoFrota"><div class="submenu-item active" onclick="openGestaoFrotaView(event,'registrar')">Registrar</div><div class="submenu-item" onclick="openGestaoFrotaView(event,'lista')">Lista</div><div class="submenu-item" onclick="openGestaoFrotaView(event,'relatorios')">Relatorios</div><div class="submenu-item" onclick="openGestaoFrotaCargas(event)">Cadastro Cargas</div><div class="submenu-item" onclick="openGestaoFrotaEscala(event)">Escala</div></div></div>
-    <div class="menu-item has-submenu" data-tab="vendas" onclick="toggleVendasSubmenu(event)">Vendas <span class="submenu-caret">&#9662;</span><div class="submenu" id="submenuVendas"><div class="submenu-item active" data-vendas-view="relatorio" onclick="openVendasView(event,'relatorio')">Relatorio</div><div class="submenu-item" data-vendas-view="pontosvenda" onclick="openVendasView(event,'pontosvenda')">Pontos de Venda</div><div class="submenu-item" onclick="openVendasComissao(event)">Comissao</div></div></div>
+    <div class="menu-item has-submenu" data-tab="vendas" onclick="toggleVendasSubmenu(event)">Vendas <span class="submenu-caret">&#9662;</span><div class="submenu" id="submenuVendas"><div class="submenu-item active" data-vendas-view="relatorio" onclick="openVendasView(event,'relatorio')">Relatorio</div><div class="submenu-item" data-vendas-view="pontosvenda" onclick="openVendasView(event,'pontosvenda')">Pontos de Venda</div></div></div>
     <div class="menu-item has-submenu" data-tab="monitor" onclick="toggleMonitorSubmenu(event)">Monitor <span class="submenu-caret">&#9662;</span><div class="submenu" id="submenuMonitor"><div class="submenu-item active" data-monitor-view="esxi" onclick="openMonitorView(event,'esxi')">ESXi</div><div class="submenu-item" data-monitor-view="cameras" onclick="openMonitorView(event,'cameras')">Cameras</div><div class="submenu-item" data-monitor-view="automacao" onclick="openMonitorView(event,'automacao')">Automacao</div><div class="submenu-item" data-monitor-view="importar_xml" onclick="openMonitorView(event,'importar_xml')">Importar XML</div><div class="submenu-item" data-monitor-view="gestor_emails" onclick="openMonitorView(event,'gestor_emails')">Gestor de E-mails</div><div class="submenu-item" data-monitor-view="comunicacao" onclick="openMonitorComunicacao(event)">Comunicacao</div></div></div>
     <div class="menu-item" onclick="showTab('agentia',this); iniciarAgentIa()">Agent IA</div>
     <div class="menu-item has-submenu" data-tab="config" onclick="toggleConfigSubmenu(event)">Config <span class="submenu-caret">&#9662;</span><div class="submenu" id="submenuConfig"><div class="submenu-item active" onclick="openConfigView(event,'status')">Status</div><div class="submenu-item" onclick="openConfigView(event,'logs')">Logs</div><div class="submenu-item" onclick="openConfigView(event,'cameras')">Cameras</div><div class="submenu-item" onclick="openConfigView(event,'sip')">SIP</div><div class="submenu-item" onclick="openConfigView(event,'nfe')">NF-e</div><div class="submenu-item" onclick="openConfigView(event,'vendas')">Vendas</div><div class="submenu-item" onclick="openDocsPortal(event)">Docs</div></div></div>
-    <div id="menuLogoutBtn" class="menu-item menu-item-logout" onclick="forcarLogoutSistema()">Sair</div>
   </nav>
 
   <!-- =====================================================
@@ -285,6 +275,37 @@
         </div>
       </div>
 
+    </div>
+
+    <div id="dashViewComissoes" class="dash-view hidden">
+      <div class="boxFrota">
+        <div class="comissao-dashboard-head">
+          <div>
+            <h2>Dashboard de Comissões</h2>
+            <p class="hint">Ranking de devoluções: o melhor colocado possui o menor percentual.</p>
+          </div>
+          <button type="button" onclick="carregarDashboardComissoes()">Atualizar Dashboard</button>
+        </div>
+        <div id="dashComissoesResumo" class="vendas-resumo-cards vendas-resumo-cards--wide"></div>
+      </div>
+      <div class="boxFrota">
+        <h3>Ranking de Devoluções</h3>
+        <div class="tableWrap">
+          <table class="dash-table">
+            <thead>
+              <tr>
+                <th>Posição</th>
+                <th>Entregador</th>
+                <th>Volumes carregados</th>
+                <th>Devoluções</th>
+                <th>Percentual</th>
+                <th>Líquido</th>
+              </tr>
+            </thead>
+            <tbody id="dashComissoesRankingBody"></tbody>
+          </table>
+        </div>
+      </div>
     </div>
 </section>
 
@@ -1101,12 +1122,12 @@
         <button type="button" onclick="salvarComissaoCadastro()">Salvar Cadastro</button>
       </div>
       <div class="boxFrota">
-        <h3>Rotas / Cidades</h3>
-        <input id="comcidade_rota" placeholder="Nome da rota">
-        <button type="button" onclick="salvarComissaoCidade()">Adicionar Rota</button>
+        <h3>Cidades / Rotas</h3>
+        <input id="comcidade_rota" placeholder="Nome da cidade ou rota">
+        <button type="button" onclick="salvarComissaoCidade()">Adicionar Cidade</button>
         <div style="overflow:auto; max-height:250px;">
           <table>
-            <thead><tr><th>Rota</th><th>Acoes</th></tr></thead>
+            <thead><tr><th>Cidade / Rota</th><th>Ações</th></tr></thead>
             <tbody id="comissaoCidadesBody"></tbody>
           </table>
         </div>
@@ -1738,72 +1759,107 @@
        (MENU) COMISSAO
   ====================================================== -->
   <section id="comissao" class="section">
-    <h2>Comissao</h2>
+    <div class="comissao-page-head">
+      <div>
+        <h2 id="comissaoPageTitle">Comissões</h2>
+        <p id="comissaoPageHint" class="hint">Lançamentos baseados na aba “Cargas Lançar” da planilha de comissões.</p>
+      </div>
+      <button id="comissaoNovoLancamentoBtn" type="button" onclick="abrirComissaoLancamentoModal()">Novo lançamento</button>
+    </div>
 
     <div id="comissaoViewLancamento" class="dash-view">
-      <div class="frotaGrid">
-        <div class="boxFrota">
-          <h3>Novo Lancamento</h3>
-          <input id="com_cod_vendedor" type="number" placeholder="Codigo vendedor (A)">
-          <input id="com_motorista" placeholder="Motorista (B)">
-          <input id="com_entregador" placeholder="Entregador (C)">
-          <input id="com_rota" placeholder="Rota (D)">
-          <input id="com_usina" placeholder="Usina (AE)">
-          <input id="com_data_faturamento" type="date" placeholder="Faturamento (E)">
-          <input id="com_data_saida" type="date" placeholder="Saida (F)">
-          <input id="com_data_chegada" type="date" placeholder="Chegada (G)">
-
-          <h4 style="margin:10px 0 6px;">Valores Vendedor (R$)</h4>
-          <input id="com_v_gf" type="number" step="0.01" placeholder="V_GF (H)">
-          <input id="com_d_gf" type="number" step="0.01" placeholder="D_GF (I)">
-          <input id="com_icms_gf" type="number" step="0.01" placeholder="ICMS_GF (J)">
-          <input id="com_v_pet" type="number" step="0.01" placeholder="V_PET (K)">
-          <input id="com_d_pet" type="number" step="0.01" placeholder="D_PET (L)">
-          <input id="com_icms_pet" type="number" step="0.01" placeholder="ICMS_PET (M)">
-          <input id="com_v_agua" type="number" step="0.01" placeholder="V_AGUA (N)">
-          <input id="com_d_agua" type="number" step="0.01" placeholder="D_AGUA (O)">
-        </div>
-
-        <div class="boxFrota">
-          <h3>Volumes Entregador</h3>
-          <input id="com_gf_600" type="number" step="0.01" placeholder="GF_600 (P)">
-          <input id="com_gf_200" type="number" step="0.01" placeholder="GF_200 (Q)">
-          <input id="com_gf_300" type="number" step="0.01" placeholder="GF_300 (R)">
-          <input id="com_dev_gf" type="number" step="0.01" placeholder="DEV_GF (S)">
-          <input id="com_pet_2l" type="number" step="0.01" placeholder="PET_2L (U)">
-          <input id="com_pet_600" type="number" step="0.01" placeholder="PET_600 (V)">
-          <input id="com_dev_pet" type="number" step="0.01" placeholder="DEV_PET (W)">
-          <input id="com_agua_vol" type="number" step="0.01" placeholder="AGUA (Y)">
-          <input id="com_total_pedidos" type="number" step="0.01" placeholder="TOTALPEDIDOS (AC)">
-          <input id="com_acucar_qtd" type="number" step="0.01" placeholder="ACUCAR (AD)">
-          <input id="com_t_acucar" type="number" step="0.01" placeholder="T_ACUCAR (AF)">
-        </div>
-
-        <div class="boxFrota">
-          <h3>Regras de Comissao</h3>
-          <small class="hint">Padrao da planilha: vendedor (1%, 1%, 3%) e entregador (8%, 6%, 6%).</small>
-          <input id="com_pct_vend_gf" type="number" step="0.0001" value="0.01" placeholder="Pct vendedor GF">
-          <input id="com_pct_vend_pet" type="number" step="0.0001" value="0.01" placeholder="Pct vendedor PET">
-          <input id="com_pct_vend_agua" type="number" step="0.0001" value="0.03" placeholder="Pct vendedor AGUA">
-          <hr>
-          <input id="com_pct_ent_gf" type="number" step="0.0001" value="0.08" placeholder="Pct entregador GF">
-          <input id="com_pct_ent_pet" type="number" step="0.0001" value="0.06" placeholder="Pct entregador PET">
-          <input id="com_pct_ent_agua" type="number" step="0.0001" value="0.06" placeholder="Pct entregador AGUA">
-          <input id="com_taxa_ent_acucar" type="number" step="0.0001" value="0" placeholder="Taxa entregador ACUCAR (R$/un)">
-          <button type="button" onclick="salvarComissaoLancamento()">Salvar Lancamento</button>
+      <div id="comissaoLancamentoModal" class="foto-modal hidden" onclick="fecharComissaoLancamentoModal(event)">
+        <div class="foto-modal-content comissao-modal-content" onclick="event.stopPropagation()">
+          <div class="foto-modal-header">
+            <div>
+              <h3 id="comissaoModalTitulo">Novo lançamento de comissão</h3>
+              <small class="hint">Preencha os dados correspondentes à aba “Cargas Lançar”.</small>
+            </div>
+            <button class="btn-secondary" type="button" onclick="fecharComissaoLancamentoModal()">Fechar</button>
+          </div>
+          <div class="comissao-modal-tabs" role="tablist">
+            <button type="button" class="active" data-comissao-form-tab="identificacao" onclick="mostrarAbaComissaoForm('identificacao', this)">1. Identificação</button>
+            <button type="button" data-comissao-form-tab="vendedor" onclick="mostrarAbaComissaoForm('vendedor', this)">2. Valores do vendedor</button>
+            <button type="button" data-comissao-form-tab="volumes" onclick="mostrarAbaComissaoForm('volumes', this)">3. Volumes e devoluções</button>
+          </div>
+          <div class="comissao-form-body">
+            <div class="comissao-form-pane active" data-comissao-form-pane="identificacao">
+              <h3>Identificação da carga</h3>
+              <p class="hint">Os dados de identificação do último lançamento ficam preenchidos para facilitar lançamentos seguidos.</p>
+              <div class="comissao-fields-grid">
+                <label>Vendedor<select id="com_cod_vendedor"><option value="">Selecione o vendedor</option></select></label>
+                <label>Entregador<select id="com_entregador"><option value="">Selecione o entregador</option></select></label>
+                <label>Rota *<select id="com_rota" required><option value="">Selecione a rota</option></select></label>
+                <label>Usina<select id="com_usina"><option value="">Selecione a usina</option></select></label>
+                <label>Data de faturamento<input id="com_data_faturamento" type="date"></label>
+                <label>Data de saída<input id="com_data_saida" type="date"></label>
+                <label>Data de chegada<input id="com_data_chegada" type="date"></label>
+              </div>
+            </div>
+            <div class="comissao-form-pane" data-comissao-form-pane="vendedor">
+              <h3>Valores por categoria</h3>
+              <p class="hint">Informe vendas, devoluções e ICMS em reais, conforme a planilha.</p>
+              <div class="comissao-category-grid">
+                <fieldset><legend>Garrafa</legend>
+                  <label>Valor vendido<input id="com_v_gf" type="number" min="0" step="0.01"></label>
+                  <label>Valor devolvido<input id="com_d_gf" type="number" min="0" step="0.01"></label>
+                  <label>ICMS<input id="com_icms_gf" type="number" min="0" step="0.01"></label>
+                </fieldset>
+                <fieldset><legend>PET</legend>
+                  <label>Valor vendido<input id="com_v_pet" type="number" min="0" step="0.01"></label>
+                  <label>Valor devolvido<input id="com_d_pet" type="number" min="0" step="0.01"></label>
+                  <label>ICMS<input id="com_icms_pet" type="number" min="0" step="0.01"></label>
+                </fieldset>
+                <fieldset><legend>Água</legend>
+                  <label>Valor vendido<input id="com_v_agua" type="number" min="0" step="0.01"></label>
+                  <label>Valor devolvido<input id="com_d_agua" type="number" min="0" step="0.01"></label>
+                </fieldset>
+              </div>
+            </div>
+            <div class="comissao-form-pane" data-comissao-form-pane="volumes">
+              <h3>Volumes entregues e devolvidos</h3>
+              <div class="comissao-category-grid">
+                <fieldset><legend>Garrafa</legend>
+                  <label>GF 600 ml<input id="com_gf_600" type="number" min="0" step="0.001"></label>
+                  <label>GF 200 ml<input id="com_gf_200" type="number" min="0" step="0.001"></label>
+                  <label>GF 300 ml<input id="com_gf_300" type="number" min="0" step="0.001"></label>
+                  <label>Devolução GF<input id="com_dev_gf" type="number" min="0" step="0.001"></label>
+                </fieldset>
+                <fieldset><legend>PET</legend>
+                  <label>PET 2 litros<input id="com_pet_2l" type="number" min="0" step="0.001"></label>
+                  <label>PET 600 ml<input id="com_pet_600" type="number" min="0" step="0.001"></label>
+                  <label>Devolução PET<input id="com_dev_pet" type="number" min="0" step="0.001"></label>
+                </fieldset>
+                <fieldset><legend>Água</legend>
+                  <label>Volume de água<input id="com_agua_vol" type="number" min="0" step="0.001"></label>
+                  <label>Devolução de água<input id="com_dev_agua" type="number" min="0" step="0.001"></label>
+                </fieldset>
+                <fieldset><legend>Outros dados</legend>
+                  <label>Total de pedidos<input id="com_total_pedidos" type="number" min="0" step="1"></label>
+                  <label>Quantidade de açúcar<input id="com_acucar_qtd" type="number" min="0" step="0.001"></label>
+                  <label>Total açúcar<input id="com_t_acucar" type="number" min="0" step="0.01"></label>
+                </fieldset>
+              </div>
+            </div>
+          </div>
+          <div class="comissao-modal-actions">
+            <button class="btn-secondary" type="button" onclick="fecharComissaoLancamentoModal()">Cancelar</button>
+            <button id="comissaoModalSalvarBtn" type="button" onclick="salvarComissaoLancamento()">Salvar lançamento</button>
+          </div>
         </div>
       </div>
 
-      <h3>Lancamentos</h3>
-      <div style="overflow:auto; max-height:380px;">
+      <div class="boxFrota">
+      <h3>Lançamentos</h3>
+      <div style="overflow:auto; max-height:620px;">
         <table>
           <thead>
             <tr>
               <th>ID</th>
               <th>Vendedor</th>
-              <th>Motorista</th>
               <th>Entregador</th>
               <th>Rota</th>
+              <th>Chegada</th>
               <th>Base Vend. (R$)</th>
               <th>Com. Vend. (R$)</th>
               <th>Base Ent. (vol)</th>
@@ -1814,53 +1870,72 @@
           <tbody id="comissaoLancamentosBody"></tbody>
         </table>
       </div>
+      </div>
     </div>
 
     <div id="comissaoViewRelatorios" class="dash-view hidden">
       <div class="frotaGrid">
         <div class="boxFrota">
           <h3>Filtros</h3>
-          <select id="comrel_vendedor" onchange="atualizarBotaoImprimirComissao()"><option value="">Todos vendedores</option></select>
-          <select id="comrel_entregador" onchange="atualizarBotaoImprimirComissao()"><option value="">Todos entregadores</option></select>
+          <select id="comrel_vendedor" onchange="alterarFiltroRelatorioComissao('vendedor')"><option value="">Todos vendedores</option></select>
+          <select id="comrel_entregador" onchange="alterarFiltroRelatorioComissao('entregador')"><option value="">Todos entregadores</option></select>
           <button type="button" onclick="carregarRelatoriosComissao()">Atualizar Relatorios</button>
           <button id="comrelPrintBtn" type="button" class="hidden" onclick="imprimirRelatorioComissaoPdf()">Imprimir PDF</button>
         </div>
-        <div class="boxFrota">
+        <div id="comrelResumoBox" class="boxFrota">
           <h3>Resumo Geral</h3>
           <div id="comrelResumoGeral" class="hint">Carregando...</div>
         </div>
       </div>
       <div class="frotaGrid">
-        <div class="boxFrota">
+        <div id="comrelVendedoresBox" class="boxFrota">
           <h3>Total Vendedores</h3>
           <div style="overflow:auto; max-height:320px;">
             <table>
-              <thead><tr><th>Cod</th><th>Nome</th><th>Base Total</th><th>Comissao</th></tr></thead>
+              <thead><tr>
+                <th>Cod</th><th>Nome</th>
+                <th>Base GF</th><th>% GF</th><th>Com. GF</th>
+                <th>Base PET</th><th>% PET</th><th>Com. PET</th>
+                <th>Base Água</th><th>% Água</th><th>Com. Água</th>
+                <th>Base Total</th><th>Comissão Total</th>
+              </tr></thead>
               <tbody id="comrelTotalVendedoresBody"></tbody>
             </table>
           </div>
         </div>
-        <div class="boxFrota">
+        <div id="comrelEntregadoresBox" class="boxFrota">
           <h3>Total Entregadores</h3>
           <div style="overflow:auto; max-height:320px;">
             <table>
-              <thead><tr><th>Nome</th><th>Vol Total</th><th>Comissao</th></tr></thead>
+              <thead><tr>
+                <th>Nome</th>
+                <th>Vol. GF</th><th>% GF</th><th>Com. GF</th>
+                <th>Vol. PET</th><th>% PET</th><th>Com. PET</th>
+                <th>Vol. Água</th><th>% Água</th><th>Com. Água</th>
+                <th>% Devolução</th><th>Vol. Total</th><th>Comissão Total</th>
+              </tr></thead>
               <tbody id="comrelTotalEntregadoresBody"></tbody>
             </table>
           </div>
         </div>
       </div>
       <div class="frotaGrid">
-        <div class="boxFrota">
+        <div id="comrelRefugoBox" class="boxFrota">
           <h3>Total Refugo</h3>
           <div style="overflow:auto; max-height:220px;">
             <table>
-              <thead><tr><th>Entregador</th><th>DEV_GF</th><th>DEV_PET</th></tr></thead>
+              <thead><tr>
+                <th>Entregador</th>
+                <th>Vol. GF</th><th>Dev. GF</th><th>% Dev. GF</th>
+                <th>Vol. PET</th><th>Dev. PET</th><th>% Dev. PET</th>
+                <th>Vol. Água</th><th>Dev. Água</th><th>% Dev. Água</th>
+                <th>% Geral</th>
+              </tr></thead>
               <tbody id="comrelRefugoBody"></tbody>
             </table>
           </div>
         </div>
-        <div class="boxFrota">
+        <div id="comrelAcucarBox" class="boxFrota">
           <h3>Total Acucar</h3>
           <div style="overflow:auto; max-height:220px;">
             <table>
@@ -1868,6 +1943,12 @@
               <tbody id="comrelAcucarBody"></tbody>
             </table>
           </div>
+        </div>
+      </div>
+      <div class="boxFrota">
+        <h3 id="comrelLancamentosTitulo">Lançamentos do relatório</h3>
+        <div id="comrelLancamentosDetalhe" style="overflow:auto; max-height:620px;">
+          <div class="hint">Selecione um filtro e atualize o relatório.</div>
         </div>
       </div>
     </div>
@@ -2897,78 +2978,10 @@
   <input type="file" id="nfeOcrImagemInput" accept="image/*" capture="environment" hidden>
   <input type="file" id="estoqueItensFotoInput" accept="image/*" capture="environment" hidden>
 
-  <div id="loginModal" class="login-modal">
-    <div class="login-card">
-      <h3>Entrar no Sistema</h3>
-      <form id="loginForm" onsubmit="event.preventDefault(); fazerLoginSistema();">
-        <input type="text" id="loginUsuario" placeholder="Login" autocomplete="username" autocapitalize="none" spellcheck="false">
-        <input type="password" id="loginSenha" placeholder="Senha" autocomplete="current-password">
-        <button type="submit" id="loginBtn">Entrar</button>
-        <small id="loginMsg" class="hint"></small>
-      </form>
-    </div>
-  </div>
-
   <!-- =====================================================
        SCRIPTS
   ====================================================== -->
   <script src="/vendor/jssip.min.js?v=__RB_ASSET_VERSION__"></script>
   <script src="/script.js?v=__RB_ASSET_VERSION__"></script>
-  <script>
-    (function () {
-      function forceLoginUsable() {
-        var modal = document.getElementById("loginModal");
-        if (!modal) return;
-        var blockers = document.querySelectorAll(".menu-overlay, .foto-modal, .chat-widget, .chat-fab, .dash-tooltip");
-        if (modal.classList.contains("hidden")) {
-          for (var j = 0; j < blockers.length; j++) {
-            blockers[j].style.pointerEvents = "";
-          }
-          return;
-        }
-
-        modal.style.zIndex = "2147483647";
-        modal.style.pointerEvents = "auto";
-
-        var card = modal.querySelector(".login-card");
-        if (card) card.style.pointerEvents = "auto";
-
-        var body = document.body;
-        if (body) {
-          body.classList.remove("menu-open");
-          body.classList.add("login-active");
-          body.classList.add("modal-open");
-          body.style.overflow = "";
-        }
-
-        for (var i = 0; i < blockers.length; i++) {
-          var el = blockers[i];
-          el.style.pointerEvents = "none";
-        }
-
-        var user = document.getElementById("loginUsuario");
-        var pass = document.getElementById("loginSenha");
-        if (user) {
-          user.disabled = false;
-          user.readOnly = false;
-        }
-        if (pass) {
-          pass.disabled = false;
-          pass.readOnly = false;
-        }
-      }
-
-      window.addEventListener("load", function () {
-        setTimeout(forceLoginUsable, 50);
-        setTimeout(forceLoginUsable, 400);
-        var tries = 0;
-        var h = setInterval(function () {
-          forceLoginUsable();
-          tries += 1;
-          if (tries >= 20) clearInterval(h);
-        }, 250);
-      });
-    })();
-  </script>
 </body>
 </html>

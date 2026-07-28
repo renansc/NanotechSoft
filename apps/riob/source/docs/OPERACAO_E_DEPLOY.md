@@ -301,7 +301,7 @@ Checklist:
 ### 9.1 Fluxo padrao
 
 ```bash
-./update.sh
+../../../update.sh
 ```
 
 Equivalente manual:
@@ -892,13 +892,10 @@ RB_OPEN_WEBUI_HF_HUB_OFFLINE=1
 RB_OPEN_WEBUI_OLLAMA_URL=http://ollama:11434
 ```
 
-Em deploy Docker, o projeto sobe um container `riobranco-ollama` com volume
-persistente `ollama_data` e um container `riobranco-open-webui` com volume
-persistente `open_webui_data`. Os scripts `./up.sh` e `./update.sh` executam o
-bootstrap `ollama-model-init`, que faz `ollama pull` do modelo definido em
-`RB_AGENT_OLLAMA_MODEL`, sobem o WebUI e validam que ele consegue listar esse
-mesmo modelo. A logica comum dos atalhos fica em `deploy/lib/ollama.sh`; o pull
-do modelo fica em `deploy/ollama/pull-model.sh`.
+Ollama e Open WebUI são componentes opcionais. Os comandos canônicos
+`../../../up.sh`, `../../../down.sh` e `../../../update.sh` não administram esses
+serviços. Instalação, atualização e validação de modelos devem ser operações
+separadas, explicitamente solicitadas.
 
 O Open WebUI e construido sobre a imagem oficial definida em
 `RB_OPEN_WEBUI_IMAGE`, com NumPy `2.2.6` fixado por
@@ -917,17 +914,16 @@ Para producao usando o Ollama gerenciado pelo compose:
 3. defina `RB_AGENT_OLLAMA_MODEL` com o mesmo Qwen validado na homologacao
 4. deixe `RB_OPEN_WEBUI_OLLAMA_URL=http://ollama:11434`
 5. gere uma chave longa para `RB_OPEN_WEBUI_SECRET_KEY`
-6. execute `./update.sh`
+6. opere o serviço opcional de IA separadamente; `../../../update.sh` atualiza
+   apenas portal e RioB
 
 No modo gerenciado, `RB_MANAGED_OLLAMA_MODEL` define o modelo oficial e assume
 `qwen2.5:3b` quando nao estiver presente. Depois do pull e da validacao, o
 bootstrap remove os modelos listados em `RB_OLLAMA_REMOVE_MODELS`; o padrao
 remove `qwen2.5:7b`.
 
-O proxy e o Open WebUI sao publicados em todas as interfaces da VM. Os scripts
-`./up.sh` e `./update.sh` validam `/api/status` pelo valor de
-`RB_PUBLIC_BASE_URL`, impedindo que um deploy aparentemente saudavel fique
-acessivel apenas por `localhost`.
+O proxy do RioB é atualizado pelo fluxo canônico. A publicação e validação do
+Open WebUI não fazem parte desse fluxo.
 
 Se for necessario usar um Ollama externo, defina `RB_MANAGED_OLLAMA=0` e informe
 `RB_AGENT_OLLAMA_URL`; nesse modo o deploy nao instala modelo no servidor externo,
@@ -935,12 +931,11 @@ mas a validacao final ainda falha se o modelo configurado nao estiver acessivel.
 
 O Open WebUI fica disponivel por padrao em `http://IP-DA-VM:3000`. A primeira
 conta cadastrada se torna administradora. Depois do primeiro cadastro, defina
-`RB_OPEN_WEBUI_ENABLE_SIGNUP=false` e execute `./update.sh` para bloquear novos
-registros publicos.
+`RB_OPEN_WEBUI_ENABLE_SIGNUP=false` e reinicie explicitamente o serviço do
+Open WebUI para bloquear novos registros públicos.
 
-Nao mantenha uma segunda instalacao nativa do Ollama nem outro compose separado
-do Open WebUI na mesma VM. O deploy oficial passa a administrar ambos pelo
-`docker-compose.yml` deste repositorio.
+Evite instalações concorrentes do mesmo serviço de IA na mesma VM. Elas não
+fazem parte dos quatro comandos operacionais canônicos.
 
 ## 20. Migracao dos combustiveis da frota
 

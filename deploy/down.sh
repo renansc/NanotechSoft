@@ -8,6 +8,6 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/common.sh"
 cd_project
 require_compose
 
-log "parando app sem remover os bancos..."
-compose stop "$APP_SERVICE"
-compose ps "$DB_SERVICE" "$PACS_DB_SERVICE" "$APP_SERVICE"
+log "parando portal e RioB sem remover bancos, volumes ou dados..."
+compose stop "$APP_SERVICE" "$RIOB_PROXY_SERVICE" "$RIOB_APP_SERVICE"
+compose ps "${DATABASE_SERVICES[@]}" "${RUNTIME_SERVICES[@]}"

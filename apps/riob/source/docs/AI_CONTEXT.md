@@ -47,12 +47,14 @@ If you need context fast, read these files first:
 
 ## Useful commands
 
-- `./up.sh`
-  - rebuild and start `app` and `proxy`
-- `./down.sh`
-  - stop `app` and `proxy`
-- `./update.sh`
-  - pull latest code from the current branch and redeploy `app` and `proxy`
+- `../../../up.sh`
+  - rebuild and start the integrated portal and RioB stack without replacing data
+- `../../../down.sh`
+  - stop portal and RioB applications while preserving databases
+- `../../../update.sh`
+  - pull the current branch and redeploy applications without operating databases
+- `../../../git-safe-push.sh -m "message"`
+  - validate, commit, and push through the repository-safe workflow
 - `python3 -m unittest discover -s tests -v`
   - run the Python test suite
 - `python3 -m compileall server.py tools tests`
@@ -73,6 +75,8 @@ If you need context fast, read these files first:
 - If you need to plan a change, generate a brief first instead of guessing the files.
 - Prefer `./riob-agent brief "..."` when you need a concise, file-aware analysis before editing.
 - If a flow touches deploy, backup, or integrations, mention the operational impact explicitly.
+- Treat `docs/AI_RESEARCH_MANUAL.md` at the repository root as the permanent
+  operational source of truth.
 - If the context is incomplete, say what is missing instead of inventing details.
 
 ## High-signal areas

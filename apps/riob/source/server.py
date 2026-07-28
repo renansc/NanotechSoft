@@ -14,7 +14,7 @@ from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, landscape
 from werkzeug.utils import secure_filename
-from werkzeug.security import generate_password_hash, check_password_hash
+from werkzeug.security import generate_password_hash
 import os
 import json
 import ast
@@ -415,6 +415,244 @@ db_config = {
 
 def get_conn():
     return mysql.connector.connect(**db_config)
+
+def _importar_cadastros_comissao_modelo(cur):
+    """Atualiza a base inicial extraída da aba Cadastros da planilha 2025."""
+    path = os.path.join(BASE_DIR, "data", "comissao_cadastros_2025.csv")
+    if not os.path.exists(path):
+        return
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS comissao_importacoes (
+            chave VARCHAR(120) PRIMARY KEY,
+            importado_em DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    chave_importacao = "cadastros_planilha_2025_v1"
+    cur.execute("SELECT chave FROM comissao_importacoes WHERE chave=%s LIMIT 1", (chave_importacao,))
+    if cur.fetchone():
+        return
+    with open(path, "r", encoding="utf-8", newline="") as arquivo:
+        for item in csv.DictReader(arquivo):
+            codigo = int(float(item.get("codigo") or 0))
+            funcao = str(item.get("funcao") or "").strip().lower()
+            nome = str(item.get("nome") or "").strip()
+            if not codigo or funcao not in ("vendedor", "entregador") or not nome:
+                continue
+            valores = (
+                nome,
+                float(item.get("pct_gf") or 0),
+                float(item.get("pct_pet") or 0),
+                float(item.get("pct_agua") or 0),
+                funcao,
+                codigo,
+            )
+            cur.execute(
+                "SELECT id FROM comissao_cadastros WHERE LOWER(funcao)=%s AND codigo=%s ORDER BY id LIMIT 1",
+                (funcao, codigo),
+            )
+            existente = cur.fetchone()
+            if existente:
+                cur.execute(
+                    """
+                    UPDATE comissao_cadastros
+                    SET nome=%s, pct_gf=%s, pct_pet=%s, pct_agua=%s, ativo=1
+                    WHERE LOWER(funcao)=%s AND codigo=%s
+                    """,
+                    valores,
+                )
+            else:
+                cur.execute(
+                    """
+                    INSERT INTO comissao_cadastros
+                        (nome, pct_gf, pct_pet, pct_agua, ativo, funcao, codigo)
+                    VALUES (%s, %s, %s, %s, 1, %s, %s)
+                    """,
+                    valores,
+                )
+    cur.execute("INSERT INTO comissao_importacoes (chave) VALUES (%s)", (chave_importacao,))
+
+def _comissao_rota_chave(valor):
+    texto = unicodedata.normalize("NFKD", str(valor or "").strip())
+    texto = "".join(char for char in texto if not unicodedata.combining(char))
+    return re.sub(r"[^a-z0-9]+", " ", texto.lower()).strip()
+
+def _comissao_cidade_upsert(cur, rota):
+    rota = re.sub(r"\s+", " ", str(rota or "")).strip()
+    rota_norm = _comissao_rota_chave(rota)
+    if not rota_norm:
+        return 0, False
+    cur.execute("SELECT id FROM comissao_cidades WHERE rota_norm=%s ORDER BY id LIMIT 1", (rota_norm,))
+    existente = cur.fetchone()
+    if existente:
+        return int(existente[0]), False
+    cur.execute("INSERT INTO comissao_cidades (rota, rota_norm) VALUES (%s, %s)", (rota, rota_norm))
+    return int(cur.lastrowid), True
+
+def _preparar_comissao_cidades(cur):
+    try:
+        cur.execute("ALTER TABLE comissao_cidades ADD COLUMN rota_norm VARCHAR(220) NOT NULL DEFAULT '' AFTER rota")
+    except Exception:
+        pass
+    cur.execute("SELECT id, rota FROM comissao_cidades ORDER BY id")
+    vistos = {}
+    for item_id, rota in cur.fetchall() or []:
+        chave = _comissao_rota_chave(rota)
+        if not chave:
+            cur.execute("DELETE FROM comissao_cidades WHERE id=%s", (item_id,))
+        elif chave in vistos:
+            cur.execute("DELETE FROM comissao_cidades WHERE id=%s", (item_id,))
+        else:
+            vistos[chave] = item_id
+            cur.execute("UPDATE comissao_cidades SET rota_norm=%s WHERE id=%s", (chave, item_id))
+    try:
+        cur.execute("ALTER TABLE comissao_cidades ADD UNIQUE KEY uq_comissao_cidades_rota_norm (rota_norm)")
+    except Exception:
+        pass
+
+def _importar_cidades_comissao_modelo(cur):
+    path = os.path.join(BASE_DIR, "data", "comissao_cidades_2025.csv")
+    if not os.path.exists(path):
+        return
+    chave_importacao = "cidades_planilha_2025_v1"
+    cur.execute("SELECT chave FROM comissao_importacoes WHERE chave=%s LIMIT 1", (chave_importacao,))
+    if cur.fetchone():
+        return
+    with open(path, "r", encoding="utf-8", newline="") as arquivo:
+        for item in csv.DictReader(arquivo):
+            _comissao_cidade_upsert(cur, item.get("rota"))
+    cur.execute("INSERT INTO comissao_importacoes (chave) VALUES (%s)", (chave_importacao,))
+
+def _importar_lancamentos_comissao_modelo(cur):
+    """Importa uma única vez os valores da aba Cargas Lançar da planilha 2025."""
+    path = os.path.join(BASE_DIR, "data", "comissao_lancamentos_2025.csv")
+    if not os.path.exists(path):
+        return
+    chave_importacao = "lancamentos_planilha_2025_v1"
+    cur.execute("SELECT chave FROM comissao_importacoes WHERE chave=%s LIMIT 1", (chave_importacao,))
+    if cur.fetchone():
+        return
+
+    cur.execute(
+        """
+        SELECT codigo, nome, pct_gf, pct_pet, pct_agua, LOWER(funcao)
+        FROM comissao_cadastros
+        WHERE ativo=1 AND LOWER(funcao) IN ('vendedor', 'entregador')
+        ORDER BY id
+        """
+    )
+    vendedores = {}
+    entregadores = {}
+    for codigo, nome, pct_gf, pct_pet, pct_agua, funcao in cur.fetchall() or []:
+        percentuais = (
+            float(pct_gf or 0),
+            float(pct_pet or 0),
+            float(pct_agua or 0),
+        )
+        if funcao == "vendedor" and int(codigo or 0):
+            vendedores[int(codigo)] = percentuais
+        elif funcao == "entregador":
+            entregadores[_comissao_rota_chave(nome)] = percentuais
+
+    def numero(item, campo):
+        try:
+            return float(item.get(campo) or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    def data_iso(item, campo):
+        valor = str(item.get(campo) or "").strip()
+        return valor or None
+
+    with open(path, "r", encoding="utf-8", newline="") as arquivo:
+        for item in csv.DictReader(arquivo):
+            cod_vendedor = int(numero(item, "cod_vendedor"))
+            entregador = str(item.get("entregador") or "").strip()
+            pct_vendedor = vendedores.get(cod_vendedor, (0.0, 0.0, 0.0))
+            pct_entregador = entregadores.get(
+                _comissao_rota_chave(entregador),
+                (0.0, 0.0, 0.0),
+            )
+            cur.execute(
+                """
+                INSERT INTO comissao_lancamentos (
+                    cod_vendedor, motorista, entregador, rota, usina,
+                    data_faturamento, data_saida, data_chegada,
+                    v_gf, d_gf, icms_gf, v_pet, d_pet, icms_pet, v_agua, d_agua,
+                    gf_600, gf_200, gf_300, dev_gf,
+                    pet_2l, pet_600, dev_pet, agua_vol, dev_agua,
+                    total_pedidos, acucar_qtd, t_acucar,
+                    pct_vend_gf, pct_vend_pet, pct_vend_agua,
+                    pct_ent_gf, pct_ent_pet, pct_ent_agua, taxa_ent_acucar
+                ) VALUES (
+                    %s, %s, %s, %s, %s,
+                    %s, %s, %s,
+                    %s, %s, %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s,
+                    %s, %s, %s,
+                    %s, %s, %s,
+                    %s, %s, %s, %s
+                )
+                """,
+                (
+                    cod_vendedor,
+                    "",
+                    entregador,
+                    str(item.get("rota") or "").strip(),
+                    str(item.get("usina") or "").strip(),
+                    data_iso(item, "data_faturamento"),
+                    data_iso(item, "data_saida"),
+                    data_iso(item, "data_chegada"),
+                    numero(item, "v_gf"),
+                    numero(item, "d_gf"),
+                    numero(item, "icms_gf"),
+                    numero(item, "v_pet"),
+                    numero(item, "d_pet"),
+                    numero(item, "icms_pet"),
+                    numero(item, "v_agua"),
+                    numero(item, "d_agua"),
+                    numero(item, "gf_600"),
+                    numero(item, "gf_200"),
+                    numero(item, "gf_300"),
+                    numero(item, "dev_gf"),
+                    numero(item, "pet_2l"),
+                    numero(item, "pet_600"),
+                    numero(item, "dev_pet"),
+                    numero(item, "agua_vol"),
+                    0,
+                    numero(item, "total_pedidos"),
+                    numero(item, "acucar_qtd"),
+                    numero(item, "t_acucar"),
+                    *pct_vendedor,
+                    *pct_entregador,
+                    0,
+                ),
+            )
+    cur.execute("INSERT INTO comissao_importacoes (chave) VALUES (%s)", (chave_importacao,))
+
+def _sincronizar_comissao_cidades_kanban(cur):
+    candidatos = []
+    for sql in (
+        "SELECT DISTINCT cidade FROM fretes WHERE TRIM(COALESCE(cidade, '')) <> ''",
+        "SELECT DISTINCT cidade FROM cargas WHERE TRIM(COALESCE(cidade, '')) <> ''",
+        "SELECT DISTINCT rota FROM cargas WHERE TRIM(COALESCE(rota, '')) <> ''",
+        "SELECT DISTINCT rota FROM pontos_venda WHERE TRIM(COALESCE(rota, '')) <> ''",
+    ):
+        cur.execute(sql)
+        candidatos.extend(row[0] for row in (cur.fetchall() or []) if row and row[0])
+    cur.execute("SELECT nome, cidades FROM cargas_rotas WHERE ativo=1")
+    for nome, cidades in cur.fetchall() or []:
+        if nome:
+            candidatos.append(nome)
+        candidatos.extend(
+            parte.strip()
+            for parte in re.split(r"(?:\r?\n|[;,|])+", str(cidades or ""))
+            if parte.strip()
+        )
+    for rota in candidatos:
+        _comissao_cidade_upsert(cur, rota)
 
 # =========================================================
 # (1.5) MIGRAÇÃO / GARANTIR ESQUEMA (FROTA)
@@ -1228,6 +1466,7 @@ def ensure_schema():
             pet_600 DECIMAL(12,3) DEFAULT 0,
             dev_pet DECIMAL(12,3) DEFAULT 0,
             agua_vol DECIMAL(12,3) DEFAULT 0,
+            dev_agua DECIMAL(12,3) DEFAULT 0,
             total_pedidos DECIMAL(12,3) DEFAULT 0,
             acucar_qtd DECIMAL(12,3) DEFAULT 0,
             t_acucar DECIMAL(12,3) DEFAULT 0,
@@ -1268,8 +1507,10 @@ def ensure_schema():
         CREATE TABLE IF NOT EXISTS comissao_cidades (
             id INT AUTO_INCREMENT PRIMARY KEY,
             rota VARCHAR(220) NOT NULL,
+            rota_norm VARCHAR(220) NOT NULL DEFAULT '',
             criado_em DATETIME DEFAULT CURRENT_TIMESTAMP,
-            INDEX (rota)
+            INDEX (rota),
+            UNIQUE KEY uq_comissao_cidades_rota_norm (rota_norm)
         )
         """)
         cur.execute("""
@@ -2152,6 +2393,10 @@ def ensure_schema():
         except Exception:
             pass
         try:
+            cur.execute("ALTER TABLE comissao_lancamentos ADD COLUMN dev_agua DECIMAL(12,3) DEFAULT 0 AFTER agua_vol")
+        except Exception:
+            pass
+        try:
             cur.execute("ALTER TABLE nfe_config ADD COLUMN ambiente VARCHAR(20) DEFAULT 'producao'")
         except Exception:
             pass
@@ -2291,6 +2536,11 @@ def ensure_schema():
             )
         except Exception:
             pass
+        _importar_cadastros_comissao_modelo(cur)
+        _preparar_comissao_cidades(cur)
+        _importar_cidades_comissao_modelo(cur)
+        _sincronizar_comissao_cidades_kanban(cur)
+        _importar_lancamentos_comissao_modelo(cur)
         _sincronizar_usuarios_sip(conn)
         conn.commit()
         cur.close()
@@ -4018,7 +4268,7 @@ def _calc_comissao_lancamento(row):
 
     base_ent_gf = _nz(row.get("gf_600")) + _nz(row.get("gf_200")) + _nz(row.get("gf_300")) - _nz(row.get("dev_gf"))
     base_ent_pet = _nz(row.get("pet_2l")) + _nz(row.get("pet_600")) - _nz(row.get("dev_pet"))
-    base_ent_agua = _nz(row.get("agua_vol"))
+    base_ent_agua = _nz(row.get("agua_vol")) - _nz(row.get("dev_agua"))
     base_ent_acucar = _nz(row.get("acucar_qtd"))
     taxa_acucar = _nz(row.get("taxa_ent_acucar"))
     if taxa_acucar <= 0:
@@ -9580,30 +9830,6 @@ def _usuario_publico_dict(row):
         "codbar_modo": _normalizar_codbar_modo(row.get("codbar_modo")),
         "data_cadastro": _fmt_dt(row.get("data_cadastro")),
     }
-
-def _buscar_usuario_login_cur(cur, login):
-    cur.execute(
-        """
-        SELECT
-            u.id,
-            COALESCE(c.nome, u.nome) AS nome,
-            u.login,
-            u.senha,
-            u.ativo,
-            COALESCE(c.sip_habilitado, u.sip_habilitado, 0) AS sip_habilitado,
-            COALESCE(c.sip_usuario, u.sip_usuario, '') AS sip_usuario,
-            COALESCE(c.sip_senha, u.sip_senha, '') AS sip_senha,
-            COALESCE(c.sip_ramal, u.sip_ramal, '') AS sip_ramal,
-            COALESCE(c.codbar_modo, u.codbar_modo, 'bip') AS codbar_modo,
-            u.data_cadastro
-        FROM usuarios u
-        LEFT JOIN colaboradores c ON c.usuario_id = u.id
-        WHERE u.login=%s
-        LIMIT 1
-        """,
-        (login,),
-    )
-    return cur.fetchone()
 
 def _buscar_usuario_id_cur(cur, user_id):
     cur.execute(
@@ -20695,67 +20921,6 @@ def usuario_logado_api():
         return jsonify({"erro": "usuario inativo"}), 403
     return jsonify({"ok": True, "usuario": _usuario_publico_dict(row)})
 
-@app.route("/api/login", methods=["POST"])
-def login_usuario():
-    data = request.json or {}
-    login = _as_str(data.get("login"))
-    senha = _as_str(data.get("senha"))
-    if not login or not senha:
-        return jsonify({"erro": "login e senha sao obrigatorios"}), 400
-
-    conn = get_conn()
-    cur = conn.cursor(dictionary=True)
-    row = _buscar_usuario_login_cur(cur, login)
-    if not row:
-        cur.close()
-        conn.close()
-        return jsonify({"erro": "credenciais invalidas"}), 401
-
-    senha_ok = False
-    senha_db = str(row.get("senha") or "")
-    # Aceita hash atual; fallback para senhas legadas em texto puro.
-    try:
-        senha_ok = check_password_hash(senha_db, senha)
-    except Exception:
-        senha_ok = False
-    legacy_plain = (not senha_ok and senha_db == senha)
-    if legacy_plain:
-        senha_ok = True
-        try:
-            cur2 = conn.cursor()
-            cur2.execute("UPDATE usuarios SET senha=%s WHERE id=%s", (generate_password_hash(senha), row.get("id")))
-            conn.commit()
-            cur2.close()
-        except Exception:
-            pass
-
-    if senha_ok:
-        try:
-            _sincronizar_usuarios_sip(conn, senha_plana_por_id={_as_int(row.get("id"), 0): senha}, apenas_ids=[row.get("id")])
-            conn.commit()
-        except Exception:
-            pass
-
-    cur.close()
-    conn.close()
-
-    if not senha_ok:
-        return jsonify({"erro": "credenciais invalidas"}), 401
-    if _as_int(row.get("ativo"), 1) != 1:
-        return jsonify({"erro": "usuario inativo"}), 403
-
-    _sincronizar_usuario_freepbx_best_effort(row.get("id"))
-
-    return jsonify({
-        "ok": True,
-        "usuario": {
-            "id": _as_int(row.get("id"), 0),
-            "nome": _as_str(row.get("nome")),
-            "login": _as_str(row.get("login")),
-            "codbar_modo": _normalizar_codbar_modo(row.get("codbar_modo")),
-        }
-    })
-
 @app.route("/api/chat/conversa", methods=["GET"])
 def chat_conversa():
     usuario_id = _as_int(request.args.get("usuario_id"), 0)
@@ -21425,10 +21590,17 @@ def listar_comissao_lancamentos():
     cur.execute("""
         SELECT
             id, cod_vendedor, motorista, entregador, rota, usina,
+            (
+                SELECT cadastro.nome
+                FROM comissao_cadastros cadastro
+                WHERE LOWER(cadastro.funcao)='vendedor'
+                  AND cadastro.codigo=comissao_lancamentos.cod_vendedor
+                ORDER BY cadastro.id LIMIT 1
+            ) AS vendedor_nome,
             data_faturamento, data_saida, data_chegada,
             v_gf, d_gf, icms_gf, v_pet, d_pet, icms_pet, v_agua, d_agua,
             gf_600, gf_200, gf_300, dev_gf, pet_2l, pet_600, dev_pet,
-            agua_vol, total_pedidos, acucar_qtd, t_acucar,
+            agua_vol, dev_agua, total_pedidos, acucar_qtd, t_acucar,
             pct_vend_gf, pct_vend_pet, pct_vend_agua,
             pct_ent_gf, pct_ent_pet, pct_ent_agua, taxa_ent_acucar,
             criado_em
@@ -21445,6 +21617,7 @@ def listar_comissao_lancamentos():
         out.append({
             "id": _as_int(r.get("id"), 0),
             "cod_vendedor": _as_int(r.get("cod_vendedor"), 0),
+            "vendedor_nome": _as_str(r.get("vendedor_nome")),
             "motorista": _as_str(r.get("motorista")),
             "entregador": _as_str(r.get("entregador")),
             "rota": _as_str(r.get("rota")),
@@ -21453,6 +21626,26 @@ def listar_comissao_lancamentos():
             "data_saida": _fmt_dt(r.get("data_saida")),
             "data_chegada": _fmt_dt(r.get("data_chegada")),
             "criado_em": _fmt_dt(r.get("criado_em")),
+            "v_gf": _as_float(r.get("v_gf"), 0.0),
+            "d_gf": _as_float(r.get("d_gf"), 0.0),
+            "icms_gf": _as_float(r.get("icms_gf"), 0.0),
+            "v_pet": _as_float(r.get("v_pet"), 0.0),
+            "d_pet": _as_float(r.get("d_pet"), 0.0),
+            "icms_pet": _as_float(r.get("icms_pet"), 0.0),
+            "v_agua": _as_float(r.get("v_agua"), 0.0),
+            "d_agua": _as_float(r.get("d_agua"), 0.0),
+            "gf_600": _as_float(r.get("gf_600"), 0.0),
+            "gf_200": _as_float(r.get("gf_200"), 0.0),
+            "gf_300": _as_float(r.get("gf_300"), 0.0),
+            "dev_gf": _as_float(r.get("dev_gf"), 0.0),
+            "pet_2l": _as_float(r.get("pet_2l"), 0.0),
+            "pet_600": _as_float(r.get("pet_600"), 0.0),
+            "dev_pet": _as_float(r.get("dev_pet"), 0.0),
+            "agua_vol": _as_float(r.get("agua_vol"), 0.0),
+            "dev_agua": _as_float(r.get("dev_agua"), 0.0),
+            "total_pedidos": _as_float(r.get("total_pedidos"), 0.0),
+            "acucar_qtd": _as_float(r.get("acucar_qtd"), 0.0),
+            "t_acucar": _as_float(r.get("t_acucar"), 0.0),
             **calc,
         })
     return jsonify(out)
@@ -21460,21 +21653,59 @@ def listar_comissao_lancamentos():
 @app.route("/api/comissao/lancamentos", methods=["POST"])
 def criar_comissao_lancamento():
     data = request.json or {}
-    motorista = _as_str(data.get("motorista"))
+    cod_vendedor = _as_int(data.get("cod_vendedor"), 0)
     entregador = _as_str(data.get("entregador"))
     rota = _as_str(data.get("rota"))
-    if not motorista or not entregador or not rota:
-        return jsonify({"erro": "motorista, entregador e rota sao obrigatorios"}), 400
+    if not rota:
+        return jsonify({"erro": "rota obrigatoria"}), 400
+    if not cod_vendedor and not entregador:
+        return jsonify({"erro": "informe vendedor ou entregador"}), 400
 
     conn = get_conn()
     cur = conn.cursor()
+    pct_vend_gf = pct_vend_pet = pct_vend_agua = 0.0
+    pct_ent_gf = pct_ent_pet = pct_ent_agua = 0.0
+    if cod_vendedor:
+        cur.execute(
+            """
+            SELECT pct_gf, pct_pet, pct_agua
+            FROM comissao_cadastros
+            WHERE LOWER(funcao)='vendedor' AND codigo=%s AND ativo=1
+            ORDER BY id LIMIT 1
+            """,
+            (cod_vendedor,),
+        )
+        vendedor_cadastro = cur.fetchone()
+        if not vendedor_cadastro:
+            cur.close()
+            conn.close()
+            return jsonify({"erro": "vendedor nao encontrado no cadastro de comissoes"}), 400
+        pct_vend_gf, pct_vend_pet, pct_vend_agua = map(_nz, vendedor_cadastro)
+    if entregador:
+        cur.execute(
+            """
+            SELECT pct_gf, pct_pet, pct_agua
+            FROM comissao_cadastros
+            WHERE LOWER(funcao)='entregador'
+              AND UPPER(TRIM(nome))=UPPER(TRIM(%s))
+              AND ativo=1
+            ORDER BY id LIMIT 1
+            """,
+            (entregador,),
+        )
+        entregador_cadastro = cur.fetchone()
+        if not entregador_cadastro:
+            cur.close()
+            conn.close()
+            return jsonify({"erro": "entregador nao encontrado no cadastro de comissoes"}), 400
+        pct_ent_gf, pct_ent_pet, pct_ent_agua = map(_nz, entregador_cadastro)
     cur.execute("""
         INSERT INTO comissao_lancamentos (
             cod_vendedor, motorista, entregador, rota, usina,
             data_faturamento, data_saida, data_chegada,
             v_gf, d_gf, icms_gf, v_pet, d_pet, icms_pet, v_agua, d_agua,
             gf_600, gf_200, gf_300, dev_gf, pet_2l, pet_600, dev_pet,
-            agua_vol, total_pedidos, acucar_qtd, t_acucar,
+            agua_vol, dev_agua, total_pedidos, acucar_qtd, t_acucar,
             pct_vend_gf, pct_vend_pet, pct_vend_agua,
             pct_ent_gf, pct_ent_pet, pct_ent_agua, taxa_ent_acucar
         ) VALUES (
@@ -21482,29 +21713,118 @@ def criar_comissao_lancamento():
             %s, %s, %s,
             %s, %s, %s, %s, %s, %s, %s, %s,
             %s, %s, %s, %s, %s, %s, %s,
-            %s, %s, %s, %s,
+            %s, %s, %s, %s, %s,
             %s, %s, %s,
             %s, %s, %s, %s
         )
     """, (
-        _as_int(data.get("cod_vendedor"), 0), motorista, entregador, rota, _as_str(data.get("usina")),
+        cod_vendedor, "", entregador, rota, _as_str(data.get("usina")),
         _as_date(data.get("data_faturamento")), _as_date(data.get("data_saida")), _as_date(data.get("data_chegada")),
         _as_float(data.get("v_gf"), 0.0), _as_float(data.get("d_gf"), 0.0), _as_float(data.get("icms_gf"), 0.0),
         _as_float(data.get("v_pet"), 0.0), _as_float(data.get("d_pet"), 0.0), _as_float(data.get("icms_pet"), 0.0),
         _as_float(data.get("v_agua"), 0.0), _as_float(data.get("d_agua"), 0.0),
         _as_float(data.get("gf_600"), 0.0), _as_float(data.get("gf_200"), 0.0), _as_float(data.get("gf_300"), 0.0),
         _as_float(data.get("dev_gf"), 0.0), _as_float(data.get("pet_2l"), 0.0), _as_float(data.get("pet_600"), 0.0),
-        _as_float(data.get("dev_pet"), 0.0), _as_float(data.get("agua_vol"), 0.0), _as_float(data.get("total_pedidos"), 0.0),
+        _as_float(data.get("dev_pet"), 0.0), _as_float(data.get("agua_vol"), 0.0), _as_float(data.get("dev_agua"), 0.0),
+        _as_float(data.get("total_pedidos"), 0.0),
         _as_float(data.get("acucar_qtd"), 0.0), _as_float(data.get("t_acucar"), 0.0),
-        _as_float(data.get("pct_vend_gf"), 0.01), _as_float(data.get("pct_vend_pet"), 0.01), _as_float(data.get("pct_vend_agua"), 0.03),
-        _as_float(data.get("pct_ent_gf"), 0.08), _as_float(data.get("pct_ent_pet"), 0.06), _as_float(data.get("pct_ent_agua"), 0.06),
-        _as_float(data.get("taxa_ent_acucar"), 0.0),
+        pct_vend_gf, pct_vend_pet, pct_vend_agua,
+        pct_ent_gf, pct_ent_pet, pct_ent_agua, 0.0,
     ))
     novo_id = cur.lastrowid
     conn.commit()
     cur.close()
     conn.close()
     return jsonify({"ok": True, "id": _as_int(novo_id, 0)})
+
+@app.route("/api/comissao/lancamentos/<int:item_id>", methods=["PUT", "PATCH"])
+def editar_comissao_lancamento(item_id):
+    data = request.json or {}
+    cod_vendedor = _as_int(data.get("cod_vendedor"), 0)
+    entregador = _as_str(data.get("entregador"))
+    rota = _as_str(data.get("rota"))
+    if not rota:
+        return jsonify({"erro": "rota obrigatoria"}), 400
+    if not cod_vendedor and not entregador:
+        return jsonify({"erro": "informe vendedor ou entregador"}), 400
+
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT id FROM comissao_lancamentos WHERE id=%s LIMIT 1", (item_id,))
+    if not cur.fetchone():
+        cur.close()
+        conn.close()
+        return jsonify({"erro": "lancamento nao encontrado"}), 404
+
+    pct_vend_gf = pct_vend_pet = pct_vend_agua = 0.0
+    pct_ent_gf = pct_ent_pet = pct_ent_agua = 0.0
+    if cod_vendedor:
+        cur.execute(
+            """
+            SELECT pct_gf, pct_pet, pct_agua
+            FROM comissao_cadastros
+            WHERE LOWER(funcao)='vendedor' AND codigo=%s AND ativo=1
+            ORDER BY id LIMIT 1
+            """,
+            (cod_vendedor,),
+        )
+        cadastro = cur.fetchone()
+        if not cadastro:
+            cur.close()
+            conn.close()
+            return jsonify({"erro": "vendedor nao encontrado no cadastro de comissoes"}), 400
+        pct_vend_gf, pct_vend_pet, pct_vend_agua = map(_nz, cadastro)
+    if entregador:
+        cur.execute(
+            """
+            SELECT pct_gf, pct_pet, pct_agua
+            FROM comissao_cadastros
+            WHERE LOWER(funcao)='entregador'
+              AND UPPER(TRIM(nome))=UPPER(TRIM(%s))
+              AND ativo=1
+            ORDER BY id LIMIT 1
+            """,
+            (entregador,),
+        )
+        cadastro = cur.fetchone()
+        if not cadastro:
+            cur.close()
+            conn.close()
+            return jsonify({"erro": "entregador nao encontrado no cadastro de comissoes"}), 400
+        pct_ent_gf, pct_ent_pet, pct_ent_agua = map(_nz, cadastro)
+
+    cur.execute(
+        """
+        UPDATE comissao_lancamentos SET
+            cod_vendedor=%s, motorista='', entregador=%s, rota=%s, usina=%s,
+            data_faturamento=%s, data_saida=%s, data_chegada=%s,
+            v_gf=%s, d_gf=%s, icms_gf=%s, v_pet=%s, d_pet=%s, icms_pet=%s, v_agua=%s, d_agua=%s,
+            gf_600=%s, gf_200=%s, gf_300=%s, dev_gf=%s, pet_2l=%s, pet_600=%s, dev_pet=%s,
+            agua_vol=%s, dev_agua=%s, total_pedidos=%s, acucar_qtd=%s, t_acucar=%s,
+            pct_vend_gf=%s, pct_vend_pet=%s, pct_vend_agua=%s,
+            pct_ent_gf=%s, pct_ent_pet=%s, pct_ent_agua=%s, taxa_ent_acucar=0
+        WHERE id=%s
+        """,
+        (
+            cod_vendedor, entregador, rota, _as_str(data.get("usina")),
+            _as_date(data.get("data_faturamento")), _as_date(data.get("data_saida")), _as_date(data.get("data_chegada")),
+            _as_float(data.get("v_gf"), 0.0), _as_float(data.get("d_gf"), 0.0), _as_float(data.get("icms_gf"), 0.0),
+            _as_float(data.get("v_pet"), 0.0), _as_float(data.get("d_pet"), 0.0), _as_float(data.get("icms_pet"), 0.0),
+            _as_float(data.get("v_agua"), 0.0), _as_float(data.get("d_agua"), 0.0),
+            _as_float(data.get("gf_600"), 0.0), _as_float(data.get("gf_200"), 0.0), _as_float(data.get("gf_300"), 0.0),
+            _as_float(data.get("dev_gf"), 0.0), _as_float(data.get("pet_2l"), 0.0), _as_float(data.get("pet_600"), 0.0),
+            _as_float(data.get("dev_pet"), 0.0), _as_float(data.get("agua_vol"), 0.0), _as_float(data.get("dev_agua"), 0.0),
+            _as_float(data.get("total_pedidos"), 0.0), _as_float(data.get("acucar_qtd"), 0.0),
+            _as_float(data.get("t_acucar"), 0.0),
+            pct_vend_gf, pct_vend_pet, pct_vend_agua,
+            pct_ent_gf, pct_ent_pet, pct_ent_agua,
+            item_id,
+        ),
+    )
+    conn.commit()
+    cur.close()
+    conn.close()
+    return jsonify({"ok": True, "id": item_id, "atualizado": True})
 
 @app.route("/api/comissao/lancamentos/<int:item_id>", methods=["DELETE"])
 def deletar_comissao_lancamento(item_id):
@@ -21607,6 +21927,10 @@ def deletar_comissao_cadastro(item_id):
 @app.route("/api/comissao/cidades", methods=["GET"])
 def listar_comissao_cidades():
     conn = get_conn()
+    cur_sync = conn.cursor()
+    _sincronizar_comissao_cidades_kanban(cur_sync)
+    conn.commit()
+    cur_sync.close()
     cur = conn.cursor(dictionary=True)
     cur.execute("SELECT id, rota, criado_em FROM comissao_cidades ORDER BY rota ASC")
     rows = cur.fetchall() or []
@@ -21626,12 +21950,11 @@ def criar_comissao_cidade():
         return jsonify({"erro": "rota obrigatoria"}), 400
     conn = get_conn()
     cur = conn.cursor()
-    cur.execute("INSERT INTO comissao_cidades (rota) VALUES (%s)", (rota,))
-    novo_id = cur.lastrowid
+    novo_id, criado = _comissao_cidade_upsert(cur, rota)
     conn.commit()
     cur.close()
     conn.close()
-    return jsonify({"ok": True, "id": _as_int(novo_id, 0)})
+    return jsonify({"ok": True, "id": _as_int(novo_id, 0), "criado": criado})
 
 @app.route("/api/comissao/cidades/<int:item_id>", methods=["DELETE"])
 def deletar_comissao_cidade(item_id):
@@ -21655,14 +21978,17 @@ def deletar_comissao_cidade(item_id):
 def _coletar_relatorios_comissao(filtro_cod=0, filtro_entregador=""):
     filtro_cod = _as_int(filtro_cod, 0)
     filtro_entregador = _as_str(filtro_entregador).upper()
+    if filtro_cod > 0:
+        filtro_entregador = ""
     conn = get_conn()
     cur = conn.cursor(dictionary=True)
     cur.execute("""
         SELECT
             id, cod_vendedor, motorista, entregador, rota, usina,
+            data_faturamento, data_saida, data_chegada,
             v_gf, d_gf, icms_gf, v_pet, d_pet, icms_pet, v_agua, d_agua,
             gf_600, gf_200, gf_300, dev_gf, pet_2l, pet_600, dev_pet,
-            agua_vol, total_pedidos, acucar_qtd, t_acucar,
+            agua_vol, dev_agua, total_pedidos, acucar_qtd, t_acucar,
             pct_vend_gf, pct_vend_pet, pct_vend_agua,
             pct_ent_gf, pct_ent_pet, pct_ent_agua, taxa_ent_acucar
         FROM comissao_lancamentos
@@ -21691,11 +22017,15 @@ def _coletar_relatorios_comissao(filtro_cod=0, filtro_entregador=""):
     total_entregadores = {}
     total_refugo = {}
     total_acucar = {}
+    lancamentos_detalhados = []
     resumo = {
         "total_lancamentos": 0,
         "base_vendedor_total": 0.0,
         "comissao_vendedor_total": 0.0,
         "comissao_entregador_total": 0.0,
+        "volume_entregador_total": 0.0,
+        "devolucao_total": 0.0,
+        "percentual_devolucao": 0.0,
     }
 
     for r in lancamentos:
@@ -21717,16 +22047,32 @@ def _coletar_relatorios_comissao(filtro_cod=0, filtro_entregador=""):
         com_v = (calc["base_gf"] * pct_v_gf) + (calc["base_pet"] * pct_v_pet) + (calc["base_agua"] * pct_v_agua)
         resumo["comissao_vendedor_total"] += com_v
 
-        key_v = cod
-        if key_v not in total_vendedores:
-            total_vendedores[key_v] = {
-                "codigo": cod,
-                "nome": _as_str(cad_v.get("nome")) if cad_v else "",
-                "base_total": 0.0,
-                "comissao_total": 0.0,
-            }
-        total_vendedores[key_v]["base_total"] += calc["base_vendedor_total"]
-        total_vendedores[key_v]["comissao_total"] += com_v
+        if cod > 0:
+            key_v = cod
+            if key_v not in total_vendedores:
+                total_vendedores[key_v] = {
+                    "codigo": cod,
+                    "nome": _as_str(cad_v.get("nome")) if cad_v else "",
+                    "pct_gf": pct_v_gf,
+                    "pct_pet": pct_v_pet,
+                    "pct_agua": pct_v_agua,
+                    "base_gf": 0.0,
+                    "base_pet": 0.0,
+                    "base_agua": 0.0,
+                    "comissao_gf": 0.0,
+                    "comissao_pet": 0.0,
+                    "comissao_agua": 0.0,
+                    "base_total": 0.0,
+                    "comissao_total": 0.0,
+                }
+            total_vendedores[key_v]["base_gf"] += calc["base_gf"]
+            total_vendedores[key_v]["base_pet"] += calc["base_pet"]
+            total_vendedores[key_v]["base_agua"] += calc["base_agua"]
+            total_vendedores[key_v]["comissao_gf"] += calc["base_gf"] * pct_v_gf
+            total_vendedores[key_v]["comissao_pet"] += calc["base_pet"] * pct_v_pet
+            total_vendedores[key_v]["comissao_agua"] += calc["base_agua"] * pct_v_agua
+            total_vendedores[key_v]["base_total"] += calc["base_vendedor_total"]
+            total_vendedores[key_v]["comissao_total"] += com_v
 
         cad_e = ent_cad.get(_as_str(ent_nome).upper())
         pct_e_gf = _as_float(cad_e.get("pct_gf"), _as_float(r.get("pct_ent_gf"), 0.08)) if cad_e else _as_float(r.get("pct_ent_gf"), 0.08)
@@ -21738,16 +22084,135 @@ def _coletar_relatorios_comissao(filtro_cod=0, filtro_entregador=""):
         com_e = (calc["base_ent_gf"] * pct_e_gf) + (calc["base_ent_pet"] * pct_e_pet) + (calc["base_ent_agua"] * pct_e_agua) + (calc["base_ent_acucar"] * taxa_acucar)
         resumo["comissao_entregador_total"] += com_e
 
-        key_e = _as_str(ent_nome) or "SEM NOME"
-        if key_e not in total_entregadores:
-            total_entregadores[key_e] = {"nome": key_e, "volume_total": 0.0, "comissao_total": 0.0}
-        total_entregadores[key_e]["volume_total"] += (calc["base_ent_gf"] + calc["base_ent_pet"] + calc["base_ent_agua"] + calc["base_ent_acucar"])
-        total_entregadores[key_e]["comissao_total"] += com_e
+        lancamentos_detalhados.append({
+            "id": _as_int(r.get("id"), 0),
+            "cod_vendedor": cod,
+            "vendedor": _as_str(cad_v.get("nome")) if cad_v else "",
+            "entregador": ent_nome,
+            "rota": _as_str(r.get("rota")),
+            "usina": _as_str(r.get("usina")),
+            "data_faturamento": _fmt_date(r.get("data_faturamento")),
+            "data_saida": _fmt_date(r.get("data_saida")),
+            "data_chegada": _fmt_date(r.get("data_chegada")),
+            "base_gf": calc["base_gf"],
+            "base_pet": calc["base_pet"],
+            "base_agua": calc["base_agua"],
+            "pct_vend_gf": pct_v_gf,
+            "pct_vend_pet": pct_v_pet,
+            "pct_vend_agua": pct_v_agua,
+            "comissao_vend_gf": calc["base_gf"] * pct_v_gf,
+            "comissao_vend_pet": calc["base_pet"] * pct_v_pet,
+            "comissao_vend_agua": calc["base_agua"] * pct_v_agua,
+            "comissao_vendedor": com_v,
+            "gf_600": _as_float(r.get("gf_600"), 0.0),
+            "gf_200": _as_float(r.get("gf_200"), 0.0),
+            "gf_300": _as_float(r.get("gf_300"), 0.0),
+            "dev_gf": _as_float(r.get("dev_gf"), 0.0),
+            "pet_2l": _as_float(r.get("pet_2l"), 0.0),
+            "pet_600": _as_float(r.get("pet_600"), 0.0),
+            "dev_pet": _as_float(r.get("dev_pet"), 0.0),
+            "agua_vol": _as_float(r.get("agua_vol"), 0.0),
+            "dev_agua": _as_float(r.get("dev_agua"), 0.0),
+            "base_ent_gf": calc["base_ent_gf"],
+            "base_ent_pet": calc["base_ent_pet"],
+            "base_ent_agua": calc["base_ent_agua"],
+            "pct_ent_gf": pct_e_gf,
+            "pct_ent_pet": pct_e_pet,
+            "pct_ent_agua": pct_e_agua,
+            "comissao_ent_gf": calc["base_ent_gf"] * pct_e_gf,
+            "comissao_ent_pet": calc["base_ent_pet"] * pct_e_pet,
+            "comissao_ent_agua": calc["base_ent_agua"] * pct_e_agua,
+            "volume_entregador": calc["base_ent_gf"] + calc["base_ent_pet"] + calc["base_ent_agua"],
+            "volume_bruto_entregador": (
+                _as_float(r.get("gf_600"), 0.0) + _as_float(r.get("gf_200"), 0.0) +
+                _as_float(r.get("gf_300"), 0.0) + _as_float(r.get("pet_2l"), 0.0) +
+                _as_float(r.get("pet_600"), 0.0) + _as_float(r.get("agua_vol"), 0.0)
+            ),
+            "devolucao_entregador": (
+                _as_float(r.get("dev_gf"), 0.0) + _as_float(r.get("dev_pet"), 0.0) +
+                _as_float(r.get("dev_agua"), 0.0)
+            ),
+            "percentual_devolucao": (
+                (
+                    _as_float(r.get("dev_gf"), 0.0) + _as_float(r.get("dev_pet"), 0.0) +
+                    _as_float(r.get("dev_agua"), 0.0)
+                ) / (
+                    _as_float(r.get("gf_600"), 0.0) + _as_float(r.get("gf_200"), 0.0) +
+                    _as_float(r.get("gf_300"), 0.0) + _as_float(r.get("pet_2l"), 0.0) +
+                    _as_float(r.get("pet_600"), 0.0) + _as_float(r.get("agua_vol"), 0.0)
+                ) * 100
+                if (
+                    _as_float(r.get("gf_600"), 0.0) + _as_float(r.get("gf_200"), 0.0) +
+                    _as_float(r.get("gf_300"), 0.0) + _as_float(r.get("pet_2l"), 0.0) +
+                    _as_float(r.get("pet_600"), 0.0) + _as_float(r.get("agua_vol"), 0.0)
+                ) > 0 else 0.0
+            ),
+            "comissao_entregador": com_e,
+        })
 
-        if key_e not in total_refugo:
-            total_refugo[key_e] = {"entregador": key_e, "dev_gf": 0.0, "dev_pet": 0.0}
-        total_refugo[key_e]["dev_gf"] += _as_float(r.get("dev_gf"), 0.0)
-        total_refugo[key_e]["dev_pet"] += _as_float(r.get("dev_pet"), 0.0)
+        key_e = _as_str(ent_nome)
+        if key_e:
+            bruto_gf = _as_float(r.get("gf_600"), 0.0) + _as_float(r.get("gf_200"), 0.0) + _as_float(r.get("gf_300"), 0.0)
+            bruto_pet = _as_float(r.get("pet_2l"), 0.0) + _as_float(r.get("pet_600"), 0.0)
+            bruto_agua = _as_float(r.get("agua_vol"), 0.0)
+            dev_gf = _as_float(r.get("dev_gf"), 0.0)
+            dev_pet = _as_float(r.get("dev_pet"), 0.0)
+            dev_agua = _as_float(r.get("dev_agua"), 0.0)
+            if key_e not in total_entregadores:
+                total_entregadores[key_e] = {
+                    "nome": key_e,
+                    "pct_gf": pct_e_gf,
+                    "pct_pet": pct_e_pet,
+                    "pct_agua": pct_e_agua,
+                    "volume_gf": 0.0,
+                    "volume_pet": 0.0,
+                    "volume_agua": 0.0,
+                    "volume_acucar": 0.0,
+                    "comissao_gf": 0.0,
+                    "comissao_pet": 0.0,
+                    "comissao_agua": 0.0,
+                    "comissao_acucar": 0.0,
+                    "volume_total": 0.0,
+                    "volume_bruto_total": 0.0,
+                    "devolucao_total": 0.0,
+                    "percentual_devolucao": 0.0,
+                    "comissao_total": 0.0,
+                }
+            total_e = total_entregadores[key_e]
+            total_e["volume_gf"] += calc["base_ent_gf"]
+            total_e["volume_pet"] += calc["base_ent_pet"]
+            total_e["volume_agua"] += calc["base_ent_agua"]
+            total_e["volume_acucar"] += calc["base_ent_acucar"]
+            total_e["comissao_gf"] += calc["base_ent_gf"] * pct_e_gf
+            total_e["comissao_pet"] += calc["base_ent_pet"] * pct_e_pet
+            total_e["comissao_agua"] += calc["base_ent_agua"] * pct_e_agua
+            total_e["comissao_acucar"] += calc["base_ent_acucar"] * taxa_acucar
+            # Igual ao TOTAL da planilha: GF + PET + ADQ. Açúcar é demonstrado
+            # separadamente e participa da comissão, mas não do total de volumes.
+            total_e["volume_total"] += calc["base_ent_gf"] + calc["base_ent_pet"] + calc["base_ent_agua"]
+            total_e["volume_bruto_total"] += bruto_gf + bruto_pet + bruto_agua
+            total_e["devolucao_total"] += dev_gf + dev_pet + dev_agua
+            total_e["comissao_total"] += com_e
+
+            if key_e not in total_refugo:
+                total_refugo[key_e] = {
+                    "entregador": key_e,
+                    "volume_gf": 0.0,
+                    "volume_pet": 0.0,
+                    "volume_agua": 0.0,
+                    "dev_gf": 0.0,
+                    "dev_pet": 0.0,
+                    "dev_agua": 0.0,
+                }
+            refugo = total_refugo[key_e]
+            refugo["volume_gf"] += bruto_gf
+            refugo["volume_pet"] += bruto_pet
+            refugo["volume_agua"] += bruto_agua
+            refugo["dev_gf"] += dev_gf
+            refugo["dev_pet"] += dev_pet
+            refugo["dev_agua"] += dev_agua
+            resumo["volume_entregador_total"] += bruto_gf + bruto_pet + bruto_agua
+            resumo["devolucao_total"] += dev_gf + dev_pet + dev_agua
 
         key_u = _as_str(r.get("usina")) or "SEM USINA"
         if key_u not in total_acucar:
@@ -21756,15 +22221,57 @@ def _coletar_relatorios_comissao(filtro_cod=0, filtro_entregador=""):
         total_acucar[key_u]["qtd"] += qtd_ac
         total_acucar[key_u]["comissao"] += qtd_ac * taxa_acucar
 
+    resumo["percentual_devolucao"] = (
+        resumo["devolucao_total"] / resumo["volume_entregador_total"] * 100
+        if resumo["volume_entregador_total"] > 0 else 0.0
+    )
+    for item in total_entregadores.values():
+        item["percentual_devolucao"] = (
+            item["devolucao_total"] / item["volume_bruto_total"] * 100
+            if item["volume_bruto_total"] > 0 else 0.0
+        )
+    for item in total_refugo.values():
+        item["pct_dev_gf"] = item["dev_gf"] / item["volume_gf"] * 100 if item["volume_gf"] > 0 else 0.0
+        item["pct_dev_pet"] = item["dev_pet"] / item["volume_pet"] * 100 if item["volume_pet"] > 0 else 0.0
+        item["pct_dev_agua"] = item["dev_agua"] / item["volume_agua"] * 100 if item["volume_agua"] > 0 else 0.0
+        volume_total = item["volume_gf"] + item["volume_pet"] + item["volume_agua"]
+        devolucao_total = item["dev_gf"] + item["dev_pet"] + item["dev_agua"]
+        item["pct_dev_total"] = devolucao_total / volume_total * 100 if volume_total > 0 else 0.0
+
+    ranking_devolucoes = sorted(
+        (
+            dict(item)
+            for item in total_entregadores.values()
+            if _as_float(item.get("volume_bruto_total"), 0.0) > 0
+        ),
+        key=lambda item: (
+            _as_float(item.get("percentual_devolucao"), 0.0),
+            _as_float(item.get("devolucao_total"), 0.0),
+            _as_str(item.get("nome")),
+        ),
+    )
+    for posicao, item in enumerate(ranking_devolucoes, 1):
+        item["posicao"] = posicao
+
     return {
+        "tipo_relatorio": "vendedor" if filtro_cod > 0 else ("entregador" if filtro_entregador else "geral"),
         "resumo_geral": resumo,
         "total_vendedores": sorted(total_vendedores.values(), key=lambda x: (x["codigo"], x["nome"])),
         "total_entregadores": sorted(total_entregadores.values(), key=lambda x: x["nome"]),
         "total_refugo": sorted(total_refugo.values(), key=lambda x: x["entregador"]),
         "total_acucar": sorted(total_acucar.values(), key=lambda x: x["usina"]),
+        "lancamentos": sorted(
+            lancamentos_detalhados,
+            key=lambda x: (x.get("data_chegada") or "", x.get("id") or 0),
+        ),
+        "ranking_devolucoes": ranking_devolucoes,
     }
 
 def _build_relatorio_comissao_pdf(rel, filtro_cod=0, filtro_entregador=""):
+    filtro_cod = _as_int(filtro_cod, 0)
+    filtro_entregador = "" if filtro_cod > 0 else _as_str(filtro_entregador)
+    somente_vendedor = filtro_cod > 0
+    somente_entregador = bool(filtro_entregador)
     stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     arquivo = os.path.join("/tmp", f"relatorio_comissao_{stamp}.pdf")
     doc = SimpleDocTemplate(
@@ -21803,37 +22310,64 @@ def _build_relatorio_comissao_pdf(rel, filtro_cod=0, filtro_entregador=""):
     ]))
     elementos.append(cabecalho)
     elementos.append(Spacer(1, 12))
-    elementos.append(Paragraph("Relatorio de Comissao", styles["Heading2"]))
+    titulo_relatorio = "Relatorio de Comissao do Vendedor" if somente_vendedor else "Relatorio de Comissao do Entregador"
+    elementos.append(Paragraph(titulo_relatorio, styles["Heading2"]))
     elementos.append(Spacer(1, 8))
 
     filtro_txt = "Todos"
-    if _as_int(filtro_cod, 0) > 0:
-        filtro_txt = f"Vendedor codigo {_as_int(filtro_cod, 0)}"
-    if _as_str(filtro_entregador):
-        filtro_txt = f"Entregador {_as_str(filtro_entregador)}"
+    if somente_vendedor:
+        filtro_txt = f"Vendedor codigo {filtro_cod}"
+    elif somente_entregador:
+        filtro_txt = f"Entregador {filtro_entregador}"
     elementos.append(Paragraph(f"Filtro aplicado: {filtro_txt}", styles["Normal"]))
     elementos.append(Paragraph(f"Emitido em: {datetime.datetime.now().strftime('%d/%m/%Y %H:%M:%S')}", styles["Normal"]))
     elementos.append(Spacer(1, 10))
 
     r = rel.get("resumo_geral", {}) or {}
     elementos.append(Paragraph(f"Total de lancamentos: {_as_int(r.get('total_lancamentos'), 0)}", styles["Normal"]))
-    elementos.append(Paragraph(f"Base vendedor total: R$ {_as_float(r.get('base_vendedor_total'), 0.0):.2f}", styles["Normal"]))
-    elementos.append(Paragraph(f"Comissao vendedor total: R$ {_as_float(r.get('comissao_vendedor_total'), 0.0):.2f}", styles["Normal"]))
-    elementos.append(Paragraph(f"Comissao entregador total: R$ {_as_float(r.get('comissao_entregador_total'), 0.0):.2f}", styles["Normal"]))
+    if somente_vendedor:
+        elementos.append(Paragraph(f"Base vendedor total: R$ {_as_float(r.get('base_vendedor_total'), 0.0):.2f}", styles["Normal"]))
+        elementos.append(Paragraph(f"Comissao vendedor total: R$ {_as_float(r.get('comissao_vendedor_total'), 0.0):.2f}", styles["Normal"]))
+    if somente_entregador:
+        elementos.append(Paragraph(f"Comissao entregador total: R$ {_as_float(r.get('comissao_entregador_total'), 0.0):.2f}", styles["Normal"]))
+        elementos.append(Paragraph(
+            "Devolucao geral: "
+            f"{_as_float(r.get('devolucao_total'), 0.0):.2f} / "
+            f"{_as_float(r.get('volume_entregador_total'), 0.0):.2f} volumes = "
+            f"{_as_float(r.get('percentual_devolucao'), 0.0):.2f}%",
+            styles["Normal"],
+        ))
+    elementos.append(Spacer(1, 8))
+    elementos.append(Paragraph("<b>Etapas de calculo</b>", styles["Normal"]))
+    if somente_vendedor:
+        elementos.append(Paragraph(
+            "Base da categoria = vendas - devolucoes - ICMS "
+            "(Agua: vendas - devolucoes). Comissao = base x percentual cadastrado.",
+            styles["Normal"],
+        ))
+    if somente_entregador:
+        elementos.append(Paragraph(
+            "Volume liquido = volumes carregados - devolucoes. "
+            "Comissao = volume liquido x percentual cadastrado. "
+            "Percentual de devolucao = devolucoes / volumes carregados x 100.",
+            styles["Normal"],
+        ))
     elementos.append(Spacer(1, 12))
 
     tv = rel.get("total_vendedores", []) or []
-    if tv:
+    if tv and somente_vendedor:
         elementos.append(Paragraph("Totais por Vendedor", styles["Heading4"]))
-        dados = [["Cod", "Nome", "Base", "Comissao"]]
+        dados = [["Cod", "Nome", "GF: base x %", "PET: base x %", "Agua: base x %", "Comissao"]]
         for x in tv[:80]:
             dados.append([
                 str(_as_int(x.get("codigo"), 0)),
-                _as_str(x.get("nome"))[:36],
-                f"R$ {_as_float(x.get('base_total'),0.0):.2f}",
+                _as_str(x.get("nome"))[:25],
+                f"{_as_float(x.get('base_gf'),0.0):.2f} x {_as_float(x.get('pct_gf'),0.0)*100:.2f}%",
+                f"{_as_float(x.get('base_pet'),0.0):.2f} x {_as_float(x.get('pct_pet'),0.0)*100:.2f}%",
+                f"{_as_float(x.get('base_agua'),0.0):.2f} x {_as_float(x.get('pct_agua'),0.0)*100:.2f}%",
                 f"R$ {_as_float(x.get('comissao_total'),0.0):.2f}",
             ])
-        t = Table(dados, colWidths=[50, 190, 110, 110])
+        t = Table(dados, colWidths=[32, 108, 82, 82, 82, 76])
         t.setStyle(TableStyle([
             ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
             ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
@@ -21843,20 +22377,62 @@ def _build_relatorio_comissao_pdf(rel, filtro_cod=0, filtro_entregador=""):
         elementos.append(Spacer(1, 12))
 
     te = rel.get("total_entregadores", []) or []
-    if te:
-        elementos.append(Paragraph("Totais por Entregador", styles["Heading4"]))
-        dados = [["Nome", "Volume", "Comissao"]]
-        for x in te[:80]:
-            dados.append([
-                _as_str(x.get("nome"))[:42],
-                f"{_as_float(x.get('volume_total'),0.0):.2f}",
-                f"R$ {_as_float(x.get('comissao_total'),0.0):.2f}",
-            ])
-        t = Table(dados, colWidths=[230, 100, 130])
+    if te and somente_entregador:
+        x = te[0]
+        elementos.append(Paragraph(f"Totais - {_as_str(x.get('nome'))}", styles["Heading4"]))
+        dados = [
+            ["", "Volumes", "Percentual", "Comissao"],
+            ["GF", f"{_as_float(x.get('volume_gf'),0):.2f}", f"{_as_float(x.get('pct_gf'),0)*100:.2f}%", f"R$ {_as_float(x.get('comissao_gf'),0):.2f}"],
+            ["PET", f"{_as_float(x.get('volume_pet'),0):.2f}", f"{_as_float(x.get('pct_pet'),0)*100:.2f}%", f"R$ {_as_float(x.get('comissao_pet'),0):.2f}"],
+            ["ADQ", f"{_as_float(x.get('volume_agua'),0):.2f}", f"{_as_float(x.get('pct_agua'),0)*100:.2f}%", f"R$ {_as_float(x.get('comissao_agua'),0):.2f}"],
+            ["ACUCAR", f"{_as_float(x.get('volume_acucar'),0):.2f}", "-", f"R$ {_as_float(x.get('comissao_acucar'),0):.2f}"],
+            ["TOTAL", f"{_as_float(x.get('volume_total'),0):.2f}", "", f"R$ {_as_float(x.get('comissao_total'),0):.2f}"],
+        ]
+        t = Table(dados, colWidths=[100, 110, 100, 130])
         t.setStyle(TableStyle([
             ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
             ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
+            ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
             ("FONTSIZE", (0, 0), (-1, -1), 8),
+        ]))
+        elementos.append(t)
+
+    detalhes = rel.get("lancamentos", []) or []
+    if detalhes:
+        elementos.append(Spacer(1, 12))
+        elementos.append(Paragraph(f"Lancamentos ({len(detalhes)})", styles["Heading4"]))
+        if somente_vendedor:
+            dados = [["ID", "Rota", "Chegada", "GF: base x %", "PET: base x %", "Agua: base x %", "Total"]]
+            for x in detalhes:
+                dados.append([
+                    str(_as_int(x.get("id"), 0)),
+                    _as_str(x.get("rota"))[:18],
+                    _as_str(x.get("data_chegada")) or "-",
+                    f"{_as_float(x.get('base_gf'),0):.2f} x {_as_float(x.get('pct_vend_gf'),0)*100:.2f}%",
+                    f"{_as_float(x.get('base_pet'),0):.2f} x {_as_float(x.get('pct_vend_pet'),0)*100:.2f}%",
+                    f"{_as_float(x.get('base_agua'),0):.2f} x {_as_float(x.get('pct_vend_agua'),0)*100:.2f}%",
+                    f"R$ {_as_float(x.get('comissao_vendedor'),0):.2f}",
+                ])
+            larguras = [26, 82, 56, 78, 78, 78, 64]
+        else:
+            dados = [["ID", "Rota", "Chegada", "GF liq. x %", "PET liq. x %", "Agua x %", "% Dev.", "Total"]]
+            for x in detalhes:
+                dados.append([
+                    str(_as_int(x.get("id"), 0)),
+                    _as_str(x.get("rota"))[:18],
+                    _as_str(x.get("data_chegada")) or "-",
+                    f"{_as_float(x.get('base_ent_gf'),0):.2f} x {_as_float(x.get('pct_ent_gf'),0)*100:.2f}%",
+                    f"{_as_float(x.get('base_ent_pet'),0):.2f} x {_as_float(x.get('pct_ent_pet'),0)*100:.2f}%",
+                    f"{_as_float(x.get('base_ent_agua'),0):.2f} x {_as_float(x.get('pct_ent_agua'),0)*100:.2f}%",
+                    f"{_as_float(x.get('percentual_devolucao'),0):.2f}%",
+                    f"R$ {_as_float(x.get('comissao_entregador'),0):.2f}",
+                ])
+            larguras = [24, 65, 50, 68, 68, 68, 50, 69]
+        t = Table(dados, colWidths=larguras, repeatRows=1)
+        t.setStyle(TableStyle([
+            ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+            ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
+            ("FONTSIZE", (0, 0), (-1, -1), 7),
         ]))
         elementos.append(t)
 

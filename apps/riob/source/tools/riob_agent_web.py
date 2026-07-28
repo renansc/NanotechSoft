@@ -327,7 +327,7 @@ OPTIONS = {
         "title": "Deploy local",
         "summary": "Gera backup e sobe app/proxy com build.",
         "details": (
-            "Usa ./up.sh por baixo, sem derrubar o banco. Ao final tenta validar /api/status."
+            "Usa o up.sh canônico da raiz, sem derrubar o banco. Ao final tenta validar /api/status."
         ),
         "command": ["deploy"],
         "safe": False,

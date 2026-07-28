@@ -18,6 +18,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = ROOT.parents[2]
 TOOLS_DIR = Path(__file__).resolve().parent
 if str(TOOLS_DIR) not in sys.path:
     sys.path.insert(0, str(TOOLS_DIR))
@@ -417,7 +418,7 @@ def do_deploy(args: argparse.Namespace) -> None:
         env["NO_CACHE"] = "1"
 
     log("aplicando deploy de app e proxy")
-    run(["./up.sh"], dry_run=args.dry_run, env=env)
+    run([str(PROJECT_ROOT / "up.sh")], dry_run=args.dry_run, env=env)
     if not args.skip_health and not args.dry_run:
         health_check()
 
@@ -432,7 +433,7 @@ def do_update(args: argparse.Namespace) -> None:
     if args.no_cache:
         env["NO_CACHE"] = "1"
 
-    cmd = ["./update.sh"]
+    cmd = [str(PROJECT_ROOT / "update.sh")]
     if args.branch:
         cmd.append(args.branch)
     run(cmd, dry_run=args.dry_run, env=env)

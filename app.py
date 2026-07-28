@@ -365,6 +365,83 @@ def ensure_database():
             """,
             ("Administrador", "admin", admin_hash, "admin", 1),
         )
+
+    riob_hash = generate_password_hash("riob")
+    cur.execute("SELECT id FROM usuarios WHERE login=%s LIMIT 1", ("riob",))
+    riob_row = cur.fetchone()
+    if riob_row:
+        riob_user_id = int(riob_row[0])
+        cur.execute(
+            """
+            UPDATE usuarios
+            SET nome=%s, senha=%s, perfil=%s, ativo=%s
+            WHERE id=%s
+            """,
+            ("Usuario RioB", riob_hash, "usuario", 1, riob_user_id),
+        )
+    else:
+        cur.execute(
+            """
+            INSERT INTO usuarios (nome, login, senha, perfil, ativo)
+            VALUES (%s, %s, %s, %s, %s)
+            """,
+            ("Usuario RioB", "riob", riob_hash, "usuario", 1),
+        )
+        riob_user_id = int(cur.lastrowid)
+
+    cur.execute(
+        "DELETE FROM usuario_app_permissoes WHERE usuario_id=%s",
+        (riob_user_id,),
+    )
+    cur.execute(
+        """
+        INSERT INTO usuario_app_permissoes
+            (usuario_id, app_key, recurso, permitido)
+        VALUES (%s, %s, %s, %s)
+        """,
+        (riob_user_id, "riob", "*", 1),
+    )
+
+    for nome, login, senha in (
+        ("Junior", "junior", "junior"),
+        ("Rebeca", "rebeca", "rebeca"),
+    ):
+        senha_hash = generate_password_hash(senha)
+        cur.execute("SELECT id FROM usuarios WHERE login=%s LIMIT 1", (login,))
+        usuario_row = cur.fetchone()
+        if usuario_row:
+            usuario_id = int(usuario_row[0])
+            cur.execute(
+                """
+                UPDATE usuarios
+                SET nome=%s, senha=%s, perfil=%s, ativo=%s
+                WHERE id=%s
+                """,
+                (nome, senha_hash, "usuario", 1, usuario_id),
+            )
+        else:
+            cur.execute(
+                """
+                INSERT INTO usuarios (nome, login, senha, perfil, ativo)
+                VALUES (%s, %s, %s, %s, %s)
+                """,
+                (nome, login, senha_hash, "usuario", 1),
+            )
+            usuario_id = int(cur.lastrowid)
+
+        cur.execute(
+            "DELETE FROM usuario_app_permissoes WHERE usuario_id=%s",
+            (usuario_id,),
+        )
+        cur.execute(
+            """
+            INSERT INTO usuario_app_permissoes
+                (usuario_id, app_key, recurso, permitido)
+            VALUES (%s, %s, %s, %s)
+            """,
+            (usuario_id, "riob", "*", 1),
+        )
+
     conn.commit()
     cur.close()
     conn.close()
@@ -1107,6 +1184,18 @@ def app_visible_to_user(app_item, usuario):
     return bool(permissions)
 
 
+def visible_apps_for_user(usuario):
+    apps = list_apps()
+    if user_is_admin(usuario):
+        return apps
+    permissions = get_user_permissions(usuario)
+    return [
+        app_item
+        for app_item in apps
+        if permissions.get(app_item["app_key"])
+    ]
+
+
 def menu_item_visible(item, app_item, usuario):
     if user_is_admin(usuario):
         return True
@@ -1193,7 +1282,7 @@ def current_user_or_logout():
 def portal_context(usuario=None):
     usuario = usuario or current_user_or_logout()
     apps = list_apps()
-    visible_apps = [app_item for app_item in apps if app_visible_to_user(app_item, usuario)]
+    visible_apps = visible_apps_for_user(usuario)
     client_config = client_contracts_payload()
     return {
         "usuario": usuario,
@@ -1516,6 +1605,14 @@ def riob_hash_bridge_script():
       }
       if (section === "cadastros" && view && typeof window.openCadastrosView === "function") {
         window.openCadastrosView(null, view);
+        return;
+      }
+      if (section === "comissao" && view === "relatorios" && typeof window.openComissaoView === "function") {
+        window.openComissaoView(null, "relatorios");
+        return;
+      }
+      if (section === "comissao" && typeof window.openWorkflowView === "function") {
+        window.openWorkflowView(null, "comissao");
         return;
       }
       if (section === "gestaofrota" && view && typeof window.openGestaoFrotaView === "function") {
@@ -4524,7 +4621,10 @@ def api_me():
 @app.route("/api/apps")
 @login_required
 def api_apps():
-    return jsonify({"ok": True, "apps": list_apps()})
+    usuario = current_user_or_logout()
+    if not usuario:
+        return jsonify({"erro": "usuario nao encontrado"}), 404
+    return jsonify({"ok": True, "apps": visible_apps_for_user(usuario)})
 
 
 @app.route("/api/clientes-modulos")

@@ -136,17 +136,23 @@ conectada a um banco MySQL/MariaDB para abrir e para restaurar o arquivo.
 
 ## Scripts operacionais
 
-Os atalhos da raiz podem ser usados com ou sem `.sh`:
+Os quatro comandos operacionais canônicos ficam na raiz:
 
 ```bash
-./up
-./down
-./git-safe -m "mensagem do commit"
+./up.sh
+./down.sh
+./update.sh
+./git-safe-push.sh -m "mensagem do commit"
 ```
 
-- `./up` sobe ou recria `mysql`, `pacs-postgres` e `app`, valida os manifests dos apps e espera `/login` responder.
-- `./down` para somente o container `app`, preservando os bancos e volumes do MySQL e do PostgreSQL do PACS.
-- `./git-safe` bloqueia arquivos sensiveis/runtime, valida Python, valida `source_dir` dos apps, valida `clientes-modulos.json`, executa Docker Compose quando disponivel, opcionalmente builda/testa o container e envia a branch atual para `origin`.
+- `./up.sh` reconstrói e sobe portal e RioB para teste, preservando os bancos e volumes.
+- `./down.sh` para portal e RioB, sem parar, restaurar ou sincronizar bancos.
+- `./update.sh` atualiza o código e recria somente as aplicações em produção, sem operar bancos.
+- `./git-safe-push.sh` bloqueia arquivos sensíveis/runtime, valida portal e RioB, cria o commit e envia a branch atual para `origin`.
+
+Não existem scripts operacionais próprios dentro dos apps. Consulte
+`docs/AI_RESEARCH_MANUAL.md` para os contratos completos e pressupostos
+permanentes do projeto.
 
 Os scripts detectam `docker compose`, `docker-compose` ou `podman compose`. Se o Docker CLI nao estiver disponivel no terminal atual, execute os scripts fora de sandboxes que nao exponham Docker, como alguns ambientes Flatpak, ou instale o plugin Compose.
 

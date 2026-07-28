@@ -30,21 +30,22 @@ else
   log "diretorio sem repositorio Git; pulando git pull"
 fi
 
-log "garantindo mysql e postgres do pacs sem remover volumes..."
-compose up -d "$DB_SERVICE" "$PACS_DB_SERVICE"
-
-log "recriando app..."
+log "recriando somente portal e RioB; nenhum servico de banco sera iniciado, restaurado ou sincronizado..."
 if [[ "${NO_CACHE:-0}" == "1" ]]; then
-  compose build --no-cache "$APP_SERVICE"
-  compose up -d --no-deps "$APP_SERVICE"
+  compose build --no-cache "${BUILD_SERVICES[@]}"
 else
-  compose up -d --build --no-deps "$APP_SERVICE"
+  compose build "${BUILD_SERVICES[@]}"
 fi
+compose up -d --no-deps "${RUNTIME_SERVICES[@]}"
 
 if ! wait_for_app 45 2; then
   compose logs --tail=120 "$APP_SERVICE" >&2 || true
-  die "app nao respondeu apos update"
+  die "portal nao respondeu apos update"
+fi
+if ! wait_for_riob 45 2; then
+  compose logs --tail=120 "$RIOB_APP_SERVICE" >&2 || true
+  die "RioB nao respondeu apos update"
 fi
 
-compose ps "$DB_SERVICE" "$PACS_DB_SERVICE" "$APP_SERVICE"
-log "update concluido"
+compose ps "${RUNTIME_SERVICES[@]}"
+log "update de producao concluido sem operacoes de banco"
