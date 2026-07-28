@@ -12,6 +12,7 @@ SKIP_HEALTH=0
 SKIP_COMPOSE=0
 SKIP_WHITESPACE=0
 YES=0
+ONLY_PATHS=()
 
 usage() {
   cat <<'EOF'
@@ -27,6 +28,8 @@ Opcoes:
   --skip-compose        Pular validacao/build/health com Docker Compose
                         Se Docker Compose nao existir, o script faz este pulo automaticamente
   --skip-whitespace     Pular git diff --check
+  --only CAMINHO        Incluir somente este arquivo/diretorio no commit
+                        Pode ser informado mais de uma vez
   -h, --help            Mostrar ajuda
 
 O script:
@@ -168,6 +171,11 @@ while [[ $# -gt 0 ]]; do
       SKIP_WHITESPACE=1
       shift
       ;;
+    --only)
+      [[ $# -ge 2 ]] || die "faltou caminho depois de $1"
+      ONLY_PATHS+=("$2")
+      shift 2
+      ;;
     -h|--help)
       usage
       exit 0
@@ -207,17 +215,30 @@ for path in "${STAGED_FILES[@]}"; do
 done
 
 log "adicionando arquivos seguros"
-mapfile -d '' CHANGED_FILES < <(git ls-files --modified --deleted --others --exclude-standard -z)
 SAFE_FILES=()
 BLOCKED_FILES=()
-for path in "${CHANGED_FILES[@]}"; do
-  [[ -n "$path" ]] || continue
-  if is_risky_path "$path"; then
-    BLOCKED_FILES+=("$path")
-  else
-    SAFE_FILES+=("$path")
-  fi
-done
+if [[ "${#ONLY_PATHS[@]}" -gt 0 ]]; then
+  log "modo --only ativo; removendo do stage os arquivos fora do escopo"
+  git restore --staged -- .
+  for path in "${ONLY_PATHS[@]}"; do
+    [[ -n "$path" ]] || continue
+    if is_risky_path "$path"; then
+      BLOCKED_FILES+=("$path")
+    else
+      SAFE_FILES+=("$path")
+    fi
+  done
+else
+  mapfile -d '' CHANGED_FILES < <(git ls-files --modified --deleted --others --exclude-standard -z)
+  for path in "${CHANGED_FILES[@]}"; do
+    [[ -n "$path" ]] || continue
+    if is_risky_path "$path"; then
+      BLOCKED_FILES+=("$path")
+    else
+      SAFE_FILES+=("$path")
+    fi
+  done
+fi
 
 if [[ "${#BLOCKED_FILES[@]}" -gt 0 ]]; then
   log "arquivos bloqueados ignorados:"

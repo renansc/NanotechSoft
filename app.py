@@ -820,6 +820,57 @@ body[class*="theme-"] select,
 body[class*="theme-"] textarea {{
   border-color: var(--line);
 }}
+
+/* RioB: adapta o workflow, que originalmente usa cores fixas, ao tema do portal. */
+body[class*="theme-"] .menu {{
+  background: var(--menu);
+}}
+body[class*="theme-"] .menu-item:hover {{
+  background: var(--menu-hover);
+}}
+body[class*="theme-"] .menu-item.active {{
+  background: var(--menu-active);
+}}
+body[class*="theme-"] #fretes {{
+  color: var(--text);
+}}
+body[class*="theme-"] #fretes .kanban-col {{
+  background: var(--panel2);
+  border: 1px solid var(--line);
+  color: var(--text);
+  box-shadow: var(--shadow);
+}}
+body[class*="theme-"] #fretes .kanban-col.highlight {{
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}}
+body[class*="theme-"] #fretes .card {{
+  background: var(--panel);
+  border: 1px solid var(--line);
+  color: var(--text);
+  box-shadow: var(--shadow);
+}}
+body[class*="theme-"] #fretes .card-info,
+body[class*="theme-"] #fretes .details {{
+  background: var(--panel2);
+  border-color: var(--line);
+  color: var(--text);
+}}
+body[class*="theme-"] #fretes input,
+body[class*="theme-"] #fretes select,
+body[class*="theme-"] #fretes textarea {{
+  background: var(--panel2);
+  border-color: var(--line);
+  color: var(--text);
+}}
+body[class*="theme-"] #fretes .kanban-scrollbar {{
+  background: var(--panel);
+  border-color: var(--line);
+}}
+body[class*="theme-"] #fretes .kanban::-webkit-scrollbar-thumb,
+body[class*="theme-"] #fretes .kanban-scrollbar::-webkit-scrollbar-thumb {{
+  background: var(--accent);
+}}
 </style>
 <script>window.NOTECHSOFT_THEME = {json.dumps(theme)};</script>
 """
