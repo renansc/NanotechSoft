@@ -21650,6 +21650,123 @@ def listar_comissao_lancamentos():
         })
     return jsonify(out)
 
+def _build_comissao_lancamentos_xlsx(rows):
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    headers = [
+        "VENDEDOR", "MOTORISTA", "ENTREGADOR", "ROTA", "FATURAMENTO", "SAIDA", "CHEGADA",
+        "V_GF", "D_GF", "ICMS_GF", "V_PET", "D_PET", "ICMS_PET", "V_AGUA", "D_AGUA",
+        "GF_600", "GF_200", "GF_300", "DEV_GF", "FR_GAR", "PET_2L", "PET_600", "DEV_PET",
+        "FR_PET", "AGUA", "RF_GF", "RF_PET", "RF_AGUA", "TOTALPEDIDOS", "AÇUCAR", "USINA",
+        "T_ACUCAR",
+    ]
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Cargas Lançar"
+    sheet.freeze_panes = "A2"
+    sheet.auto_filter.ref = f"A1:{get_column_letter(len(headers))}1"
+
+    header_fill = PatternFill("solid", fgColor="1F4E78")
+    for column, header in enumerate(headers, 1):
+        cell = sheet.cell(row=1, column=column, value=header)
+        cell.font = Font(color="FFFFFF", bold=True)
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+
+    def excel_date(value):
+        if isinstance(value, datetime.datetime):
+            return value.date()
+        if isinstance(value, datetime.date):
+            return value
+        parsed = _as_date(value)
+        return parsed if isinstance(parsed, datetime.date) else None
+
+    for row_index, item in enumerate(rows, 2):
+        values = [
+            _as_int(item.get("cod_vendedor"), 0),
+            _as_str(item.get("motorista")),
+            _as_str(item.get("entregador")),
+            _as_str(item.get("rota")),
+            excel_date(item.get("data_faturamento")),
+            excel_date(item.get("data_saida")),
+            excel_date(item.get("data_chegada")),
+            _as_float(item.get("v_gf"), 0.0),
+            _as_float(item.get("d_gf"), 0.0),
+            _as_float(item.get("icms_gf"), 0.0),
+            _as_float(item.get("v_pet"), 0.0),
+            _as_float(item.get("d_pet"), 0.0),
+            _as_float(item.get("icms_pet"), 0.0),
+            _as_float(item.get("v_agua"), 0.0),
+            _as_float(item.get("d_agua"), 0.0),
+            _as_float(item.get("gf_600"), 0.0),
+            _as_float(item.get("gf_200"), 0.0),
+            _as_float(item.get("gf_300"), 0.0),
+            _as_float(item.get("dev_gf"), 0.0),
+            None,
+            _as_float(item.get("pet_2l"), 0.0),
+            _as_float(item.get("pet_600"), 0.0),
+            _as_float(item.get("dev_pet"), 0.0),
+            None,
+            _as_float(item.get("agua_vol"), 0.0),
+            None,
+            None,
+            _as_float(item.get("dev_agua"), 0.0),
+            _as_int(item.get("total_pedidos"), 0),
+            _as_float(item.get("acucar_qtd"), 0.0),
+            _as_str(item.get("usina")),
+            _as_float(item.get("t_acucar"), 0.0),
+        ]
+        for column, value in enumerate(values, 1):
+            cell = sheet.cell(row=row_index, column=column, value=value)
+            if 5 <= column <= 7 and value:
+                cell.number_format = "dd/mm/yyyy"
+            elif column not in (1, 2, 3, 4, 20, 24, 26, 27, 31):
+                cell.number_format = "0.###"
+
+    widths = {
+        1: 12, 2: 30, 3: 30, 4: 24, 5: 14, 6: 14, 7: 14,
+        31: 24,
+    }
+    for column in range(1, len(headers) + 1):
+        sheet.column_dimensions[get_column_letter(column)].width = widths.get(column, 13)
+
+    arquivo = tempfile.NamedTemporaryFile(prefix="comissoes_cargas_lancar_", suffix=".xlsx", delete=False)
+    arquivo.close()
+    workbook.save(arquivo.name)
+    return arquivo.name
+
+@app.route("/api/comissao/lancamentos/exportar-xlsx", methods=["GET"])
+def exportar_comissao_lancamentos_xlsx():
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    cur.execute(
+        """
+        SELECT
+            cod_vendedor, motorista, entregador, rota, usina,
+            data_faturamento, data_saida, data_chegada,
+            v_gf, d_gf, icms_gf, v_pet, d_pet, icms_pet, v_agua, d_agua,
+            gf_600, gf_200, gf_300, dev_gf, pet_2l, pet_600, dev_pet,
+            agua_vol, dev_agua, total_pedidos, acucar_qtd, t_acucar
+        FROM comissao_lancamentos
+        ORDER BY data_faturamento, data_saida, data_chegada, id
+        """
+    )
+    rows = cur.fetchall() or []
+    cur.close()
+    conn.close()
+
+    arquivo = _build_comissao_lancamentos_xlsx(rows)
+    nome = f"comissoes_cargas_lancar_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    return send_file(
+        arquivo,
+        as_attachment=True,
+        download_name=nome,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
 @app.route("/api/comissao/lancamentos", methods=["POST"])
 def criar_comissao_lancamento():
     data = request.json or {}
@@ -21718,7 +21835,7 @@ def criar_comissao_lancamento():
             %s, %s, %s, %s
         )
     """, (
-        cod_vendedor, "", entregador, rota, _as_str(data.get("usina")),
+        cod_vendedor, _as_str(data.get("motorista")), entregador, rota, _as_str(data.get("usina")),
         _as_date(data.get("data_faturamento")), _as_date(data.get("data_saida")), _as_date(data.get("data_chegada")),
         _as_float(data.get("v_gf"), 0.0), _as_float(data.get("d_gf"), 0.0), _as_float(data.get("icms_gf"), 0.0),
         _as_float(data.get("v_pet"), 0.0), _as_float(data.get("d_pet"), 0.0), _as_float(data.get("icms_pet"), 0.0),
@@ -21796,7 +21913,7 @@ def editar_comissao_lancamento(item_id):
     cur.execute(
         """
         UPDATE comissao_lancamentos SET
-            cod_vendedor=%s, motorista='', entregador=%s, rota=%s, usina=%s,
+            cod_vendedor=%s, motorista=%s, entregador=%s, rota=%s, usina=%s,
             data_faturamento=%s, data_saida=%s, data_chegada=%s,
             v_gf=%s, d_gf=%s, icms_gf=%s, v_pet=%s, d_pet=%s, icms_pet=%s, v_agua=%s, d_agua=%s,
             gf_600=%s, gf_200=%s, gf_300=%s, dev_gf=%s, pet_2l=%s, pet_600=%s, dev_pet=%s,
@@ -21806,7 +21923,7 @@ def editar_comissao_lancamento(item_id):
         WHERE id=%s
         """,
         (
-            cod_vendedor, entregador, rota, _as_str(data.get("usina")),
+            cod_vendedor, _as_str(data.get("motorista")), entregador, rota, _as_str(data.get("usina")),
             _as_date(data.get("data_faturamento")), _as_date(data.get("data_saida")), _as_date(data.get("data_chegada")),
             _as_float(data.get("v_gf"), 0.0), _as_float(data.get("d_gf"), 0.0), _as_float(data.get("icms_gf"), 0.0),
             _as_float(data.get("v_pet"), 0.0), _as_float(data.get("d_pet"), 0.0), _as_float(data.get("icms_pet"), 0.0),
@@ -22015,11 +22132,15 @@ def _coletar_relatorios_comissao(filtro_cod=0, filtro_entregador=""):
 
     total_vendedores = {}
     total_entregadores = {}
+    ranking_faixas = {}
     total_refugo = {}
     total_acucar = {}
     lancamentos_detalhados = []
     resumo = {
         "total_lancamentos": 0,
+        "total_entregas": 0,
+        "fretes_ate_5": 0,
+        "fretes_acima_5": 0,
         "base_vendedor_total": 0.0,
         "comissao_vendedor_total": 0.0,
         "comissao_entregador_total": 0.0,
@@ -22037,7 +22158,11 @@ def _coletar_relatorios_comissao(filtro_cod=0, filtro_entregador=""):
             continue
 
         calc = _calc_comissao_lancamento(r)
+        qtd_entregas = max(0, _as_int(r.get("total_pedidos"), 0))
+        faixa_entregas = "acima_5" if qtd_entregas > 5 else "ate_5"
         resumo["total_lancamentos"] += 1
+        resumo["total_entregas"] += qtd_entregas
+        resumo[f"fretes_{faixa_entregas}"] += 1
         resumo["base_vendedor_total"] += calc["base_vendedor_total"]
 
         cad_v = vend_cad.get(cod)
@@ -22094,6 +22219,7 @@ def _coletar_relatorios_comissao(filtro_cod=0, filtro_entregador=""):
             "data_faturamento": _fmt_date(r.get("data_faturamento")),
             "data_saida": _fmt_date(r.get("data_saida")),
             "data_chegada": _fmt_date(r.get("data_chegada")),
+            "total_pedidos": qtd_entregas,
             "base_gf": calc["base_gf"],
             "base_pet": calc["base_pet"],
             "base_agua": calc["base_agua"],
@@ -22172,6 +22298,7 @@ def _coletar_relatorios_comissao(filtro_cod=0, filtro_entregador=""):
                     "comissao_pet": 0.0,
                     "comissao_agua": 0.0,
                     "comissao_acucar": 0.0,
+                    "total_entregas": 0,
                     "volume_total": 0.0,
                     "volume_bruto_total": 0.0,
                     "devolucao_total": 0.0,
@@ -22187,12 +22314,31 @@ def _coletar_relatorios_comissao(filtro_cod=0, filtro_entregador=""):
             total_e["comissao_pet"] += calc["base_ent_pet"] * pct_e_pet
             total_e["comissao_agua"] += calc["base_ent_agua"] * pct_e_agua
             total_e["comissao_acucar"] += calc["base_ent_acucar"] * taxa_acucar
+            total_e["total_entregas"] += qtd_entregas
             # Igual ao TOTAL da planilha: GF + PET + ADQ. Açúcar é demonstrado
             # separadamente e participa da comissão, mas não do total de volumes.
             total_e["volume_total"] += calc["base_ent_gf"] + calc["base_ent_pet"] + calc["base_ent_agua"]
             total_e["volume_bruto_total"] += bruto_gf + bruto_pet + bruto_agua
             total_e["devolucao_total"] += dev_gf + dev_pet + dev_agua
             total_e["comissao_total"] += com_e
+
+            key_ranking = (faixa_entregas, key_e)
+            if key_ranking not in ranking_faixas:
+                ranking_faixas[key_ranking] = {
+                    "nome": key_e,
+                    "faixa_entregas": faixa_entregas,
+                    "faixa_entregas_label": "Acima de 5 entregas" if faixa_entregas == "acima_5" else "Até 5 entregas",
+                    "qtd_fretes": 0,
+                    "total_entregas": 0,
+                    "volume_bruto_total": 0.0,
+                    "devolucao_total": 0.0,
+                    "percentual_devolucao": 0.0,
+                }
+            faixa_e = ranking_faixas[key_ranking]
+            faixa_e["qtd_fretes"] += 1
+            faixa_e["total_entregas"] += qtd_entregas
+            faixa_e["volume_bruto_total"] += bruto_gf + bruto_pet + bruto_agua
+            faixa_e["devolucao_total"] += dev_gf + dev_pet + dev_agua
 
             if key_e not in total_refugo:
                 total_refugo[key_e] = {
@@ -22230,6 +22376,11 @@ def _coletar_relatorios_comissao(filtro_cod=0, filtro_entregador=""):
             item["devolucao_total"] / item["volume_bruto_total"] * 100
             if item["volume_bruto_total"] > 0 else 0.0
         )
+    for item in ranking_faixas.values():
+        item["percentual_devolucao"] = (
+            item["devolucao_total"] / item["volume_bruto_total"] * 100
+            if item["volume_bruto_total"] > 0 else 0.0
+        )
     for item in total_refugo.values():
         item["pct_dev_gf"] = item["dev_gf"] / item["volume_gf"] * 100 if item["volume_gf"] > 0 else 0.0
         item["pct_dev_pet"] = item["dev_pet"] / item["volume_pet"] * 100 if item["volume_pet"] > 0 else 0.0
@@ -22241,17 +22392,21 @@ def _coletar_relatorios_comissao(filtro_cod=0, filtro_entregador=""):
     ranking_devolucoes = sorted(
         (
             dict(item)
-            for item in total_entregadores.values()
+            for item in ranking_faixas.values()
             if _as_float(item.get("volume_bruto_total"), 0.0) > 0
         ),
         key=lambda item: (
+            0 if item.get("faixa_entregas") == "acima_5" else 1,
             _as_float(item.get("percentual_devolucao"), 0.0),
-            _as_float(item.get("devolucao_total"), 0.0),
+            -_as_float(item.get("volume_bruto_total"), 0.0),
             _as_str(item.get("nome")),
         ),
     )
-    for posicao, item in enumerate(ranking_devolucoes, 1):
-        item["posicao"] = posicao
+    posicoes_por_faixa = {}
+    for item in ranking_devolucoes:
+        faixa = item["faixa_entregas"]
+        posicoes_por_faixa[faixa] = posicoes_por_faixa.get(faixa, 0) + 1
+        item["posicao"] = posicoes_por_faixa[faixa]
 
     return {
         "tipo_relatorio": "vendedor" if filtro_cod > 0 else ("entregador" if filtro_entregador else "geral"),
@@ -22330,6 +22485,7 @@ def _build_relatorio_comissao_pdf(rel, filtro_cod=0, filtro_entregador=""):
         elementos.append(Paragraph(f"Comissao vendedor total: R$ {_as_float(r.get('comissao_vendedor_total'), 0.0):.2f}", styles["Normal"]))
     if somente_entregador:
         elementos.append(Paragraph(f"Comissao entregador total: R$ {_as_float(r.get('comissao_entregador_total'), 0.0):.2f}", styles["Normal"]))
+        elementos.append(Paragraph(f"Quantidade de entregas: {_as_int(r.get('total_entregas'), 0)}", styles["Normal"]))
         elementos.append(Paragraph(
             "Devolucao geral: "
             f"{_as_float(r.get('devolucao_total'), 0.0):.2f} / "
@@ -22415,11 +22571,12 @@ def _build_relatorio_comissao_pdf(rel, filtro_cod=0, filtro_entregador=""):
                 ])
             larguras = [26, 82, 56, 78, 78, 78, 64]
         else:
-            dados = [["ID", "Rota", "Chegada", "GF liq. x %", "PET liq. x %", "Agua x %", "% Dev.", "Total"]]
+            dados = [["ID", "Rota", "Entregas", "Chegada", "GF liq. x %", "PET liq. x %", "Agua x %", "% Dev.", "Total"]]
             for x in detalhes:
                 dados.append([
                     str(_as_int(x.get("id"), 0)),
                     _as_str(x.get("rota"))[:18],
+                    str(_as_int(x.get("total_pedidos"), 0)),
                     _as_str(x.get("data_chegada")) or "-",
                     f"{_as_float(x.get('base_ent_gf'),0):.2f} x {_as_float(x.get('pct_ent_gf'),0)*100:.2f}%",
                     f"{_as_float(x.get('base_ent_pet'),0):.2f} x {_as_float(x.get('pct_ent_pet'),0)*100:.2f}%",
@@ -22427,7 +22584,7 @@ def _build_relatorio_comissao_pdf(rel, filtro_cod=0, filtro_entregador=""):
                     f"{_as_float(x.get('percentual_devolucao'),0):.2f}%",
                     f"R$ {_as_float(x.get('comissao_entregador'),0):.2f}",
                 ])
-            larguras = [24, 65, 50, 68, 68, 68, 50, 69]
+            larguras = [22, 57, 43, 47, 61, 61, 61, 46, 62]
         t = Table(dados, colWidths=larguras, repeatRows=1)
         t.setStyle(TableStyle([
             ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),

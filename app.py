@@ -1607,8 +1607,8 @@ def riob_hash_bridge_script():
         window.openCadastrosView(null, view);
         return;
       }
-      if (section === "comissao" && view === "relatorios" && typeof window.openComissaoView === "function") {
-        window.openComissaoView(null, "relatorios");
+      if (section === "comissao" && ["relatorios", "exportar"].includes(view) && typeof window.openComissaoView === "function") {
+        window.openComissaoView(null, view);
         return;
       }
       if (section === "comissao" && typeof window.openWorkflowView === "function") {

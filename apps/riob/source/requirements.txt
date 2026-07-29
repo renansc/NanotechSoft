@@ -6,6 +6,7 @@ pyVmomi>=8.0,<10.0
 requests>=2.32.0,<3.0
 cryptography>=43.0.0,<45.0.0
 lxml>=5.2.0,<6.0.0
+openpyxl>=3.1.5,<4.0.0
 pyOpenSSL>=24.2.1,<24.3.0
 signxml>=3.2.2,<4.0.0
 numpy>=1.26,<2.0

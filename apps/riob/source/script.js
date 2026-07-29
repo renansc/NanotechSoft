@@ -2324,21 +2324,25 @@ async function carregarDashboardComissoes(){
   const resp = await apiFetch("/api/comissao/relatorios");
   if (!resp.ok){
     if (resumoEl) resumoEl.innerHTML = _resumoCardVendas("Erro", "Falha ao carregar");
-    if (body) body.innerHTML = `<tr><td colspan="6">Não foi possível carregar o ranking.</td></tr>`;
+    if (body) body.innerHTML = `<tr><td colspan="9">Não foi possível carregar o ranking.</td></tr>`;
     return;
   }
   const data = await resp.json();
   const ranking = Array.isArray(data?.ranking_devolucoes) ? data.ranking_devolucoes : [];
   const geral = data?.resumo_geral || {};
-  const melhor = ranking[0] || {};
+  const melhorAcima5 = ranking.find((item)=>item.faixa_entregas === "acima_5") || {};
+  const melhorAte5 = ranking.find((item)=>item.faixa_entregas === "ate_5") || {};
   if (resumoEl){
     resumoEl.innerHTML = _renderCardsVendasResumo([
       ["Entregadores no ranking", _fmtNumber(ranking.length, 0)],
-      ["Volumes carregados", _fmtNumber(geral.volume_entregador_total || 0, 2)],
-      ["Devoluções", _fmtNumber(geral.devolucao_total || 0, 2)],
+      ["Fretes acima de 5", `${_fmtNumber(geral.fretes_acima_5 || 0, 0)} fretes`],
+      ["Fretes até 5", `${_fmtNumber(geral.fretes_ate_5 || 0, 0)} fretes`],
+      ["Total de entregas", `${_fmtNumber(geral.total_entregas || 0, 0)} entregas`],
+      ["Volumes carregados", `${_fmtNumber(geral.volume_entregador_total || 0, 0)} vol.`],
+      ["Volumes devolvidos", `${_fmtNumber(geral.devolucao_total || 0, 0)} vol.`],
       ["Percentual geral", `${_fmtNumber(geral.percentual_devolucao || 0, 2)}%`],
-      ["Melhor colocado", melhor.nome || "-"],
-      ["Melhor percentual", `${_fmtNumber(melhor.percentual_devolucao || 0, 2)}%`],
+      ["Melhor acima de 5", melhorAcima5.nome || "-"],
+      ["Melhor até 5", melhorAte5.nome || "-"],
     ]);
   }
   if (body){
@@ -2348,13 +2352,16 @@ async function carregarDashboardComissoes(){
       const liquido = Number(item.volume_bruto_total || 0) - Number(item.devolucao_total || 0);
       return `<tr class="${posicao <= 3 ? `comissao-ranking-top comissao-ranking-${posicao}` : ""}">
         <td><strong>${medalha} ${_escHtml(String(posicao))}º</strong></td>
+        <td>${_escHtml(item.faixa_entregas_label || "-")}</td>
         <td>${_escHtml(item.nome || "-")}</td>
-        <td>${_escHtml(_fmtNumber(item.volume_bruto_total || 0, 2))}</td>
-        <td>${_escHtml(_fmtNumber(item.devolucao_total || 0, 2))}</td>
+        <td>${_escHtml(_fmtNumber(item.qtd_fretes || 0, 0))} fretes</td>
+        <td>${_escHtml(_fmtNumber(item.total_entregas || 0, 0))} entregas</td>
+        <td>${_escHtml(_fmtNumber(item.volume_bruto_total || 0, 0))} vol.</td>
+        <td>${_escHtml(_fmtNumber(item.devolucao_total || 0, 0))} vol.</td>
         <td><strong>${_escHtml(_fmtNumber(item.percentual_devolucao || 0, 2))}%</strong></td>
-        <td>${_escHtml(_fmtNumber(liquido, 2))}</td>
+        <td>${_escHtml(_fmtNumber(liquido, 0))} vol.</td>
       </tr>`;
-    }).join("") : `<tr><td colspan="6">Nenhum entregador com volumes lançados.</td></tr>`;
+    }).join("") : `<tr><td colspan="9">Nenhum entregador com volumes lançados.</td></tr>`;
   }
 }
 
@@ -2800,7 +2807,7 @@ function openComissaoView(ev, view){
   showTab("comissao", menu);
 
   document.querySelectorAll("#submenuComissao .submenu-item").forEach(x=>x.classList.remove("active"));
-  const map = { lancamento: 0, relatorios: 1 };
+  const map = { lancamento: 0, relatorios: 1, exportar: 2 };
   const target = map[view] ?? 0;
   const items = document.querySelectorAll("#submenuComissao .submenu-item");
   if (items && items[target]) items[target].classList.add("active");
@@ -2814,18 +2821,55 @@ function setComissaoView(view){
   window.__comissaoView = view;
   const vLanc = document.getElementById("comissaoViewLancamento");
   const vRel = document.getElementById("comissaoViewRelatorios");
+  const vExportar = document.getElementById("comissaoViewExportar");
   const titulo = document.getElementById("comissaoPageTitle");
   const hint = document.getElementById("comissaoPageHint");
   const novoBtn = document.getElementById("comissaoNovoLancamentoBtn");
   if (vLanc) vLanc.classList.toggle("hidden", view !== "lancamento");
   if (vRel) vRel.classList.toggle("hidden", view !== "relatorios");
-  if (titulo) titulo.textContent = view === "relatorios" ? "Relatório de Comissões" : "Comissões";
+  if (vExportar) vExportar.classList.toggle("hidden", view !== "exportar");
+  if (titulo) titulo.textContent = view === "relatorios"
+    ? "Relatório de Comissões"
+    : (view === "exportar" ? "Importar / Exportar Comissões" : "Comissões");
   if (hint) hint.textContent = view === "relatorios"
     ? "Comissões de vendedores e entregadores, com percentuais e etapas de cálculo."
-    : "Lançamentos baseados na aba “Cargas Lançar” da planilha de comissões.";
-  if (novoBtn) novoBtn.classList.toggle("hidden", view === "relatorios");
+    : (view === "exportar"
+      ? "Exporte os lançamentos no padrão da planilha usada para contingência."
+      : "Lançamentos baseados na aba “Cargas Lançar” da planilha de comissões.");
+  if (novoBtn) novoBtn.classList.toggle("hidden", view !== "lancamento");
   if (view === "lancamento") carregarComissaoLancamentos().catch(()=>{});
   if (view === "relatorios") carregarRelatoriosComissao().catch(()=>{});
+}
+
+async function exportarComissaoLancamentosXlsx(){
+  const status = document.getElementById("comissaoExportarStatus");
+  if (status) status.textContent = "Gerando planilha...";
+  try {
+    const resp = await apiFetch("/api/comissao/lancamentos/exportar-xlsx");
+    if (!resp.ok) {
+      let mensagem = "Não foi possível exportar os lançamentos.";
+      try {
+        const erro = await resp.json();
+        mensagem = erro?.erro || mensagem;
+      } catch {}
+      throw new Error(mensagem);
+    }
+    const blob = await resp.blob();
+    const disposition = resp.headers.get("Content-Disposition") || "";
+    const match = disposition.match(/filename=\"?([^\";]+)\"?/i);
+    const nome = match?.[1] || "comissoes_cargas_lancar.xlsx";
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = nome;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    if (status) status.textContent = "Planilha exportada com sucesso.";
+  } catch (erro) {
+    if (status) status.textContent = erro?.message || "Falha ao exportar a planilha.";
+  }
 }
 
 function toggleVendasSubmenu(ev){
@@ -5657,7 +5701,7 @@ function showTab(tabId, el) {
     }
   }
   if (tabId === "comissao") {
-    if (!window.__comissaoView || !["lancamento", "relatorios"].includes(window.__comissaoView)) {
+    if (!window.__comissaoView || !["lancamento", "relatorios", "exportar"].includes(window.__comissaoView)) {
       window.__comissaoView = "lancamento";
     }
     setComissaoView(window.__comissaoView);
@@ -13349,6 +13393,7 @@ let comissaoLancamentosCache = new Map();
 function _salvarPadroesUltimoLancamentoComissao(payload){
   const padroes = {
     cod_vendedor: payload.cod_vendedor || "",
+    motorista: payload.motorista || "",
     entregador: payload.entregador || "",
     rota: payload.rota || "",
     usina: payload.usina || "",
@@ -13370,6 +13415,7 @@ function _aplicarPadroesUltimoLancamentoComissao(){
   }
   const campos = {
     com_cod_vendedor: String(padroes.cod_vendedor || ""),
+    com_motorista: String(padroes.motorista || ""),
     com_entregador: String(padroes.entregador || ""),
     com_rota: String(padroes.rota || ""),
     com_usina: String(padroes.usina || ""),
@@ -13387,7 +13433,7 @@ function _aplicarPadroesUltimoLancamentoComissao(){
 
 function _limparCamposComissaoLancamento(){
   [
-    "com_cod_vendedor", "com_entregador", "com_rota", "com_usina",
+    "com_cod_vendedor", "com_motorista", "com_entregador", "com_rota", "com_usina",
     "com_data_faturamento", "com_data_saida", "com_data_chegada",
     "com_v_gf", "com_d_gf", "com_icms_gf", "com_v_pet", "com_d_pet", "com_icms_pet", "com_v_agua", "com_d_agua",
     "com_gf_600", "com_gf_200", "com_gf_300", "com_dev_gf", "com_pet_2l", "com_pet_600", "com_dev_pet",
@@ -13428,6 +13474,7 @@ async function editarComissaoLancamento(id){
     await carregarOpcoesComissaoLancamento();
     const campos = {
       com_cod_vendedor: lancamento.cod_vendedor,
+      com_motorista: lancamento.motorista,
       com_entregador: lancamento.entregador,
       com_rota: lancamento.rota,
       com_usina: lancamento.usina,
@@ -13521,6 +13568,7 @@ async function _apiComissaoCadastros(funcao = ""){
 async function salvarComissaoLancamento(){
   const payload = {
     cod_vendedor: _comissaoNum("com_cod_vendedor", 0),
+    motorista: _comissaoText("com_motorista"),
     entregador: _comissaoText("com_entregador"),
     rota: _comissaoText("com_rota"),
     usina: _comissaoText("com_usina"),
@@ -13589,12 +13637,12 @@ async function carregarComissaoLancamentos(){
 
   const resp = await apiFetch("/api/comissao/lancamentos");
   if (!resp.ok) {
-    body.innerHTML = `<tr><td colspan="10">Erro ao carregar lançamentos.</td></tr>`;
+    body.innerHTML = `<tr><td colspan="11">Erro ao carregar lançamentos.</td></tr>`;
     return;
   }
   const dados = await resp.json();
   if (!Array.isArray(dados) || dados.length === 0) {
-    body.innerHTML = `<tr><td colspan="10">Sem lançamentos de comissão.</td></tr>`;
+    body.innerHTML = `<tr><td colspan="11">Sem lançamentos de comissão.</td></tr>`;
     return;
   }
 
@@ -13606,6 +13654,7 @@ async function carregarComissaoLancamentos(){
       <tr>
         <td>${_escHtml(String(r.id || 0))}</td>
         <td>${_escHtml(r.vendedor_nome ? `${r.cod_vendedor || 0} - ${r.vendedor_nome}` : String(r.cod_vendedor || "-"))}</td>
+        <td>${_escHtml(r.motorista || "-")}</td>
         <td>${_escHtml(r.entregador || "-")}</td>
         <td>${_escHtml(r.rota || "-")}</td>
         <td>${_escHtml(_fmtDateBr(r.data_chegada) || "-")}</td>
@@ -13815,21 +13864,21 @@ async function carregarRelatoriosComissao(){
       resumo.innerHTML = `
         <div class="comissao-relatorio-identificacao">
           <strong>${_escHtml(entregaResumo.nome || "Entregador")}</strong>
-          <span>${_escHtml(String(g.total_lancamentos || 0))} lançamentos</span>
+          <span>${_escHtml(_fmtNumber(entregaResumo.total_entregas || 0, 0))} entregas em ${_escHtml(String(g.total_lancamentos || 0))} lançamentos</span>
         </div>
         <div class="comissao-devolucao-destaque">
           <span>Percentual geral de devolução</span>
           <strong>${_escHtml(_fmtNumber(g.percentual_devolucao || 0, 2))}%</strong>
-          <small>${_escHtml(_fmtNumber(g.devolucao_total || 0, 2))} devolvidos ÷ ${_escHtml(_fmtNumber(g.volume_entregador_total || 0, 2))} carregados</small>
+          <small>${_escHtml(_fmtNumber(g.devolucao_total || 0, 0))} vol. devolvidos ÷ ${_escHtml(_fmtNumber(g.volume_entregador_total || 0, 0))} vol. carregados</small>
         </div>
         <table class="comissao-total-planilha">
           <thead><tr><th colspan="2"></th><th>VOLUMES</th><th>COMISSÃO</th></tr></thead>
           <tbody>
-            <tr><th class="comissao-totais-label" rowspan="5">TOTAIS</th><th>GF</th><td>${_escHtml(_fmtNumber(entregaResumo.volume_gf || 0, 2))}</td><td>R$ ${_escHtml(_fmtMoney(entregaResumo.comissao_gf || 0))}</td></tr>
-            <tr><th>PET</th><td>${_escHtml(_fmtNumber(entregaResumo.volume_pet || 0, 2))}</td><td>R$ ${_escHtml(_fmtMoney(entregaResumo.comissao_pet || 0))}</td></tr>
-            <tr><th>ADQ</th><td>${_escHtml(_fmtNumber(entregaResumo.volume_agua || 0, 2))}</td><td>R$ ${_escHtml(_fmtMoney(entregaResumo.comissao_agua || 0))}</td></tr>
-            <tr><th>AÇÚCAR</th><td>${_escHtml(_fmtNumber(entregaResumo.volume_acucar || 0, 2))}</td><td>R$ ${_escHtml(_fmtMoney(entregaResumo.comissao_acucar || 0))}</td></tr>
-            <tr class="comissao-total-final"><th>TOTAL</th><td>${_escHtml(_fmtNumber(entregaResumo.volume_total || 0, 2))}</td><td>R$ ${_escHtml(_fmtMoney(entregaResumo.comissao_total || 0))}</td></tr>
+            <tr><th class="comissao-totais-label" rowspan="5">TOTAIS</th><th>GF</th><td>${_escHtml(_fmtNumber(entregaResumo.volume_gf || 0, 0))} vol.</td><td>R$ ${_escHtml(_fmtMoney(entregaResumo.comissao_gf || 0))}</td></tr>
+            <tr><th>PET</th><td>${_escHtml(_fmtNumber(entregaResumo.volume_pet || 0, 0))} vol.</td><td>R$ ${_escHtml(_fmtMoney(entregaResumo.comissao_pet || 0))}</td></tr>
+            <tr><th>ADQ</th><td>${_escHtml(_fmtNumber(entregaResumo.volume_agua || 0, 0))} vol.</td><td>R$ ${_escHtml(_fmtMoney(entregaResumo.comissao_agua || 0))}</td></tr>
+            <tr><th>AÇÚCAR</th><td>${_escHtml(_fmtNumber(entregaResumo.volume_acucar || 0, 0))} vol.</td><td>R$ ${_escHtml(_fmtMoney(entregaResumo.comissao_acucar || 0))}</td></tr>
+            <tr class="comissao-total-final"><th>TOTAL</th><td>${_escHtml(_fmtNumber(entregaResumo.volume_total || 0, 0))} vol.</td><td>R$ ${_escHtml(_fmtMoney(entregaResumo.comissao_total || 0))}</td></tr>
           </tbody>
         </table>`;
     } else {
@@ -13838,7 +13887,8 @@ async function carregarRelatoriosComissao(){
       linhas.push(`Comissão vendedor: <b>R$ ${_escHtml(_fmtMoney(g.comissao_vendedor_total || 0))}</b>`);
       if (data?.tipo_relatorio !== "vendedor"){
         linhas.push(`Comissão entregador: <b>R$ ${_escHtml(_fmtMoney(g.comissao_entregador_total || 0))}</b>`);
-        linhas.push(`Devolução geral: <b>${_escHtml(_fmtNumber(g.devolucao_total || 0, 2))} de ${_escHtml(_fmtNumber(g.volume_entregador_total || 0, 2))} volumes (${_escHtml(_fmtNumber(g.percentual_devolucao || 0, 2))}%)</b>`);
+        linhas.push(`Entregas: <b>${_escHtml(_fmtNumber(g.total_entregas || 0, 0))} entregas</b>`);
+        linhas.push(`Devolução geral: <b>${_escHtml(_fmtNumber(g.devolucao_total || 0, 0))} de ${_escHtml(_fmtNumber(g.volume_entregador_total || 0, 0))} vol. (${_escHtml(_fmtNumber(g.percentual_devolucao || 0, 2))}%)</b>`);
       }
       resumo.innerHTML = linhas.join("<br>");
     }
@@ -13878,20 +13928,21 @@ async function carregarRelatoriosComissao(){
     entBody.innerHTML = rows.length ? rows.map((r)=>`
       <tr>
         <td>${_escHtml(r.nome || "-")}</td>
-        <td>${_escHtml(_fmtNumber(r.volume_gf || 0, 2))}</td>
+        <td>${_escHtml(_fmtNumber(r.total_entregas || 0, 0))}</td>
+        <td>${_escHtml(_fmtNumber(r.volume_gf || 0, 0))}</td>
         <td>${_escHtml(_fmtNumber((r.pct_gf || 0) * 100, 2))}%</td>
         <td>R$ ${_escHtml(_fmtMoney(r.comissao_gf || 0))}</td>
-        <td>${_escHtml(_fmtNumber(r.volume_pet || 0, 2))}</td>
+        <td>${_escHtml(_fmtNumber(r.volume_pet || 0, 0))}</td>
         <td>${_escHtml(_fmtNumber((r.pct_pet || 0) * 100, 2))}%</td>
         <td>R$ ${_escHtml(_fmtMoney(r.comissao_pet || 0))}</td>
-        <td>${_escHtml(_fmtNumber(r.volume_agua || 0, 2))}</td>
+        <td>${_escHtml(_fmtNumber(r.volume_agua || 0, 0))}</td>
         <td>${_escHtml(_fmtNumber((r.pct_agua || 0) * 100, 2))}%</td>
         <td>R$ ${_escHtml(_fmtMoney(r.comissao_agua || 0))}</td>
         <td>${_escHtml(_fmtNumber(r.percentual_devolucao || 0, 2))}%</td>
-        <td>${_escHtml(_fmtNumber(r.volume_total || 0, 2))}</td>
+        <td>${_escHtml(_fmtNumber(r.volume_total || 0, 0))}</td>
         <td>R$ ${_escHtml(_fmtMoney(r.comissao_total || 0))}</td>
       </tr>
-    `).join("") : `<tr><td colspan="13">Sem dados.</td></tr>`;
+    `).join("") : `<tr><td colspan="14">Sem dados.</td></tr>`;
   }
 
   const refBody = document.getElementById("comrelRefugoBody");
@@ -13951,20 +14002,20 @@ async function carregarRelatoriosComissao(){
     } else if (tipoRelatorio === "entregador"){
       detalhesEl.innerHTML = `<table>
         <thead><tr>
-          <th>ID</th><th>Rota</th><th>Faturamento</th><th>Saída</th><th>Chegada</th>
-          <th>GF carregado</th><th>Dev. GF</th><th>GF líquido</th><th>% GF</th><th>Com. GF</th>
-          <th>PET carregado</th><th>Dev. PET</th><th>PET líquido</th><th>% PET</th><th>Com. PET</th>
-          <th>Água líquida</th><th>% Água</th><th>Com. Água</th><th>% Devolução do frete</th><th>Comissão Total</th>
+          <th>ID</th><th>Rota</th><th>Entregas (qtd.)</th><th>Faturamento</th><th>Saída</th><th>Chegada</th>
+          <th>GF carregado (vol.)</th><th>Dev. GF (vol.)</th><th>GF líquido (vol.)</th><th>% GF</th><th>Com. GF (R$)</th>
+          <th>PET carregado (vol.)</th><th>Dev. PET (vol.)</th><th>PET líquido (vol.)</th><th>% PET</th><th>Com. PET (R$)</th>
+          <th>Água líquida (vol.)</th><th>% Água</th><th>Com. Água (R$)</th><th>% Devolução do frete</th><th>Comissão Total (R$)</th>
         </tr></thead><tbody>${detalhes.map((r)=>{
           const brutoGf = Number(r.gf_600 || 0) + Number(r.gf_200 || 0) + Number(r.gf_300 || 0);
           const brutoPet = Number(r.pet_2l || 0) + Number(r.pet_600 || 0);
           return `<tr>
-            <td>${_escHtml(String(r.id || 0))}</td><td>${_escHtml(r.rota || "-")}</td>
+            <td>${_escHtml(String(r.id || 0))}</td><td>${_escHtml(r.rota || "-")}</td><td>${_escHtml(_fmtNumber(r.total_pedidos || 0, 0))}</td>
             <td>${_escHtml(_fmtDateBr(r.data_faturamento))}</td><td>${_escHtml(_fmtDateBr(r.data_saida))}</td><td>${_escHtml(_fmtDateBr(r.data_chegada))}</td>
-            <td>${_escHtml(_fmtNumber(brutoGf, 2))}</td><td>${_escHtml(_fmtNumber(r.dev_gf || 0, 2))}</td><td>${_escHtml(_fmtNumber(r.base_ent_gf || 0, 2))}</td><td>${_escHtml(_fmtNumber((r.pct_ent_gf || 0) * 100, 2))}%</td><td>R$ ${_escHtml(_fmtMoney(r.comissao_ent_gf || 0))}</td>
-            <td>${_escHtml(_fmtNumber(brutoPet, 2))}</td><td>${_escHtml(_fmtNumber(r.dev_pet || 0, 2))}</td><td>${_escHtml(_fmtNumber(r.base_ent_pet || 0, 2))}</td><td>${_escHtml(_fmtNumber((r.pct_ent_pet || 0) * 100, 2))}%</td><td>R$ ${_escHtml(_fmtMoney(r.comissao_ent_pet || 0))}</td>
-            <td>${_escHtml(_fmtNumber(r.base_ent_agua || 0, 2))}</td><td>${_escHtml(_fmtNumber((r.pct_ent_agua || 0) * 100, 2))}%</td><td>R$ ${_escHtml(_fmtMoney(r.comissao_ent_agua || 0))}</td>
-            <td>${_escHtml(_fmtNumber(r.devolucao_entregador || 0, 2))} ÷ ${_escHtml(_fmtNumber(r.volume_bruto_entregador || 0, 2))} = <b>${_escHtml(_fmtNumber(r.percentual_devolucao || 0, 2))}%</b></td>
+            <td>${_escHtml(_fmtNumber(brutoGf, 0))}</td><td>${_escHtml(_fmtNumber(r.dev_gf || 0, 0))}</td><td>${_escHtml(_fmtNumber(r.base_ent_gf || 0, 0))}</td><td>${_escHtml(_fmtNumber((r.pct_ent_gf || 0) * 100, 2))}%</td><td>R$ ${_escHtml(_fmtMoney(r.comissao_ent_gf || 0))}</td>
+            <td>${_escHtml(_fmtNumber(brutoPet, 0))}</td><td>${_escHtml(_fmtNumber(r.dev_pet || 0, 0))}</td><td>${_escHtml(_fmtNumber(r.base_ent_pet || 0, 0))}</td><td>${_escHtml(_fmtNumber((r.pct_ent_pet || 0) * 100, 2))}%</td><td>R$ ${_escHtml(_fmtMoney(r.comissao_ent_pet || 0))}</td>
+            <td>${_escHtml(_fmtNumber(r.base_ent_agua || 0, 0))}</td><td>${_escHtml(_fmtNumber((r.pct_ent_agua || 0) * 100, 2))}%</td><td>R$ ${_escHtml(_fmtMoney(r.comissao_ent_agua || 0))}</td>
+            <td>${_escHtml(_fmtNumber(r.devolucao_entregador || 0, 0))} vol. ÷ ${_escHtml(_fmtNumber(r.volume_bruto_entregador || 0, 0))} vol. = <b>${_escHtml(_fmtNumber(r.percentual_devolucao || 0, 2))}%</b></td>
             <td>R$ ${_escHtml(_fmtMoney(r.comissao_entregador || 0))}</td>
           </tr>`;
         }).join("")}</tbody></table>`;

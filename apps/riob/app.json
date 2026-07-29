@@ -122,6 +122,11 @@
     ],
     "import_export": [
       {
+        "nome": "Comissões",
+        "url": "/apps/riob#comissao:exportar",
+        "grupo": "RioB"
+      },
+      {
         "nome": "Gestor de E-mails RioB",
         "url": "/apps/riob#monitor:gestor_emails"
       }

@@ -871,6 +871,7 @@ Tabela `sip_config`:
 ### Endpoints
 
 - `GET /api/comissao/lancamentos`
+- `GET /api/comissao/lancamentos/exportar-xlsx`
 - `POST /api/comissao/lancamentos`
 - `DELETE /api/comissao/lancamentos/<id>`
 - `GET /api/comissao/cadastros`
@@ -1209,7 +1210,18 @@ Tabela mais densa do dominio de comissao, com:
 - valores por linha de negocio
 - taxas
 - percentuais
-- dados de rota, vendedor, motorista, entregador e usina
+- `total_pedidos`, interpretado nos relatorios como quantidade de entregas
+- dados de rota, vendedor, motorista, entregador e usina; o motorista e
+  preservado na criacao, edicao e exportacao de contingencia
+
+O ranking de devolucoes classifica cada frete pelo seu `total_pedidos`: `ate_5`
+ou `acima_5` entregas. Os resultados de cada entregador sao acumulados
+separadamente por faixa, portanto o mesmo entregador pode aparecer nas duas. Em
+cada faixa, ordena pelo menor percentual de devolucao e usa o maior volume
+carregado como desempate.
+
+A exportacao XLSX gera a aba `Cargas Lançar` com as colunas A-AF no mesmo
+padrao da planilha de contingencia de comissoes.
 
 ### `comissao_cadastros`
 
