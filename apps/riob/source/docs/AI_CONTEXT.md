@@ -71,6 +71,18 @@ If you need context fast, read these files first:
 - Do not guess APIs, routes, or table names when the repository can confirm them.
 - Prefer the smallest useful patch over broad refactors.
 - Preserve the current style in the large legacy files.
+- In fretes created or linked from an outgoing XML, keep the trip summary
+  synchronized when the truck is attached later: inherit `veiculos.km_atual`
+  when the frete has no KM, inherit `cargas.peso_total` and the load delivery
+  count when the corresponding frete fields are empty, count each linked
+  outgoing NF-e as at least one delivery, and propagate the truck/context to
+  the XML links without overwriting larger totals entered manually.
+- Outgoing NF-e cards in the Kanban must be consolidated instead of duplicated:
+  reuse an active card for the same destination city; when an archived frete
+  contains multiple cities, register or extend that group in `cargas_rotas`;
+  later XMLs whose cities belong to that route must reuse one active route card
+  even before a truck is linked. Never merge active cards assigned to different
+  trucks.
 - When changing behavior, inspect tests and add or adjust them when practical.
 - If you need to plan a change, generate a brief first instead of guessing the files.
 - Prefer `./riob-agent brief "..."` when you need a concise, file-aware analysis before editing.

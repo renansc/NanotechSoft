@@ -11211,6 +11211,18 @@ async function desvincularXmlPendenteFrete(freteId, notaKey) {
 }
 
 function _bindFreteDetalheDadosWorkflow(body) {
+  const veiculoSelect = body?.querySelector?.(".frete-veiculo");
+  const kmInput = body?.querySelector?.(".frete-km-atual");
+  if (veiculoSelect && kmInput) {
+    veiculoSelect.onchange = () => {
+      const veiculo = _buscarVeiculoCadastro(veiculoSelect.value);
+      const kmAtual = Number(veiculo?.km_atual || 0);
+      if (kmAtual > 0 && Number(kmInput.value || 0) <= 0) {
+        kmInput.value = String(kmAtual);
+      }
+    };
+  }
+
   const motoristaSelect = body?.querySelector?.(".frete-motorista");
   const apoioSelect = body?.querySelector?.(".frete-entregador");
   if (!motoristaSelect || !apoioSelect) return;

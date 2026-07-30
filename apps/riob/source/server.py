@@ -2952,6 +2952,30 @@ def _buscar_km_atual_veiculo(cur, veiculo_id):
     )
     return _as_int((cur.fetchone() or {}).get("km_atual"), 0)
 
+def _resolver_resumo_viagem_frete(
+    km_frete,
+    km_veiculo,
+    qtd_entregas,
+    total_xml,
+    peso_frete=0,
+    peso_carga=0,
+    entregas_carga=0,
+):
+    km_frete = _as_int(km_frete, 0)
+    km_veiculo = _as_int(km_veiculo, 0)
+    qtd_entregas = max(0, _as_int(qtd_entregas, 0))
+    total_xml = max(0, _as_int(total_xml, 0))
+    entregas_carga = max(0, _as_int(entregas_carga, 0))
+    peso_frete = max(0.0, _as_float(peso_frete, 0.0))
+    peso_carga = max(0.0, _as_float(peso_carga, 0.0))
+    return {
+        "km_atual": km_frete if km_frete > 0 else km_veiculo,
+        "peso": peso_frete if peso_frete > 0 else peso_carga,
+        # Cada NF-e de saida vinculada representa uma entrega. Preserva um
+        # total manual maior, pois ele pode incluir entregas sem XML.
+        "qtd_entregas": max(qtd_entregas, entregas_carga, total_xml),
+    }
+
 def _buscar_equipe_atual_veiculo(cur, veiculo_id):
     veiculo_id = _as_int(veiculo_id, 0)
     if veiculo_id <= 0:
@@ -7440,6 +7464,7 @@ FRETE_SELECT_SQL = """
         c.origem_csv AS carga_origem_csv,
         c.registros_importados AS carga_registros_importados,
         c.clientes_distintos AS carga_clientes_distintos,
+        c.numero_entregas AS carga_numero_entregas,
         c.quantidade_total AS carga_quantidade_total,
         c.litros_total AS carga_litros_total,
         c.peso_total AS carga_peso_total,
@@ -7448,7 +7473,9 @@ FRETE_SELECT_SQL = """
         cil.carga_cidades AS carga_cidades,
         COALESCE(f.veiculo_id, vr.id) AS veiculo_id_resolvido,
         COALESCE(v.nome, vr.nome) AS veiculo_nome_resolvido,
-        COALESCE(v.placa, vr.placa) AS veiculo_placa_resolvida
+        COALESCE(v.placa, vr.placa) AS veiculo_placa_resolvida,
+        COALESCE(v.km_atual, vr.km_atual) AS veiculo_km_atual_resolvido,
+        COALESCE(xft.total_xml, 0) AS xml_entregas_total
     FROM fretes f
     LEFT JOIN colaboradores cm ON f.colaborador_motorista_id = cm.id
     LEFT JOIN colaboradores ce ON f.colaborador_entregador_id = ce.id
@@ -7468,6 +7495,22 @@ FRETE_SELECT_SQL = """
     ) cil ON cil.carga_id = c.id
     LEFT JOIN veiculos vr ON TRIM(COALESCE(vr.nome, '')) = TRIM(COALESCE(c.veiculo_numero, ''))
         OR TRIM(COALESCE(vr.placa, '')) = TRIM(COALESCE(c.veiculo_numero, ''))
+    LEFT JOIN (
+        SELECT frete_id, COUNT(DISTINCT nota_key) AS total_xml
+        FROM (
+            SELECT frete_id, nota_key
+            FROM estoque_xml_frete_vinculos
+            UNION ALL
+            SELECT frete_id, nota_key
+            FROM estoque_xml_frete_pre_vinculos
+            WHERE frete_id IS NOT NULL
+              AND COALESCE(status, '') NOT IN (
+                  'cancelado', 'cancelada', 'descartado', 'descartada',
+                  'ignorado', 'ignorada', 'dispensado'
+              )
+        ) xml_notas
+        GROUP BY frete_id
+    ) xft ON xft.frete_id = f.id
 """
 
 def _serialize_frete_row(row):
@@ -7495,9 +7538,20 @@ def _serialize_frete_row(row):
         "carga_id": _as_int(row.get("carga_id"), 0) or None,
         "observacao": _as_str(row.get("observacao")),
         "lote_manual": _normalizar_lotes_frete(row.get("lote_manual")),
-        "km_atual": _as_int(row.get("km_atual"), 0),
-        "peso": _as_float(row.get("peso"), 0.0),
-        "qtd_entregas": _as_int(row.get("qtd_entregas"), 0),
+        "km_atual": (
+            _as_int(row.get("km_atual"), 0)
+            or _as_int(row.get("veiculo_km_atual_resolvido"), 0)
+        ),
+        "peso": (
+            _as_float(row.get("peso"), 0.0)
+            or _as_float(row.get("carga_peso_total"), 0.0)
+        ),
+        "qtd_entregas": max(
+            _as_int(row.get("qtd_entregas"), 0),
+            _as_int(row.get("carga_numero_entregas"), 0),
+            _as_int(row.get("carga_clientes_distintos"), 0),
+            _as_int(row.get("xml_entregas_total"), 0),
+        ),
         "colaborador_motorista_nome": colaborador_motorista_nome,
         "colaborador_entregador_nome": colaborador_entregador_nome,
         "motorista_nome": colaborador_motorista_nome,
@@ -7514,6 +7568,7 @@ def _serialize_frete_row(row):
         "carga_origem_csv": _as_str(row.get("carga_origem_csv")),
         "carga_registros_importados": _as_int(row.get("carga_registros_importados"), 0),
         "carga_clientes_distintos": _as_int(row.get("carga_clientes_distintos"), 0),
+        "carga_numero_entregas": _as_int(row.get("carga_numero_entregas"), 0),
         "carga_quantidade_total": _as_float(row.get("carga_quantidade_total"), 0.0),
         "carga_litros_total": _as_float(row.get("carga_litros_total"), 0.0),
         "carga_peso_total": _as_float(row.get("carga_peso_total"), 0.0),
@@ -7732,6 +7787,7 @@ def _limpar_fretes_finalizados_expirados():
             if cursor.rowcount <= 0:
                 continue
             depois = _buscar_frete_detalhado(cursor, frete_id)
+            _registrar_rota_frete_arquivado(cursor, frete_id)
             _registrar_historico_frete(
                 cursor,
                 frete_id,
@@ -14934,6 +14990,180 @@ def _estoque_xml_sugerir_frete(cur, transporte, veiculo_id=0):
         "candidatos_total": len(candidatos),
     }
 
+def _frete_cidades_lista(*valores):
+    cidades = []
+    vistos = set()
+    for valor in valores:
+        candidatos = valor if isinstance(valor, (list, tuple, set)) else [valor]
+        partes = []
+        for candidato in candidatos:
+            partes.extend(
+                re.split(r"(?:\r?\n|[;,|]|\s+-\s+)+", _as_str(candidato))
+            )
+        for parte in partes:
+            cidade = _normalizar_nome_local(parte)
+            chave = _normalizar_chave_texto(cidade)
+            if cidade and chave and chave not in vistos:
+                vistos.add(chave)
+                cidades.append(cidade)
+    return cidades
+
+
+def _estoque_xml_sugerir_frete_por_cidade_rota(cur, nota, veiculo_id=0):
+    canonicos = (nota or {}).get("canonicos") or []
+    cidades_nota = _frete_cidades_lista(
+        *[_estoque_xml_cidade_destinatario(row) for row in canonicos]
+    )
+    if not cidades_nota:
+        return {}
+    cidade_chaves = {_normalizar_chave_texto(cidade) for cidade in cidades_nota}
+
+    cur.execute("SELECT id, nome, cidades FROM cargas_rotas WHERE ativo=1 ORDER BY id")
+    rota_escolhida = None
+    rota_chaves = set()
+    for rota in cur.fetchall() or []:
+        chaves = {
+            _normalizar_chave_texto(cidade)
+            for cidade in _cargas_rota_cidades_lista(rota.get("cidades"))
+            if _normalizar_chave_texto(cidade)
+        }
+        if cidade_chaves & chaves:
+            rota_escolhida = rota
+            rota_chaves = chaves
+            break
+
+    cur.execute(
+        """
+        SELECT f.id, f.nome, f.cidade, f.veiculo_id,
+               c.cidade AS carga_cidade, c.rota AS carga_rota,
+               cil.carga_cidades
+        FROM fretes f
+        LEFT JOIN cargas c ON c.id=f.carga_id
+        LEFT JOIN (
+            SELECT carga_id, GROUP_CONCAT(DISTINCT cidade SEPARATOR '\n') AS carga_cidades
+            FROM cargas_import_linhas
+            WHERE TRIM(COALESCE(cidade, ''))<>''
+            GROUP BY carga_id
+        ) cil ON cil.carga_id=c.id
+        WHERE COALESCE(f.arquivado, 0)=0
+          AND COALESCE(f.status, '') NOT IN ('retornando', 'paradoVasio')
+          AND (
+              f.observacao LIKE 'Card criado automaticamente pelo XML%%'
+              OR EXISTS (
+                  SELECT 1 FROM estoque_xml_frete_vinculos v
+                  WHERE v.frete_id=f.id
+              )
+              OR EXISTS (
+                  SELECT 1 FROM estoque_xml_frete_pre_vinculos p
+                  WHERE p.frete_id=f.id
+                    AND COALESCE(p.status, '') NOT IN (
+                        'cancelado', 'cancelada', 'descartado', 'descartada',
+                        'ignorado', 'ignorada', 'dispensado'
+                    )
+              )
+          )
+        ORDER BY f.id ASC
+        """
+    )
+    candidatos = []
+    veiculo_id = _as_int(veiculo_id, 0)
+    for frete in cur.fetchall() or []:
+        veiculo_frete = _as_int(frete.get("veiculo_id"), 0)
+        if veiculo_id and veiculo_frete and veiculo_id != veiculo_frete:
+            continue
+        cidades_frete = _frete_cidades_lista(
+            frete.get("cidade"),
+            frete.get("carga_cidade"),
+            frete.get("carga_rota"),
+            frete.get("carga_cidades"),
+        )
+        chaves_frete = {
+            _normalizar_chave_texto(cidade)
+            for cidade in cidades_frete
+            if _normalizar_chave_texto(cidade)
+        }
+        mesma_cidade = bool(cidade_chaves & chaves_frete)
+        mesma_rota = bool(rota_chaves and rota_chaves & chaves_frete)
+        if not (mesma_cidade or mesma_rota):
+            continue
+        candidatos.append(
+            {
+                "frete": frete,
+                "mesma_cidade": mesma_cidade,
+                "mesma_rota": mesma_rota,
+                "veiculo_confere": bool(veiculo_id and veiculo_frete == veiculo_id),
+            }
+        )
+    if not candidatos:
+        return {}
+    candidatos.sort(
+        key=lambda item: (
+            1 if item["mesma_cidade"] else 0,
+            1 if item["veiculo_confere"] else 0,
+            -_as_int(item["frete"].get("id"), 0),
+        ),
+        reverse=True,
+    )
+    escolhido = candidatos[0]
+    frete = escolhido["frete"]
+    motivo = (
+        f"A cidade {cidades_nota[0]} ja possui o frete #{frete.get('id')}."
+        if escolhido["mesma_cidade"]
+        else (
+            f"A cidade {cidades_nota[0]} pertence a rota "
+            f"{_as_str((rota_escolhida or {}).get('nome'))}, ja representada "
+            f"pelo frete #{frete.get('id')}."
+        )
+    )
+    return {
+        "frete_id": _as_int(frete.get("id"), 0),
+        "confianca": "alta",
+        "motivo": motivo,
+        "candidatos_total": len(candidatos),
+        "origem": "cidade" if escolhido["mesma_cidade"] else "rota_registrada",
+    }
+
+def _estoque_xml_agrupar_cidades_no_frete(cur, frete_id, nota):
+    frete_id = _as_int(frete_id, 0)
+    if frete_id <= 0:
+        return []
+    cur.execute(
+        """
+        SELECT f.nome, f.cidade, f.veiculo_id, v.nome AS veiculo_nome
+        FROM fretes f
+        LEFT JOIN veiculos v ON v.id=f.veiculo_id
+        WHERE f.id=%s
+        LIMIT 1
+        """,
+        (frete_id,),
+    )
+    frete = cur.fetchone() or {}
+    cidades = _frete_cidades_lista(
+        frete.get("cidade"),
+        *[
+            _estoque_xml_cidade_destinatario(row)
+            for row in ((nota or {}).get("canonicos") or [])
+        ],
+    )
+    if not cidades:
+        return []
+    cidade_texto = " - ".join(cidades)
+    nome = _montar_nome_frete_exibicao(
+        cidades,
+        _as_str(frete.get("veiculo_nome")),
+        cidades[0],
+    ) or _as_str(frete.get("nome"))
+    cur.execute(
+        """
+        UPDATE fretes
+        SET cidade=%s,
+            nome=%s
+        WHERE id=%s
+        """,
+        (cidade_texto[:255], nome[:150], frete_id),
+    )
+    return cidades
+
 
 def _estoque_xml_criar_frete_automatico(
     cur,
@@ -15183,7 +15413,9 @@ def _estoque_xml_preparar_vinculo(cur, nota, usuario="sistema"):
             "candidatos_total": 1,
         }
     else:
-        sugestao = _estoque_xml_sugerir_frete(cur, transporte, veiculo_id)
+        sugestao = _estoque_xml_sugerir_frete_por_cidade_rota(
+            cur, nota, veiculo_id
+        ) or _estoque_xml_sugerir_frete(cur, transporte, veiculo_id)
         frete_id_sugerido = _as_int(sugestao.get("frete_id"), 0)
         if frete_id_sugerido > 0:
             frete_atual = _buscar_frete_detalhado(cur, frete_id_sugerido)
@@ -15214,6 +15446,9 @@ def _estoque_xml_preparar_vinculo(cur, nota, usuario="sistema"):
             }
 
     frete_id = _as_int((frete_atual or {}).get("id"), 0)
+    if frete_id > 0:
+        _estoque_xml_agrupar_cidades_no_frete(cur, frete_id, nota)
+        frete_atual = _buscar_frete_detalhado(cur, frete_id) or frete_atual
     if not veiculo_id:
         veiculo_id = _as_int((frete_atual or {}).get("veiculo_id"), 0)
     status_pre = "confirmado" if vinculo_final else "pendente"
@@ -16019,6 +16254,225 @@ def _estoque_xml_nota_publica(nota, referencias_lancadas):
         "valor_total_nota": _as_float(base.get("valor_total_nota"), 0.0),
         "arquivo_origem": _as_str(base.get("arquivo_origem")),
     }
+
+def _sincronizar_dados_viagem_xml_frete(cur, frete_id, veiculo_id=0):
+    frete_id = _as_int(frete_id, 0)
+    if frete_id <= 0:
+        return {}
+    cur.execute(
+        """
+        SELECT f.veiculo_id, f.carga_id, f.cidade, f.nome,
+               f.km_atual, f.peso, f.qtd_entregas,
+               c.peso_total AS carga_peso_total,
+               c.numero_entregas AS carga_numero_entregas,
+               c.clientes_distintos AS carga_clientes_distintos
+        FROM fretes f
+        LEFT JOIN cargas c ON c.id=f.carga_id
+        WHERE f.id=%s
+        LIMIT 1
+        """,
+        (frete_id,),
+    )
+    frete = cur.fetchone() or {}
+    if not frete:
+        return {}
+
+    veiculo_id = _as_int(veiculo_id, 0) or _as_int(frete.get("veiculo_id"), 0)
+    km_veiculo = _buscar_km_atual_veiculo(cur, veiculo_id)
+    cur.execute(
+        """
+        SELECT COUNT(DISTINCT nota_key) AS total
+        FROM (
+            SELECT nota_key
+            FROM estoque_xml_frete_vinculos
+            WHERE frete_id=%s
+            UNION ALL
+            SELECT nota_key
+            FROM estoque_xml_frete_pre_vinculos
+            WHERE frete_id=%s
+              AND COALESCE(status, '') NOT IN (
+                  'cancelado', 'cancelada', 'descartado', 'descartada',
+                  'ignorado', 'ignorada', 'dispensado'
+              )
+        ) notas_frete
+        """,
+        (frete_id, frete_id),
+    )
+    total_xml = _as_int((cur.fetchone() or {}).get("total"), 0)
+    resumo = _resolver_resumo_viagem_frete(
+        frete.get("km_atual"),
+        km_veiculo,
+        frete.get("qtd_entregas"),
+        total_xml,
+        frete.get("peso"),
+        frete.get("carga_peso_total"),
+        (
+            _as_int(frete.get("carga_numero_entregas"), 0)
+            or _as_int(frete.get("carga_clientes_distintos"), 0)
+        ),
+    )
+    rota = (
+        _as_str(frete.get("cidade"))
+        or _as_str(frete.get("nome"))
+    )
+    cur.execute(
+        """
+        UPDATE fretes
+        SET veiculo_id=COALESCE(veiculo_id, %s),
+            km_atual=%s,
+            peso=%s,
+            qtd_entregas=%s
+        WHERE id=%s
+        """,
+        (
+            veiculo_id or None,
+            resumo["km_atual"],
+            resumo["peso"],
+            resumo["qtd_entregas"],
+            frete_id,
+        ),
+    )
+    if veiculo_id > 0:
+        cur.execute(
+            """
+            UPDATE estoque_xml_frete_pre_vinculos
+            SET veiculo_id=%s,
+                origem_veiculo=CASE
+                    WHEN TRIM(COALESCE(origem_veiculo, '')) IN ('', 'nao_identificado')
+                    THEN 'kanban_manual'
+                    ELSE origem_veiculo
+                END,
+                atualizado_em=NOW()
+            WHERE frete_id=%s
+            """,
+            (veiculo_id, frete_id),
+        )
+        cur.execute(
+            """
+            UPDATE estoque_xml_frete_vinculos
+            SET veiculo_id=%s,
+                carga_id=COALESCE(carga_id, %s),
+                rota_registrada=CASE
+                    WHEN TRIM(COALESCE(rota_registrada, ''))='' THEN %s
+                    ELSE rota_registrada
+                END
+            WHERE frete_id=%s
+            """,
+            (
+                veiculo_id,
+                _as_int(frete.get("carga_id"), 0) or None,
+                rota,
+                frete_id,
+            ),
+        )
+    return {
+        **resumo,
+        "veiculo_id": veiculo_id or None,
+        "total_xml": total_xml,
+    }
+
+def _registrar_rota_frete_arquivado(cur, frete_id):
+    frete_id = _as_int(frete_id, 0)
+    if frete_id <= 0:
+        return {}
+    cur.execute(
+        """
+        SELECT f.cidade, c.cidade AS carga_cidade, c.rota AS carga_rota,
+               cil.carga_cidades
+        FROM fretes f
+        LEFT JOIN cargas c ON c.id=f.carga_id
+        LEFT JOIN (
+            SELECT carga_id, GROUP_CONCAT(DISTINCT cidade SEPARATOR '\n') AS carga_cidades
+            FROM cargas_import_linhas
+            WHERE TRIM(COALESCE(cidade, ''))<>''
+            GROUP BY carga_id
+        ) cil ON cil.carga_id=c.id
+        WHERE f.id=%s
+        LIMIT 1
+        """,
+        (frete_id,),
+    )
+    frete = cur.fetchone() or {}
+    cidades = _frete_cidades_lista(
+        frete.get("cidade"),
+        frete.get("carga_cidade"),
+        frete.get("carga_rota"),
+        frete.get("carga_cidades"),
+    )
+    cur.execute(
+        """
+        SELECT nota_key
+        FROM estoque_xml_frete_vinculos
+        WHERE frete_id=%s
+        UNION
+        SELECT nota_key
+        FROM estoque_xml_frete_pre_vinculos
+        WHERE frete_id=%s
+          AND COALESCE(status, '') NOT IN (
+              'cancelado', 'cancelada', 'descartado', 'descartada',
+              'ignorado', 'ignorada', 'dispensado'
+          )
+        """,
+        (frete_id, frete_id),
+    )
+    for row in cur.fetchall() or []:
+        nota_key = _as_str(row.get("nota_key"))
+        nota = (_estoque_xml_carregar_notas(cur, nota_key) or {}).get(nota_key)
+        if not nota:
+            continue
+        cidades = _frete_cidades_lista(
+            cidades,
+            *[
+                _estoque_xml_cidade_destinatario(item)
+                for item in (nota.get("canonicos") or [])
+            ],
+        )
+    if len(cidades) < 2:
+        return {}
+
+    chaves = {_normalizar_chave_texto(cidade) for cidade in cidades}
+    cur.execute(
+        "SELECT id, nome, cidades FROM cargas_rotas WHERE ativo=1 ORDER BY id"
+    )
+    rota_existente = None
+    for rota in cur.fetchall() or []:
+        cidades_rota = _cargas_rota_cidades_lista(rota.get("cidades"))
+        chaves_rota = {
+            _normalizar_chave_texto(cidade)
+            for cidade in cidades_rota
+            if _normalizar_chave_texto(cidade)
+        }
+        if chaves & chaves_rota:
+            rota_existente = rota
+            cidades = _frete_cidades_lista(cidades_rota, cidades)
+            break
+
+    nome = " - ".join(cidades)[:220]
+    cidades_texto = "\n".join(cidades)
+    if rota_existente:
+        cur.execute(
+            """
+            UPDATE cargas_rotas
+            SET nome=%s, cidades=%s, ativo=1, atualizado_em=NOW()
+            WHERE id=%s
+            """,
+            (nome, cidades_texto, _as_int(rota_existente.get("id"), 0)),
+        )
+        rota_id = _as_int(rota_existente.get("id"), 0)
+    else:
+        cur.execute(
+            """
+            INSERT INTO cargas_rotas (nome, cidades, ativo, criado_em, atualizado_em)
+            VALUES (%s, %s, 1, NOW(), NOW())
+            ON DUPLICATE KEY UPDATE
+                cidades=VALUES(cidades),
+                ativo=1,
+                atualizado_em=NOW()
+            """,
+            (nome, cidades_texto),
+        )
+        rota_id = _as_int(cur.lastrowid, 0)
+    return {"id": rota_id or None, "nome": nome, "cidades": cidades}
 
 
 def _cargas_rota_cidades_lista(valor):
@@ -17371,6 +17825,7 @@ def vincular_xml_pendente_frete(id):
                 frete,
                 historico_depois,
             )
+            _sincronizar_dados_viagem_xml_frete(cur, id, veiculo_id_vinculo)
             conn.commit()
             info = _estoque_xml_nota_vinculo_frete_publica(
                 cur,
@@ -17507,6 +17962,8 @@ def vincular_xml_pendente_frete(id):
 
         if modo == "vinculo_definitivo":
             _estoque_xml_atualizar_cidade_frete(cur, id, nota)
+        _sincronizar_dados_viagem_xml_frete(cur, id, veiculo_id_vinculo)
+        frete = _buscar_frete_detalhado(cur, id) or frete
         historico_depois = {
             **frete,
             "numero_nota": numero_nota,
@@ -20500,6 +20957,8 @@ def atualizar_frete(id):
     km_atual = _as_int(data.get("km_atual"), 0) if ("km_atual" in data and data.get("km_atual") is not None) else _as_int(antes.get("km_atual"), 0)
     peso = _as_float(data.get("peso"), 0.0) if ("peso" in data and data.get("peso") is not None) else _as_float(antes.get("peso"), 0.0)
     qtd_entregas = _as_int(data.get("qtd_entregas"), 0) if ("qtd_entregas" in data and data.get("qtd_entregas") is not None) else _as_int(antes.get("qtd_entregas"), 0)
+    if veiculo_id and km_atual <= 0:
+        km_atual = _buscar_km_atual_veiculo(cursor, veiculo_id)
 
     if not nome:
         cursor.close()
@@ -20650,6 +21109,9 @@ def atualizar_frete(id):
             (km_atual_num, km_atual_num, veiculo_id_num)
         )
 
+    _sincronizar_dados_viagem_xml_frete(cursor, id, veiculo_id_num)
+    if solicitou_arquivamento:
+        _registrar_rota_frete_arquivado(cursor, id)
     depois = _buscar_frete_detalhado(cursor, id)
     estoque_baixa = _sincronizar_baixa_estoque_frete(cursor, antes, depois, usuario=usuario)
     _registrar_historico_frete(cursor, id, "atualizado", usuario, antes, depois)
