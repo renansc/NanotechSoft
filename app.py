@@ -1764,6 +1764,13 @@ def healthz_riob():
     except urllib.error.HTTPError as exc:
         result["upstream_status"] = exc.code
         result["error_type"] = type(exc).__name__
+    except urllib.error.URLError as exc:
+        reason = getattr(exc, "reason", None)
+        result["error_type"] = type(exc).__name__
+        result["network_error"] = type(reason).__name__ if reason is not None else "Unknown"
+        errno = getattr(reason, "errno", None)
+        if errno is not None:
+            result["network_errno"] = errno
     except Exception as exc:
         result["error_type"] = type(exc).__name__
     result["elapsed_ms"] = round((time.monotonic() - started) * 1000)
