@@ -135,6 +135,14 @@ If you need context fast, read these files first:
   contain 24; returnable 200 ml crates contain 48; water packs contain 12.
   Explicit product codes or spelling variations must not create duplicate rows
   in the stock-status display when this canonical identity is the same.
+- Stock has two top-level operational areas: `PRODUCAO` and
+  `ALMOXARIFADO_GERAL`. Production is split into `PRODUTOS` and
+  `MATERIA_PRIMA`. Formula inputs (for example sugar, concentrate, flavoring,
+  acidulant, preservative, coloring and carbon dioxide) belong to raw material;
+  other non-commercial supplies belong to general warehouse. Only commercial
+  finished products — disposable soft drinks, returnable soft drinks and water
+  — may appear in the stock dashboard. Detailed stock screens must still show
+  all three sections and preserve every movement.
 - When changing behavior, inspect tests and add or adjust them when practical.
 - During dead-code sweeps, a missing direct reference is not enough to remove
   Flask routes, HTML callbacks, protocol handlers, library overrides or public

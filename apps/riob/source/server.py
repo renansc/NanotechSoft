@@ -3081,6 +3081,50 @@ def _estoque_grupo_normalizado(valor):
 def _estoque_grupo_ordem(valor):
     return _ESTOQUE_GRUPOS_ORDEM.get(_estoque_grupo_normalizado(valor), 99)
 
+def _estoque_classificacao_operacional(item):
+    item = item or {}
+    grupo = _estoque_grupo_normalizado(item.get("grupo_estoque")) or _estoque_grupo_inferido(
+        nome_produto=item.get("produto_base_nome") or item.get("nome_produto"),
+        codigo_produto_nfe=item.get("codigo_produto_nfe"),
+    )
+    if grupo in {"GFA", "PET", "AGUA"}:
+        return {
+            "estoque_area": "PRODUCAO",
+            "estoque_subgrupo": "PRODUTOS",
+            "exibir_dashboard": True,
+        }
+
+    categorias = {
+        _as_str(valor).strip().lower()
+        for valor in (item.get("fornecedor_categorias") or [])
+        if _as_str(valor)
+    }
+    texto = _produto_nome_normalizado(
+        " ".join(
+            [
+                _as_str(item.get("produto_base_nome")),
+                _as_str(item.get("nome_produto")),
+                _as_str(item.get("grupo_estoque")),
+            ]
+        )
+    )
+    termos_formula = (
+        "ACUCAR", "CONCENTRADO", "AROMA", "EXTRATO", "XAROPE",
+        "ACIDO", "ACIDULANTE", "CONSERVANTE", "CORANTE",
+        "EDULCORANTE", "ANTIOXIDANTE", "GAS CARBONICO", "CO2",
+    )
+    if "materia_prima" in categorias or any(termo in texto for termo in termos_formula):
+        return {
+            "estoque_area": "PRODUCAO",
+            "estoque_subgrupo": "MATERIA_PRIMA",
+            "exibir_dashboard": False,
+        }
+    return {
+        "estoque_area": "ALMOXARIFADO_GERAL",
+        "estoque_subgrupo": "GERAL",
+        "exibir_dashboard": False,
+    }
+
 def _estoque_grupo_inferido(nome_produto="", codigo_produto_nfe="", grupo_estoque=""):
     grupo_exp = _estoque_grupo_normalizado(grupo_estoque)
     if grupo_exp:
@@ -7264,6 +7308,7 @@ def _obter_ou_criar_produto_estoque(cur, codigo_barras="", codigo_produto_nfe=""
 
 def _produto_estoque_publico(row):
     meta = _estoque_produto_meta(row)
+    classificacao = _estoque_classificacao_operacional({**row, **meta})
     fator_padrao = _as_float(row.get("fator_embalagem_padrao"), 1.0)
     if fator_padrao <= 0:
         fator_padrao = 1.0
@@ -7276,6 +7321,7 @@ def _produto_estoque_publico(row):
         "produto_base_nome": meta.get("produto_base_nome"),
         "produto_base_key": meta.get("produto_base_key"),
         "cadastro_explicitado": 1 if meta.get("cadastro_explicitado") else 0,
+        **classificacao,
         "unidade": _as_str(row.get("unidade")),
         "embalagem_tipo_padrao": _as_str(row.get("embalagem_tipo_padrao")),
         "fator_embalagem_padrao": fator_padrao,
@@ -13456,7 +13502,7 @@ def _estoque_resumo_produtos_data():
             continue
         fornecedores = _estoque_fornecedores_lista(item)
         meta["saidas_dia_total"] += saidas_dia
-        rows.append({
+        row_publica = {
             "grupo_estoque": _as_str(item.get("grupo_estoque")) or "OUTROS",
             "produto_base_nome": _as_str(item.get("produto_base_nome")) or _as_str(item.get("nome_produto")) or "-",
             "produto_base_key": _as_str(item.get("produto_base_key")),
@@ -13479,7 +13525,9 @@ def _estoque_resumo_produtos_data():
             "fornecedores": fornecedores,
             "fornecedor_nomes": [f.get("nome") for f in fornecedores if f.get("nome")],
             "fornecedor_categorias": sorted({f.get("categoria") or "outros" for f in fornecedores}),
-        })
+        }
+        row_publica.update(_estoque_classificacao_operacional(row_publica))
+        rows.append(row_publica)
     rows.sort(key=lambda r: (
         _estoque_grupo_ordem(r.get("grupo_estoque")),
         _produto_nome_normalizado(r.get("produto_base_nome") or r.get("nome_produto")),
@@ -13499,7 +13547,23 @@ def _estoque_resumo_produtos_data():
     }
 
 def _dashboard_estoque_data():
-    return _estoque_resumo_produtos_data()
+    payload = _estoque_resumo_produtos_data()
+    rows = [
+        row for row in payload.get("rows", [])
+        if row.get("exibir_dashboard")
+    ]
+    meta = dict(payload.get("meta") or {})
+    meta["itens_dashboard"] = len(rows)
+    meta["vendas_dia_total"] = round(
+        sum(_as_float(row.get("vendas_dia"), 0.0) for row in rows), 3
+    )
+    meta["vendas_semana_total"] = round(
+        sum(_as_float(row.get("vendas_semana"), 0.0) for row in rows), 3
+    )
+    meta["saidas_dia_total"] = round(
+        sum(_as_float(row.get("saidas_dia"), 0.0) for row in rows), 3
+    )
+    return {"rows": rows, "meta": meta}
 
 
 _RASTREIO_SIMULACAO_ATE = datetime.date(2026, 7, 31)

@@ -463,6 +463,14 @@ sequenceDiagram
 
 ## 8. Estoque, NF-e e conferencia
 
+O estoque possui as areas `Producao` e `Almoxarifado geral`. Producao e
+subdividida em `Produtos` e `Materia-prima`: insumos usados em formula ficam em
+materia-prima, enquanto materiais nao comercializados ficam no almoxarifado.
+O dashboard exibe exclusivamente produtos acabados comercializados dos grupos
+refrigerante descartavel (`PET`), refrigerante retornavel (`GFA`) e agua
+(`AGUA`). Posicao e cadastro continuam retornando todos os itens, identificados
+por `estoque_area`, `estoque_subgrupo` e `exibir_dashboard`.
+
 ### Endpoints
 
 - `GET /api/dashboard_estoque`

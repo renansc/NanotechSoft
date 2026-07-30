@@ -14275,6 +14275,24 @@ function _estoqueProdutoLancamentoCombinaFiltros(produto = {}){
 }
 
 const ESTOQUE_GRUPOS_ORDEM = { GFA: 0, PET: 1, AGUA: 2, OUTROS: 3 };
+const ESTOQUE_AREAS_ORDEM = {
+  "PRODUCAO:PRODUTOS": 0,
+  "PRODUCAO:MATERIA_PRIMA": 1,
+  "ALMOXARIFADO_GERAL:GERAL": 2,
+};
+
+function _estoqueAreaKey(item = {}){
+  const area = String(item.estoque_area || "ALMOXARIFADO_GERAL").toUpperCase();
+  const subgrupo = String(item.estoque_subgrupo || "GERAL").toUpperCase();
+  return `${area}:${subgrupo}`;
+}
+
+function _estoqueAreaLabel(item = {}){
+  const key = _estoqueAreaKey(item);
+  if (key === "PRODUCAO:PRODUTOS") return "Produção — Produtos";
+  if (key === "PRODUCAO:MATERIA_PRIMA") return "Produção — Matéria-prima";
+  return "Almoxarifado geral";
+}
 
 function _estoqueGrupoNormalizado(valor = ""){
   const raw = String(valor || "").trim().toUpperCase();
@@ -14321,6 +14339,9 @@ function _estoqueGrupoOrdem(valor = ""){
 
 function _estoqueOrdenarPorGrupo(rows = []){
   return [...(Array.isArray(rows) ? rows : [])].sort((a, b) => {
+    const areaA = ESTOQUE_AREAS_ORDEM[_estoqueAreaKey(a)] ?? 99;
+    const areaB = ESTOQUE_AREAS_ORDEM[_estoqueAreaKey(b)] ?? 99;
+    if (areaA !== areaB) return areaA - areaB;
     const grupoA = _estoqueGrupoOrdem(a?.grupo_estoque);
     const grupoB = _estoqueGrupoOrdem(b?.grupo_estoque);
     if (grupoA !== grupoB) return grupoA - grupoB;
@@ -14338,10 +14359,17 @@ function _estoqueOrdenarPorGrupo(rows = []){
 }
 
 function _estoqueLinhasAgrupadas(rows = [], rowRenderer, colspan = 1){
+  let areaAtual = "";
   let grupoAtual = "";
   return _estoqueOrdenarPorGrupo(rows).map((row) => {
+    const area = _estoqueAreaKey(row);
     const grupo = _estoqueGrupoNormalizado(row?.grupo_estoque) || "OUTROS";
     const partes = [];
+    if (area !== areaAtual) {
+      areaAtual = area;
+      grupoAtual = "";
+      partes.push(`<tr class="estoque-group-row estoque-area-row"><td colspan="${Number(colspan || 1)}">${_escHtml(_estoqueAreaLabel(row))}</td></tr>`);
+    }
     if (grupo !== grupoAtual) {
       grupoAtual = grupo;
       partes.push(`<tr class="estoque-group-row"><td colspan="${Number(colspan || 1)}">${_escHtml(_estoqueGrupoLabel(grupo))}</td></tr>`);

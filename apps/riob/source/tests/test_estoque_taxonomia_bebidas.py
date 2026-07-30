@@ -62,6 +62,33 @@ class EstoqueTaxonomiaBebidasTests(unittest.TestCase):
             ),
         )
 
+    def test_classifica_hierarquia_operacional_do_estoque(self):
+        self.assertEqual(
+            {
+                "estoque_area": "PRODUCAO",
+                "estoque_subgrupo": "PRODUTOS",
+                "exibir_dashboard": True,
+            },
+            server._estoque_classificacao_operacional(
+                {"nome_produto": "Refrigerante Cola PET 2L", "grupo_estoque": "PET"}
+            ),
+        )
+        self.assertEqual(
+            "MATERIA_PRIMA",
+            server._estoque_classificacao_operacional(
+                {
+                    "nome_produto": "Concentrado de guaraná",
+                    "fornecedor_categorias": ["materia_prima"],
+                }
+            )["estoque_subgrupo"],
+        )
+        self.assertEqual(
+            "ALMOXARIFADO_GERAL",
+            server._estoque_classificacao_operacional(
+                {"nome_produto": "Papel A4"}
+            )["estoque_area"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
