@@ -162,7 +162,7 @@ LOCAL_RIOB_APPS = {
         "cwd": APPS_DIR / "riob" / "source",
         "script": "server.py",
         "port": int(os.environ.get("RIOB_APP_PORT", "8898")),
-        "startup_wait": 180,
+        "startup_wait": float(os.environ.get("RIOB_STARTUP_WAIT", "180")),
         "env": {
             "APP_HOST": "127.0.0.1",
             "APP_PORT": os.environ.get("RIOB_APP_PORT", "8898"),
@@ -1851,6 +1851,20 @@ def ensure_local_riob_app(app_key):
             time.sleep(0.25)
         log_app_startup_error(app_key, f"processo iniciou, mas a porta 127.0.0.1:{port} nao respondeu")
     return False
+
+
+def warmup_render_riob():
+    """Inicia o RioB antes do primeiro acesso quando ele compartilha o container."""
+    render_runtime = str(os.environ.get("RENDER") or "").strip().lower() == "true"
+    riob_target = urllib.parse.urlparse(RIOB_BASE_URL)
+    if not render_runtime or riob_target.hostname not in {"127.0.0.1", "localhost", "::1"}:
+        return
+    threading.Thread(
+        target=ensure_local_riob_app,
+        args=("riob",),
+        name="riob-render-warmup",
+        daemon=True,
+    ).start()
 
 
 def local_riob_proxy_response(app_key, subpath=""):
@@ -4777,6 +4791,9 @@ def db_error(exc):
             "NS_DB_USER, NS_DB_PASSWORD e NS_DB_NAME no web service."
         )
     return render_template("db_error.html", detalhe=detail), status
+
+
+warmup_render_riob()
 
 
 if __name__ == "__main__":

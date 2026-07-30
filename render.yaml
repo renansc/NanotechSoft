@@ -81,6 +81,8 @@ services:
         value: http://127.0.0.1:8898
       - key: RIOB_APP_PORT
         value: "8898"
+      - key: RIOB_STARTUP_WAIT
+        value: "600"
       - key: RIOB_DB_NAME
         value: riobranco
       - key: RB_AGENT_LLM_PROVIDER
