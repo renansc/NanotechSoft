@@ -3,6 +3,12 @@ services:
     name: nanotechsoft
     runtime: docker
     plan: starter
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    dockerCommand: >-
+      sh -c 'exec gunicorn --bind 0.0.0.0:${PORT:-5600}
+      --workers ${WEB_CONCURRENCY:-1} --threads ${GUNICORN_THREADS:-4}
+      --timeout ${GUNICORN_TIMEOUT:-240} app:app'
     autoDeployTrigger: commit
     healthCheckPath: /healthz
     envVars:
