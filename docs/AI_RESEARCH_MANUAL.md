@@ -135,3 +135,10 @@ Antes de excluir, pesquise todas as referências. Remova duplicações comprovad
 e atualize chamadas/documentação no mesmo trabalho. Não remova dados do usuário,
 backups ou arquivos não relacionados. Código legado sem chamadas ainda deve ser
 avaliado quanto a entrada externa antes da exclusão.
+
+## Portas do Portal no Docker e no Render
+
+- A imagem do Portal deve escutar a variável `PORT` fornecida pelo ambiente.
+- Quando `PORT` não estiver definida, o padrão local obrigatório é `5600`, conforme o `docker-compose.yml`.
+- Nunca fixe `10000` diretamente no `Dockerfile`: essa é a porta atualmente usada pelo Render e uma constante nela interrompe o healthcheck e o acesso local.
+- Alterações de inicialização devem ser validadas tanto pelo `./up.sh` local quanto pela configuração do `render.yaml`.

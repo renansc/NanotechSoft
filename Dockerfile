@@ -17,4 +17,4 @@ COPY . .
 
 EXPOSE 5600
 
-CMD ["gunicorn", "--bind", "0.0.0.0:10000", "--workers", "1", "--threads", "16", "--timeout", "240", "app:app"]
+CMD ["sh", "-c", "exec gunicorn --bind 0.0.0.0:${PORT:-5600} --workers 1 --threads 16 --timeout 240 app:app"]
