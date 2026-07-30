@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import mimetypes
 import ssl
+import socket
 import subprocess
 import sys
 import threading
@@ -450,7 +451,7 @@ def ensure_database():
 
 @app.before_request
 def bootstrap_request():
-    if request.path.startswith("/static/") or request.path == "/healthz":
+    if request.path.startswith("/static/") or request.path.startswith("/healthz"):
         return
     ensure_database()
 
@@ -467,6 +468,66 @@ def add_no_cache_headers(resp):
 @app.route("/healthz")
 def healthz():
     return jsonify({"ok": True})
+
+
+def _masked_host(value):
+    host = str(value or "").strip()
+    if not host:
+        return ""
+    if re.fullmatch(r"\d{1,3}(?:\.\d{1,3}){3}", host):
+        parts = host.split(".")
+        return f"{parts[0]}.{parts[1]}.x.x"
+    labels = host.split(".")
+    return f"***.{'.'.join(labels[-2:])}" if len(labels) > 2 else "***"
+
+
+@app.route("/healthz/database")
+def healthz_database():
+    result = {
+        "ok": False,
+        "host": _masked_host(DB_CONFIG.get("host")),
+        "port": DB_CONFIG.get("port"),
+        "portal_schema": DB_CONFIG.get("database"),
+        "riob_schema": os.environ.get("RIOB_DB_NAME", "riobranco"),
+    }
+    started = time.monotonic()
+    try:
+        with socket.create_connection(
+            (DB_CONFIG["host"], int(DB_CONFIG["port"])),
+            timeout=3,
+        ):
+            result["tcp"] = True
+        cfg = dict(DB_CONFIG)
+        cfg["connection_timeout"] = 5
+        conn = mysql.connector.connect(**cfg)
+        cur = conn.cursor()
+        cur.execute("SELECT DATABASE()")
+        result["connected_schema"] = (cur.fetchone() or [""])[0]
+        riob_schema = str(result["riob_schema"]).replace("`", "")
+        cur.execute(
+            """
+            SELECT table_name
+            FROM information_schema.tables
+            WHERE table_schema=%s AND table_name IN ('fretes', 'veiculos')
+            """,
+            (riob_schema,),
+        )
+        tables = {row[0] for row in cur.fetchall()}
+        result["riob_tables"] = sorted(tables)
+        for table in ("fretes", "veiculos"):
+            if table in tables:
+                cur.execute(f"SELECT COUNT(*) FROM `{riob_schema}`.`{table}`")
+                result[f"riob_{table}"] = int((cur.fetchone() or [0])[0])
+        cur.close()
+        conn.close()
+        result["ok"] = {"fretes", "veiculos"}.issubset(tables)
+    except Exception as exc:
+        result["error_type"] = type(exc).__name__
+        errno = getattr(exc, "errno", None)
+        if errno is not None:
+            result["error_code"] = errno
+    result["elapsed_ms"] = round((time.monotonic() - started) * 1000)
+    return jsonify(result), (200 if result["ok"] else 503)
 
 
 # ---------------------------------------------------------------------------

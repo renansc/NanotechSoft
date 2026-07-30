@@ -6,7 +6,7 @@ services:
     dockerfilePath: ./Dockerfile
     dockerContext: .
     dockerCommand: >-
-      gunicorn --bind 0.0.0.0:10000 --workers 1 --threads 4
+      gunicorn --bind 0.0.0.0:10000 --workers 1 --threads 16
       --timeout 240 app:app
     autoDeployTrigger: commit
     healthCheckPath: /healthz
@@ -36,7 +36,9 @@ services:
       - key: WEB_CONCURRENCY
         value: "1"
       - key: GUNICORN_THREADS
-        value: "4"
+        value: "16"
+      - key: NS_DB_CONNECT_TIMEOUT
+        value: "5"
       - key: GUNICORN_TIMEOUT
         value: "240"
       - key: AUTOMACAO_APP_DIR
