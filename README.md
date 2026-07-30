@@ -65,23 +65,20 @@ Para rodar local explicitamente:
 NANOTECH_ENV_FILE=.env_local python app.py
 ```
 
-No Render, use o `render.yaml`; ele cria o MySQL privado e injeta as variaveis
-necessarias no web service. Para o PACS, configure tambem as variaveis
+No Render, use o `render.yaml`; ele preserva as variaveis `NS_DB_*` configuradas
+no painel para o servidor MySQL unico. Para o PACS, configure tambem as variaveis
 `RAIOXPACS_*` para apontar ao PostgreSQL publicado do servidor local ou a um
 PostgreSQL externo.
 
 ## Deploy no Render
 
-A branch `main` contem tambem a configuracao externa. O `render.yaml` define
-dois servicos:
+A branch `main` contem tambem a configuracao externa. O `render.yaml` define o
+Web Service:
 
 - `nanotechsoft`: web service Docker do portal.
-- `nanotechsoft-mysql`: MySQL 8 como private service com disco persistente em
-  `/var/lib/mysql`.
 
 No Render, importe o Blueprint a partir da branch `main`. Criar apenas um
-Web Service manual nao aplica as variaveis do `render.yaml`; nesse caso o app
-cai no padrao local `127.0.0.1:3307` e nao encontra o MySQL.
+Web Service manual exige a configuracao equivalente das variaveis no painel.
 
 O RioB roda como subprocesso no mesmo container do portal no Render, em
 `http://127.0.0.1:8898`. O portal detecta o ambiente Render e usa esse endereco
@@ -89,9 +86,35 @@ mesmo se uma configuracao antiga apontar para `host.docker.internal`, nome que
 existe apenas no Docker local.
 
 O Render nao oferece MySQL gerenciado nativo como oferece Postgres; este projeto
-usa MySQL em private service com Render Disk. Para producao, faca backups
-periodicos com `mysqldump`, porque snapshot de disco nao substitui backup logico
-de banco.
+acessa o servidor MySQL unico informado em `NS_DB_*`. Para producao, faca
+backups periodicos com `mysqldump`.
+
+### Validacao obrigatoria do RioB no Render
+
+O auto-deploy do Render publica codigo, mas nao copia o banco MySQL local. O
+RioB publicado usa o schema `riobranco` do servidor informado em `NS_DB_*`;
+portanto, uma tela vazia pode significar que o servico esta saudavel, mas
+conectado a um schema vazio ou diferente.
+
+O portal e o RioB devem usar um unico servidor MySQL, configurado no Web Service
+pelas variaveis `NS_DB_HOST`, `NS_DB_PORT`, `NS_DB_USER` e `NS_DB_PASSWORD`.
+Nesse servidor, `NS_DB_NAME` seleciona o schema do portal (`notechsoft`) e
+`RIOB_DB_NAME` seleciona o schema operacional do RioB (`riobranco`). O
+`render.yaml` nao deve sobrescrever essas variaveis com outro MySQL.
+
+Antes de considerar uma alteracao concluida:
+
+1. confirme que o commit esperado esta em `origin/main`;
+2. confirme no Render que esse mesmo commit terminou o deploy;
+3. teste `/healthz` e tambem uma rota de dados do recurso alterado pela URL
+   publica;
+4. confirme, somente com consultas de leitura, que o schema persistente do
+   Render contem os registros esperados;
+5. trate backup, restore ou sincronizacao de dados como operacao separada,
+   explicitamente autorizada e nunca como efeito colateral do deploy.
+
+Um `200` em `/healthz` comprova apenas que o portal esta respondendo; ele nao
+valida o subprocesso RioB nem a presenca dos dados de negocio.
 
 O RaioxPacs usa PostgreSQL separado do MySQL do portal. No deploy Docker local,
 o servico `pacs-postgres` e publicado em `RAIOXPACS_POSTGRES_PORT`, por padrao
@@ -110,8 +133,7 @@ direcionamento de portas, configure no web service:
 Tambem e possivel preencher `RAIOXPACS_DATABASE_URL` no Render; se ela existir,
 ela tem prioridade sobre as variaveis `RAIOXPACS_PG*`.
 
-Se preferir usar um MySQL externo, remova ou ignore o servico
-`nanotechsoft-mysql` no Render e configure estas variaveis no web service:
+Configure o servidor MySQL unico no Web Service do Render com estas variaveis:
 
 - `NS_DB_HOST`
 - `NS_DB_PORT`

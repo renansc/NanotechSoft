@@ -1,18 +1,4 @@
 services:
-  - type: pserv
-    name: nanotechsoft-mysql
-    runtime: image
-    plan: standard
-    image:
-      url: docker.io/mysql:8.0
-    autoDeployTrigger: off
-    disk:
-      name: mysql-data
-      mountPath: /var/lib/mysql
-      sizeGB: 10
-    envVars:
-      - fromGroup: nanotechsoft-mysql
-
   - type: web
     name: nanotechsoft
     runtime: docker
@@ -23,21 +9,15 @@ services:
       - key: FLASK_SECRET
         generateValue: true
       - key: NS_DB_HOST
-        fromService:
-          name: nanotechsoft-mysql
-          type: pserv
-          property: host
+        sync: false
       - key: NS_DB_PORT
-        value: "3306"
+        sync: false
       - key: NS_DB_USER
-        value: root
+        sync: false
       - key: NS_DB_PASSWORD
-        fromService:
-          name: nanotechsoft-mysql
-          type: pserv
-          envVarKey: MYSQL_ROOT_PASSWORD
+        sync: false
       - key: NS_DB_NAME
-        value: notechsoft
+        sync: false
       - key: CLIENTE_DEPLOY_ID
         sync: false
       - key: NS_HOST
@@ -96,17 +76,3 @@ services:
         value: "off"
       - key: RIOB_SSL_VERIFY
         value: "0"
-
-envVarGroups:
-  - name: nanotechsoft-mysql
-    envVars:
-      - key: MYSQL_DATABASE
-        value: notechsoft
-      - key: MYSQL_USER
-        value: notechsoft
-      - key: MYSQL_PASSWORD
-        generateValue: true
-      - key: MYSQL_ROOT_PASSWORD
-        generateValue: true
-      - key: MYSQL_ROOT_HOST
-        value: "%"
