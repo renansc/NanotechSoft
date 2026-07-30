@@ -1742,6 +1742,34 @@ def open_riob_request(req, timeout=120):
     return opener.open(req, timeout=timeout)
 
 
+@app.route("/healthz/riob")
+def healthz_riob():
+    parsed = urllib.parse.urlparse(RIOB_BASE_URL)
+    result = {
+        "ok": False,
+        "origin_host": _masked_host(parsed.hostname),
+        "origin_port": parsed.port,
+        "origin_scheme": parsed.scheme,
+        "mode": "local" if parsed.hostname in {"127.0.0.1", "localhost", "::1"} else "proxy",
+    }
+    started = time.monotonic()
+    try:
+        req = urllib.request.Request(
+            f"{RIOB_BASE_URL}/api/status",
+            headers={"Accept": "application/json"},
+        )
+        with open_riob_request(req, timeout=15) as resp:
+            result["upstream_status"] = resp.status
+            result["ok"] = 200 <= resp.status < 300
+    except urllib.error.HTTPError as exc:
+        result["upstream_status"] = exc.code
+        result["error_type"] = type(exc).__name__
+    except Exception as exc:
+        result["error_type"] = type(exc).__name__
+    result["elapsed_ms"] = round((time.monotonic() - started) * 1000)
+    return jsonify(result), (200 if result["ok"] else 503)
+
+
 def local_riob_prefix(app_key):
     return f"/apps/{app_key}/riob"
 
@@ -1953,9 +1981,9 @@ def riob_proxy_response(app_key="riob", subpath="", embedded=False):
     if not app_visible_to_user({"app_key": app_key}, usuario):
         return jsonify({"erro": "app nao liberado para este usuario"}), 403
 
-    # No Render o RioB compartilha o mesmo container do portal e escuta em
-    # 127.0.0.1. No Compose ele e um servico separado (riob-proxy), portanto
-    # nao deve ser iniciado como subprocesso.
+    # Com uma origem externa configurada, o Portal atua como proxy reverso e
+    # mantem a URL publica do Render no navegador. O subprocesso local existe
+    # apenas como compatibilidade quando a origem aponta para loopback.
     riob_target = urllib.parse.urlparse(RIOB_BASE_URL)
     if riob_target.hostname in {"127.0.0.1", "localhost", "::1"}:
         if not ensure_local_riob_app("riob"):

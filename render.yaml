@@ -78,7 +78,7 @@ services:
       - key: NANOTECH_SHARED_DIR
         value: /app/apps/shared
       - key: RIOB_BASE_URL
-        value: http://127.0.0.1:8898
+        sync: false
       - key: RIOB_APP_PORT
         value: "8898"
       - key: RIOB_STARTUP_WAIT

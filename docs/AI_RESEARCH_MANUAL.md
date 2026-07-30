@@ -142,6 +142,10 @@ avaliado quanto a entrada externa antes da exclusão.
 - Quando `PORT` não estiver definida, o padrão local obrigatório é `5600`, conforme o `docker-compose.yml`.
 - Nunca fixe `10000` diretamente no `Dockerfile`: essa é a porta atualmente usada pelo Render e uma constante nela interrompe o healthcheck e o acesso local.
 - Alterações de inicialização devem ser validadas tanto pelo `./up.sh` local quanto pela configuração do `render.yaml`.
-- No Render, o RioB compartilha o contêiner do Portal e deve iniciar em segundo
-  plano junto com ele; não deixe a inicialização pesada para o primeiro acesso
-  do usuário. No compose local, o RioB permanece no serviço `riob-app`.
+- No Render, prefira `RIOB_BASE_URL` apontando para uma origem HTTPS externa: o
+  Portal deve funcionar como proxy reverso e manter a URL pública do Render no
+  navegador. O subprocesso no mesmo contêiner é somente compatibilidade.
+- No compose local, o RioB permanece no serviço `riob-app`.
+- Cache e balanceamento não podem incluir respostas mutáveis, sessões, uploads
+  ou APIs de escrita sem armazenamento e afinidade compartilhados entre todas
+  as origens.

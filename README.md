@@ -80,10 +80,14 @@ Web Service:
 No Render, importe o Blueprint a partir da branch `main`. Criar apenas um
 Web Service manual exige a configuracao equivalente das variaveis no painel.
 
-O RioB roda como subprocesso no mesmo container do portal no Render, em
-`http://127.0.0.1:8898`. O portal detecta o ambiente Render e usa esse endereco
-mesmo se uma configuracao antiga apontar para `host.docker.internal`, nome que
-existe apenas no Docker local.
+No Render, configure `RIOB_BASE_URL` com a URL HTTPS publica da origem RioB.
+O Portal atua como proxy reverso: o navegador permanece na URL do Render e o IP
+da origem nao aparece nos links da interface. Se essa variavel estiver ausente,
+o modo de compatibilidade ainda inicia o RioB no mesmo container, em
+`http://127.0.0.1:8898`, mas esse modo torna o deploy mais lento.
+
+Valide a origem configurada em `/healthz/riob`. Esse diagnostico consulta
+`/api/status` no servidor RioB sem expor a URL completa da origem.
 
 O Render nao oferece MySQL gerenciado nativo como oferece Postgres; este projeto
 acessa o servidor MySQL unico informado em `NS_DB_*`. Para producao, faca
