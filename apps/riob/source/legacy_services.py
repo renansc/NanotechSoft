@@ -1731,10 +1731,6 @@ def _supplier_category(value):
     return aliases.get(text, text if text in SUPPLIER_CATEGORIES else "outros")
 
 
-def _supplier_category_label(value):
-    return SUPPLIER_CATEGORIES.get(_supplier_category(value), SUPPLIER_CATEGORIES["outros"])
-
-
 def _supplier_list_values(value):
     return [
         item.strip().lower()

@@ -3095,7 +3095,7 @@ def _estoque_grupo_inferido(nome_produto="", codigo_produto_nfe="", grupo_estoqu
         return "AGUA"
     if re.search(r"\bPREFORMA\b", texto) or re.search(r"\bPRE\s*-?\s*FORMA\b", texto):
         return "OUTROS"
-    if re.search(r"\bPET\b", texto) or re.search(r"\bDESCART", texto):
+    if re.search(r"\bPET\b", texto) or re.search(r"\bDESCART", texto) or re.search(r"\bRECICLAV", texto):
         return "PET"
     if re.search(r"\bGFA\b", texto) or re.search(r"\bGRF\b", texto) or re.search(r"\bGARRAFA\b", texto) or re.search(r"\bVIDRO\b", texto):
         return "GFA"
@@ -3139,11 +3139,66 @@ def _estoque_extrair_multiplicador(texto):
 
 def _estoque_base_nome_inferido(nome_produto="", grupo_estoque="", produto_base_nome=""):
     base_exp = _as_str(produto_base_nome).strip()
-    if base_exp:
-        return base_exp
-    nome = _as_str(nome_produto).strip()
+    nome = _as_str(nome_produto).strip() or base_exp
     grupo = _estoque_grupo_inferido(nome_produto=nome, grupo_estoque=grupo_estoque)
     texto = nome.upper()
+    texto_norm = _produto_nome_normalizado(nome)
+    if grupo == "AGUA" or re.search(r"\bAGUA\b", texto_norm):
+        gas = "SEM GAS" if re.search(r"\bSEM GAS\b", texto_norm) else (
+            "COM GAS" if re.search(r"\b(?:COM GAS|C GAS)\b", texto_norm) else ""
+        )
+        volume = next(
+            (
+                rotulo
+                for padrao, rotulo in (
+                    (r"\b2\s*L(?:T)?\b|\b2L\b", "2L"),
+                    (r"\b600\s*ML\b", "600ML"),
+                    (r"\b510\s*ML\b", "510ML"),
+                    (r"\b500\s*ML\b", "500ML"),
+                    (r"\b200\s*ML\b", "200ML"),
+                )
+                if re.search(padrao, texto_norm)
+            ),
+            "",
+        )
+        return " ".join(parte for parte in ("AGUA", gas, volume) if parte)
+
+    sabores = (
+        (r"\bLARANJINHA\b", "LARANJINHA"),
+        (r"\bLARANJA\b", "LARANJA"),
+        (r"\bLIMAO\b|\bSODA\b", "LIMAO (SODA)"),
+        (r"\bFRAMBOESA\b", "FRAMBOESA"),
+        (r"\bABACAXI\b", "ABACAXI"),
+        (r"\bASTUBA\b", "ASTUBA"),
+        (r"\bCITRUS\b", "CITRUS"),
+        (r"\bTUBAINA\b", "TUBAINA"),
+        (r"\bGUARANA\b", "GUARANA"),
+        (r"\bUVA\b", "UVA"),
+        (r"\bCOLA\b", "COLA"),
+    )
+    sabor = next(
+        (rotulo for padrao, rotulo in sabores if re.search(padrao, texto_norm)),
+        "",
+    )
+    volume = next(
+        (
+            rotulo
+            for padrao, rotulo in (
+                (r"\b2\s*L(?:T)?\b|\b2L\b", "2L"),
+                (r"\b600\s*ML\b", "600ML"),
+                (r"\b200\s*ML\b", "200ML"),
+            )
+            if re.search(padrao, texto_norm)
+        ),
+        "",
+    )
+    if sabor and volume:
+        prefixo = "RETORNAVEL" if grupo == "GFA" else (
+            "RECICLAVEL" if re.search(r"\bRECICLAV", texto_norm) else ""
+        )
+        return " ".join(parte for parte in (prefixo, sabor, volume) if parte)
+    if base_exp:
+        return base_exp
     if grupo == "PET":
         if re.search(r"\b2\s*L(T)?\b|\b2LT\b", texto):
             return "PET 2L"
@@ -3185,7 +3240,7 @@ def _estoque_produto_meta(row):
         codigo_produto_nfe=row.get("codigo_produto_nfe"),
     )
     base_exp = _as_str(row.get("produto_base_nome")).strip()
-    base_nome = base_exp or _estoque_base_nome_inferido(
+    base_nome = _estoque_base_nome_inferido(
         nome_produto=row.get("nome_produto"),
         grupo_estoque=grupo,
         produto_base_nome=row.get("produto_base_nome"),
@@ -3218,6 +3273,8 @@ def _fator_base_produto(nome_produto="", embalagem="", unidade_ref="", grupo_pro
         _as_str(grupo_produto).upper(),
     ]).strip()
     multiplicador = _estoque_extrair_multiplicador(texto)
+    eh_2l = bool(re.search(r"\b2\s*L(?:T)?\b|\b2L\b", texto))
+    eh_200ml = bool(re.search(r"\b200\s*ML\b", texto))
 
     if unidade == "UN":
         return 1.0
@@ -3227,10 +3284,13 @@ def _fator_base_produto(nome_produto="", embalagem="", unidade_ref="", grupo_pro
         if unidade == "PALLET":
             return 35.0 * 24.0
         if unidade in ("CX", "CX24", "CX48"):
-            return 24.0
+            return multiplicador or (48.0 if eh_200ml else 24.0)
         return 12.0 if multiplicador <= 0 else multiplicador
     if grupo == "PET":
-        pacote = multiplicador or (12.0 if re.search(r"\b12\b", texto) else (9.0 if re.search(r"\b9\b", texto) else 0.0))
+        pacote = multiplicador or (
+            6.0 if eh_2l
+            else (12.0 if re.search(r"\b12\b", texto) else (9.0 if re.search(r"\b9\b", texto) else 0.0))
+        )
         if unidade == "PALLET":
             return (pacote if pacote > 0 else 12.0) * 80.0
         if unidade in ("PCT", "FD"):
@@ -4584,9 +4644,6 @@ def _combustivel_tipo_label(v):
         "etanol": "Etanol",
         "arla": "Arla",
     }[_normalizar_combustivel_tipo(v)]
-
-def _combustivel_e_diesel(v):
-    return _normalizar_combustivel_tipo(v) in ("diesel_s10", "diesel_500")
 
 def _combustivel_move_veiculo(v):
     return _normalizar_combustivel_tipo(v) in (
@@ -7259,6 +7316,26 @@ def _aplicar_cadastro_embalagem_preview(preview):
             if fator_padrao > 0 and _as_float(item_atual.get("fator_embalagem"), 0.0) <= 0:
                 item_atual["fator_embalagem"] = fator_padrao
                 item_atual["fator_inferido"] = 0
+            grupo_regra = _estoque_grupo_inferido(
+                nome_produto=item_atual.get("nome_produto"),
+                codigo_produto_nfe=item_atual.get("codigo_produto_nfe"),
+                grupo_estoque=cadastro.get("grupo_estoque"),
+            )
+            apresentacao_regra = _estoque_apresentacao_normalizada(
+                item_atual.get("embalagem_tipo"),
+                item_atual.get("unidade"),
+                item_atual.get("nome_produto"),
+            )
+            if apresentacao_regra in {"PCT", "FD", "CX", "CX24", "CX48"}:
+                fator_regra = _fator_base_produto(
+                    nome_produto=item_atual.get("nome_produto"),
+                    embalagem=apresentacao_regra,
+                    unidade_ref=apresentacao_regra,
+                    grupo_produto=grupo_regra,
+                )
+                if grupo_regra in {"PET", "GFA", "AGUA"} and fator_regra > 0:
+                    item_atual["fator_embalagem"] = fator_regra
+                    item_atual["fator_inferido"] = 1
             itens_final.append(_normalizar_item_preview_nfe(item_atual, len(itens_final) + 1))
         preview["itens"] = itens_final
         return preview
@@ -9910,85 +9987,6 @@ def _buscar_usuario_id_cur(cur, user_id):
         (user_id,),
     )
     return cur.fetchone()
-
-def _sincronizar_colaborador_por_usuario(cur, user_id, data=None):
-    data = data or {}
-    cur.execute(
-        """
-        SELECT
-            id,
-            nome,
-            login,
-            senha,
-            sip_habilitado,
-            sip_usuario,
-            sip_senha,
-            sip_ramal,
-            codbar_modo
-        FROM colaboradores
-        WHERE usuario_id=%s
-        LIMIT 1
-        """,
-        (user_id,),
-    )
-    col = cur.fetchone()
-    if not col and _as_str(data.get("login")):
-        cur.execute(
-            """
-            SELECT id, usuario_id, login
-            FROM colaboradores
-            WHERE login=%s
-            ORDER BY id ASC
-            LIMIT 1
-            """,
-            (_as_str(data.get("login")),),
-        )
-        col = cur.fetchone()
-
-    if not col:
-        return 0
-
-    nome = _as_str(data.get("nome")) or _as_str((col or {}).get("nome"))
-    login = _as_str(data.get("login")) or _as_str((col or {}).get("login"))
-    senha_hash = _as_str((col or {}).get("senha"))
-    if _as_str(data.get("senha")):
-        senha_hash = generate_password_hash(_as_str(data.get("senha")))
-    sip_habilitado = 1 if _as_bool(data.get("sip_habilitado"), _as_bool((col or {}).get("sip_habilitado"), False)) else 0
-    sip_usuario = _as_str(data.get("sip_usuario")) or login
-    sip_senha = _as_str(data.get("sip_senha")) or _as_str((col or {}).get("sip_senha"))
-    sip_ramal = _as_str(data.get("sip_ramal")) or _as_str((col or {}).get("sip_ramal"))
-    codbar_modo = _normalizar_codbar_modo(data.get("codbar_modo") if "codbar_modo" in data else (col or {}).get("codbar_modo"))
-
-    if col:
-        cur.execute(
-            """
-            UPDATE colaboradores
-            SET nome=%s,
-                login=%s,
-                senha=%s,
-                sip_habilitado=%s,
-                sip_usuario=%s,
-                sip_senha=%s,
-                sip_ramal=%s,
-                codbar_modo=%s,
-                usuario_id=%s
-            WHERE id=%s
-            """,
-            (
-                nome,
-                login,
-                senha_hash,
-                sip_habilitado,
-                sip_usuario,
-                sip_senha,
-                sip_ramal,
-                codbar_modo,
-                user_id,
-                _as_int(col.get("id"), 0),
-            ),
-        )
-        return cur.rowcount or 0
-    return 0
 
 def _usuario_sip_dict(row):
     return {
@@ -13177,6 +13175,7 @@ def _estoque_merge_row(target, aliases, row):
         "ultimo_valor": 0.0,
         "ultima_movimentacao": "",
         "fornecedores": {},
+        "codigos_origem": set(),
     })
     for alias in chaves_candidatas:
         aliases[alias] = chave
@@ -13187,6 +13186,9 @@ def _estoque_merge_row(target, aliases, row):
         atual["codigo_produto_nfe_norm"] = codigo_produto_nfe_norm
     if codigo_produto_nfe_saida and not atual.get("codigo_produto_nfe"):
         atual["codigo_produto_nfe"] = codigo_produto_nfe_saida
+    for codigo in (codigo_produto_nfe_saida, codigo_barras):
+        if codigo:
+            atual.setdefault("codigos_origem", set()).add(codigo)
     if grupo_estoque and not atual.get("grupo_estoque"):
         atual["grupo_estoque"] = grupo_estoque
     if produto_base_key and not atual.get("produto_base_key"):
@@ -13460,6 +13462,8 @@ def _estoque_resumo_produtos_data():
             "produto_base_key": _as_str(item.get("produto_base_key")),
             "codigo_barras": _as_str(item.get("codigo_barras")),
             "codigo_produto_nfe": _as_str(item.get("codigo_produto_nfe")),
+            "codigos_origem": sorted(item.get("codigos_origem") or []),
+            "itens_unificados": len(item.get("codigos_origem") or []),
             "nome_produto": _as_str(item.get("produto_base_nome") or item.get("nome_produto")) or "-",
             "entradas_total": entradas_total,
             "saidas_total": saidas_total,
@@ -13529,10 +13533,6 @@ def _rastreio_parse_data_lote(value):
         except Exception:
             continue
     return None
-
-
-def _rastreio_sabor_norm(value):
-    return _normalizar_chave_texto(value)[:180]
 
 
 def _rastreio_lote_codigo(data_lote, serial):
@@ -15312,6 +15312,33 @@ def _estoque_xml_preparar_vinculo(cur, nota, usuario="sistema"):
         (nota_key,),
     )
     vinculo_final = cur.fetchone() or {}
+    desvinculado_manualmente = (
+        _as_str(pre_vinculo.get("origem_frete")) == "desvinculado_kanban"
+        and _as_str(pre_vinculo.get("status")).lower() in {
+            "cancelado",
+            "desvinculado",
+        }
+    )
+    if desvinculado_manualmente and not vinculo_final:
+        return {
+            "nota_key": nota_key,
+            "frete_id": 0,
+            "veiculo_id": 0,
+            "origem_veiculo": "desvinculado_kanban",
+            "origem_frete": "desvinculado_kanban",
+            "status": "desvinculado",
+            "dispensa_frete": False,
+            "tipo_transporte": "",
+            "origem_decisao_logistica": "manual",
+            "motivo_decisao_logistica": (
+                "Nota mantida sem vinculo por decisao manual no Kanban."
+            ),
+            "transporte_xml": transporte,
+            "frete_sugestao": {},
+            "pre_vinculo_criado": pre_vinculo_criado,
+            "frete_criado": False,
+            "bloqueio_vinculo_automatico": True,
+        }
     decisao_automatica = _estoque_xml_detectar_dispensa_frete(transporte)
     if (
         decisao_automatica.get("dispensa_frete")
@@ -15670,7 +15697,7 @@ def _estoque_xml_agrupar_notas(rows):
     return notas
 
 
-def _estoque_xml_carregar_notas(cur, nota_key=""):
+def _estoque_xml_carregar_notas(cur, nota_key="", limite_linhas=0, busca=""):
     sql = """
         SELECT
             id, arquivo_id, arquivo_origem, tipo_movimento,
@@ -15683,11 +15710,29 @@ def _estoque_xml_carregar_notas(cur, nota_key=""):
         FROM importar_xml_estoque_itens
     """
     params = []
+    where = []
     chave = _normalizar_chave_acesso_nfe(nota_key)
     if len(chave) == 44:
-        sql += " WHERE chave_nfe=%s"
+        where.append("chave_nfe=%s")
         params.append(chave)
-    sql += " ORDER BY id ASC"
+    busca = _as_str(busca)
+    if busca:
+        termo = f"%{busca}%"
+        where.append(
+            """
+            (
+                numero_nota LIKE %s OR chave_nfe LIKE %s
+                OR emitente_nome LIKE %s OR destinatario_nome LIKE %s
+            )
+            """
+        )
+        params.extend((termo, termo, termo, termo))
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    limite_linhas = max(0, min(_as_int(limite_linhas, 0), 20000))
+    sql += " ORDER BY id " + ("DESC" if limite_linhas else "ASC")
+    if limite_linhas:
+        sql += f" LIMIT {limite_linhas}"
     cur.execute(sql, tuple(params))
     notas = _estoque_xml_agrupar_notas(cur.fetchall() or [])
     if nota_key and nota_key in notas:
@@ -15695,14 +15740,27 @@ def _estoque_xml_carregar_notas(cur, nota_key=""):
     return notas
 
 
-def _estoque_xml_referencias_lancadas(cur):
+def _estoque_xml_referencias_lancadas(cur, referencia_ids=None):
+    ids = sorted(
+        {
+            _as_int(valor, 0)
+            for valor in (referencia_ids or [])
+            if _as_int(valor, 0) > 0
+        }
+    )
+    filtro = ""
+    params = [_ESTOQUE_XML_REFERENCIA]
+    if ids:
+        filtro = " AND referencia_id IN (" + ",".join(["%s"] * len(ids)) + ")"
+        params.extend(ids)
     cur.execute(
-        """
+        f"""
         SELECT referencia_id
         FROM estoque_movimentos
         WHERE referencia_tipo=%s AND referencia_id IS NOT NULL
+        {filtro}
         """,
-        (_ESTOQUE_XML_REFERENCIA,),
+        tuple(params),
     )
     return {
         _as_int(row.get("referencia_id"), 0)
@@ -17297,34 +17355,99 @@ def listar_xml_pendentes_frete(id):
         filtro_rota = _estoque_xml_normalizar_texto(
             request.args.get("rota") or request.args.get("frete") or request.args.get("rota_frete")
         )
-        notas = _estoque_xml_carregar_notas(cur)
-        referencias = _estoque_xml_referencias_lancadas(cur)
-        destinos_manutencao = _estoque_xml_destinos_manutencao(cur, notas.keys())
+        busca_bruta = _as_str(request.args.get("q") or request.args.get("busca"))
+        notas = _estoque_xml_carregar_notas(
+            cur,
+            limite_linhas=600 if not incluir_todas else 10000,
+            busca=busca_bruta,
+        )
+        referencias = _estoque_xml_referencias_lancadas(
+            cur,
+            [
+                row.get("id")
+                for nota in notas.values()
+                for row in ((nota or {}).get("rows") or [])
+            ],
+        )
+        # Evita uma clausula IN com milhares de chaves. A tabela de destinos e
+        # pequena e pode ser indexada em memoria para esta listagem.
+        destinos_manutencao = _estoque_xml_destinos_manutencao(cur)
+        chaves_consulta = sorted(
+            {
+                chave
+                for nota_key, nota in notas.items()
+                for chave in (
+                    _as_str(nota_key),
+                    _normalizar_chave_acesso_nfe(
+                        (((nota or {}).get("canonicos") or [{}])[0]).get("chave_nfe")
+                    ),
+                )
+                if chave
+            }
+        )
+        filtro_chaves_sql = ""
+        filtro_chaves_params = []
+        if chaves_consulta and not incluir_todas:
+            placeholders = ",".join(["%s"] * len(chaves_consulta))
+            filtro_chaves_sql = (
+                f" WHERE ({{alias}}.frete_id=%s"
+                f" OR {{alias}}.nota_key IN ({placeholders})"
+                f" OR {{alias}}.chave_nfe IN ({placeholders}))"
+            )
+            filtro_chaves_params = [id, *chaves_consulta, *chaves_consulta]
         cur.execute(
-            """
-            SELECT v.*, f.nome AS frete_nome, f.status AS frete_status
+            (
+                """
+            SELECT v.*, f.nome AS frete_nome, f.status AS frete_status,
+                   COALESCE(f.arquivado, 0) AS frete_arquivado
             FROM estoque_xml_frete_vinculos v
             LEFT JOIN fretes f ON f.id = v.frete_id
             """
+                + filtro_chaves_sql.format(alias="v")
+            ),
+            tuple(filtro_chaves_params),
         )
-        vinculadas_por_nota = {
-            _as_str(row.get("nota_key")): row
-            for row in (cur.fetchall() or [])
-            if _as_str(row.get("nota_key"))
-        }
+        vinculos_finais = cur.fetchall() or []
+        vinculadas_por_nota = {}
+        for row in vinculos_finais:
+            aliases = {
+                _as_str(row.get("nota_key")),
+                _normalizar_chave_acesso_nfe(row.get("chave_nfe")),
+                f"numero:{_as_str(row.get('numero_nota'))}",
+            }
+            for alias in aliases:
+                if alias and alias != "numero:":
+                    vinculadas_por_nota.setdefault(alias, row)
         cur.execute(
-            """
-            SELECT p.*, f.nome AS frete_nome, f.status AS frete_status
+            (
+                """
+            SELECT p.*, f.nome AS frete_nome, f.status AS frete_status,
+                   COALESCE(f.arquivado, 0) AS frete_arquivado
             FROM estoque_xml_frete_pre_vinculos p
             LEFT JOIN fretes f ON f.id = p.frete_id
             WHERE COALESCE(p.status, 'pendente') NOT IN ('confirmado_sem_frete')
             """
+                + (
+                    filtro_chaves_sql.format(alias="p").replace(
+                        " WHERE (", " AND (", 1
+                    )
+                    if filtro_chaves_sql
+                    else ""
+                )
+            ),
+            tuple(filtro_chaves_params),
         )
-        pre_por_nota = {
-            _as_str(row.get("nota_key")): row
-            for row in (cur.fetchall() or [])
-            if _as_str(row.get("nota_key"))
-        }
+        pre_vinculos = cur.fetchall() or []
+        pre_por_nota = {}
+        for row in pre_vinculos:
+            aliases = {
+                _as_str(row.get("nota_key")),
+                _normalizar_chave_acesso_nfe(row.get("chave_nfe")),
+                f"numero:{_as_str(row.get('numero_nota'))}",
+            }
+            for alias in aliases:
+                if alias and alias != "numero:":
+                    pre_por_nota.setdefault(alias, row)
 
         placa_frete = _estoque_xml_placa_normalizada(frete.get("veiculo_placa"))
         numeros_frete = {
@@ -17346,23 +17469,64 @@ def listar_xml_pendentes_frete(id):
             "vinculado_outro": 0,
             "total": 0,
         }
-        for nota_key, nota in notas.items():
-            if nota_key in destinos_manutencao:
-                continue
+        vinculos_processados = set()
+        pre_vinculos_processados = set()
+        notas_ordenadas = sorted(
+            notas.items(),
+            key=lambda item: max(
+                (
+                    _as_int(row.get("id"), 0)
+                    for row in ((item[1] or {}).get("canonicos") or [])
+                ),
+                default=0,
+            ),
+            reverse=True,
+        )
+        for nota_key, nota in notas_ordenadas:
             resumo = _estoque_xml_nota_publica(nota, referencias)
             if resumo.get("tipo_movimento") != "saida":
                 continue
             data_emissao_normalizada = _normalizar_data_documento(resumo.get("data_emissao"))
             bate_data = bool(filtro_data and data_emissao_normalizada == filtro_data)
-            vinculo_final = vinculadas_por_nota.get(nota_key) or {}
+            chave_nfe = _normalizar_chave_acesso_nfe(resumo.get("chave_nfe"))
+            numero_nota = _as_str(resumo.get("numero_nota"))
+            vinculo_final = (
+                vinculadas_por_nota.get(nota_key)
+                or vinculadas_por_nota.get(chave_nfe)
+                or vinculadas_por_nota.get(f"numero:{numero_nota}")
+                or {}
+            )
             final_frete_id = _as_int(vinculo_final.get("frete_id"), 0)
+            if _as_int(vinculo_final.get("id"), 0) > 0:
+                vinculos_processados.add(_as_int(vinculo_final.get("id"), 0))
             final_vinculado_este = final_frete_id == id
             final_vinculado_outro = final_frete_id > 0 and final_frete_id != id
-            transporte = _estoque_xml_extrair_transporte(cur, nota)
+            pre_vinculo = (
+                pre_por_nota.get(nota_key)
+                or pre_por_nota.get(chave_nfe)
+                or pre_por_nota.get(f"numero:{numero_nota}")
+                or {}
+            )
+            if _as_int(pre_vinculo.get("id"), 0) > 0:
+                pre_vinculos_processados.add(_as_int(pre_vinculo.get("id"), 0))
+            transporte_persistido = vinculo_final or pre_vinculo
+            transporte = {
+                "placa": _as_str(transporte_persistido.get("placa_xml")),
+                "mapa": _as_str(transporte_persistido.get("mapa_xml")),
+                "numero_caminhao": _as_str(
+                    transporte_persistido.get("numero_caminhao_xml")
+                ),
+                "origem": (
+                    "vinculo_persistido" if transporte_persistido else "listagem_rapida"
+                ),
+            }
             placa_xml = _estoque_xml_placa_normalizada(transporte.get("placa"))
             numero_xml = _estoque_xml_numero_veiculo(transporte.get("numero_caminhao"))
-            pre_vinculo = pre_por_nota.get(nota_key) or {}
             pre_status = (_as_str(pre_vinculo.get("status")) or "pendente").lower()
+            desvinculado_manualmente = (
+                _as_str(pre_vinculo.get("origem_frete")) == "desvinculado_kanban"
+                and pre_status in {"cancelado", "desvinculado"}
+            )
             pre_inativo = pre_status in {
                 "cancelado",
                 "cancelada",
@@ -17376,7 +17540,11 @@ def listar_xml_pendentes_frete(id):
             pre_frete_id = 0 if pre_inativo else pre_frete_id_original
             pre_vinculado_este = pre_frete_id == id
             pre_vinculado_outro = pre_frete_id > 0 and pre_frete_id != id
-            xml_bate_frete = bool(
+            vinculo_arquivado_outro = bool(
+                (final_vinculado_outro and _as_int(vinculo_final.get("frete_arquivado"), 0))
+                or (pre_vinculado_outro and _as_int(pre_vinculo.get("frete_arquivado"), 0))
+            )
+            xml_bate_frete = not desvinculado_manualmente and bool(
                 (placa_xml and placa_frete and placa_xml == placa_frete)
                 or (numero_xml and numero_xml in numeros_frete)
                 or (
@@ -17398,6 +17566,17 @@ def listar_xml_pendentes_frete(id):
                 )
             )
             bate_busca = bool(busca and busca in texto_busca)
+            if vinculo_arquivado_outro and not (bate_busca or incluir_todas):
+                continue
+            em_manutencao = nota_key in destinos_manutencao
+            if em_manutencao and not (
+                final_vinculado_este
+                or final_vinculado_outro
+                or pre_vinculado_este
+                or pre_vinculado_outro
+                or bate_busca
+            ):
+                continue
             if resumo.get("status") == "consolidado" and not (
                 final_vinculado_este
                 or final_vinculado_outro
@@ -17413,6 +17592,12 @@ def listar_xml_pendentes_frete(id):
                 continue
             vinculado_este = final_vinculado_este or pre_vinculado_este
             vinculado_outro = final_vinculado_outro or pre_vinculado_outro
+            if (
+                vinculado_outro
+                and filtro_vinculo == "todos"
+                and not (bate_busca or incluir_todas)
+            ):
+                continue
             if vinculado_este:
                 vinculo_estado = "vinculado_frete"
             elif vinculado_outro:
@@ -17535,6 +17720,7 @@ def listar_xml_pendentes_frete(id):
                 "frete_vinculado_id": frete_vinculado_id or None,
                 "frete_vinculado_nome": frete_vinculado_nome,
                 "frete_vinculado_status": frete_vinculado_status,
+                "frete_vinculado_arquivado": bool(vinculo_arquivado_outro),
                 "vinculo_estado": vinculo_estado,
                 "vinculo_final": bool(final_frete_id > 0),
                 "vinculo_final_este_frete": bool(final_vinculado_este),
@@ -17547,11 +17733,131 @@ def listar_xml_pendentes_frete(id):
                 "pre_vinculado_outro_frete": bool(pre_vinculado_outro),
                 "pre_vinculo_inativo": bool(pre_inativo),
                 "busca_bateu": bool(bate_busca),
+                "destino_manutencao": bool(em_manutencao),
             }
             if vinculado_este or xml_bate_frete:
                 pendentes.append(info)
             else:
                 outras.append(info)
+
+        # Vinculos antigos podem sobreviver sem a linha de origem do importador
+        # ou com uma nota_key formada por uma regra anterior. Eles continuam
+        # sendo a fonte de verdade e precisam aparecer nos filtros do Kanban.
+        vinculos_orfaos = [
+            {**row, "_origem_vinculo_final": True}
+            for row in vinculos_finais
+            if _as_int(row.get("id"), 0) not in vinculos_processados
+        ]
+        chaves_vinculos_finais = {
+            _as_str(final.get("nota_key"))
+            for final in vinculos_finais
+            if _as_str(final.get("nota_key"))
+        }
+        vinculos_orfaos.extend(
+            {**row, "_origem_vinculo_final": False}
+            for row in pre_vinculos
+            if _as_int(row.get("id"), 0) not in pre_vinculos_processados
+            and _as_str(row.get("nota_key")) not in chaves_vinculos_finais
+        )
+        for row in vinculos_orfaos:
+            frete_vinculado_id = _as_int(row.get("frete_id"), 0)
+            eh_vinculo_final = bool(row.get("_origem_vinculo_final"))
+            eh_desvinculado_manual = (
+                not eh_vinculo_final
+                and _as_str(row.get("origem_frete")) == "desvinculado_kanban"
+                and _as_str(row.get("status")).lower() in {
+                    "cancelado",
+                    "desvinculado",
+                }
+            )
+            if frete_vinculado_id <= 0 and not eh_desvinculado_manual:
+                continue
+            vinculado_este = frete_vinculado_id == id
+            vinculo_arquivado_outro = bool(
+                frete_vinculado_id > 0
+                and not vinculado_este
+                and _as_int(row.get("frete_arquivado"), 0)
+            )
+            vinculo_estado = (
+                "sem_vinculo"
+                if eh_desvinculado_manual
+                else ("vinculado_frete" if vinculado_este else "vinculado_outro")
+            )
+            texto_busca = _estoque_xml_normalizar_texto(
+                " ".join(
+                    [
+                        _as_str(row.get("numero_nota")),
+                        _as_str(row.get("chave_nfe")),
+                        _as_str(row.get("nota_key")),
+                        _as_str(row.get("emitente_nome")),
+                        _as_str(row.get("destinatario_nome")),
+                    ]
+                )
+            )
+            bate_busca = bool(busca and busca in texto_busca)
+            if vinculo_arquivado_outro and not (bate_busca or incluir_todas):
+                continue
+            data_emissao = _fmt_date(row.get("data_emissao"))
+            bate_data = bool(
+                filtro_data
+                and _normalizar_data_documento(data_emissao) == filtro_data
+            )
+            frete_nome = (
+                _as_str(row.get("frete_nome"))
+                or (f"Frete #{frete_vinculado_id}" if frete_vinculado_id > 0 else "")
+            )
+            bate_rota = bool(
+                filtro_rota
+                and filtro_rota in _estoque_xml_normalizar_texto(frete_nome)
+            )
+            if busca and not bate_busca:
+                continue
+            if filtro_data and not bate_data:
+                continue
+            if filtro_rota and not bate_rota:
+                continue
+            if filtro_vinculo not in {"todos", vinculo_estado}:
+                continue
+            if (
+                not vinculado_este
+                and not eh_desvinculado_manual
+                and not (bate_busca or bate_data or bate_rota or incluir_todas)
+            ):
+                continue
+            contadores_vinculo[vinculo_estado] += 1
+            contadores_vinculo["total"] += 1
+            outras.append(
+                {
+                    "nota_key": _as_str(row.get("nota_key")),
+                    "chave_nfe": _as_str(row.get("chave_nfe")),
+                    "numero_nota": _as_str(row.get("numero_nota")),
+                    "emitente_nome": _as_str(row.get("emitente_nome")),
+                    "destinatario_nome": _as_str(row.get("destinatario_nome")),
+                    "data_emissao": data_emissao,
+                    "data_emissao_normalizada": _normalizar_data_documento(data_emissao),
+                    "status": "desvinculado" if eh_desvinculado_manual else "vinculado",
+                    "tipo_movimento": "saida",
+                    "frete_vinculado_id": frete_vinculado_id or None,
+                    "frete_vinculado_nome": frete_nome,
+                    "frete_vinculado_status": _as_str(row.get("frete_status")),
+                    "frete_sugerido_id": frete_vinculado_id or None,
+                    "frete_sugerido_nome": frete_nome,
+                    "vinculo_estado": vinculo_estado,
+                    "vinculo_final": eh_vinculo_final,
+                    "vinculado_este_frete": vinculado_este,
+                    "vinculado_outro_frete": bool(
+                        frete_vinculado_id > 0 and not vinculado_este
+                    ),
+                    "pode_desvincular": vinculado_este,
+                    "sugestao_motivo": (
+                        "Nota desvinculada manualmente e disponivel para novo vinculo."
+                        if eh_desvinculado_manual
+                        else "Vinculo persistido recuperado mesmo sem a origem XML atual."
+                    ),
+                    "busca_bateu": bate_busca,
+                    "origem_xml_ausente": True,
+                }
+            )
 
         pendentes.extend(outras)
 
@@ -17579,6 +17885,8 @@ def listar_xml_pendentes_frete(id):
                 "filtro_data": filtro_data,
                 "filtro_rota": filtro_rota,
                 "contadores_vinculo": contadores_vinculo,
+                "modo_listagem": "rapida_ativos",
+                "arquivados_incluidos": bool(incluir_todas),
             }
         )
     finally:
@@ -18104,7 +18412,7 @@ def desvincular_xml_pendente_frete(id):
             )
             VALUES (
                 %s, %s, %s, NULL, NULL, %s, %s, %s,
-                'desvinculado_kanban', 'desvinculado_kanban', 'cancelado', %s,
+                'desvinculado_kanban', 'desvinculado_kanban', 'desvinculado', %s,
                 0, NOW(), NOW(), NULL
             )
             ON DUPLICATE KEY UPDATE
@@ -18117,7 +18425,7 @@ def desvincular_xml_pendente_frete(id):
                 numero_caminhao_xml=COALESCE(NULLIF(numero_caminhao_xml, ''), VALUES(numero_caminhao_xml)),
                 origem_veiculo='desvinculado_kanban',
                 origem_frete='desvinculado_kanban',
-                status='cancelado',
+                status='desvinculado',
                 detalhes=VALUES(detalhes),
                 dispensa_frete=0,
                 atualizado_em=NOW(),
@@ -18140,7 +18448,7 @@ def desvincular_xml_pendente_frete(id):
             "numero_nota": numero_nota,
             "chave_nfe": chave_nfe,
             "vinculo_removido": vinculo_removido,
-            "pre_vinculo_cancelado": True,
+            "pre_vinculo_desvinculado": True,
         }
         _registrar_historico_frete(
             cur,
@@ -18157,7 +18465,7 @@ def desvincular_xml_pendente_frete(id):
                 "nota_key": nota_key,
                 "numero_nota": numero_nota,
                 "vinculo_removido": bool(vinculo_removido),
-                "pre_vinculo_cancelado": True,
+                "pre_vinculo_desvinculado": True,
             }
         )
     except Exception:
@@ -23854,10 +24162,6 @@ def _vendas_relatorio_nome_valido(nome):
     return True
 
 
-def _vendas_csv_nome_valido(nome):
-    return _vendas_relatorio_nome_valido(nome)
-
-
 def _vendas_xlsx_col_index(ref):
     match = re.match(r"([A-Z]+)", _as_str(ref).upper())
     if not match:
@@ -26945,30 +27249,6 @@ def _vendas_relatorio_row_publico(row):
         "valor_liquido": financeiro["valor_liquido"],
     }
 
-def _vendas_relatorio_preco_medio_publico(row):
-    totais = _vendas_relatorio_publico_totais(row)
-    quantidade = _as_float(totais.get("quantidade"), 0.0)
-    quantidade_devolvida = _as_float(totais.get("quantidade_devolvida"), 0.0)
-    quantidade_liquida = round(quantidade - quantidade_devolvida, 3)
-    valor_base_preco = round(_as_float(totais.get("valor_venda"), 0.0) - _as_float(totais.get("valor_devolvido"), 0.0), 2)
-    valor_venda = _as_float(totais.get("valor_venda"), 0.0)
-    if quantidade_liquida > 0:
-        preco_medio = valor_base_preco / quantidade_liquida
-    elif quantidade > 0:
-        preco_medio = valor_venda / quantidade
-    else:
-        preco_medio = 0.0
-    return {
-        "vendedor_chave": _as_str(row.get("vendedor_chave")) or "SEM VENDEDOR",
-        "codigo": _as_str(row.get("vendedor_codigo")),
-        "vendedor": _as_str(row.get("vendedor_nome")) or _as_str(row.get("vendedor_chave")) or "SEM VENDEDOR",
-        "cidade": _as_str(row.get("cidade")) or "SEM CIDADE",
-        "quantidade_liquida": quantidade_liquida,
-        "valor_base_preco": valor_base_preco,
-        "preco_medio": round(preco_medio, 2),
-        **totais,
-    }
-
 def _vendas_lista_resumida(valores, limite=3):
     itens = sorted({
         _as_str(valor).strip()
@@ -29095,123 +29375,6 @@ def _coletar_relatorio_vendas_consolidado(filtro_vendedor="", filtro_cliente="",
         "consolidados": consolidados,
         "clientes_disponiveis": clientes_disponiveis,
         "vendedores": vendedores,
-    }
-
-def _coletar_relatorio_vendas_bonificacao_percentual(filtro_vendedor="", filtro_cliente="", data_inicio=None, data_fim=None):
-    cache_entry, source, cfg = _vendas_obter_cache_ativo(force_refresh=False)
-
-    filtro_vendedor = _as_str(filtro_vendedor).upper()
-    filtro_cliente = _as_str(filtro_cliente).upper()
-    if isinstance(data_inicio, str):
-        data_inicio = _parse_data_br(data_inicio)
-    if isinstance(data_fim, str):
-        data_fim = _parse_data_br(data_fim)
-
-    rows_base, _ = _vendas_relatorio_base_rows(data_inicio, data_fim)
-    vendedores, clientes_disponiveis = _vendas_publicar_opcoes_relatorio(rows_base)
-
-    por_vendedor = {}
-    clientes_totais = set()
-    notas_totais = set()
-    totais = {
-        "vendedores": 0,
-        "itens": 0,
-        "clientes": 0,
-        "notas": 0,
-        "bonificacao": 0.0,
-        "valor_liquido": 0.0,
-        "percentual": 0.0,
-    }
-
-    for row in rows_base:
-        vendedor_key = _as_str(row.get("vendedor_key_upper")) or _as_str(row.get("vendedor_key")) or "SEM VENDEDOR"
-        cliente_key = _as_str(row.get("chave")) or "SEM CLIENTE"
-        if filtro_vendedor and vendedor_key.upper() != filtro_vendedor:
-            continue
-        if filtro_cliente and cliente_key != filtro_cliente:
-            continue
-
-        cliente_nome = _as_str(row.get("cliente")) or "SEM CLIENTE"
-        numero_nf = _as_str(row.get("numero_nf"))
-        vendedor_nome = _as_str(row.get("vendedor_nome")) or vendedor_key
-        vendedor_codigo = _as_str(row.get("vendedor_codigo"))
-        entry = por_vendedor.setdefault(vendedor_key, {
-            "chave": vendedor_key,
-            "codigo": vendedor_codigo,
-            "nome": vendedor_nome,
-            "itens": 0,
-            "clientes": set(),
-            "notas": set(),
-            "bonificacao": 0.0,
-            "valor_liquido": 0.0,
-        })
-
-        entry["itens"] += 1
-        entry["clientes"].add(cliente_nome)
-        if numero_nf:
-            entry["notas"].add(numero_nf)
-
-        financeiro = _vendas_row_financeiro_ajustado(row)
-        if financeiro["eh_bonificacao"]:
-            entry["bonificacao"] += financeiro["bonificacao"]
-        else:
-            entry["valor_liquido"] += financeiro["valor_liquido"]
-
-        clientes_totais.add(cliente_key)
-        if numero_nf:
-            notas_totais.add(numero_nf)
-
-    vendedores_lista = []
-    for row in por_vendedor.values():
-        bonificacao = round(_as_float(row["bonificacao"], 0.0), 2)
-        valor_liquido = round(_as_float(row["valor_liquido"], 0.0), 2)
-        percentual = round((bonificacao / valor_liquido) * 100.0, 2) if valor_liquido > 0 else 0.0
-        totais["bonificacao"] += bonificacao
-        totais["valor_liquido"] += valor_liquido
-        totais["itens"] += _as_int(row.get("itens"), 0)
-        vendedores_lista.append({
-            "chave": row["chave"],
-            "codigo": row["codigo"],
-            "nome": row["nome"],
-            "itens": _as_int(row.get("itens"), 0),
-            "clientes": len(row["clientes"]),
-            "notas": len(row["notas"]),
-            "bonificacao": bonificacao,
-            "valor_liquido": valor_liquido,
-            "percentual": percentual,
-        })
-
-    vendedores_lista.sort(key=lambda item: (-_as_float(item.get("percentual"), 0.0), -_as_float(item.get("bonificacao"), 0.0), _as_str(item.get("nome")), _as_str(item.get("codigo"))))
-
-    totais["vendedores"] = len(vendedores_lista)
-    totais["clientes"] = len(clientes_totais)
-    totais["notas"] = len(notas_totais)
-    totais["percentual"] = round((totais["bonificacao"] / totais["valor_liquido"]) * 100.0, 2) if totais["valor_liquido"] > 0 else 0.0
-    totais["bonificacao"] = round(totais["bonificacao"], 2)
-    totais["valor_liquido"] = round(totais["valor_liquido"], 2)
-
-    return {
-        "arquivo": {
-            "nome": _as_str(source.get("name")) or os.path.basename(_as_str(cache_entry.get("source_path"))),
-            "tamanho_bytes": _as_int(source.get("size"), _as_int(cache_entry.get("source_size"), 0)),
-            "atualizado_em": _as_str(source.get("mtime")) or _fmt_dt(cache_entry.get("source_mtime")),
-        },
-        "filtros": {
-            "vendedor": filtro_vendedor,
-            "cliente": filtro_cliente,
-            "data_inicio": _fmt_date(data_inicio),
-            "data_fim": _fmt_date(data_fim),
-        },
-        "cache": _vendas_cache_entry_publico(cache_entry),
-        "fonte": {
-            "source_type": _as_str(cfg.get("source_type")),
-            "ready": True,
-            "message": "",
-        },
-        "relatorio_tipo": "bonificacao_percentual",
-        "resumo_geral": totais,
-        "vendedores": vendedores_lista,
-        "clientes_disponiveis": clientes_disponiveis,
     }
 
 def _coletar_relatorio_vendas_preco_medio(filtro_vendedor="", data_inicio=None, data_fim=None):

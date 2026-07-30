@@ -22,7 +22,8 @@ If you need context fast, read these files first:
 4. `docs/OPERACAO_E_DEPLOY.md`
 5. `docs/NFE_RECEITA_E_INTEGRACAO.md`
 6. `docs/API_E_DADOS.md`
-7. `docs/PLANO_REFATORACAO_E_PENDENCIAS.md`
+7. `docs/ROTAS_E_RECURSOS_COMPLEMENTARES.md`
+8. `docs/PLANO_REFATORACAO_E_PENDENCIAS.md`
 
 ## Main files
 
@@ -83,7 +84,40 @@ If you need context fast, read these files first:
   later XMLs whose cities belong to that route must reuse one active route card
   even before a truck is linked. Never merge active cards assigned to different
   trucks.
+- A persisted outgoing NF-e/frete link is the source of truth for Kanban
+  visibility: linked notes must remain searchable and visible after reopening
+  the card, including notes also marked for maintenance and legacy records whose
+  `nota_key` differs from the normalized access key. Filters must resolve the
+  link by `nota_key`, access key, or note number. A linked note may be moved only
+  to another active, non-archived frete, keeping a single definitive link and
+  recording the transfer in both fretes' history.
+- The pending-XML Kanban list must stay fast as history grows. Its default
+  priority is: links in the current card, then unlinked notes, then links in
+  other active fretes. Do not reopen/parse every XML file while listing.
+  Links belonging to archived fretes are hidden by default and loaded only by
+  explicit search or the interface option that includes archived history.
+- When local runtime evidence is required, the project operator has authorized
+  SSH access to localhost for read-only log and service inspection. Never store
+  passwords or other credentials in this repository or in documentation.
+- Removing an outgoing NF-e from a frete means "leave it available without a
+  link", not cancel, discard, hide, or automatically recreate its card. Persist
+  this as the manual `desvinculado` state, show it in the `sem_vinculo` filter
+  immediately (including legacy `cancelado` rows whose origin is
+  `desvinculado_kanban`), and only link it again after an explicit user action.
+- Stock status uses a canonical beverage taxonomy and must merge duplicate
+  product registrations by normalized flavor, volume, and presentation. Known
+  flavors/families are grape, cola, orange, lemon/soda, raspberry, pineapple,
+  Astuba, Laranjinha, citrus, tubaina, guarana, recyclable, 200 ml, 600 ml,
+  2 L, returnable 600 ml and 200 ml, plus still and sparkling water. Default
+  packs contain 12 units; PET 2 L packs contain 6; returnable 600 ml crates
+  contain 24; returnable 200 ml crates contain 48; water packs contain 12.
+  Explicit product codes or spelling variations must not create duplicate rows
+  in the stock-status display when this canonical identity is the same.
 - When changing behavior, inspect tests and add or adjust them when practical.
+- During dead-code sweeps, a missing direct reference is not enough to remove
+  Flask routes, HTML callbacks, protocol handlers, library overrides or public
+  integration entry points. Record newly discovered active resources in
+  `docs/ROTAS_E_RECURSOS_COMPLEMENTARES.md`.
 - If you need to plan a change, generate a brief first instead of guessing the files.
 - Prefer `./riob-agent brief "..."` when you need a concise, file-aware analysis before editing.
 - If a flow touches deploy, backup, or integrations, mention the operational impact explicitly.

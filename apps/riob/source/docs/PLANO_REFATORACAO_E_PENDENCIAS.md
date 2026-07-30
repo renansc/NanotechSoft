@@ -1,6 +1,6 @@
 # Plano de Refatoracao e Pendencias
 
-Revisao em 2026-06-13.
+Revisao em 2026-07-30.
 
 Este documento registra o plano de saneamento tecnico do sistema RioBranco: refatoracao, comentarios, remocao de codigo desnecessario, atualizacao de documentacao e dependencias pendentes. A ideia e reduzir risco operacional sem trocar a arquitetura de uma vez.
 
@@ -10,10 +10,10 @@ Este documento registra o plano de saneamento tecnico do sistema RioBranco: refa
 - A validacao Python deve continuar cobrindo `compileall`, testes unitarios e `pip check`.
 - A cobertura automatizada cresceu, mas ainda nao cobre todos os fluxos integrados e de navegador.
 - O sistema principal esta concentrado em arquivos grandes:
-  - `server.py`: 20890 linhas.
-  - `script.js`: 13040 linhas depois da primeira limpeza.
-  - `style.css`: 3556 linhas.
-  - `RioBranco.html`: 2434 linhas.
+  - `server.py`: 33990 linhas.
+  - `script.js`: 18730 linhas depois das limpezas registradas.
+  - `style.css`: 4646 linhas.
+  - `RioBranco.html`: 3005 linhas.
 - Ha tambem um modulo ESXi separado com tamanho relevante:
   - `esxi/vsphere_portal/services/vsphere.py`: 1996 linhas.
   - `esxi/vsphere_portal/static/app.js`: 2586 linhas.
@@ -38,6 +38,20 @@ Limpeza complementar executada em 2026-06-13:
 - removidos um HTML de camera sem rota, um CSS externo sem referencia e uma chave SSH privada versionada;
 - adicionadas regras no `.gitignore` para impedir novo versionamento de chaves privadas;
 - mantidos backups, fotos, PDFs e snapshots operacionais por serem dados, nao codigo morto.
+
+Varredura complementar executada em 2026-07-30:
+
+- cruzadas declaracoes Python com todos os modulos e testes do app;
+- cruzadas funcoes JavaScript com `script.js` e handlers de `RioBranco.html`;
+- removidos helpers privados, wrappers antigos de cadastro/dashboard,
+  formatadores isolados e atalhos de Kanban sem chamadas;
+- preservados callbacks de Flask, `HTMLParser`, `BaseHTTPRequestHandler`,
+  overrides de bibliotecas e entradas globais de telas que podem ser chamadas
+  pelo shell/portal;
+- criado `ROTAS_E_RECURSOS_COMPLEMENTARES.md`, reduzindo de 84 para zero as
+  rotas ativas sem citacao nominal na documentacao Markdown;
+- mantida como pendencia a validacao automatizada em navegador antes de remover
+  outros pontos globais de frontend sem chamada direta aparente.
 
 Pendencias restantes do frontend:
 

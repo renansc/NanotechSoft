@@ -1503,10 +1503,6 @@ def parse_devolucao_mentions(message: str) -> dict:
     return {"items": items, "obs": obs, "cleaned": cleaned}
 
 
-def extract_devolucao_items(message: str) -> dict[str, int]:
-    return parse_devolucao_mentions(message)["items"]
-
-
 def strip_devolucao_items(text: str) -> str:
     return parse_devolucao_mentions(text)["cleaned"]
 
@@ -2066,27 +2062,6 @@ def _agent_project_context() -> dict[str, str]:
         "db_name": (os.environ.get("RB_DB_NAME") or "riobranco").strip() or "riobranco",
         "freepbx_host": (os.environ.get("RB_FREEPBX_HOST") or "").strip(),
     }
-
-
-def _agent_project_context_text() -> str:
-    ctx = _agent_project_context()
-    lines = [
-        f"Projeto: {ctx['project_name']}",
-        f"Empresa: {ctx['company_name']}",
-    ]
-    if ctx["company_cnpj"]:
-        lines.append(f"CNPJ: {ctx['company_cnpj']}")
-    if ctx["internal_ip"]:
-        lines.append(f"IP interno do ambiente: {ctx['internal_ip']}")
-    if ctx["public_base_url"]:
-        lines.append(f"Base URL publica: {ctx['public_base_url']}")
-    if ctx["server_name"]:
-        lines.append(f"Server name: {ctx['server_name']}")
-    if ctx["db_name"]:
-        lines.append(f"Banco principal: {ctx['db_name']}")
-    if ctx["freepbx_host"]:
-        lines.append(f"FreePBX: {ctx['freepbx_host']}")
-    return "\n".join(f"- {line}" for line in lines)
 
 
 def _agent_llm_timeout() -> float:
@@ -3263,12 +3238,6 @@ def _fetch_web_page_summary(url: str) -> dict | None:
         "highlights": highlights,
         "url": url,
     }
-
-
-def _web_time_left(deadline: float | None) -> float:
-    if deadline is None:
-        return _agent_web_timeout()
-    return max(0.25, deadline - time.monotonic())
 
 
 def _known_doc_candidate_urls(message: str, technologies: list[dict]) -> list[tuple[str, str]]:

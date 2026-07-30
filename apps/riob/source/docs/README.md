@@ -19,6 +19,9 @@ Este diretorio concentra a documentacao tecnica principal do sistema.
 - `API_E_DADOS.md`
   - referencia de API, dominios funcionais, principais payloads, entidades e modelo de dados
 
+- `ROTAS_E_RECURSOS_COMPLEMENTARES.md`
+  - inventario de logistica XML/frete, rastreabilidade, pontos de venda, caches, escala, rotas de cargas, agente e blueprints legados
+
 - `AI_CONTEXT.md`
   - resumo curto para agentes e manutencao, com mapa do projeto, comandos uteis e ordem de leitura
 
@@ -32,8 +35,9 @@ Este diretorio concentra a documentacao tecnica principal do sistema.
 3. `OPERACAO_E_DEPLOY.md`
 4. `NFE_RECEITA_E_INTEGRACAO.md`
 5. `API_E_DADOS.md`
-6. `AI_CONTEXT.md`
-7. `PLANO_REFATORACAO_E_PENDENCIAS.md`
+6. `ROTAS_E_RECURSOS_COMPLEMENTARES.md`
+7. `AI_CONTEXT.md`
+8. `PLANO_REFATORACAO_E_PENDENCIAS.md`
 
 ## Objetivo
 

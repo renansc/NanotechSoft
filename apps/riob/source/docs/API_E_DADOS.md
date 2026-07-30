@@ -1,5 +1,9 @@
 # API e Modelo de Dados do Sistema RioBranco
 
+As superficies complementares de logistica XML/frete, rastreabilidade, pontos
+de venda, caches, escala, rotas de cargas, agente e blueprints legados estao
+inventariadas em `ROTAS_E_RECURSOS_COMPLEMENTARES.md`.
+
 ## 1. Objetivo
 
 Este documento consolida:
@@ -498,6 +502,12 @@ Regras:
 - `POST /api/estoque` cria uma movimentacao de `entrada` ou `saida`
 - produtos faltantes podem ser auto cadastrados em `estoque_produtos`
 - `GET /api/dashboard_estoque` e `GET /api/estoque/saldo` retornam o saldo atual consolidado por item
+- bebidas sao consolidadas pela identidade canonica
+  `grupo + sabor/familia + volume`, mesmo quando existem codigos ou descricoes
+  duplicadas; a resposta informa `codigos_origem` e `itens_unificados`
+- os saldos sao somados em unidades depois da conversao: pacote padrao e agua
+  usam 12, PET 2 L usa 6, caixa retornavel 600 ml usa 24 e caixa retornavel
+  200 ml usa 48
 - `GET /api/estoque` retorna o historico mais recente de movimentos
 
 Exemplo de criacao manual:

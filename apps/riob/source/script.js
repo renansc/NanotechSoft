@@ -647,54 +647,6 @@ async function salvarVeiculo() {
   }
 }
 
-async function editarVeiculo(id, nomeAtual, placaAtual, modeloAtual, kmAtual) {
-  const novoNome = prompt("Editar nome do veículo:", nomeAtual ?? "");
-  if (novoNome === null) return;
-
-  const novaPlaca = prompt("Editar placa:", placaAtual ?? "");
-  if (novaPlaca === null) return;
-
-  const novoModelo = prompt("Editar modelo:", modeloAtual ?? "");
-  if (novoModelo === null) return;
-
-  const novoKmStr = prompt("Editar KM atual:", (kmAtual ?? "").toString());
-  if (novoKmStr === null) return;
-  const novoKm = novoKmStr.trim() === "" ? null : Number(novoKmStr.trim());
-
-  await fetch(`/api/veiculos/${id}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      nome: (novoNome || "").trim(),
-      placa: (novaPlaca || "").trim(),
-      modelo: (novoModelo || "").trim(),
-      km_atual: novoKm,
-    }),
-  });
-
-  await renderCadastros();
-  await carregarSelectsNovoFrete();
-  if (window.__dashView === "frota") {
-    await renderDashboardFrota();
-  }
-}
-
-async function carregarCadastro(tipo) {
-  let r = await apiFetch(`/api/${tipo}`);
-  const dados = await r.json();
-  if (tipo === "cargas" && Array.isArray(dados)) {
-    return dados.map((item) => {
-      const veiculo = (item.veiculo_numero || "").toString().trim();
-      const nomeBase = (item.nome || item.cidade || "Carga").toString().trim();
-      return {
-        ...item,
-        optionLabel: veiculo ? `${nomeBase} - Veiculo ${veiculo}` : nomeBase,
-      };
-    });
-  }
-  return dados;
-}
-
 async function salvarVeiculoLinha(id) {
   const nome = (document.getElementById(`v_nome_${id}`)?.value || "").trim();
   const placa = (document.getElementById(`v_placa_${id}`)?.value || "").trim();
@@ -750,11 +702,6 @@ function _escHtml(v) {
 function _asStr(value, fallback = "") {
   const texto = value == null ? "" : String(value);
   return texto.trim() ? texto : String(fallback ?? "");
-}
-
-function _asInt(value, fallback = 0) {
-  const numero = Number.parseInt(value, 10);
-  return Number.isFinite(numero) ? numero : Number.parseInt(fallback, 10) || 0;
 }
 
 function _asBool(value, fallback = false) {
@@ -976,20 +923,6 @@ async function renderCadastros() {
   }
 }
 
-function _pontosVendaOpcoesDiaSemana(selected = "") {
-  const opcoes = [
-    ["", "Dia da semana"],
-    ["0", "Segunda-feira"],
-    ["1", "Terca-feira"],
-    ["2", "Quarta-feira"],
-    ["3", "Quinta-feira"],
-    ["4", "Sexta-feira"],
-    ["5", "Sabado"],
-    ["6", "Domingo"],
-  ];
-  return opcoes.map(([value, label]) => `<option value="${_escAttr(value)}"${String(selected) === String(value) ? " selected" : ""}>${_escHtml(label)}</option>`).join("");
-}
-
 function _pontosVendaDiaLabel(item) {
   return ["Segunda-feira", "Terca-feira", "Quarta-feira", "Quinta-feira", "Sexta-feira", "Sabado", "Domingo"][Number(item?.dia_semana ?? -1)] || "-";
 }
@@ -1002,12 +935,6 @@ function _dataHojeInputLocal() {
   const agora = new Date();
   const local = new Date(agora.getTime() - (agora.getTimezoneOffset() * 60000));
   return local.toISOString().slice(0, 10);
-}
-
-function _pontosVendaSelecionado(formId, value) {
-  const el = document.getElementById(formId);
-  if (!el) return false;
-  return String(el.value || "") === String(value || "");
 }
 
 function _pontosVendaPreencherFiltros(items = []) {
@@ -2495,18 +2422,6 @@ function _dashboardVendasCelulaResumo(valorAtual = 0, valorAnterior = null) {
   return "vendas-dashboard-cell vendas-dashboard-cell-equal";
 }
 
-function _dashboardVendasRenderLinhaTabela(valorAtual = 0, valorAnterior = null) {
-  const delta = valorAnterior === null || valorAnterior === undefined ? null : (valorAtual - valorAnterior);
-  const pct = valorAnterior && valorAnterior !== 0 ? (delta / Math.abs(valorAnterior)) * 100.0 : 0.0;
-  const classe = _dashboardVendasCelulaResumo(valorAtual, valorAnterior);
-  return `
-    <td class="${classe}">
-      <strong>${_escHtml(_fmtMoneyVendas(valorAtual))}</strong>
-      ${delta === null ? "" : `<span>${_escHtml(`${delta >= 0 ? "+" : ""}${_fmtNumVendas(pct, 1)}%`)}</span>`}
-    </td>
-  `;
-}
-
 function _dashboardVendasRenderBonificacoes(payload = {}) {
   const resumo = payload?.resumo_geral || {};
   const grupos = Array.isArray(payload?.resumo_grupos) ? payload.resumo_grupos : [];
@@ -2594,10 +2509,6 @@ function _dashboardVendasRenderMixEmbalagens(payload = {}) {
       </tr>
     `).join("") : '<tr><td colspan="6">Nenhum PDV encontrado para o período.</td></tr>';
   }
-}
-
-function toggleCargasSubmenu(ev){
-  toggleExclusiveSubmenu(ev, () => openCargasView(null, window.__cargasView || "cadastro"));
 }
 
 function openCargasView(ev, view){
@@ -2796,10 +2707,6 @@ function setGestaoRegistroView(view){
   }
 }
 
-function toggleComissaoSubmenu(ev){
-  toggleExclusiveSubmenu(ev, () => openComissaoView(null, "lancamento"));
-}
-
 function openComissaoView(ev, view){
   if (ev){ ev.preventDefault(); ev.stopPropagation(); }
   const menu = document.querySelector('.menu-item.has-submenu[data-tab="comissao"]');
@@ -2911,21 +2818,6 @@ function setVendasView(view){
   }
 }
 
-function openVendasComissao(ev){
-  if (ev){ ev.preventDefault(); ev.stopPropagation(); }
-  const menu = document.querySelector('.menu-item.has-submenu[data-tab="vendas"]');
-  showTab("comissao", menu);
-
-  document.querySelectorAll("#submenuVendas .submenu-item").forEach((item) => item.classList.remove("active"));
-  const items = document.querySelectorAll("#submenuVendas .submenu-item");
-  const target = 2;
-  if (items && items[target]) items[target].classList.add("active");
-
-  const isMobile = window.matchMedia && window.matchMedia("(max-width: 768px)").matches;
-  if (isMobile && menu) menu.classList.remove("open");
-  try{ toggleMenuMobile(false); }catch{}
-}
-
 function _vendasDashboardCelulaClassificacao(valorAtual = 0, valorAnterior = null) {
   if (valorAnterior === null || valorAnterior === undefined) {
     return "vendas-dashboard-cell vendas-dashboard-cell-neutral";
@@ -3023,35 +2915,6 @@ function renderDashboardVendas(payload = {}) {
       `;
     }).join("") : `<tr><td colspan="${6 + meses.length}">Nenhum dado de evolução encontrado para o período selecionado.</td></tr>`;
   }
-}
-
-async function carregarDashboardVendas() {
-  const infoEl = document.getElementById("vendasDashArquivoInfo");
-  if (infoEl) infoEl.textContent = "Carregando dashboard de vendas...";
-  const resp = await apiFetch("/api/vendas/dashboard");
-  const data = await resp.json().catch(() => ({}));
-  if (!resp.ok) {
-    const erro = data?.erro || "Falha ao carregar dashboard de vendas.";
-    if (infoEl) infoEl.textContent = erro;
-    alert(erro);
-    return;
-  }
-  renderDashboardVendas(data || {});
-}
-
-function openPontosVendaView(ev, view){
-  if (ev){ ev.preventDefault(); ev.stopPropagation(); }
-  const menu = document.querySelector('.menu-item.has-submenu[data-tab="vendas"]');
-  window.__pontosVendaView = view;
-  showTab("pontosvenda", menu);
-
-  document.querySelectorAll("#submenuVendas .submenu-item").forEach((x) => x.classList.remove("active"));
-  const items = document.querySelectorAll("#submenuVendas .submenu-item");
-  if (items && items[2]) items[2].classList.add("active");
-
-  const isMobile = window.matchMedia && window.matchMedia("(max-width: 768px)").matches;
-  if (isMobile && menu) menu.classList.remove("open");
-  try { toggleMenuMobile(false); } catch {}
 }
 
 function setPontosVendaView(view){
@@ -3306,59 +3169,6 @@ function _vendasRenderRelatorioEspecial(tipoRelatorio, payload = {}) {
   }
 
   return "";
-}
-
-function _vendasPainelMensalHtml(painel = {}) {
-  const meses = Array.isArray(painel?.meses) ? painel.meses : [];
-  const linhas = Array.isArray(painel?.linhas) ? painel.linhas : [];
-  const total = painel?.total || {};
-  if (!meses.length) return "";
-
-  const colunasMes = meses.map((mes) => `<th>${_escHtml(mes?.label || "-")}</th>`).join("");
-
-  const rowsHtml = linhas.map((item) => {
-    const valores = Array.isArray(item?.valores) ? item.valores : [];
-    return `
-      <tr style="${item?.nome === "Total" ? "background:#fff3c4;font-weight:700;" : ""}">
-        <td>${_escHtml(item?.nome || item?.rotulo || "-")}${item?.codigo ? ` <small style="display:block; opacity:.75;">${_escHtml(item.codigo)}</small>` : ""}</td>
-        <td>${_escHtml(Number(item?.tendencia || 0) > 0 ? `+${_fmtNumVendas(Number(item.tendencia || 0), 1)}%` : `${_fmtNumVendas(Number(item?.tendencia || 0), 1)}%`)}</td>
-        ${valores.map((valor) => `<td>${_escHtml(_fmtNumVendas(Number(valor || 0), 0))}</td>`).join("")}
-        <td>${_escHtml(_fmtNumVendas(Number(item?.total || 0), 0))}</td>
-      </tr>
-    `;
-  }).join("");
-
-  const totalHtml = `
-    <tr style="background:#fff3c4;font-weight:700;">
-      <td>${_escHtml(total?.nome || "Total")}</td>
-      <td>${_escHtml(Number(total?.tendencia || 0) > 0 ? `+${_fmtNumVendas(Number(total.tendencia || 0), 1)}%` : `${_fmtNumVendas(Number(total?.tendencia || 0), 1)}%`)}</td>
-      ${(Array.isArray(total?.valores) ? total.valores : []).map((valor) => `<td>${_escHtml(_fmtNumVendas(Number(valor || 0), 0))}</td>`).join("")}
-      <td>${_escHtml(_fmtNumVendas(Number(total?.total || 0), 0))}</td>
-    </tr>
-  `;
-
-  return `
-    <div class="boxFrota">
-      <h3>${_escHtml(painel?.titulo || "VOLUME EM HL 12 ULTIMOS MESES")}</h3>
-      <div class="hint">Referência: ${_escHtml(painel?.referencia || "-")}</div>
-      <div style="overflow:auto; max-height:360px;">
-        <table>
-          <thead>
-            <tr>
-              <th>Vendedor</th>
-              <th>Tend.</th>
-              ${colunasMes}
-              <th>Total</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${rowsHtml}
-            ${totalHtml}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  `;
 }
 
 function _vendasSetVisibilidadeRelatorio(tipoRelatorio){
@@ -4414,10 +4224,7 @@ function _vendasRenderDetalheVariacao(detalhes = [], vendedorFiltro = "", mesAtu
   }
 }
 
-const VENDAS_RELATORIO_CACHE_KEY = "riobranco.vendas.bonificacoes.last_payload.v3";
 const VENDAS_RELATORIO_ACTIVE_CACHE_KEY = "riobranco.vendas.bonificacoes.active_cache_id.v3";
-const VENDAS_VARIACAO_CACHE_KEY = "riobranco.vendas.variacao_preco.last_payload.v3";
-const VENDAS_VARIACAO_ACTIVE_CACHE_KEY = "riobranco.vendas.variacao_preco.active_cache_id.v3";
 
 function _vendasCacheLocalMigrarLimparAntigo() {
   try {
@@ -4435,38 +4242,6 @@ function _vendasCacheLocalMigrarLimparAntigo() {
 }
 
 _vendasCacheLocalMigrarLimparAntigo();
-
-function _vendasCacheLocalSalvar(payload = {}) {
-  try {
-    _vendasCacheLocalMigrarLimparAntigo();
-    const clean = {
-      __cache_local_schema: 3,
-      cache: { id: payload?.cache?.id || "" },
-      cache_entry: { id: payload?.cache_entry?.id || "" },
-      relatorio_tipo: "bonificacoes",
-      mes_atual: _asStr(payload?.mes_atual || ""),
-      filtro_vendedor: _asStr(payload?.filtros?.vendedor || payload?.filtro_vendedor || ""),
-      filtro_cliente: _asStr(payload?.filtros?.cliente || payload?.filtro_cliente || ""),
-      atualizado_em: _asStr(payload?.arquivo?.atualizado_em || ""),
-    };
-    localStorage.setItem(VENDAS_RELATORIO_CACHE_KEY, JSON.stringify(clean));
-    const cacheId = clean?.cache?.id || clean?.cache_entry?.id || "";
-    if (cacheId) {
-      localStorage.setItem(VENDAS_RELATORIO_ACTIVE_CACHE_KEY, String(cacheId));
-    }
-  } catch {}
-}
-
-function _vendasCacheLocalObter() {
-  try {
-    const raw = localStorage.getItem(VENDAS_RELATORIO_CACHE_KEY);
-    if (!raw) return null;
-    const payload = JSON.parse(raw);
-    return payload && typeof payload === "object" ? payload : null;
-  } catch {
-    return null;
-  }
-}
 
 function _vendasCacheLocalAtualizarAtivo(cacheId = "") {
   try {
@@ -4545,104 +4320,6 @@ function _vendasConfigAtualizarIndicador(cfg = {}, fonte = {}, imports = [], met
   }
 
   _vendasConfigAgendarMonitor(importando);
-}
-
-function _vendasCacheLocalRestaurar() {
-  const payload = _vendasCacheLocalObter();
-  if (!payload) return false;
-  if (_asInt(payload?.__cache_local_schema, 0) !== 3) {
-    localStorage.removeItem(VENDAS_RELATORIO_CACHE_KEY);
-    localStorage.removeItem(VENDAS_RELATORIO_ACTIVE_CACHE_KEY);
-    return false;
-  }
-  const cacheId = String(payload?.cache?.id || payload?.cache_entry?.id || "").trim();
-  const cacheAtivo = String(localStorage.getItem(VENDAS_RELATORIO_ACTIVE_CACHE_KEY) || "").trim();
-  const tipoRelatorio = String(payload?.relatorio_tipo || "").replace(/-/g, "_");
-  const meses = Array.isArray(payload?.meses_disponiveis) ? payload.meses_disponiveis : [];
-  const vendedores = Array.isArray(payload?.vendedores) ? payload.vendedores : Array.isArray(payload?.vendedores_disponiveis) ? payload.vendedores_disponiveis : [];
-  if (tipoRelatorio && !["bonificacoes", "resumo"].includes(tipoRelatorio)) {
-    localStorage.removeItem(VENDAS_RELATORIO_CACHE_KEY);
-    localStorage.removeItem(VENDAS_RELATORIO_ACTIVE_CACHE_KEY);
-    return false;
-  }
-  if (!meses.length || !vendedores.length) return false;
-  if (cacheAtivo && cacheId && cacheAtivo !== cacheId) {
-    return false;
-  }
-  if (!cacheId) {
-    return false;
-  }
-  renderRelatorioVendas({ ...(payload || {}), __cache_local_restaurado: true });
-  return true;
-}
-
-function _vendasVariacaoCacheLocalSalvar(payload = {}) {
-  try {
-    _vendasCacheLocalMigrarLimparAntigo();
-    const clean = {
-      __cache_local_schema: 3,
-      cache: { id: payload?.cache?.id || "" },
-      cache_entry: { id: payload?.cache_entry?.id || "" },
-      relatorio_tipo: "variacao_preco",
-      mes_atual: _asStr(payload?.mes_atual || ""),
-      filtro_vendedor: _asStr(payload?.filtros?.vendedor || payload?.filtro_vendedor || ""),
-      atualizado_em: _asStr(payload?.arquivo?.atualizado_em || ""),
-    };
-    localStorage.setItem(VENDAS_VARIACAO_CACHE_KEY, JSON.stringify(clean));
-    const cacheId = clean?.cache?.id || clean?.cache_entry?.id || "";
-    if (cacheId) {
-      localStorage.setItem(VENDAS_VARIACAO_ACTIVE_CACHE_KEY, String(cacheId));
-    }
-  } catch {}
-}
-
-function _vendasVariacaoCacheLocalObter() {
-  try {
-    const raw = localStorage.getItem(VENDAS_VARIACAO_CACHE_KEY);
-    if (!raw) return null;
-    const payload = JSON.parse(raw);
-    return payload && typeof payload === "object" ? payload : null;
-  } catch {
-    return null;
-  }
-}
-
-function _vendasVariacaoCacheLocalAtualizarAtivo(cacheId = "") {
-  try {
-    const texto = String(cacheId || "").trim();
-    if (texto) {
-      localStorage.setItem(VENDAS_VARIACAO_ACTIVE_CACHE_KEY, texto);
-    } else {
-      localStorage.removeItem(VENDAS_VARIACAO_ACTIVE_CACHE_KEY);
-    }
-  } catch {}
-}
-
-function _vendasVariacaoCacheLocalRestaurar() {
-  const payload = _vendasVariacaoCacheLocalObter();
-  if (!payload) return false;
-  if (_asInt(payload?.__cache_local_schema, 0) !== 3) {
-    localStorage.removeItem(VENDAS_VARIACAO_CACHE_KEY);
-    localStorage.removeItem(VENDAS_VARIACAO_ACTIVE_CACHE_KEY);
-    return false;
-  }
-  const meses = Array.isArray(payload?.meses_disponiveis) ? payload.meses_disponiveis : [];
-  const vendedores = Array.isArray(payload?.vendedores) ? payload.vendedores : Array.isArray(payload?.vendedores_disponiveis) ? payload.vendedores_disponiveis : [];
-  if (!meses.length || !vendedores.length) return false;
-  const cacheId = String(payload?.cache?.id || payload?.cache_entry?.id || "").trim();
-  const cacheAtivo = String(localStorage.getItem(VENDAS_VARIACAO_ACTIVE_CACHE_KEY) || "").trim();
-  const tipoRelatorio = String(payload?.relatorio_tipo || "").replace(/-/g, "_");
-  if (tipoRelatorio && !["variacao_preco", "variacao_venda"].includes(tipoRelatorio)) {
-    return false;
-  }
-  if (cacheAtivo && cacheId && cacheAtivo !== cacheId) {
-    return false;
-  }
-  if (!cacheId) {
-    return false;
-  }
-  renderRelatorioVariacaoPreco({ ...(payload || {}), __cache_local_restaurado: true });
-  return true;
 }
 
 function selecionarVendedorRelatorioVariacao(chave = "") {
@@ -5605,23 +5282,6 @@ function _initDashFrotaTooltips(dados){
     }
   }, { once:false });
 }
-function getStatusBadge(status) {
-  const statusMap = {
-    chegada: { label: "Chegou", color: "#4CAF50", bgColor: "#E8F5E9" },
-    descarregado: { label: "Descarregado", color: "#2196F3", bgColor: "#E3F2FD" },
-    liberado: { label: "Liberado", color: "#FF9800", bgColor: "#FFF3E0" },
-    carregando: { label: "Carregando", color: "#F44336", bgColor: "#FFEBEE" },
-    carregado: { label: "Carregado", color: "#9C27B0", bgColor: "#F3E5F5" },
-    entregando: { label: "Entregando", color: "#00BCD4", bgColor: "#E0F2F1" },
-    retornando: { label: "Retornando", color: "#3F51B5", bgColor: "#EEE5F7" },
-    paradoVasio: { label: "Parado (vazio)", color: "#795548", bgColor: "#EFEBE9" },
-    paradoCarregado: { label: "Parado (carregado)", color: "#607D8B", bgColor: "#ECEFF1" }
-  };
-
-  const s = statusMap[status] || { label: "-", color: "#999", bgColor: "#f0f0f0" };
-  return `<span style="background-color: ${s.bgColor}; color: ${s.color}; padding: 4px 8px; border-radius: 4px; font-weight: bold;">${s.label}</span>`;
-}
-
 async function renderDashboardFrota(){
   const body = document.getElementById("dashFrotaBody");
   if (!body) return;
@@ -6639,20 +6299,6 @@ function _chatAIRioAppendMessage(message){
   chatState.aiRioMessages = chatState.aiRioMessages.slice(-60);
   _chatAIRioPersistState();
   _chatAIRioRenderConversation();
-}
-
-function _chatAIRioReplaceLastAgentMessage(message){
-  const msgs = chatState.aiRioMessages || [];
-  for (let i = msgs.length - 1; i >= 0; i -= 1) {
-    if (msgs[i].role === "agent") {
-      msgs[i] = _chatAIRioNormalizeMessage(message);
-      chatState.aiRioMessages = msgs.slice(-60);
-      _chatAIRioPersistState();
-      _chatAIRioRenderConversation();
-      return msgs[i];
-    }
-  }
-  return null;
 }
 
 function _chatAIRioSetPending(text = "Pensando..."){
@@ -9616,28 +9262,6 @@ function _coletarPayloadFreteDoCard(card, freteBase){
   };
 }
 
-function _atualizarDraftFreteDoCard(id){
-  const freteBase = _findFreteById(id) || {};
-  const card = _getFreteCard(id);
-  const state = _ensureFreteDraftState(freteBase);
-  state.draft = _coletarPayloadFreteDoCard(card, freteBase);
-  state.dirty = _fretePayloadSignature(state.draft) !== state.lastSavedSignature;
-  if (state.dirty) state.error = "";
-  _renderFreteSaveStatus(card, id);
-  return state.draft;
-}
-
-function _agendarAutoSaveFrete(id, delay = FRETE_AUTO_SAVE_DELAY_MS){
-  const state = freteDraftState.get(_freteKey(id));
-  if (!state) return;
-  _clearFreteSaveTimer(state);
-  state.saveTimer = setTimeout(() => {
-    _salvarFreteAutomaticamente(id).catch((err) => {
-      console.warn("Erro ao salvar frete automaticamente:", err);
-    });
-  }, delay);
-}
-
 async function _salvarFreteAutomaticamente(id, options = {}){
   const { payloadOverride = null, retryDelay = 250 } = options;
   const freteAtual = _findFreteById(id);
@@ -9906,27 +9530,6 @@ function _renderOrUpdateFreteCard(frete, options = {}){
   _renderFreteSaveStatus(card, frete.id);
   _agendarEqualizacaoAlturaKanban();
   return card;
-}
-
-async function moverFreteMobile(frete){
-  if (!frete) return;
-  const atual = String(frete.status || "");
-  const opcoes = FRETE_STATUS_OPCOES
-    .map((s, idx) => `${idx + 1}. ${s.label}${s.key === atual ? " (atual)" : ""}`)
-    .join("\n");
-  const entrada = prompt(
-    `Mover "${_rotuloFreteExibicao(frete)}" para:\n\n${opcoes}\n\nDigite o numero do destino:`,
-    ""
-  );
-  if (entrada == null) return;
-  const idx = Number(String(entrada).trim()) - 1;
-  if (!Number.isInteger(idx) || idx < 0 || idx >= FRETE_STATUS_OPCOES.length) {
-    alert("Opcao invalida.");
-    return;
-  }
-  const destino = FRETE_STATUS_OPCOES[idx].key;
-  if (destino === atual) return;
-  await _atualizarStatusFrete(frete.id, destino);
 }
 
 async function carregarInfoFrete() {
@@ -10674,21 +10277,6 @@ function _freteDetalheDadosTemplate(frete) {
   `;
 }
 
-function _freteDetalheCargaTemplate(frete) {
-  const cargaId = frete.carga_id;
-  return `
-    <div class="frete-detail-carga-summary">
-      ${cargaId ? `
-        <p><strong>ID da carga:</strong> ${_escHtml(String(cargaId))}</p>
-        ${frete.carga_nome ? `<p><strong>Nome da carga:</strong> ${_escHtml(frete.carga_nome)}</p>` : ""}
-        ${frete.carga_cidades ? `<p><strong>Cidades:</strong> ${_escHtml(frete.carga_cidades)}</p>` : ""}
-        ${frete.carga_rota ? `<p><strong>Rota:</strong> ${_escHtml(frete.carga_rota)}</p>` : ""}
-        <button class="btn-primary btn-abre-carga" type="button">Ver detalhes da carga</button>
-      ` : `<p>Este frete não possui carga vinculada.</p>`}
-    </div>
-  `;
-}
-
 function _freteDetalheCargaXmlTemplate(frete, cargaXml = {}) {
   const itens = Array.isArray(cargaXml.itens) ? cargaXml.itens : [];
   const petsPorTamanho = cargaXml.pets_por_tamanho && typeof cargaXml.pets_por_tamanho === "object"
@@ -10788,6 +10376,7 @@ function _freteDetalheNotasSaidaTemplate(notas, pendentes = []) {
             <th>Pendentes</th>
             <th>Valor</th>
             <th>Atualizacao</th>
+            <th>Acao</th>
           </tr>
         </thead>
         <tbody>
@@ -10807,6 +10396,7 @@ function _freteDetalheNotasSaidaTemplate(notas, pendentes = []) {
               <td>${_escHtml(String(nota.itens_pendentes ?? nota.itens_total ?? 0))}</td>
               <td>${_escHtml(_fmtMoney(nota.valor_total_nota || 0))}</td>
               <td>${_escHtml(_fmtDateBr(nota.atualizado_em) || nota.atualizado_em || "-")}</td>
+              <td><button type="button" class="btn-secondary" onclick="moverXmlParaOutroFrete(${Number(nota.frete_id || 0)}, '${_escJsString(nota.nota_key || nota.chave_nfe || "")}')">Mover</button></td>
             </tr>
           `).join("")}
         </tbody>
@@ -10828,6 +10418,7 @@ function _freteDetalheNotasSaidaTemplate(notas, pendentes = []) {
             <th>Quantidade</th>
             <th>Valor</th>
             <th>Registro</th>
+            <th>Acao</th>
           </tr>
         </thead>
         <tbody>
@@ -10851,6 +10442,7 @@ function _freteDetalheNotasSaidaTemplate(notas, pendentes = []) {
                 ${_escHtml(_fmtDateBr(nota.criado_em) || nota.criado_em || "-")}
                 ${nota.usuario_registro ? `<div class="hint">${_escHtml(nota.usuario_registro)}</div>` : ""}
               </td>
+              <td><button type="button" class="btn-secondary" onclick="moverXmlParaOutroFrete(${Number(nota.frete_id || 0)}, '${_escJsString(nota.nota_key || nota.chave_nfe || "")}')">Mover</button></td>
             </tr>
           `).join("")}
         </tbody>
@@ -10919,7 +10511,7 @@ function _freteDetalheVincularXmlTemplate(payload = {}, frete = {}) {
       <input id="freteXmlBuscaInput" type="search" value="${_escAttr(payload?.busca_form || "")}" placeholder="Buscar nota, chave, cliente, placa" onkeydown="if(event.key === 'Enter'){ event.preventDefault(); buscarXmlPendentesFrete(${Number(frete.id || 0)}); }">
       <label class="frete-xml-vinculo-toggle">
         <input id="freteXmlMostrarTodas" type="checkbox" ${payload?.incluindo_todas ? "checked" : ""}>
-        <span>Mostrar todas</span>
+        <span>Incluir vinculadas a fretes arquivados</span>
       </label>
       <button type="button" onclick="buscarXmlPendentesFrete(${Number(frete.id || 0)})">Filtrar</button>
       <select id="freteXmlFiltroVinculo">
@@ -11102,10 +10694,6 @@ function selecionarXmlFretePorFiltro(freteId, tipoFiltro) {
   });
 }
 
-function _xmlFreteSelecionadosNoModal() {
-  return _xmlFreteSelecionadosInfoNoModal().map((item) => item.notaKey);
-}
-
 async function vincularXmlPendentesSelecionadosFrete(freteId) {
   const selecionados = _xmlFreteSelecionadosInfoNoModal();
   const notaKeys = Array.from(new Set(selecionados.map((item) => item.notaKey)));
@@ -11186,6 +10774,38 @@ async function vincularXmlPendenteFrete(freteId, notaKey, options = {}) {
     await _renderFreteDetalheTab(frete, "notas_saida");
   }
   try { await carregarImportacoesXmlEstoque?.(); } catch {}
+}
+
+async function moverXmlParaOutroFrete(freteOrigemId, notaKey) {
+  const chave = String(notaKey || "").trim();
+  if (!chave) return;
+  try {
+    const resp = await apiFetch("/api/estoque/importacoes-xml/fretes");
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data?.erro || "Falha ao carregar fretes ativos.");
+    const fretes = (Array.isArray(data?.fretes) ? data.fretes : [])
+      .filter((item) => Number(item?.id) > 0 && Number(item.id) !== Number(freteOrigemId));
+    if (!fretes.length) {
+      alert("Nao ha outro frete ativo disponivel para receber esta nota.");
+      return;
+    }
+    const opcoes = fretes.map((item) => {
+      const caminhao = item.veiculo_nome || item.carga_veiculo_numero || "sem caminhao";
+      return `${item.id} - ${item.nome || `Frete #${item.id}`} (${caminhao})`;
+    }).join("\n");
+    const escolha = prompt(`Informe o codigo do frete de destino:\n\n${opcoes}`);
+    if (escolha === null) return;
+    const destinoId = Number(String(escolha).trim());
+    if (!fretes.some((item) => Number(item.id) === destinoId)) {
+      alert("Escolha um dos fretes ativos apresentados na lista.");
+      return;
+    }
+    await vincularXmlPendenteFrete(destinoId, chave, { transferir: true });
+    const origem = _findFreteById(freteOrigemId);
+    if (origem) await _renderFreteDetalheTab(origem, "notas_saida");
+  } catch (err) {
+    alert(err?.message || "Nao foi possivel mover o XML.");
+  }
 }
 
 async function desvincularXmlPendenteFrete(freteId, notaKey) {
@@ -14684,7 +14304,7 @@ function _estoqueGrupoInferido(item = {}){
   const texto = `${item.nome_produto || ""} ${item.codigo_produto_nfe || ""} ${item.codigo_barras || ""}`.toUpperCase();
   if (/\bAGUA\b/.test(texto)) return "AGUA";
   if (/\bPREFORMA\b/.test(texto) || /\bPRE\s*-?\s*FORMA\b/.test(texto)) return "OUTROS";
-  if (/\bPET\b/.test(texto) || /\bDESCART/.test(texto)) return "PET";
+  if (/\bPET\b/.test(texto) || /\bDESCART/.test(texto) || /\bRECICLAV/.test(texto)) return "PET";
   if (/\bGFA\b/.test(texto) || /\bGRF\b/.test(texto) || /\bGARRAFA\b/.test(texto) || /\bVIDRO\b/.test(texto)) return "GFA";
   return "OUTROS";
 }
@@ -14733,9 +14353,42 @@ function _estoqueLinhasAgrupadas(rows = [], rowRenderer, colspan = 1){
 
 function _estoqueBaseNomeInferido(item = {}){
   const explicito = String(item.produto_base_nome || item.produto_base || "").trim();
-  if (explicito) return explicito;
   const grupo = _estoqueGrupoInferido(item);
-  const texto = String(item.nome_produto || "").toUpperCase();
+  const texto = String(item.nome_produto || explicito || "").toUpperCase();
+  const textoNorm = _estoqueTextoChave(texto);
+  if (grupo === "AGUA" || /\bAGUA\b/.test(textoNorm)) {
+    const gas = /\bSEM GAS\b/.test(textoNorm) ? "SEM GAS" : (/\b(?:COM GAS|C GAS)\b/.test(textoNorm) ? "COM GAS" : "");
+    const volume = /\b2\s*L(?:T)?\b|\b2L\b/.test(textoNorm) ? "2L"
+      : /\b600\s*ML\b/.test(textoNorm) ? "600ML"
+      : /\b510\s*ML\b/.test(textoNorm) ? "510ML"
+      : /\b500\s*ML\b/.test(textoNorm) ? "500ML"
+      : /\b200\s*ML\b/.test(textoNorm) ? "200ML"
+      : "";
+    return ["AGUA", gas, volume].filter(Boolean).join(" ");
+  }
+  const sabores = [
+    [/\bLARANJINHA\b/, "LARANJINHA"],
+    [/\bLARANJA\b/, "LARANJA"],
+    [/\bLIMAO\b|\bSODA\b/, "LIMAO (SODA)"],
+    [/\bFRAMBOESA\b/, "FRAMBOESA"],
+    [/\bABACAXI\b/, "ABACAXI"],
+    [/\bASTUBA\b/, "ASTUBA"],
+    [/\bCITRUS\b/, "CITRUS"],
+    [/\bTUBAINA\b/, "TUBAINA"],
+    [/\bGUARANA\b/, "GUARANA"],
+    [/\bUVA\b/, "UVA"],
+    [/\bCOLA\b/, "COLA"],
+  ];
+  const sabor = sabores.find(([padrao]) => padrao.test(textoNorm))?.[1] || "";
+  const volume = /\b2\s*L(?:T)?\b|\b2L\b/.test(textoNorm) ? "2L"
+    : /\b600\s*ML\b/.test(textoNorm) ? "600ML"
+    : /\b200\s*ML\b/.test(textoNorm) ? "200ML"
+    : "";
+  if (sabor && volume) {
+    const prefixo = grupo === "GFA" ? "RETORNAVEL" : (/\bRECICLAV/.test(textoNorm) ? "RECICLAVEL" : "");
+    return [prefixo, sabor, volume].filter(Boolean).join(" ");
+  }
+  if (explicito) return explicito;
   if (grupo === "PET") {
     if (/\b2\s*L(T)?\b|\b2LT\b/.test(texto)) return "PET 2L";
     if (/\b600\s*ML\b|\bPET\s*600\b/.test(texto)) return "PET 600ML";
@@ -14761,6 +14414,8 @@ function _estoqueBaseNomeInferido(item = {}){
 function _estoqueTextoChave(valor = ""){
   return String(valor || "")
     .trim()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
     .toUpperCase()
     .replace(/[^A-Z0-9]+/g, " ")
     .trim();
@@ -14814,7 +14469,7 @@ function _estoqueResolverFatorProduto(item = {}, cadastro = null){
     produto_base_nome: item.produto_base_nome || produto?.produto_base_nome || "",
   };
   const grupo = _estoqueGrupoNormalizado(combinado.grupo_estoque) || _estoqueGrupoInferido(combinado) || "OUTROS";
-  const produtoBaseNome = String(combinado.produto_base_nome || _estoqueBaseNomeInferido({ ...combinado, grupo_estoque: grupo }) || combinado.nome_produto || "").trim();
+  const produtoBaseNome = String(_estoqueBaseNomeInferido({ ...combinado, grupo_estoque: grupo }) || combinado.produto_base_nome || combinado.nome_produto || "").trim();
   const apresentacao = _estoqueApresentacaoNormalizada(
     item.embalagem_tipo || item.unidade || "",
     produto?.embalagem_tipo_padrao || produto?.unidade || "",
@@ -14831,10 +14486,29 @@ function _estoqueResolverFatorProduto(item = {}, cadastro = null){
     produtoBaseNome,
   ].map((valor) => String(valor || "").trim().toUpperCase()).filter(Boolean).join(" ");
   const multiplicador = _estoqueExtrairMultiplicador(texto);
-  const pacotePet = /\b9\b/.test(texto) ? 9 : (/\b12\b/.test(texto) ? 12 : 0);
+  const eh2l = /\b2\s*L(?:T)?\b|\b2L\b/.test(texto);
+  const eh200ml = /\b200\s*ML\b/.test(texto);
+  const pacotePet = eh2l ? 6 : (/\b9\b/.test(texto) ? 9 : (/\b12\b/.test(texto) ? 12 : 0));
   let fator = fatorInformado;
   let fatorInferido = false;
   let motivoConfirmacao = "";
+  if (["PCT", "FD", "CX", "CX24", "CX48"].includes(apresentacao)) {
+    if (grupo === "PET") {
+      fator = eh2l ? 6 : 12;
+      fatorInferido = true;
+      motivoConfirmacao = eh2l
+        ? "Pacote PET de 2 L padronizado com 6 unidades."
+        : "Pacote PET padronizado com 12 unidades.";
+    } else if (grupo === "GFA") {
+      fator = eh200ml ? 48 : 24;
+      fatorInferido = true;
+      motivoConfirmacao = `Caixa retornavel de ${eh200ml ? "200 ml com 48" : "600 ml com 24"} garrafas.`;
+    } else if (grupo === "AGUA") {
+      fator = 12;
+      fatorInferido = true;
+      motivoConfirmacao = "Pacote de agua padronizado com 12 unidades.";
+    }
+  }
 
   if (!(fator > 0)) {
     if (apresentacao === "UN") {
@@ -14846,8 +14520,10 @@ function _estoqueResolverFatorProduto(item = {}, cadastro = null){
         fator = multiplicador > 100 ? multiplicador : 35 * 24;
         motivoConfirmacao = "Pallet de GFA assumido no padrao 35 caixas x 24 garrafas.";
       } else if (["CX", "CX24", "CX48"].includes(apresentacao)) {
-        fator = multiplicador > 0 ? multiplicador : 24;
-        motivoConfirmacao = multiplicador > 0 ? "Caixa de GFA inferida pelo texto da embalagem." : "Caixa de GFA assumida no padrao de 24 garrafas.";
+        fator = multiplicador > 0 ? multiplicador : (eh200ml ? 48 : 24);
+        motivoConfirmacao = multiplicador > 0
+          ? "Caixa de GFA inferida pelo texto da embalagem."
+          : `Caixa retornavel de ${eh200ml ? "200 ml com 48" : "600 ml com 24"} garrafas.`;
       } else {
         fator = 12;
         motivoConfirmacao = "Apresentacao de GFA assumida como duzia (12 garrafas).";
@@ -14877,8 +14553,9 @@ function _estoqueResolverFatorProduto(item = {}, cadastro = null){
       } else if (apresentacao === "UN") {
         fator = 1;
       } else {
-        fator = 1;
-        motivoConfirmacao = "Produto de agua sem fator explicito. Usando fator padrao 1.";
+        fator = 12;
+        fatorInferido = true;
+        motivoConfirmacao = "Pacote de agua assumido no padrao de 12 unidades.";
       }
     } else {
       if (multiplicador > 0) {
@@ -14934,7 +14611,18 @@ function _estoqueConfirmacaoLancamentoTexto(item = {}, resolvido = null){
 }
 
 function _estoqueCodigoReferencia(item = {}){
-  return item?.codigo_produto_nfe || item?.codigo_barras || "-";
+  const codigos = Array.isArray(item?.codigos_origem)
+    ? item.codigos_origem.filter(Boolean)
+    : [];
+  return codigos.length
+    ? codigos.join(", ")
+    : (item?.codigo_produto_nfe || item?.codigo_barras || "-");
+}
+
+function _estoqueProdutoStatusHtml(item = {}){
+  const nome = _escHtml(item.produto_base_nome || item.nome_produto || "-");
+  const unificados = Number(item.itens_unificados || 0);
+  return `${nome}${unificados > 1 ? `<div class="hint">${unificados} cadastros consolidados</div>` : ""}`;
 }
 
 function sincronizarNumeroNotaPorCodigo(){
@@ -14971,7 +14659,7 @@ async function renderDashboardEstoque(){
   }
   bodyPrevisao.innerHTML = dados.length ? _estoqueLinhasAgrupadas(dados, (r) => `
     <tr>
-      <td>${_escHtml(r.produto_base_nome || r.nome_produto || "-")}</td>
+      <td>${_estoqueProdutoStatusHtml(r)}</td>
       <td>${_escHtml(_estoqueCodigoReferencia(r))}</td>
       <td>${_escHtml(_estoqueFormatQtd(r.quantidade_atual))}</td>
       <td>${_escHtml(_estoqueFormatQtd(r.vendas_dia))}</td>
@@ -14982,7 +14670,7 @@ async function renderDashboardEstoque(){
   `, 7) : `<tr><td colspan="7">Sem itens cadastrados no estoque.</td></tr>`;
   bodySaldo.innerHTML = dados.length ? _estoqueLinhasAgrupadas(dados, (r) => `
     <tr>
-      <td>${_escHtml(r.produto_base_nome || r.nome_produto || "-")}</td>
+      <td>${_estoqueProdutoStatusHtml(r)}</td>
       <td>${_escHtml(_estoqueCodigoReferencia(r))}</td>
       <td>${_escHtml(_estoqueFormatQtd(r.quantidade_atual))}</td>
       <td>${_escHtml(_estoqueFormatQtd(r.quantidade_comprometida))}</td>
@@ -15093,10 +14781,6 @@ function _buscarProdutoCadastroEstoque(item = {}){
     if (porBase) return porBase;
   }
   return null;
-}
-
-function _estoqueInferirFatorEmbalagem(item = {}){
-  return Number(_estoqueResolverFatorProduto(item).fator_embalagem || 0) || 0;
 }
 
 function _enriquecerItemImportacaoEstoque(item = {}){
@@ -17884,52 +17568,6 @@ async function importarNfeEstoque(){
   document.getElementById("estoquePreviewNumeroNota")?.focus();
 }
 
-async function importarXmlFabricaEstoque(){
-  const input = document.getElementById("estoqueXmlFabricaArquivo");
-  const status = document.getElementById("estoqueNfeImportStatus");
-  const origemSetor = document.getElementById("estoqueOrigemSetor");
-  const destinoSetor = document.getElementById("estoqueDestinoSetor");
-  const file = input?.files?.[0] || null;
-
-  if (estoqueState.importDraft && !confirm("Ja existe uma importacao em revisao. Deseja substituir pelos dados do XML da fabrica?")) {
-    return;
-  }
-
-  const formData = new FormData();
-  if (file) formData.append("arquivo", file, file.name || "transferencia.xml");
-  if (status) {
-    status.textContent = file
-      ? "Lendo XML da fabrica..."
-      : "Buscando o XML mais recente da fabrica para transferencia...";
-  }
-
-  const resp = await apiFetch("/api/estoque/nfe/preview_fabrica", {
-    method: "POST",
-    body: formData,
-  });
-  const data = await resp.json().catch(() => ({}));
-  if (!resp.ok) {
-    if (status) status.textContent = data?.erro || "Falha ao ler o XML da fabrica.";
-    alert(data?.erro || "Falha ao ler o XML da fabrica.");
-    return;
-  }
-
-  const draft = _normalizarDraftImportacaoEstoque(data?.preview || {});
-  if (!draft.itens.length) draft.itens = [_novoItemImportacaoEstoque(1)];
-  estoqueState.importDraft = draft;
-  estoqueState.importDraftDirty = false;
-  estoqueState.lastPortalPreviewSignature = "";
-  if (input) input.value = "";
-  if (origemSetor) origemSetor.value = "Fabrica";
-  if (destinoSetor) destinoSetor.value = "Central";
-  if (status) {
-    status.textContent = "XML da fabrica carregado. Revise a transferencia para a central antes de confirmar a conferencia.";
-  }
-  setEstoqueView("lancar");
-  renderEstoqueImportPreview();
-  document.getElementById("estoquePreviewNumeroNota")?.focus();
-}
-
 async function importarHtmlPortalClipboardEstoque(){
   const status = document.getElementById("estoqueNfeImportStatus");
   const campoChave = document.getElementById("estoqueChaveAcesso");
@@ -18210,42 +17848,6 @@ async function selecionarConferenciaEstoque(id){
       btn.closest("tr")?.classList.add("is-selected");
     }
   });
-}
-
-async function confirmarConferenciaEstoque(){
-  const atual = estoqueState.conferenciaAtual;
-  if (!atual?.conferencia?.id) {
-    alert("Selecione uma NF-e para conferir.");
-    return;
-  }
-
-  const itens = Array.from(document.querySelectorAll(".estoque-qtd-conferida")).map((input) => ({
-    id: Number(input.dataset.itemId || 0),
-    quantidade_conferida: Number((input.value || "").trim() || 0),
-    produto_id: Number(document.querySelector(`.estoque-produto-conferencia[data-item-id="${input.dataset.itemId || 0}"]`)?.value || 0),
-  }));
-  const origem_setor = (document.getElementById("estoqueOrigemSetor")?.value || "").trim() || "Fabrica";
-  const destino_setor = (document.getElementById("estoqueDestinoSetor")?.value || "").trim() || "Almoxarifado";
-
-  const resp = await apiFetch(`/api/estoque/conferencias/${atual.conferencia.id}/confirmar`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ itens, origem_setor, destino_setor }),
-  });
-  const data = await resp.json().catch(() => ({}));
-  if (!resp.ok) {
-    alert(data?.erro || "Falha ao consolidar a conferencia.");
-    return;
-  }
-
-  estoqueState.conferenciaAtual = data;
-  alert("Conferencia consolidada com sucesso no almoxarifado.");
-  await Promise.all([
-    carregarSaldoEstoque(),
-    carregarMovimentosEstoque(),
-    carregarConferenciasEstoque(data?.conferencia?.id || null),
-  ]);
-  if (window.__dashView === "estoque") await renderDashboardEstoque();
 }
 
 async function carregarSaldoEstoque(){
@@ -18674,10 +18276,6 @@ async function atualizarLotesRastreabilidadePorPeriodo(){
     estoqueState.rastreioResultado = null;
     renderRastreioLotesEstoque();
   }
-}
-
-async function atualizarLotesRastreabilidadePorData(){
-  await atualizarLotesRastreabilidadePorPeriodo();
 }
 
 function selecionarLoteRastreabilidade(){
