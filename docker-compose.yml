@@ -38,30 +38,6 @@ services:
       retries: 30
       start_period: 30s
 
-  riob-db:
-    image: mariadb:10.11.16-jammy
-    container_name: riobranco-db
-    restart: unless-stopped
-    environment:
-      MARIADB_DATABASE: ${RB_DB_NAME:-riobranco}
-      MARIADB_USER: ${RB_DB_USER:-riobranco}
-      MARIADB_PASSWORD: ${RB_DB_PASSWORD:-riobranco123}
-      MARIADB_ROOT_PASSWORD: ${RB_DB_ROOT_PASSWORD:-root123}
-    command:
-      - --character-set-server=utf8mb4
-      - --collation-server=utf8mb4_unicode_ci
-    ports:
-      - "${RB_DB_BIND:-127.0.0.1}:${RB_DB_PORT_HOST:-3306}:3306"
-    volumes:
-      - riob_db_data:/var/lib/mysql
-      - ./apps/riob/source/sql/init_riobranco.sql:/docker-entrypoint-initdb.d/01-init_riobranco.sql:ro
-    healthcheck:
-      test: ["CMD-SHELL", "mariadb-admin ping -h 127.0.0.1 --protocol=tcp -uroot -p\"$${MARIADB_ROOT_PASSWORD}\" --silent"]
-      interval: 10s
-      timeout: 5s
-      retries: 30
-      start_period: 120s
-
   riob-app:
     container_name: riobranco-app
     image: riob-app:latest
@@ -70,7 +46,7 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     depends_on:
-      riob-db:
+      mysql:
         condition: service_healthy
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -79,7 +55,7 @@ services:
       APP_PORT: 8080
       APP_HTTPS: 0
       FLASK_SECRET: ${RB_FLASK_SECRET:-riob-local-secret}
-      DB_HOST: riob-db
+      DB_HOST: mysql
       DB_PORT: 3306
       DB_NAME: ${RB_DB_NAME:-riobranco}
       DB_USER: ${RB_DB_USER:-riobranco}
@@ -212,8 +188,6 @@ services:
 volumes:
   notechsoft_mysql:
   notechsoft_pacs_postgres:
-  riob_db_data:
-    name: riob_db_data
   riob_app_data:
     name: riob_app_data
   riob_cameras_data:
