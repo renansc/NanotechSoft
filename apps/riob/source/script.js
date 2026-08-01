@@ -2198,7 +2198,7 @@ function openDashboardView(ev, view){
 
   // marca submenu ativo
   document.querySelectorAll("#submenuDashboard .submenu-item").forEach(x=>x.classList.remove("active"));
-  const targetMap = { resumo: 0, frota: 1, estoque: 2, bonificacoes: 3, variacao_preco: 4, mix_embalagens: 5, grupos_embalagem: 5, comissoes: 6, vendas: 3 };
+  const targetMap = { resumo: 0, frota: 1, estoque: 2, vendas_diario: 3, bonificacoes: 4, variacao_preco: 5, mix_embalagens: 6, grupos_embalagem: 6, comissoes: 7, vendas: 4 };
   const target = targetMap[view] ?? 0;
   const items = document.querySelectorAll("#submenuDashboard .submenu-item");
   if (items && items[target]) items[target].classList.add("active");
@@ -2216,17 +2216,19 @@ function setDashboardView(view){
   const raw = String(view || "resumo").toLowerCase();
   const target = _dashboardVendasIsView(raw)
     ? _dashboardVendasNormalizeView(raw === "vendas" ? (window.__dashVendasView || dashboardVendasPainelState.view || "bonificacoes") : raw)
-    : ["resumo", "frota", "estoque", "comissoes"].includes(raw) ? raw : "resumo";
+    : ["resumo", "frota", "estoque", "vendas_diario", "comissoes"].includes(raw) ? raw : "resumo";
   const isVendasView = _dashboardVendasIsView(target);
   window.__dashView = target;
   const vResumo = document.getElementById("dashViewResumo");
   const vFrota = document.getElementById("dashViewFrota");
   const vEstoque = document.getElementById("dashViewEstoque");
+  const vVendasDiario = document.getElementById("dashViewVendasDiario");
   const vVendas = document.getElementById("dashViewVendas");
   const vComissoes = document.getElementById("dashViewComissoes");
   if (vResumo) vResumo.classList.toggle("hidden", target !== "resumo");
   if (vFrota) vFrota.classList.toggle("hidden", target !== "frota");
   if (vEstoque) vEstoque.classList.toggle("hidden", target !== "estoque");
+  if (vVendasDiario) vVendasDiario.classList.toggle("hidden", target !== "vendas_diario");
   if (vVendas) vVendas.classList.toggle("hidden", !isVendasView);
   if (vComissoes) vComissoes.classList.toggle("hidden", target !== "comissoes");
 
@@ -2234,6 +2236,8 @@ function setDashboardView(view){
     renderDashboardFrota().catch(e=>console.warn("dash frota erro:", e));
   } else if (target === "estoque") {
     renderDashboardEstoque().catch(e=>console.warn("dash estoque erro:", e));
+  } else if (target === "vendas_diario") {
+    carregarDashboardVendasDiario().catch(e=>console.warn("dashboard vendas diario erro:", e));
   } else if (isVendasView) {
     setDashboardVendasView(target);
     recarregarDashboardVendaAtual().catch(e=>console.warn("dash vendas erro:", e));
@@ -2242,6 +2246,42 @@ function setDashboardView(view){
   } else {
     atualizarDash().catch(()=>{});
   }
+}
+
+async function carregarDashboardVendasDiario(){
+  const input = document.getElementById("dashVendasDiarioData");
+  const params = new URLSearchParams();
+  if (input?.value) params.set("data", input.value);
+  const resp = await apiFetch(`/api/vendas/diario/dashboard${params.toString() ? `?${params}` : ""}`);
+  const data = await resp.json().catch(() => ({}));
+  const info = document.getElementById("dashVendasDiarioInfo");
+  if (!resp.ok) {
+    if (info) info.textContent = data?.erro || "Falha ao carregar dashboard de vendas diária.";
+    return;
+  }
+  if (input && data.data_ref) input.value = data.data_ref;
+  if (info) info.textContent = data.data_ref ? `Posição de ${data.data_ref.split("-").reverse().join("/")}.` : "Nenhuma venda diária importada.";
+  const resumo = data?.resumo || {};
+  const cards = document.getElementById("dashVendasDiarioCards");
+  if (cards) cards.innerHTML = _renderCardsVendasResumo([
+    ["Vendedores", _fmtNumVendas(resumo.vendedores)], ["Clientes com venda", _fmtNumVendas(resumo.clientes)],
+    ["Vendas efetivadas", _fmtNumVendas(resumo.positivos)],
+    ["Volume vendido", _fmtNumVendas(resumo.volume_venda, 3)], ["Volume bonificado", _fmtNumVendas(resumo.volume_bonificado, 3)],
+    ["Valor bruto", _fmtMoneyVendas(resumo.valor_bruto)], ["Bonificação (Tb. 91)", _fmtMoneyVendas(resumo.valor_bonificacao)],
+    ["Valor líquido", _fmtMoneyVendas(resumo.valor_liquido)],
+  ]);
+  const statusLabel = {com_vendas: "Com vendas", atencao: "Atenção", sem_vendas: "Sem vendas"};
+  const sellers = Array.isArray(data?.vendedores) ? data.vendedores : [];
+  const body = document.getElementById("dashVendasDiarioBody");
+  if (body) body.innerHTML = sellers.length ? sellers.map((item) => `<tr>
+    <td><span class="vendas-diario-status vendas-diario-status--${_escHtml(item.status || "sem_vendas")}">${_escHtml(statusLabel[item.status] || item.status)}</span></td>
+    <td><strong>Vendedor ${_escHtml(item.vendedor_codigo || "-")}</strong></td>
+    <td>${_escHtml(_fmtNumVendas(item.clientes))}</td><td>${_escHtml(_fmtNumVendas(item.positivos))}</td>
+    <td>${_escHtml(_fmtNumVendas(item.volume_venda, 3))}</td><td>${_escHtml(_fmtNumVendas(item.volume_bonificado, 3))}</td>
+    <td>${_escHtml(_fmtMoneyVendas(item.valor_bruto))}</td>
+    <td>${_escHtml(_fmtMoneyVendas(item.valor_bonificacao))}</td>
+    <td><strong>${_escHtml(_fmtMoneyVendas(item.valor_liquido))}</strong></td>
+  </tr>`).join("") : '<tr><td colspan="9">Nenhum vendedor encontrado para a data.</td></tr>';
 }
 
 async function carregarDashboardComissoes(){
@@ -2788,7 +2828,7 @@ function openVendasView(ev, view){
   const menu = document.querySelector('.menu-item.has-submenu[data-tab="vendas"]');
   document.querySelectorAll("#submenuVendas .submenu-item").forEach((x) => x.classList.remove("active"));
   const items = document.querySelectorAll("#submenuVendas .submenu-item");
-  const targetView = (view === "pontosvenda" ? "pontosvenda" : "relatorio");
+  const targetView = view === "pontosvenda" ? "pontosvenda" : (view === "diario" ? "diario" : "relatorio");
   const itemAtivo = document.querySelector(`#submenuVendas .submenu-item[data-vendas-view="${targetView}"]`);
 
   if (targetView === "pontosvenda") {
@@ -2796,10 +2836,10 @@ function openVendasView(ev, view){
     showTab("pontosvenda", menu);
     if (itemAtivo) itemAtivo.classList.add("active");
   } else {
-    window.__vendasView = "relatorio";
+    window.__vendasView = targetView;
     showTab("vendas", menu);
     if (itemAtivo) itemAtivo.classList.add("active");
-    setVendasView("relatorio");
+    setVendasView(targetView);
   }
 
   const isMobile = window.matchMedia && window.matchMedia("(max-width: 768px)").matches;
@@ -2808,14 +2848,337 @@ function openVendasView(ev, view){
 }
 
 function setVendasView(view){
-  const target = String(view || "relatorio").toLowerCase() === "pontosvenda" ? "pontosvenda" : "relatorio";
+  const raw = String(view || "relatorio").toLowerCase();
+  const target = raw === "diario" ? "diario" : (raw === "pontosvenda" ? "pontosvenda" : "relatorio");
   window.__vendasView = target;
   vendasState.view = target;
   const rel = document.getElementById("vendasViewRelatorio");
   if (rel) rel.classList.toggle("hidden", target !== "relatorio");
+  ["vendasViewRelatorioVariacao", "vendasViewRelatorioMix", "vendasViewRelatorioPrecoMedio"].forEach((id) => {
+    const element = document.getElementById(id);
+    if (element && target !== "relatorio") element.classList.add("hidden");
+  });
+  const diario = document.getElementById("vendasViewDiario");
+  if (diario) diario.classList.toggle("hidden", target !== "diario");
   if (target === "relatorio") {
     setVendasRelatorioModo(window.__vendasRelatorioModo || "bonificacoes");
   }
+  if (target === "diario") carregarVendasDiario().catch(() => {});
+}
+
+async function carregarVendasDiario(){
+  const dataInput = document.getElementById("vendasDiarioData");
+  const params = new URLSearchParams();
+  if (dataInput?.value) params.set("data", dataInput.value);
+  const resp = await apiFetch(`/api/vendas/diario${params.toString() ? `?${params}` : ""}`);
+  const data = await resp.json().catch(() => ({}));
+  const info = document.getElementById("vendasDiarioInfo");
+  if (!resp.ok) {
+    if (info) info.textContent = data?.erro || "Falha ao carregar vendas diario.";
+    return;
+  }
+  if (dataInput && data.data_ref) dataInput.value = data.data_ref;
+  if (info) info.textContent = `Fonte: ${data?.importacao?.diretorio || "-"} | Importacao automatica: ${data?.importacao?.horario || "08:00"}`;
+  const resumo = data?.resumo || {};
+  const cards = document.getElementById("vendasDiarioResumo");
+  if (cards) cards.innerHTML = _renderCardsVendasResumo([
+    ["Vendas efetivadas", _fmtNumVendas(resumo.positivos)], ["Valor bruto", _fmtMoneyVendas(resumo.valor_bruto)],
+    ["Bonificação (Tb. 91)", _fmtMoneyVendas(resumo.valor_bonificacao)], ["Valor líquido", _fmtMoneyVendas(resumo.valor_liquido)],
+    ["Peso bruto", `${_fmtNumVendas(resumo.peso_bruto, 3)} kg`],
+  ]);
+  const pedidos = Array.isArray(data?.pedidos) ? data.pedidos : [];
+  const body = document.getElementById("vendasDiarioBody");
+  if (body) body.innerHTML = pedidos.length ? pedidos.map((item) => `<tr>
+    <td>${_escHtml(item.vendedor_codigo || "-")}</td><td>${_escHtml(`${item.cliente_codigo || ""} - ${item.cliente_nome || ""}`)}</td>
+    <td>${_escHtml(item.fantasia || "-")}</td><td>${_escHtml(item.cidade || "-")}</td><td>${_escHtml(item.status || "-")}</td>
+    <td>${_escHtml(item.motivo || "-")}</td><td>${_escHtml(_fmtNumVendas(item.itens))}</td>
+    <td>${_escHtml(_fmtMoneyVendas(item.valor_total))}</td><td>${_escHtml(_fmtMoneyVendas(item.valor_bonificacao))}</td>
+    <td><strong>${_escHtml(_fmtMoneyVendas(item.valor_liquido))}</strong></td><td>${_escHtml(`${_fmtNumVendas(item.peso_bruto, 3)} kg`)}</td>
+  </tr>`).join("") : '<tr><td colspan="11">Nenhum pedido importado para a data.</td></tr>';
+  await carregarKanbanVendasDiario();
+}
+
+function _renderCardKanbanVendasDiario(card){
+  const clientes = Array.isArray(card?.clientes_lista) ? card.clientes_lista : [];
+  const produtos = Array.isArray(card?.produtos) ? card.produtos : [];
+  const sugestoes = Array.isArray(card?.sugestao_baixa_estoque) ? card.sugestao_baixa_estoque : [];
+  const fontes = Array.isArray(card?.fontes) ? card.fontes : [];
+  const sugestoesUniao = Array.isArray(card?.sugestoes_uniao) ? card.sugestoes_uniao : [];
+  const statusOptions = [
+    ["importado", "Importado"], ["conferir_estoque", "Conferir estoque"], ["conferido", "Conferido"],
+  ];
+  const tituloCard = card.mapa_numero ? `Carga ${card.mapa_numero}` : `Vendedor ${card.vendedor_codigo || "-"}`;
+  return `<article class="vendas-diario-kanban-card" onclick="abrirCardVendasDiario(${Number(card.id) || 0})">
+    <header><strong>${_escHtml(tituloCard)}</strong><span>${_escHtml(_fmtMoneyVendas(card.valor_total))}</span></header>
+    <div class="hint">${_escHtml(card.arquivo_nome || "-")} | ${_escHtml(_fmtNumVendas(card.clientes))} clientes</div>
+    ${card.rota ? `<div class="hint"><strong>Rota:</strong> ${_escHtml(card.rota)} | ${_escHtml(_fmtNumVendas(card.peso_total, 3))} kg | ${_escHtml(_fmtNumVendas(card.qtd_entregas))} entregas | ${_escHtml(_fmtNumVendas(card.volumes_total, 3))} volumes</div>` : ""}
+    <div class="hint"><strong>Origens:</strong> ${_escHtml(card.origens_tipos || card.origem_tipo || "txt")} (${fontes.length || 1} documento(s))</div>
+    <div class="vendas-diario-card-indicadores"><span>${_escHtml(_fmtNumVendas(card.positivos))} clientes com venda</span><span>${_escHtml(_fmtNumVendas(produtos.length))} produtos</span></div>
+    <div class="vendas-diario-card-acoes" onclick="event.stopPropagation()">
+      <button type="button" onclick="abrirCardVendasDiario(${Number(card.id) || 0}, 'visualizar')">Abrir</button>
+      <button type="button" onclick="abrirCardVendasDiario(${Number(card.id) || 0}, 'editar')">Editar</button>
+      <button type="button" class="btn-secondary" onclick="abrirCardVendasDiario(${Number(card.id) || 0}, 'enviar')">Enviar para Liberado</button>
+    </div>
+    <label>Status
+      <select onclick="event.stopPropagation()" onchange="event.stopPropagation(); moverCardKanbanVendasDiario(${Number(card.id) || 0}, this.value)">
+        ${statusOptions.map(([value, label]) => `<option value="${value}"${card.status === value ? " selected" : ""}>${label}</option>`).join("")}
+      </select>
+    </label>
+    <details><summary>Clientes com venda (${clientes.length})</summary><div class="vendas-diario-card-lista">${clientes.map((item) => `<div><strong>${_escHtml(item.fantasia || item.cliente_nome || "-")}</strong><br><span>${_escHtml(item.cidade || "-")} | ${_escHtml(_fmtMoneyVendas(item.valor_total))}</span></div>`).join("") || "Nenhum cliente com venda."}</div></details>
+    <details><summary>Produtos (${produtos.length})</summary><div class="vendas-diario-card-lista">${produtos.map((item) => `<div>${_escHtml(item.produto_codigo)} - ${_escHtml(item.descricao)}: <strong>${_escHtml(_fmtNumVendas(item.quantidade_venda, 3))} ${_escHtml(item.unidade)} | ${_escHtml(_fmtMoneyVendas(item.valor_venda))}</strong>${Number(item.quantidade_bonificada || 0) ? ` + ${_escHtml(_fmtNumVendas(item.quantidade_bonificada, 3))} bonif. (${_escHtml(_fmtMoneyVendas(item.valor_bonificado))})` : ""}</div>`).join("") || "Nenhum produto."}</div></details>
+    <details class="vendas-diario-sugestao"><summary>Sugestão para baixa em estoque (${sugestoes.length})</summary><div class="vendas-diario-card-lista">${sugestoes.map((item) => `<div>${_escHtml(item.produto_codigo)} - ${_escHtml(item.descricao)}: <strong>${_escHtml(_fmtNumVendas(item.quantidade_venda, 3))} ${_escHtml(item.unidade)}</strong></div>`).join("") || "Sem sugestão de baixa."}</div><small>Somente sugestão: nenhum saldo foi alterado.</small></details>
+    ${sugestoesUniao.length ? `<details onclick="event.stopPropagation()"><summary>Possíveis cards da mesma carga (${sugestoesUniao.length})</summary><div class="vendas-diario-card-lista">${sugestoesUniao.map((item) => `<div>Card #${item.id} | ${_escHtml(item.origens_tipos || "-")} | ${_escHtml(item.rota || item.vendedor_codigo || "-")} <button type="button" onclick="unirCardVendasDiario(${item.id},${card.id})">Unir neste card</button></div>`).join("")}</div><small>A união é manual e mantém cada documento para auditoria.</small></details>` : ""}
+    ${fontes.length > 1 ? `<details onclick="event.stopPropagation()"><summary>Documentos vinculados</summary><div class="vendas-diario-card-lista">${fontes.map((item) => `<div>${_escHtml(item.origem_tipo)} | ${_escHtml(item.arquivo_nome || "-")} ${Number(item.id) !== Number(card.id) ? `<button type="button" onclick="separarFonteVendasDiario(${item.id})">Mover para card separado</button>` : ""}</div>`).join("")}</div></details>` : ""}
+  </article>`;
+}
+
+async function carregarKanbanVendasDiario(){
+  const data = document.getElementById("vendasDiarioData")?.value || "";
+  const params = new URLSearchParams();
+  if (data) params.set("data", data);
+  const resp = await apiFetch(`/api/vendas/diario/kanban${params.toString() ? `?${params}` : ""}`);
+  const payload = await resp.json().catch(() => ({}));
+  if (!resp.ok) return;
+  const cards = Array.isArray(payload?.cards) ? payload.cards : [];
+  window.__vendasDiarioKanbanCards = cards;
+  const columns = {
+    importado: document.getElementById("vendasDiarioKanbanImportado"),
+    conferir_estoque: document.getElementById("vendasDiarioKanbanEstoque"),
+    conferido: document.getElementById("vendasDiarioKanbanConferido"),
+  };
+  Object.entries(columns).forEach(([status, element]) => {
+    if (!element) return;
+    const selected = cards.filter((card) => card.status === status);
+    element.innerHTML = selected.length ? selected.map(_renderCardKanbanVendasDiario).join("") : '<div class="hint">Nenhum card.</div>';
+  });
+}
+
+function _payloadModalCardVendasDiario(){
+  const motoristaId = Number(document.getElementById("vendasDiarioModalMotorista")?.value || 0) || null;
+  const entregadorInformado = Number(document.getElementById("vendasDiarioModalEntregador")?.value || 0) || null;
+  return {
+    nome_frete: document.getElementById("vendasDiarioModalNome")?.value?.trim() || "",
+    cidade_cadastro_id: Number(document.getElementById("vendasDiarioModalCidadeCadastro")?.value || 0) || null,
+    veiculo_id: Number(document.getElementById("vendasDiarioModalVeiculo")?.value || 0) || null,
+    colaborador_motorista_id: motoristaId,
+    colaborador_entregador_id: entregadorInformado || _resolverEntregadorPadrao(motoristaId, null),
+    status: document.getElementById("vendasDiarioModalStatus")?.value || "importado",
+    observacao: document.getElementById("vendasDiarioModalObservacao")?.value?.trim() || "",
+  };
+}
+
+async function abrirCardVendasDiario(cardId, modo = "visualizar"){
+  const card = (window.__vendasDiarioKanbanCards || []).find((item) => Number(item.id) === Number(cardId));
+  if (!card) return;
+  await ensureCadastrosCache();
+  document.getElementById("vendasDiarioModalId").value = String(card.id);
+  document.getElementById("vendasDiarioModalTitulo").textContent = card.mapa_numero ? `Carga ${card.mapa_numero} - ${card.rota || ""}` : `Vendas Diario - Vendedor ${card.vendedor_codigo || "-"}`;
+  document.getElementById("vendasDiarioModalResumo").textContent = card.mapa_numero
+    ? `${card.qtd_entregas || 0} entregas | ${_fmtNumVendas(card.volumes_total, 3)} volumes | ${_fmtNumVendas(card.peso_total, 3)} kg | ${_fmtMoneyVendas(card.valor_total)} | Bonificacao ${_fmtMoneyVendas(card.valor_bonificacao)}`
+    : `${card.clientes || 0} clientes | ${card.positivos || 0} positivos | ${_fmtMoneyVendas(card.valor_total)}`;
+  document.getElementById("vendasDiarioModalNome").value = card.nome_frete || `Vendas ${card.data_ref || ""} - Vendedor ${card.vendedor_codigo || ""}`;
+  document.getElementById("vendasDiarioModalStatus").value = card.status || "importado";
+  document.getElementById("vendasDiarioModalObservacao").value = card.observacao || "";
+  if (!Array.isArray(window.__vendasDiarioCidadesCadastro)) {
+    const cidadesResp = await apiFetch("/api/comissao/cidades");
+    const cidadesData = await cidadesResp.json().catch(() => []);
+    window.__vendasDiarioCidadesCadastro = Array.isArray(cidadesData) ? cidadesData : [];
+  }
+  const cidadeSelect = document.getElementById("vendasDiarioModalCidadeCadastro");
+  cidadeSelect.innerHTML = '<option value="">Selecione no cadastro do Kanban</option>' + window.__vendasDiarioCidadesCadastro.map((item) => `<option value="${item.id}">${_escHtml(item.rota)}</option>`).join("");
+  cidadeSelect.value = card.cidade_cadastro_id ? String(card.cidade_cadastro_id) : "";
+  const veiculos = document.getElementById("vendasDiarioModalVeiculo");
+  veiculos.innerHTML = '<option value="">Selecione o caminhao</option>' + (cacheCadastros.veiculos || []).map((item) => `<option value="${item.id}">${_escHtml(item.nome || item.placa || `Veiculo ${item.id}`)}</option>`).join("");
+  veiculos.value = card.veiculo_id ? String(card.veiculo_id) : "";
+  const motorista = document.getElementById("vendasDiarioModalMotorista");
+  motorista.innerHTML = '<option value="">Selecione o motorista</option>' + _listaColaboradoresPorFuncao("motorista").map((item) => `<option value="${item.id}">${_escHtml(item.nome)}</option>`).join("");
+  motorista.value = card.colaborador_motorista_id ? String(card.colaborador_motorista_id) : "";
+  const entregador = document.getElementById("vendasDiarioModalEntregador");
+  entregador.innerHTML = optionsFromEscalaApoio(card.colaborador_entregador_id, card.colaborador_motorista_id);
+  motorista.onchange = () => _atualizarOptionsApoioFrete(entregador, motorista.value, entregador.value);
+  document.getElementById("vendasDiarioModalDetalhes").innerHTML = _renderCardKanbanVendasDiario({...card, id: 0})
+    .replace(/<div class="vendas-diario-card-acoes"[\s\S]*?<\/div>/, "")
+    .replace(/<select[\s\S]*?<\/select>/, "");
+  _abrirPopupBloqueante(document.getElementById("vendasDiarioCardModal"));
+  const nome = document.getElementById("vendasDiarioModalNome");
+  if (modo === "editar") nome?.focus();
+  if (modo === "enviar") document.getElementById("vendasDiarioModalVeiculo")?.focus();
+}
+
+function fecharCardVendasDiario(){
+  _fecharPopupBloqueante(document.getElementById("vendasDiarioCardModal"));
+}
+
+function fecharCardVendasDiarioBackdrop(event){
+  if (event?.target === document.getElementById("vendasDiarioCardModal")) fecharCardVendasDiario();
+}
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !document.getElementById("vendasDiarioCardModal")?.classList.contains("hidden")) {
+    fecharCardVendasDiario();
+  }
+});
+
+async function salvarCardVendasDiario(){
+  const id = Number(document.getElementById("vendasDiarioModalId")?.value || 0);
+  const resp = await apiFetch(`/api/vendas/diario/kanban/${id}`, {method:"PUT", headers:{"Content-Type":"application/json"}, body:JSON.stringify(_payloadModalCardVendasDiario())});
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) return alert(data?.erro || "Falha ao salvar card.");
+  fecharCardVendasDiario(); await carregarKanbanVendasDiario();
+}
+
+async function excluirCardVendasDiario(){
+  if (!confirm("Excluir este card de Vendas Diario?")) return;
+  const id = Number(document.getElementById("vendasDiarioModalId")?.value || 0);
+  const resp = await apiFetch(`/api/vendas/diario/kanban/${id}`, {method:"DELETE"});
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) return alert(data?.erro || "Falha ao excluir card.");
+  fecharCardVendasDiario(); await carregarKanbanVendasDiario();
+}
+
+async function enviarCardVendasDiarioFrete(){
+  const payload = _payloadModalCardVendasDiario();
+  const faltantes = [];
+  if (!payload.cidade_cadastro_id) faltantes.push("cidade/rota cadastrada");
+  if (!payload.veiculo_id) faltantes.push("caminhão");
+  if (!payload.colaborador_motorista_id) faltantes.push("motorista");
+  if (!payload.colaborador_entregador_id) faltantes.push("entregador ou motorista habilitado para ir sozinho");
+  if (faltantes.length) return alert(`Preencha: ${faltantes.join(", ")}.`);
+  if (!confirm("Criar o frete e enviar este card para Liberado no Kanban RioB?")) return;
+  const id = Number(document.getElementById("vendasDiarioModalId")?.value || 0);
+  const resp = await apiFetch(`/api/vendas/diario/kanban/${id}/enviar-frete`, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload)});
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) return alert(data?.erro || "Falha ao criar frete.");
+  fecharCardVendasDiario(); await carregarKanbanVendasDiario();
+  alert(`Frete #${data.frete_id} criado na coluna Liberado do Kanban RioB.`);
+}
+
+async function moverCardKanbanVendasDiario(cardId, status){
+  const resp = await apiFetch(`/api/vendas/diario/kanban/${cardId}/status`, {
+    method: "PUT", headers: {"Content-Type": "application/json"}, body: JSON.stringify({status}),
+  });
+  if (!resp.ok) {
+    const data = await resp.json().catch(() => ({}));
+    alert(data?.erro || "Falha ao mover card.");
+  }
+  await carregarKanbanVendasDiario();
+}
+
+function selecionarArquivoVendasDiario(){
+  const input = document.getElementById("vendasDiarioArquivo");
+  const arquivo = input?.files?.[0];
+  const nome = document.getElementById("vendasDiarioArquivoNome");
+  const botao = document.getElementById("vendasDiarioImportarBtn");
+  if (nome) nome.textContent = arquivo ? arquivo.name : "Nenhum arquivo selecionado.";
+  if (botao) botao.disabled = !arquivo;
+}
+
+async function importarVendasDiario(){
+  const info = document.getElementById("vendasDiarioInfo");
+  if (info) info.textContent = "Importando arquivos TXT...";
+  const arquivo = document.getElementById("vendasDiarioArquivo")?.files?.[0];
+  const options = {method: "POST"};
+  if (arquivo) {
+    const form = new FormData();
+    form.append("arquivo", arquivo);
+    options.body = form;
+  }
+  const resp = await apiFetch("/api/vendas/diario/importar", options);
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    if (info) info.textContent = data?.erro || "Falha ao importar vendas diario.";
+    return;
+  }
+  const imported = (data?.resultados || []).filter((item) => item.status === "importado").length;
+  if (info) info.textContent = `${imported} arquivo(s) novo(s) importado(s).`;
+  const input = document.getElementById("vendasDiarioArquivo");
+  if (input) input.value = "";
+  selecionarArquivoVendasDiario();
+  await carregarVendasDiario();
+}
+
+async function importarVendasDiarioPasta(){
+  const input = document.getElementById("vendasDiarioArquivo");
+  if (input) input.value = "";
+  selecionarArquivoVendasDiario();
+  await importarVendasDiario();
+}
+
+async function prepararImportacaoCargaPdfVendasDiario(){
+  const input = document.getElementById("vendasDiarioCargaPdf");
+  const arquivo = input?.files?.[0];
+  if (!arquivo) return;
+  const modal = document.getElementById("vendasDiarioPdfModal");
+  const select = document.getElementById("vendasDiarioCargaPdfVendedor");
+  const erro = document.getElementById("vendasDiarioPdfErro");
+  document.getElementById("vendasDiarioPdfArquivoNome").textContent = arquivo.name;
+  select.innerHTML = '<option value="">Carregando vendedores...</option>';
+  select.disabled = true;
+  if (erro) erro.textContent = "";
+  _abrirPopupBloqueante(modal);
+  const resp = await apiFetch("/api/vendas/diario/vendedores");
+  const data = await resp.json().catch(() => ({}));
+  const vendedores = Array.isArray(data?.vendedores) ? data.vendedores : [];
+  select.disabled = false;
+  select.innerHTML = '<option value="">Selecione o vendedor</option>' + vendedores.map((item) => {
+    const label = item.nome ? `${item.codigo} - ${item.nome}` : item.codigo;
+    return `<option value="${_escAttr(item.codigo)}">${_escHtml(label)}</option>`;
+  }).join("");
+  if (!resp.ok || !vendedores.length) {
+    if (erro) erro.textContent = data?.erro || "Nenhum vendedor cadastrado foi encontrado.";
+  }
+}
+
+function cancelarImportacaoCargaPdfVendasDiario(){
+  const input = document.getElementById("vendasDiarioCargaPdf");
+  if (input) input.value = "";
+  _fecharPopupBloqueante(document.getElementById("vendasDiarioPdfModal"));
+}
+
+function fecharImportacaoCargaPdfBackdrop(event){
+  if (event?.target === document.getElementById("vendasDiarioPdfModal")) cancelarImportacaoCargaPdfVendasDiario();
+}
+
+async function importarCargaPdfVendasDiario(){
+  const input = document.getElementById("vendasDiarioCargaPdf");
+  const arquivo = input?.files?.[0];
+  if (!arquivo) return;
+  const vendedorCodigo = document.getElementById("vendasDiarioCargaPdfVendedor")?.value || "";
+  if (!vendedorCodigo) {
+    return alert("Selecione o vendedor responsável pela carga PDF.");
+  }
+  const info = document.getElementById("vendasDiarioInfo");
+  if (info) info.textContent = `Importando carga ${arquivo.name}...`;
+  const form = new FormData();
+  form.append("arquivo", arquivo);
+  form.append("vendedor_codigo", vendedorCodigo);
+  const resp = await apiFetch("/api/vendas/diario/importar-carga-pdf", {method:"POST", body:form});
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    if (info) info.textContent = data?.erro || "Falha ao importar carga PDF.";
+    return alert(data?.erro || "Falha ao importar carga PDF.");
+  }
+  input.value = "";
+  _fecharPopupBloqueante(document.getElementById("vendasDiarioPdfModal"));
+  if (info) info.textContent = data.status === "ja_importado" ? "Esta carga ja estava importada." : `Carga mapa ${data?.carga?.mapa || "-"} importada.`;
+  if (data?.carga?.data_ref) document.getElementById("vendasDiarioData").value = data.carga.data_ref;
+  await carregarVendasDiario();
+}
+
+async function unirCardVendasDiario(cardOrigemId, cardDestinoId){
+  if (!confirm(`Unir os documentos do card #${cardOrigemId} ao card #${cardDestinoId}?`)) return;
+  const resp = await apiFetch(`/api/vendas/diario/kanban/${cardOrigemId}/unir`, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({destino_card_id:cardDestinoId})});
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) return alert(data?.erro || "Falha ao unir cards.");
+  await carregarKanbanVendasDiario();
+}
+
+async function separarFonteVendasDiario(cardId){
+  if (!confirm("Mover este documento para um card separado?")) return;
+  const resp = await apiFetch(`/api/vendas/diario/kanban/${cardId}/separar`, {method:"POST"});
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) return alert(data?.erro || "Falha ao separar documento.");
+  await carregarKanbanVendasDiario();
 }
 
 function _vendasDashboardCelulaClassificacao(valorAtual = 0, valorAnterior = null) {
@@ -5367,7 +5730,7 @@ function showTab(tabId, el) {
     setComissaoView(window.__comissaoView);
   }
   if (tabId === "vendas") {
-    if (!window.__vendasView || !["dashboard", "relatorio"].includes(window.__vendasView)) {
+    if (!window.__vendasView || !["dashboard", "relatorio", "diario"].includes(window.__vendasView)) {
       window.__vendasView = "relatorio";
     }
     setVendasView(window.__vendasView);
@@ -7575,7 +7938,7 @@ function atualizarUsuarioLogadoUI() {
 function _syncBlockingPopupState() {
   const body = document.body;
   if (!body) return;
-  const hasBlockingPopup = !!document.querySelector(".foto-modal:not(.hidden)");
+  const hasBlockingPopup = !!document.querySelector(".foto-modal:not(.hidden), .vendas-diario-modal:not(.hidden)");
   body.classList.toggle("modal-open", hasBlockingPopup);
 }
 
@@ -10285,24 +10648,33 @@ function _freteDetalheCargaXmlTemplate(frete, cargaXml = {}) {
   if (!itens.length) {
     return `
       <div class="frete-detail-empty">
-        Este card possui XML vinculado, mas os itens da carga ainda não foram encontrados.
-        Confira se a NF-e está confirmada ou pré-vinculada na aba “Notas de saída”.
+        Ainda não foram encontrados itens no PDF da carga nem nos XMLs vinculados.
       </div>
     `;
   }
+  const origemPdf = cargaXml.origem_principal === "pdf";
   return `
     <div class="frota-historico-grid">
       <div class="frota-historico-card">
-        <h4>Resumo da carga pelos XMLs</h4>
+        <h4>${origemPdf ? "Resumo da carga pelo PDF" : "Resumo da carga pelos XMLs"}</h4>
         <div class="frota-historico-kv">
+          ${origemPdf ? _frotaHistoricoResumoRow("Arquivo", cargaXml.arquivo_pdf || "-") : ""}
+          ${origemPdf ? _frotaHistoricoResumoRow("Vendedor", cargaXml.vendedor_codigo || "-") : ""}
+          ${origemPdf ? _frotaHistoricoResumoRow("Mapa", cargaXml.mapa_numero || "-") : ""}
+          ${origemPdf ? _frotaHistoricoResumoRow("Rota", cargaXml.rota || "-") : ""}
+          ${origemPdf ? _frotaHistoricoResumoRow("Peso", `${_fmtNumeroCarga(cargaXml.peso_total, 3)} kg`) : ""}
+          ${origemPdf ? _frotaHistoricoResumoRow("Entregas", cargaXml.qtd_entregas || 0) : ""}
           ${_frotaHistoricoResumoRow("NF-e vinculadas", cargaXml.notas_total || 0)}
           ${_frotaHistoricoResumoRow("Total de embalagens", _fmtNumeroCarga(cargaXml.total_embalagens, 3))}
           ${_frotaHistoricoResumoRow("Total de garrafas / unidades", _fmtNumeroCarga(cargaXml.total_unidades, 3))}
           ${_frotaHistoricoResumoRow("Total de PETs", _fmtNumeroCarga(cargaXml.total_pets, 3))}
           ${_frotaHistoricoResumoRow("Total retornáveis / vidro", _fmtNumeroCarga(cargaXml.total_retornaveis, 3))}
           ${_frotaHistoricoResumoRow("Volume estimado", `${_fmtNumeroCarga(cargaXml.total_litros, 3)} L`)}
-          ${_frotaHistoricoResumoRow("Valor total das notas", _fmtMoney(cargaXml.valor_total || 0))}
+          ${_frotaHistoricoResumoRow(origemPdf ? "Valor total da carga" : "Valor total das notas", _fmtMoney(cargaXml.valor_total || 0))}
+          ${origemPdf ? _frotaHistoricoResumoRow("Bonificação", _fmtMoney(cargaXml.valor_bonificacao || 0)) : ""}
         </div>
+        ${origemPdf && cargaXml.cidades_resumo ? `<div class="hint">${_escHtml(cargaXml.cidades_resumo)}</div>` : ""}
+        ${origemPdf ? `<div class="hint">PDF é a fonte principal. XML complementa somente informações ausentes, sem duplicar os itens.</div>` : ""}
         ${petsPorTamanho.length ? `
           <div class="hint">
             PETs por tamanho:
@@ -10331,6 +10703,7 @@ function _freteDetalheCargaXmlTemplate(frete, cargaXml = {}) {
                   <td>
                     <strong>${_escHtml(item.nome || "-")}</strong>
                     ${item.codigo_produto ? `<div class="hint">Código ${_escHtml(item.codigo_produto)}</div>` : ""}
+                    ${item.origem ? `<div class="hint">Origem: ${_escHtml(item.origem === "pdf" ? "PDF" : "XML complementar")}</div>` : ""}
                   </td>
                   <td>${_escHtml(item.tipo || "-")}</td>
                   <td>${_escHtml(_fmtNumeroCarga(item.embalagens, 3))} ${_escHtml(item.unidade || "")}</td>
@@ -14466,7 +14839,7 @@ function _estoqueApresentacaoNormalizada(...valores){
   if (texto.includes("CX48")) return "CX48";
   if (texto.includes("CX24")) return "CX24";
   if (texto.includes("CAIXA") || texto.includes("CAIXAS") || /\bCX\b/.test(texto)) return "CX";
-  if (texto.includes("PACOTE") || texto.includes("PACOTES") || /\bPCT\b/.test(texto) || /\bPAC\b/.test(texto)) return "PCT";
+  if (texto.includes("PACOTE") || texto.includes("PACOTES") || /\bPCT\b/.test(texto) || /\bPAC\b/.test(texto) || /\bPT\b/.test(texto)) return "PCT";
   if (texto.includes("FARDO") || texto.includes("FARDOS") || /\bFD\b/.test(texto)) return "FD";
   if (texto.includes("UNIDADE") || texto.includes("UNIDADES") || /\bUND\b/.test(texto) || /\bUN\b/.test(texto)) return "UN";
   return _estoqueEmbalagemPadrao(texto);
@@ -14653,6 +15026,22 @@ function _estoqueProdutoStatusHtml(item = {}){
   return `${nome}${unificados > 1 ? `<div class="hint">${unificados} cadastros consolidados</div>` : ""}`;
 }
 
+function _estoqueFormatPallet(item = {}, valor = 0){
+  const quantidade = Number(valor || 0);
+  const meta = item?.pallet_meta || {};
+  const porPallet = Number(meta.unidades_por_pallet || 0);
+  const porVolume = Number(meta.unidades_por_volume || 0);
+  if (!(porPallet > 0) || !(porVolume > 0)) return `${_estoqueFormatQtd(quantidade)} unidades`;
+  const sinal = quantidade < 0 ? "-" : "";
+  let restante = Math.abs(quantidade);
+  const pallets = Math.floor((restante + 1e-9) / porPallet);
+  restante -= pallets * porPallet;
+  const volumes = Math.floor((restante + 1e-9) / porVolume);
+  restante -= volumes * porVolume;
+  const rotulo = String(meta.rotulo_volume || "volumes");
+  return `${sinal}${pallets} pallet${pallets === 1 ? "" : "s"} + ${volumes} ${rotulo} + ${_estoqueFormatQtd(restante)} unidades`;
+}
+
 function sincronizarNumeroNotaPorCodigo(){
   const codigo = document.getElementById("estoqueCodigoBarras");
   const nota = document.getElementById("estoqueNumeroNota");
@@ -14689,20 +15078,20 @@ async function renderDashboardEstoque(){
     <tr>
       <td>${_estoqueProdutoStatusHtml(r)}</td>
       <td>${_escHtml(_estoqueCodigoReferencia(r))}</td>
-      <td>${_escHtml(_estoqueFormatQtd(r.quantidade_atual))}</td>
-      <td>${_escHtml(_estoqueFormatQtd(r.vendas_dia))}</td>
-      <td>${_escHtml(_estoqueFormatQtd(r.saidas_dia))}</td>
-      <td>${_escHtml(_estoqueFormatQtd(r.quantidade_comprometida))}</td>
-      <td><span style="font-weight:700;color:${Number(r.saldo_previsto_dia || 0) < 0 ? "#b91c1c" : "#166534"};">${_escHtml(_estoqueFormatQtd(r.saldo_previsto_dia))}</span></td>
+      <td>${_escHtml(_estoqueFormatPallet(r, r.quantidade_atual))}</td>
+      <td>${_escHtml(_estoqueFormatPallet(r, r.vendas_dia))}</td>
+      <td>${_escHtml(_estoqueFormatPallet(r, r.saidas_dia))}</td>
+      <td>${_escHtml(_estoqueFormatPallet(r, r.quantidade_comprometida))}</td>
+      <td><span style="font-weight:700;color:${Number(r.saldo_previsto_dia || 0) < 0 ? "#b91c1c" : "#166534"};">${_escHtml(_estoqueFormatPallet(r, r.saldo_previsto_dia))}</span></td>
     </tr>
   `, 7) : `<tr><td colspan="7">Sem itens cadastrados no estoque.</td></tr>`;
   bodySaldo.innerHTML = dados.length ? _estoqueLinhasAgrupadas(dados, (r) => `
     <tr>
       <td>${_estoqueProdutoStatusHtml(r)}</td>
       <td>${_escHtml(_estoqueCodigoReferencia(r))}</td>
-      <td>${_escHtml(_estoqueFormatQtd(r.quantidade_atual))}</td>
-      <td>${_escHtml(_estoqueFormatQtd(r.quantidade_comprometida))}</td>
-      <td><span style="font-weight:700;color:${Number(r.saldo_remanescente || 0) < 0 ? "#b91c1c" : "#166534"};">${_escHtml(_estoqueFormatQtd(r.saldo_remanescente))}</span></td>
+      <td>${_escHtml(_estoqueFormatPallet(r, r.quantidade_atual))}</td>
+      <td>${_escHtml(_estoqueFormatPallet(r, r.quantidade_comprometida))}</td>
+      <td><span style="font-weight:700;color:${Number(r.saldo_remanescente || 0) < 0 ? "#b91c1c" : "#166534"};">${_escHtml(_estoqueFormatPallet(r, r.saldo_remanescente))}</span></td>
       <td>R$ ${_escHtml(_fmtMoney(r.ultimo_valor))}</td>
       <td>${_escHtml(_fmtDateBr(r.ultima_movimentacao))}</td>
     </tr>
@@ -17919,9 +18308,9 @@ function renderSaldoEstoqueFiltrado(){
       <td>${_escHtml(_estoqueCodigoReferencia(r))}</td>
       <td>${_escHtml(_estoqueFornecedorResumo(r))}</td>
       <td>${_escHtml(_estoqueCategoriaFornecedorResumo(r))}</td>
-      <td>${_escHtml(_estoqueFormatQtd(r.entradas_total))}</td>
-      <td>${_escHtml(_estoqueFormatQtd(r.saidas_total))}</td>
-      <td>${_escHtml(_estoqueFormatQtd(r.quantidade_atual))}</td>
+      <td>${_escHtml(_estoqueFormatPallet(r, r.entradas_total))}</td>
+      <td>${_escHtml(_estoqueFormatPallet(r, r.saidas_total))}</td>
+      <td>${_escHtml(_estoqueFormatPallet(r, r.quantidade_atual))}</td>
       <td>R$ ${_escHtml(_fmtMoney(r.ultimo_valor))}</td>
       <td>${_escHtml(_fmtDateBr(r.ultima_movimentacao))}</td>
     </tr>

@@ -84,6 +84,65 @@ If you need context fast, read these files first:
   later XMLs whose cities belong to that route must reuse one active route card
   even before a truck is linked. Never merge active cards assigned to different
   trucks.
+- Daily-sales evidence can arrive as TXT, load PDF, and outgoing NF-e XML. TXT
+  keeps its seller from the source; PDF must not be imported without an operator
+  selecting the responsible seller. Compatible sources are suggestions only:
+  union, separation, and movement between cards require explicit confirmation
+  and an audit entry. Preserve every original document and never merge cards
+  assigned to different trucks or dates. The outgoing-XML/freight link remains
+  the definitive RioB Kanban link after the sales card reaches Loading.
+- PDF signature deduplication must not silently swallow a reimport. If the prior
+  PDF card is logically deleted and has no freight, reimport reactivates that
+  same card, updates its synthetic order and card to the operator-selected
+  seller in one transaction, and records the previous/new seller in history.
+  An active duplicate returns a visible conflict identifying its card/seller;
+  a PDF already linked to freight can never be reassigned by reimport.
+- Sending a Daily Sales card to freight follows the same crew rule as the main
+  RioB freight form: when no separate delivery person/support is selected, a
+  driver marked both `is_motorista` and `is_entregador` is assigned to both
+  roles and may go alone. Validation errors must name only the fields actually
+  missing instead of presenting a generic city/truck/crew warning.
+- A Daily Sales card creates its RioB freight in `liberado`, as a future-load
+  plan, never directly in `carregando`. Do not block this transition because
+  the selected truck or crew is still assigned to an active trip: their
+  availability must be enforced only when the planned freight advances to the
+  effective loading stage.
+- In freight `Ver dados/Carga`, a linked Daily Sales PDF remains the primary
+  operational source even after outgoing XMLs are attached. Preserve PDF map,
+  route, cities, seller, weight, deliveries, volumes, total, bonus, and product
+  quantities. XML may fill only missing fields/items. De-duplicate products by
+  normalized product code (or normalized name when code is absent), never add
+  PDF and XML quantities for the same product, and label each displayed item's
+  source. Stock movement still requires its separate confirmation workflow.
+- In the daily TXT dashboard, `TOTAL DO PEDIDO` is the gross value. Items whose
+  sales table is `91 - BONIFICACAO` compose the monetary bonus as
+  `quantidade * valor_unitario`; daily and seller net value is always gross
+  minus that bonus. Keep gross, bonus, and net visible together and calculate
+  the bonus in a per-order aggregate so joining multiple items never repeats
+  the order gross value.
+- Daily-sales dashboards are live projections of active card sources. A logical
+  card deletion must exclude its import/seller source (and every attached source
+  of a composed card) from daily summaries and detail immediately, while keeping
+  the original document and audit history. Any future financial edit must update
+  the canonical order/item rows and the audit log in the same transaction; never
+  maintain a separate cached total that can diverge from card state.
+- TXT Daily Sales persistence contains only effective sales: `status=positiva`
+  and `valor_total > 0`. Parse the full source file for structural validation,
+  but never insert negative/zero visits in `vendas_diario_pedidos`, never retain
+  their items, and never create their Kanban cards. The daily dashboard is a
+  sales dashboard, not a visit/negativation archive.
+- Stock remains canonical in individual units, but production dashboards display
+  `pallets + packages/boxes + remaining units`. Capacities are: water 150x12,
+  PET 600 ml 132x12, GFA 600 ml 35x24, PET 2 L 80x6, PET 200 ml 304x12,
+  GFA 200 ml CX48 48x48, and GFA 200 ml CX24 60x24. Never guess the GFA
+  200 ml box variant when the product registration/name does not distinguish
+  CX24 from CX48; in that case retain the canonical unit display.
+- A composed daily-sales card must never add TXT, PDF, and XML quantities as if
+  they were independent stock issues. They are alternate evidence for the same
+  load. For stock-decrement suggestion prefer official outgoing XML when linked,
+  otherwise detailed TXT, and use PDF only as contingency. Keep quantities by
+  source visible for reconciliation; actual stock movement still requires the
+  existing confirmation workflow.
 - A persisted outgoing NF-e/frete link is the source of truth for Kanban
   visibility: linked notes must remain searchable and visible after reopening
   the card, including notes also marked for maintenance and legacy records whose

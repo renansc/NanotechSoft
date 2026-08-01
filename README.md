@@ -83,8 +83,9 @@ Web Service manual exige a configuracao equivalente das variaveis no painel.
 No Render, configure `RIOB_BASE_URL` com a URL HTTPS publica da origem RioB.
 O Portal atua como proxy reverso: o navegador permanece na URL do Render e o IP
 da origem nao aparece nos links da interface. Se essa variavel estiver ausente,
-o modo de compatibilidade ainda inicia o RioB no mesmo container, em
-`http://127.0.0.1:8898`, mas esse modo torna o deploy mais lento.
+o Render retorna erro de configuracao e nao inicia outro RioB no mesmo container.
+O `render.yaml` fixa `RIOB_PROXY_ONLY=1`; o fallback por subprocesso permanece
+disponivel apenas em ambientes locais com `RIOB_PROXY_ONLY=0`.
 
 Valide a origem configurada em `/healthz/riob`. Esse diagnostico consulta
 `/api/status` no servidor RioB sem expor a URL completa da origem.

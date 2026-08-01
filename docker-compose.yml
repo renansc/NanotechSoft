@@ -99,6 +99,9 @@ services:
       RB_EMAIL_AUTO_IMPORT: ${RB_EMAIL_AUTO_IMPORT:-1}
       RB_EMAIL_AUTO_INTERVAL_MINUTES: ${RB_EMAIL_AUTO_INTERVAL_MINUTES:-5}
       RB_EMAIL_TIMEZONE: ${RB_EMAIL_TIMEZONE:-America/Sao_Paulo}
+      RB_VENDAS_DIARIO_DIR: /imports/vendas-diario
+      RB_VENDAS_DIARIO_HORA: ${RB_VENDAS_DIARIO_HORA:-08:00}
+      RB_VENDAS_DIARIO_AUTO: ${RB_VENDAS_DIARIO_AUTO:-1}
     volumes:
       - riob_app_data:/data/app
       - riob_cameras_data:/data/cameras
@@ -110,6 +113,7 @@ services:
       - ./apps/riob/source/certs:/app/certs:ro
       - ./apps/riob/source/ImportarXml:/legacy/ImportarXml:ro
       - ./apps/riob/source/GestorEmails:/legacy/GestorEmails:ro
+      - ${RB_VENDAS_DIARIO_HOST_DIR:-/media/SrvWin/CARGAS/VendasDiario}:/imports/vendas-diario:ro
 
   riob-proxy:
     image: nginx:1.27-alpine

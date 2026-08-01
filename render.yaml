@@ -79,6 +79,8 @@ services:
         value: /app/apps/shared
       - key: RIOB_BASE_URL
         sync: false
+      - key: RIOB_PROXY_ONLY
+        value: "1"
       - key: RIOB_APP_PORT
         value: "8898"
       - key: RIOB_STARTUP_WAIT

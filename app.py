@@ -135,10 +135,18 @@ RAIOXPACS_BASE_URL = f"http://127.0.0.1:{RAIOXPACS_PORT}"
 RAIOXPACS_STARTUP_WAIT = float(os.environ.get("RAIOXPACS_STARTUP_WAIT", "90"))
 
 
+RIOB_PROXY_ONLY = str(os.environ.get("RIOB_PROXY_ONLY") or "").strip().lower() in {"1", "true", "yes", "sim", "on"}
+
+
 def resolve_riob_base_url():
     configured = str(os.environ.get("RIOB_BASE_URL") or "").strip()
     render_runtime = str(os.environ.get("RENDER") or "").strip().lower() == "true"
     configured_host = urllib.parse.urlparse(configured).hostname if configured else ""
+    if RIOB_PROXY_ONLY:
+        internal_hosts = {"host.docker.internal", "riob-proxy", "127.0.0.1", "localhost", "::1"}
+        if not configured or configured_host in internal_hosts:
+            return ""
+        return configured
     if render_runtime and (not configured or configured_host == "host.docker.internal"):
         port = int(os.environ.get("RIOB_APP_PORT", "8898"))
         return f"http://127.0.0.1:{port}"
@@ -1693,7 +1701,7 @@ def riob_hash_bridge_script():
           window.openVendasComissao(null);
           return;
         }
-        window.openVendasView(null, view);
+        window.openVendasView(null, ["kanban", "importar"].includes(view) ? "diario" : view);
         return;
       }
       if (section && typeof window.showTab === "function") {
@@ -1744,6 +1752,13 @@ def open_riob_request(req, timeout=120):
 
 @app.route("/healthz/riob")
 def healthz_riob():
+    if not RIOB_BASE_URL:
+        return jsonify({
+            "ok": False,
+            "mode": "proxy_only",
+            "error_type": "ConfigurationError",
+            "message": "RIOB_BASE_URL externa nao configurada.",
+        }), 503
     parsed = urllib.parse.urlparse(RIOB_BASE_URL)
     result = {
         "ok": False,
@@ -1987,6 +2002,13 @@ def riob_proxy_response(app_key="riob", subpath="", embedded=False):
         return redirect(url_for("login_page"))
     if not app_visible_to_user({"app_key": app_key}, usuario):
         return jsonify({"erro": "app nao liberado para este usuario"}), 403
+    if not RIOB_BASE_URL:
+        return render_template(
+            "app_placeholder.html",
+            app_key=app_key,
+            mensagem="Portal em modo proxy: configure uma origem HTTPS externa em RIOB_BASE_URL.",
+            **portal_context(usuario),
+        ), 503
 
     # Com uma origem externa configurada, o Portal atua como proxy reverso e
     # mantem a URL publica do Render no navegador. O subprocesso local existe

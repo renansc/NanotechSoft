@@ -24,6 +24,10 @@
         "url": "/apps/riob#dashboard:estoque"
       },
       {
+        "nome": "Vendas Diaria RioB",
+        "url": "/apps/riob#dashboard:vendas_diario"
+      },
+      {
         "nome": "Bonificacoes RioB",
         "url": "/apps/riob#dashboard:bonificacoes"
       },
@@ -42,6 +46,10 @@
       }
     ],
     "workflow": [
+      {
+        "nome": "Kanban Vendas Diario",
+        "url": "/apps/riob#vendas:kanban"
+      },
       {
         "nome": "Kanban RioB",
         "url": "/apps/riob#fretes"
@@ -121,6 +129,10 @@
       }
     ],
     "import_export": [
+      {
+        "nome": "Importar Vendas Diario",
+        "url": "/apps/riob#vendas:importar"
+      },
       {
         "nome": "Comissões",
         "url": "/apps/riob#comissao:exportar",

@@ -77,6 +77,18 @@ O recurso mantem agenda e periodicidade de visitas, vendedor, cliente e rota.
 
 ## Vendas e caches
 
+- `GET /api/vendas/diario`: consulta os pedidos diarios importados, opcionalmente por `?data=AAAA-MM-DD`.
+- `GET /api/vendas/diario/dashboard`: consolida status, positivacao, volume e valor diario por vendedor.
+- `GET /api/vendas/diario/kanban`: retorna um card persistido por importacao e vendedor, com clientes, produtos e sugestao de baixa.
+- O Kanban diario cria e lista cards somente para vendedores com pelo menos um pedido positivo; vendedores com apenas pedidos negativos permanecem no relatorio, mas nao geram card de frete.
+- `PUT /api/vendas/diario/kanban/<id>/status`: move o card entre `importado`, `conferir_estoque` e `conferido`; nenhum desses status altera o estoque automaticamente.
+- `PUT /api/vendas/diario/kanban/<id>` e `DELETE /api/vendas/diario/kanban/<id>`: salvam o rascunho editavel ou ocultam o card ainda nao vinculado.
+- `POST /api/vendas/diario/kanban/<id>/enviar-frete`: valida cidade, caminhao, motorista e entregador, cria um frete `carregando` no Kanban RioB e vincula o card de origem em uma unica transacao. O envio nao baixa estoque.
+- `POST /api/vendas/diario/importar-carga-pdf`: importa o PDF de Carga do Caminhao, reconhece mapa, rota, cidades, peso, entregas, volumes, valores e produtos e cria um card de carga elegivel ao mesmo fluxo de frete.
+- O campo de cidade do popup diario usa obrigatoriamente `comissao_cidades.id`, sincronizado com as cidades e rotas do Kanban RioB. O texto original do TXT/PDF e apenas referencia e nunca e enviado diretamente ao frete.
+- `POST /api/vendas/diario/importar`: dispara a varredura idempotente da pasta ou aceita um TXT manual no campo multipart `arquivo`.
+- O compartilhamento SMB deve ser montado no host e exposto ao container em `/imports/vendas-diario`; a rotina automatica roda por padrao as 08:00.
+
 - `GET /api/vendas/relatorio/preco-medio/pdf`
 - `GET /api/vendas/dashboard`
 - `GET /api/dashboard_vendas`
@@ -158,3 +170,16 @@ JavaScript, HTML ou testes e nao for rota, callback, handler de protocolo,
 override de biblioteca ou entrada publica de integracao. Metodos de
 `HTMLParser`, `BaseHTTPRequestHandler` e funcoes decoradas pelo Flask continuam
 validos mesmo sem chamada textual direta.
+### Composicao de cards Vendas Diario (TXT, PDF e XML)
+
+- PDF exige `vendedor_codigo` no upload; TXT conserva o vendedor do arquivo.
+- `POST /api/vendas/diario/kanban/<card_id>/unir` move uma origem ou um card
+  composto para outro card ativo da mesma data. Caminhoes divergentes bloqueiam
+  a operacao.
+- `POST /api/vendas/diario/kanban/<card_id>/separar` devolve uma origem a um card
+  independente.
+- Toda uniao/separacao e registrada em `vendas_diario_kanban_historico`.
+- Cidade/rota, mapa e data geram sugestoes; nenhuma uniao e automatica.
+- TXT, PDF e XML sao evidencias alternativas da carga. A sugestao de baixa nao
+  soma fontes convergentes: XML oficial tem prioridade, depois TXT e por ultimo
+  PDF. A baixa efetiva continua dependendo da conferencia de estoque existente.

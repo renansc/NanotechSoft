@@ -43,6 +43,7 @@
         <div class="submenu-item active" onclick="openDashboardView(event,'resumo')">Resumo</div>
         <div class="submenu-item" onclick="openDashboardView(event,'frota')">Frota / Manutenção</div>
         <div class="submenu-item" onclick="openDashboardView(event,'estoque')">Estoque</div>
+        <div class="submenu-item" onclick="openDashboardView(event,'vendas_diario')">Vendas diária</div>
         <div class="submenu-item" onclick="openDashboardView(event,'bonificacoes')">Bonificações</div>
         <div class="submenu-item" onclick="openDashboardView(event,'variacao_preco')">Variação de Preço</div>
         <div class="submenu-item" onclick="openDashboardView(event,'grupos_embalagem')">Grupos Embalagem</div>
@@ -67,7 +68,7 @@
     </div>
     <div class="menu-item" onclick="showTab('devolucoes',this)">Devoluções</div>
     <div class="menu-item has-submenu" data-tab="gestaofrota" onclick="toggleGestaoFrotaSubmenu(event)">Gestao Frota <span class="submenu-caret">&#9662;</span><div class="submenu" id="submenuGestaoFrota"><div class="submenu-item active" onclick="openGestaoFrotaView(event,'registrar')">Registrar</div><div class="submenu-item" onclick="openGestaoFrotaView(event,'lista')">Lista</div><div class="submenu-item" onclick="openGestaoFrotaView(event,'relatorios')">Relatorios</div><div class="submenu-item" onclick="openGestaoFrotaCargas(event)">Cadastro Cargas</div><div class="submenu-item" onclick="openGestaoFrotaEscala(event)">Escala</div></div></div>
-    <div class="menu-item has-submenu" data-tab="vendas" onclick="toggleVendasSubmenu(event)">Vendas <span class="submenu-caret">&#9662;</span><div class="submenu" id="submenuVendas"><div class="submenu-item active" data-vendas-view="relatorio" onclick="openVendasView(event,'relatorio')">Relatorio</div><div class="submenu-item" data-vendas-view="pontosvenda" onclick="openVendasView(event,'pontosvenda')">Pontos de Venda</div></div></div>
+    <div class="menu-item has-submenu" data-tab="vendas" onclick="toggleVendasSubmenu(event)">Vendas <span class="submenu-caret">&#9662;</span><div class="submenu" id="submenuVendas"><div class="submenu-item active" data-vendas-view="relatorio" onclick="openVendasView(event,'relatorio')">Relatorio</div><div class="submenu-item" data-vendas-view="diario" onclick="openVendasView(event,'diario')">Vendas diario</div><div class="submenu-item" data-vendas-view="pontosvenda" onclick="openVendasView(event,'pontosvenda')">Pontos de Venda</div></div></div>
     <div class="menu-item has-submenu" data-tab="monitor" onclick="toggleMonitorSubmenu(event)">Monitor <span class="submenu-caret">&#9662;</span><div class="submenu" id="submenuMonitor"><div class="submenu-item active" data-monitor-view="esxi" onclick="openMonitorView(event,'esxi')">ESXi</div><div class="submenu-item" data-monitor-view="cameras" onclick="openMonitorView(event,'cameras')">Cameras</div><div class="submenu-item" data-monitor-view="automacao" onclick="openMonitorView(event,'automacao')">Automacao</div><div class="submenu-item" data-monitor-view="importar_xml" onclick="openMonitorView(event,'importar_xml')">Importar XML</div><div class="submenu-item" data-monitor-view="gestor_emails" onclick="openMonitorView(event,'gestor_emails')">Gestor de E-mails</div><div class="submenu-item" data-monitor-view="comunicacao" onclick="openMonitorComunicacao(event)">Comunicacao</div></div></div>
     <div class="menu-item" onclick="showTab('agentia',this); iniciarAgentIa()">Agent IA</div>
     <div class="menu-item has-submenu" data-tab="config" onclick="toggleConfigSubmenu(event)">Config <span class="submenu-caret">&#9662;</span><div class="submenu" id="submenuConfig"><div class="submenu-item active" onclick="openConfigView(event,'status')">Status</div><div class="submenu-item" onclick="openConfigView(event,'logs')">Logs</div><div class="submenu-item" onclick="openConfigView(event,'cameras')">Cameras</div><div class="submenu-item" onclick="openConfigView(event,'sip')">SIP</div><div class="submenu-item" onclick="openConfigView(event,'nfe')">NF-e</div><div class="submenu-item" onclick="openConfigView(event,'vendas')">Vendas</div><div class="submenu-item" onclick="openDocsPortal(event)">Docs</div></div></div>
@@ -156,6 +157,29 @@
         </div>
       </div>
       <small class="hint">A previsao mostra vendas e saidas processadas no dia; o saldo mostra o estoque atual, o comprometido e o remanescente por produto.</small>
+    </div>
+
+    <div id="dashViewVendasDiario" class="dash-view hidden">
+      <div class="boxFrota vendas-dashboard-shell">
+        <div class="vendas-box-head">
+          <h2>Dashboard - Vendas diária</h2>
+          <div class="vendas-toolbar">
+            <input type="date" id="dashVendasDiarioData" onchange="carregarDashboardVendasDiario()">
+            <button type="button" onclick="carregarDashboardVendasDiario()">Atualizar Dashboard</button>
+          </div>
+        </div>
+        <div id="dashVendasDiarioInfo" class="hint">Carregando desempenho dos vendedores.</div>
+        <div id="dashVendasDiarioCards" class="vendas-resumo-cards vendas-resumo-cards--wide"></div>
+      </div>
+      <div class="boxFrota">
+        <h3>Status dos vendedores</h3>
+        <div style="overflow:auto; max-height:620px;">
+          <table class="vendas-dashboard-table">
+            <thead><tr><th>Status</th><th>Vendedor</th><th>Clientes</th><th>Vendas efetivadas</th><th>Volume</th><th>Vol. bonificado</th><th>Valor bruto</th><th>Bonificação (Tb. 91)</th><th>Valor líquido</th></tr></thead>
+            <tbody id="dashVendasDiarioBody"></tbody>
+          </table>
+        </div>
+      </div>
     </div>
 
     <div id="dashViewVendas" class="dash-view hidden">
@@ -360,6 +384,49 @@
       </div>
     </div>
   </section>
+
+  <div id="vendasDiarioCardModal" class="vendas-diario-modal hidden" role="dialog" aria-modal="true" onclick="fecharCardVendasDiarioBackdrop(event)">
+    <div class="vendas-diario-modal-content" onclick="event.stopPropagation()">
+      <span class="close" onclick="fecharCardVendasDiario()">&times;</span>
+      <h3 id="vendasDiarioModalTitulo">Card de Vendas Diario</h3>
+      <input type="hidden" id="vendasDiarioModalId">
+      <div id="vendasDiarioModalResumo" class="hint"></div>
+      <div class="vendas-diario-modal-grid">
+        <label>Nome do frete<input type="text" id="vendasDiarioModalNome"></label>
+        <label>Cidade/rota cadastrada<select id="vendasDiarioModalCidadeCadastro"><option value="">Selecione no cadastro do Kanban</option></select></label>
+        <label>Caminhao<select id="vendasDiarioModalVeiculo"></select></label>
+        <label>Motorista<select id="vendasDiarioModalMotorista"></select></label>
+        <label>Entregador<select id="vendasDiarioModalEntregador"></select></label>
+        <label>Status<select id="vendasDiarioModalStatus"><option value="importado">Importado</option><option value="conferir_estoque">Conferir estoque</option><option value="conferido">Conferido</option></select></label>
+        <label class="vendas-diario-modal-full">Observacao<textarea id="vendasDiarioModalObservacao" rows="3"></textarea></label>
+      </div>
+      <div id="vendasDiarioModalDetalhes"></div>
+      <div class="vendas-toolbar vendas-diario-modal-actions">
+        <button type="button" onclick="salvarCardVendasDiario()">Salvar</button>
+        <button type="button" class="btn-secondary" onclick="enviarCardVendasDiarioFrete()">Enviar para Liberado</button>
+        <button type="button" class="btn-danger" onclick="excluirCardVendasDiario()">Excluir</button>
+        <button type="button" onclick="fecharCardVendasDiario()">Fechar</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="vendasDiarioPdfModal" class="vendas-diario-modal hidden" role="dialog" aria-modal="true" onclick="fecharImportacaoCargaPdfBackdrop(event)">
+    <div class="vendas-diario-modal-content" onclick="event.stopPropagation()">
+      <span class="close" onclick="cancelarImportacaoCargaPdfVendasDiario()">&times;</span>
+      <h3>Importar carga PDF</h3>
+      <div id="vendasDiarioPdfArquivoNome" class="hint">Nenhum PDF selecionado.</div>
+      <div class="vendas-diario-modal-grid">
+        <label class="vendas-diario-modal-full">Vendedor responsável
+          <select id="vendasDiarioCargaPdfVendedor"><option value="">Carregando vendedores...</option></select>
+        </label>
+      </div>
+      <div id="vendasDiarioPdfErro" class="hint"></div>
+      <div class="vendas-toolbar vendas-diario-modal-actions">
+        <button type="button" onclick="importarCargaPdfVendasDiario()">Confirmar importação</button>
+        <button type="button" class="btn-secondary" onclick="cancelarImportacaoCargaPdfVendasDiario()">Cancelar</button>
+      </div>
+    </div>
+  </div>
 
   <!-- =====================================================
        (MENU) FRETES / KANBAN
@@ -2313,6 +2380,50 @@
               <tbody id="vendasPrecoBody"></tbody>
             </table>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="vendasViewDiario" class="dash-view hidden">
+      <div class="boxFrota">
+        <div class="vendas-box-head">
+          <div>
+            <h3>Vendas diario</h3>
+            <div id="vendasDiarioInfo" class="hint">Importacao automatica programada para 08:00.</div>
+          </div>
+          <div class="vendas-toolbar">
+            <input type="date" id="vendasDiarioData" onchange="carregarVendasDiario()">
+            <button type="button" onclick="carregarVendasDiario()">Atualizar</button>
+          </div>
+        </div>
+        <div class="vendas-diario-import-box">
+          <input class="hidden" type="file" id="vendasDiarioArquivo" accept=".txt,text/plain" onchange="selecionarArquivoVendasDiario()">
+          <button type="button" onclick="document.getElementById('vendasDiarioArquivo').click()">Selecionar TXT do PC</button>
+          <span id="vendasDiarioArquivoNome" class="hint">Nenhum arquivo selecionado.</span>
+          <button type="button" id="vendasDiarioImportarBtn" onclick="importarVendasDiario()" disabled>Importar arquivo</button>
+          <input class="hidden" type="file" id="vendasDiarioCargaPdf" accept=".pdf,application/pdf" onchange="prepararImportacaoCargaPdfVendasDiario()">
+          <button type="button" onclick="document.getElementById('vendasDiarioCargaPdf').click()">Importar carga PDF</button>
+          <button type="button" onclick="importarVendasDiarioPasta()">Ler pasta automática agora</button>
+          </div>
+        <div id="vendasDiarioResumo" class="vendas-resumo-cards vendas-resumo-cards--wide"></div>
+      </div>
+      <div class="boxFrota">
+        <div class="vendas-box-head">
+          <h3>Kanban por vendedor</h3>
+          <button type="button" onclick="carregarKanbanVendasDiario()">Atualizar Kanban</button>
+        </div>
+        <div class="vendas-diario-kanban">
+          <section class="vendas-diario-kanban-col"><h4>Importado</h4><div id="vendasDiarioKanbanImportado"></div></section>
+          <section class="vendas-diario-kanban-col"><h4>Conferir estoque</h4><div id="vendasDiarioKanbanEstoque"></div></section>
+          <section class="vendas-diario-kanban-col"><h4>Conferido</h4><div id="vendasDiarioKanbanConferido"></div></section>
+        </div>
+      </div>
+      <div class="boxFrota">
+        <div style="overflow:auto; max-height:620px;">
+          <table>
+            <thead><tr><th>Vendedor</th><th>Cliente</th><th>Fantasia</th><th>Cidade</th><th>Status</th><th>Motivo</th><th>Itens</th><th>Valor bruto</th><th>Bonificação</th><th>Valor líquido</th><th>Peso</th></tr></thead>
+            <tbody id="vendasDiarioBody"></tbody>
+          </table>
         </div>
       </div>
     </div>

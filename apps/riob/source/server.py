@@ -38,6 +38,8 @@ from html.parser import HTMLParser
 from urllib.parse import urlparse, unquote
 import paramiko
 import nfe_ws
+from vendas_diario import discover_txt_files, parse_report, read_report
+from vendas_carga_pdf import parse_carga_pdf
 
 app = Flask(__name__, static_folder='.')
 
@@ -127,6 +129,8 @@ VENDAS_UPLOADS_DIR = os.path.join(VENDAS_CACHE_DIR, "uploads")
 VENDAS_REPORTS_DIR = os.path.join(VENDAS_CACHE_DIR, "reports")
 VENDAS_CONFIG_FILE = os.path.join(DATA_ROOT, "vendas-config.json")
 VENDAS_IMPORT_RULES_FILE = os.path.join(VENDAS_RELATORIOS_DIR, "config-rel-vendas")
+VENDAS_DIARIO_DIR = os.environ.get("RB_VENDAS_DIARIO_DIR", "/imports/vendas-diario")
+VENDAS_DIARIO_HORA = os.environ.get("RB_VENDAS_DIARIO_HORA", "08:00")
 DB_BACKUP_DIR = os.environ.get("RB_DB_BACKUP_DIR", os.path.join(BASE_DIR, "backupsSql"))
 CAMERAS_DATA_DIR = os.environ.get("CAMERAS_DATA_DIR", os.path.join(BASE_DIR, "cameras"))
 CARGAS_IMPORT_ROOT = os.environ.get("RB_CARGAS_IMPORT_DIR", "/media/SrvWin/CARGAS")
@@ -1602,6 +1606,126 @@ def ensure_schema():
             INDEX idx_vendas_relatorio_itens_data_grupo (import_id, data_ref, grupo_norm)
         )
         """)
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS vendas_diario_importacoes (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            data_ref DATE NOT NULL,
+            arquivo_nome VARCHAR(255) NOT NULL,
+            arquivo_caminho VARCHAR(700) NOT NULL DEFAULT '',
+            assinatura CHAR(64) NOT NULL,
+            pedidos INT NOT NULL DEFAULT 0,
+            positivos INT NOT NULL DEFAULT 0,
+            negativos INT NOT NULL DEFAULT 0,
+            valor_total DECIMAL(18,2) NOT NULL DEFAULT 0,
+            importado_em DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE KEY uq_vendas_diario_assinatura (assinatura),
+            INDEX idx_vendas_diario_data (data_ref)
+        )
+        """)
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS vendas_diario_pedidos (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            importacao_id BIGINT NOT NULL,
+            data_ref DATE NOT NULL,
+            vendedor_codigo VARCHAR(40) NOT NULL DEFAULT '',
+            cliente_codigo VARCHAR(40) NOT NULL DEFAULT '',
+            cliente_nome VARCHAR(255) NOT NULL DEFAULT '',
+            fantasia VARCHAR(255) NOT NULL DEFAULT '',
+            cidade VARCHAR(180) NOT NULL DEFAULT '',
+            status VARCHAR(20) NOT NULL DEFAULT 'positiva',
+            motivo_codigo VARCHAR(20) NOT NULL DEFAULT '',
+            motivo VARCHAR(255) NOT NULL DEFAULT '',
+            valor_total DECIMAL(18,2) NOT NULL DEFAULT 0,
+            peso_bruto DECIMAL(18,3) NOT NULL DEFAULT 0,
+            INDEX idx_vendas_diario_pedidos_data (data_ref),
+            INDEX idx_vendas_diario_pedidos_vendedor (vendedor_codigo),
+            INDEX idx_vendas_diario_pedidos_cliente (cliente_codigo)
+        )
+        """)
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS vendas_diario_itens (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            pedido_id BIGINT NOT NULL,
+            produto_codigo VARCHAR(40) NOT NULL DEFAULT '',
+            tabela_venda INT NOT NULL DEFAULT 0,
+            via INT NOT NULL DEFAULT 0,
+            quantidade DECIMAL(18,3) NOT NULL DEFAULT 0,
+            unidade VARCHAR(10) NOT NULL DEFAULT '',
+            descricao VARCHAR(255) NOT NULL DEFAULT '',
+            valor_unitario DECIMAL(18,2) NOT NULL DEFAULT 0,
+            INDEX idx_vendas_diario_itens_pedido (pedido_id),
+            INDEX idx_vendas_diario_itens_produto (produto_codigo)
+        )
+        """)
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS vendas_diario_kanban (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            importacao_id BIGINT NOT NULL,
+            vendedor_codigo VARCHAR(40) NOT NULL DEFAULT '',
+            status VARCHAR(30) NOT NULL DEFAULT 'importado',
+            frete_id INT NULL,
+            nome_frete VARCHAR(255) NOT NULL DEFAULT '',
+            cidade VARCHAR(255) NOT NULL DEFAULT '',
+            cidade_cadastro_id INT NULL,
+            origem_tipo VARCHAR(20) NOT NULL DEFAULT 'txt',
+            card_principal_id BIGINT NULL,
+            veiculo_id INT NULL,
+            colaborador_motorista_id INT NULL,
+            colaborador_entregador_id INT NULL,
+            observacao VARCHAR(500) NOT NULL DEFAULT '',
+            mapa_numero VARCHAR(40) NOT NULL DEFAULT '',
+            rota VARCHAR(255) NOT NULL DEFAULT '',
+            peso_total DECIMAL(18,3) NOT NULL DEFAULT 0,
+            qtd_entregas INT NOT NULL DEFAULT 0,
+            volumes_total DECIMAL(18,3) NOT NULL DEFAULT 0,
+            valor_bonificacao DECIMAL(18,2) NOT NULL DEFAULT 0,
+            criado_em DATETIME DEFAULT CURRENT_TIMESTAMP,
+            atualizado_em DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uq_vendas_diario_kanban_import_vendedor (importacao_id, vendedor_codigo),
+            INDEX idx_vendas_diario_kanban_status (status)
+        )
+        """)
+        for stmt in (
+            "ALTER TABLE vendas_diario_kanban ADD COLUMN frete_id INT NULL",
+            "ALTER TABLE vendas_diario_kanban ADD COLUMN nome_frete VARCHAR(255) NOT NULL DEFAULT ''",
+            "ALTER TABLE vendas_diario_kanban ADD COLUMN cidade VARCHAR(255) NOT NULL DEFAULT ''",
+            "ALTER TABLE vendas_diario_kanban ADD COLUMN cidade_cadastro_id INT NULL",
+            "ALTER TABLE vendas_diario_kanban ADD COLUMN origem_tipo VARCHAR(20) NOT NULL DEFAULT 'txt'",
+            "ALTER TABLE vendas_diario_kanban ADD COLUMN card_principal_id BIGINT NULL",
+            "ALTER TABLE vendas_diario_kanban ADD COLUMN veiculo_id INT NULL",
+            "ALTER TABLE vendas_diario_kanban ADD COLUMN colaborador_motorista_id INT NULL",
+            "ALTER TABLE vendas_diario_kanban ADD COLUMN colaborador_entregador_id INT NULL",
+            "ALTER TABLE vendas_diario_kanban ADD COLUMN observacao VARCHAR(500) NOT NULL DEFAULT ''",
+            "ALTER TABLE vendas_diario_kanban ADD COLUMN mapa_numero VARCHAR(40) NOT NULL DEFAULT ''",
+            "ALTER TABLE vendas_diario_kanban ADD COLUMN rota VARCHAR(255) NOT NULL DEFAULT ''",
+            "ALTER TABLE vendas_diario_kanban ADD COLUMN peso_total DECIMAL(18,3) NOT NULL DEFAULT 0",
+            "ALTER TABLE vendas_diario_kanban ADD COLUMN qtd_entregas INT NOT NULL DEFAULT 0",
+            "ALTER TABLE vendas_diario_kanban ADD COLUMN volumes_total DECIMAL(18,3) NOT NULL DEFAULT 0",
+            "ALTER TABLE vendas_diario_kanban ADD COLUMN valor_bonificacao DECIMAL(18,2) NOT NULL DEFAULT 0",
+            "ALTER TABLE vendas_diario_kanban ADD INDEX idx_vendas_diario_kanban_frete (frete_id)",
+            "ALTER TABLE vendas_diario_kanban ADD INDEX idx_vendas_diario_kanban_cidade (cidade_cadastro_id)",
+            "ALTER TABLE vendas_diario_kanban ADD INDEX idx_vendas_diario_kanban_principal (card_principal_id)",
+        ):
+            try:
+                cur.execute(stmt)
+            except Exception:
+                pass
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS vendas_diario_kanban_historico (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            card_id BIGINT NOT NULL,
+            acao VARCHAR(40) NOT NULL,
+            card_origem_id BIGINT NULL,
+            card_destino_id BIGINT NULL,
+            usuario VARCHAR(120) NOT NULL DEFAULT '',
+            detalhes TEXT NULL,
+            criado_em DATETIME DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_vd_kanban_hist_card (card_id),
+            INDEX idx_vd_kanban_hist_origem (card_origem_id),
+            INDEX idx_vd_kanban_hist_destino (card_destino_id)
+        )
+        """)
+        cur.execute("UPDATE vendas_diario_kanban SET origem_tipo='pdf' WHERE mapa_numero<>'' AND origem_tipo='txt'")
 
         
         # 2b) Se as tabelas já existiam antigas, garante colunas esperadas
@@ -3159,7 +3283,7 @@ def _estoque_apresentacao_normalizada(*valores):
         return "CX"
     if "DUZIA" in texto or "DUZIAS" in texto or re.search(r"\bDZ\b", texto):
         return "DZ"
-    if "PACOTE" in texto or "PACOTES" in texto or re.search(r"\bPCT\b", texto) or re.search(r"\bPAC\b", texto):
+    if "PACOTE" in texto or "PACOTES" in texto or re.search(r"\bPCT\b", texto) or re.search(r"\bPAC\b", texto) or re.search(r"\bPT\b", texto):
         return "PCT"
     if "FARDO" in texto or "FARDOS" in texto or re.search(r"\bFD\b", texto):
         return "FD"
@@ -3368,6 +3492,46 @@ def _fator_base_produto(nome_produto="", embalagem="", unidade_ref="", grupo_pro
     if "GFA" in texto or "510ML" in texto or "200ML" in texto:
         return 12.0
     return 1.0
+
+
+def _estoque_pallet_meta(item):
+    """Capacidade logistica; o saldo canonico continua sempre em unidades."""
+    item = item or {}
+    grupo = _estoque_grupo_normalizado(item.get("grupo_estoque")) or _estoque_grupo_inferido(
+        nome_produto=item.get("produto_base_nome") or item.get("nome_produto"),
+        grupo_estoque=item.get("grupo_estoque"),
+    )
+    texto = _produto_nome_normalizado(" ".join([
+        _as_str(item.get("produto_base_nome")), _as_str(item.get("nome_produto")),
+        _as_str(item.get("embalagem_tipo_padrao")), _as_str(item.get("unidade")),
+    ]))
+    volumes = unidades = 0
+    rotulo = ""
+    regra = ""
+    if grupo == "AGUA":
+        volumes, unidades, rotulo, regra = 150, 12, "pacotes", "agua_150x12"
+    elif grupo == "PET" and re.search(r"\b2\s*L(?:T)?\b|\b2L\b", texto):
+        volumes, unidades, rotulo, regra = 80, 6, "pacotes", "pet_2l_80x6"
+    elif grupo == "PET" and re.search(r"\b600\s*ML\b|\bPET\s*600\b", texto):
+        volumes, unidades, rotulo, regra = 132, 12, "pacotes", "pet_600_132x12"
+    elif grupo == "PET" and re.search(r"\b200\s*ML\b|\bPET\s*200\b", texto):
+        volumes, unidades, rotulo, regra = 304, 12, "pacotes", "pet_200_304x12"
+    elif grupo == "GFA" and re.search(r"\b600\s*ML\b|\bGFA\s*600\b|\bGRF\s*600\b", texto):
+        volumes, unidades, rotulo, regra = 35, 24, "caixas", "gfa_600_35x24"
+    elif grupo == "GFA" and re.search(r"\b200\s*ML\b|\bGFA\s*200\b|\bGRF\s*200\b", texto):
+        fatores = {_as_int(valor, 0) for valor in (item.get("fatores_embalagem_origem") or [])}
+        if "CX24" in texto or re.search(r"\b(?:CX|CAIXA)\s*24\b", texto) or fatores == {24}:
+            volumes, unidades, rotulo, regra = 60, 24, "caixas", "gfa_200_cx24_60x24"
+        elif "CX48" in texto or re.search(r"\b(?:CX|CAIXA)\s*48\b", texto) or fatores == {48}:
+            volumes, unidades, rotulo, regra = 48, 48, "caixas", "gfa_200_cx48_48x48"
+    return {
+        "identificado": bool(volumes and unidades),
+        "volumes_por_pallet": volumes,
+        "unidades_por_volume": unidades,
+        "unidades_por_pallet": volumes * unidades,
+        "rotulo_volume": rotulo,
+        "regra": regra,
+    }
 
 def _valor_numerico_token(texto):
     return _as_float_br(_as_str(texto), _as_float(_as_str(texto), 0.0))
@@ -13222,6 +13386,8 @@ def _estoque_merge_row(target, aliases, row):
         "ultima_movimentacao": "",
         "fornecedores": {},
         "codigos_origem": set(),
+        "embalagens_origem": set(),
+        "fatores_embalagem_origem": set(),
     })
     for alias in chaves_candidatas:
         aliases[alias] = chave
@@ -13235,6 +13401,12 @@ def _estoque_merge_row(target, aliases, row):
     for codigo in (codigo_produto_nfe_saida, codigo_barras):
         if codigo:
             atual.setdefault("codigos_origem", set()).add(codigo)
+    embalagem_origem = _as_str(row.get("embalagem_tipo_padrao") or row.get("unidade")).upper()
+    if embalagem_origem:
+        atual.setdefault("embalagens_origem", set()).add(embalagem_origem)
+    fator_origem = _as_float(row.get("fator_embalagem_padrao"), 0.0)
+    if fator_origem > 0:
+        atual.setdefault("fatores_embalagem_origem", set()).add(fator_origem)
     if grupo_estoque and not atual.get("grupo_estoque"):
         atual["grupo_estoque"] = grupo_estoque
     if produto_base_key and not atual.get("produto_base_key"):
@@ -13525,8 +13697,11 @@ def _estoque_resumo_produtos_data():
             "fornecedores": fornecedores,
             "fornecedor_nomes": [f.get("nome") for f in fornecedores if f.get("nome")],
             "fornecedor_categorias": sorted({f.get("categoria") or "outros" for f in fornecedores}),
+            "embalagem_tipo_padrao": " ".join(sorted(item.get("embalagens_origem") or [])),
+            "fatores_embalagem_origem": sorted(item.get("fatores_embalagem_origem") or []),
         }
         row_publica.update(_estoque_classificacao_operacional(row_publica))
+        row_publica["pallet_meta"] = _estoque_pallet_meta(row_publica)
         rows.append(row_publica)
     rows.sort(key=lambda r: (
         _estoque_grupo_ordem(r.get("grupo_estoque")),
@@ -21723,6 +21898,113 @@ def listar_notas_saida_frete(id):
                 grupos.values(),
                 key=lambda item: _as_str(item.get("nome")).lower(),
             )
+
+        # O PDF de carga e a fonte operacional principal do card. XMLs ligados
+        # depois complementam apenas itens/campos ausentes; nunca somam a mesma
+        # carga uma segunda vez nem sobrescrevem dados existentes no PDF.
+        cursor.execute("""
+            SELECT k.id card_id,k.vendedor_codigo,k.mapa_numero,k.rota,k.observacao,
+                   k.peso_total,k.qtd_entregas,k.volumes_total,k.valor_bonificacao,
+                   i.id importacao_id,i.data_ref,i.arquivo_nome,i.valor_total
+            FROM vendas_diario_kanban k
+            JOIN vendas_diario_importacoes i ON i.id=k.importacao_id
+            WHERE k.frete_id=%s AND k.origem_tipo='pdf'
+            ORDER BY k.id LIMIT 1
+        """, (id,))
+        pdf_ref = cursor.fetchone()
+        if pdf_ref:
+            cursor.execute("""
+                SELECT vi.produto_codigo,vi.descricao,vi.unidade,
+                       SUM(vi.quantidade) quantidade
+                FROM vendas_diario_itens vi
+                JOIN vendas_diario_pedidos vp ON vp.id=vi.pedido_id
+                WHERE vp.importacao_id=%s AND vp.vendedor_codigo=%s
+                GROUP BY vi.produto_codigo,vi.descricao,vi.unidade
+                ORDER BY vi.descricao,vi.unidade
+            """, (pdf_ref["importacao_id"], pdf_ref["vendedor_codigo"]))
+            itens_pdf = []
+            total_unidades_pdf = 0.0
+            total_pets_pdf = 0.0
+            total_retornaveis_pdf = 0.0
+            total_litros_pdf = 0.0
+            pets_tamanho_pdf = {}
+            for row in cursor.fetchall() or []:
+                nome = _as_str(row.get("descricao")) or "Item sem descricao"
+                unidade = _as_str(row.get("unidade"))
+                embalagens = _as_float(row.get("quantidade"), 0.0)
+                fator = _fator_base_produto(nome_produto=nome, embalagem=unidade, unidade_ref=unidade)
+                fator = fator if fator > 0 else 1.0
+                unidades = embalagens * fator
+                texto = _normalizar_chave_texto(nome).upper()
+                eh_pet = "PET" in texto or "AGUA" in texto
+                eh_retornavel = any(token in texto for token in ("GFA", "GRF", "RETORN", "VIDRO")) and not eh_pet
+                medidas = re.findall(r"(\d+(?:[.,]\d+)?)\s*(ML|LITROS?|LTS?|LT)\b", texto, re.I)
+                litros_unidade = 0.0
+                if medidas:
+                    medida, unidade_medida = medidas[-1]
+                    litros_unidade = _as_float(str(medida).replace(",", "."), 0.0)
+                    if unidade_medida.upper() == "ML":
+                        litros_unidade /= 1000.0
+                litros = unidades * litros_unidade
+                item_pdf = {
+                    "nome": nome,
+                    "codigo_produto": _as_str(row.get("produto_codigo")),
+                    "unidade": unidade,
+                    "fator": fator,
+                    "embalagens": embalagens,
+                    "unidades": unidades,
+                    "litros": litros,
+                    "valor": 0.0,
+                    "tipo": "PET" if eh_pet else ("Retornavel" if eh_retornavel else "Outros"),
+                    "origem": "pdf",
+                }
+                itens_pdf.append(item_pdf)
+                total_unidades_pdf += unidades
+                total_litros_pdf += litros
+                if eh_pet:
+                    total_pets_pdf += unidades
+                    tamanho = (f"{litros_unidade:g} L" if litros_unidade >= 1 else f"{round(litros_unidade*1000):g} ml") if litros_unidade else "Tamanho nao identificado"
+                    pets_tamanho_pdf[tamanho] = _as_float(pets_tamanho_pdf.get(tamanho), 0.0) + unidades
+                elif eh_retornavel:
+                    total_retornaveis_pdf += unidades
+
+            def chave_item_carga(item):
+                codigo = _codigo_produto_chave(item.get("codigo_produto"))
+                if codigo:
+                    return f"cod:{codigo}"
+                return f"nome:{_normalizar_chave_texto(item.get('nome'))}"
+
+            chaves_pdf = {chave_item_carga(item) for item in itens_pdf}
+            itens_xml_complementares = []
+            for item in carga_xml.get("itens") or []:
+                if chave_item_carga(item) in chaves_pdf:
+                    continue
+                itens_xml_complementares.append({**item, "origem": "xml_complementar"})
+            carga_xml = {
+                **carga_xml,
+                "origem_principal": "pdf",
+                "fontes": {"pdf": True, "xml": bool(notas or pendentes)},
+                "card_vendas_diario_id": _as_int(pdf_ref.get("card_id"), 0),
+                "arquivo_pdf": _as_str(pdf_ref.get("arquivo_nome")),
+                "vendedor_codigo": _as_str(pdf_ref.get("vendedor_codigo")),
+                "mapa_numero": _as_str(pdf_ref.get("mapa_numero")),
+                "rota": _as_str(pdf_ref.get("rota")),
+                "cidades_resumo": _as_str(pdf_ref.get("observacao")),
+                "data_ref": _fmt_date(pdf_ref.get("data_ref")),
+                "peso_total": _as_float(pdf_ref.get("peso_total"), 0.0),
+                "qtd_entregas": _as_int(pdf_ref.get("qtd_entregas"), 0),
+                "total_embalagens": _as_float(pdf_ref.get("volumes_total"), 0.0),
+                "valor_total": _as_float(pdf_ref.get("valor_total"), 0.0),
+                "valor_bonificacao": _as_float(pdf_ref.get("valor_bonificacao"), 0.0),
+                "total_unidades": total_unidades_pdf,
+                "total_pets": total_pets_pdf,
+                "total_retornaveis": total_retornaveis_pdf,
+                "total_litros": total_litros_pdf,
+                "pets_por_tamanho": pets_tamanho_pdf,
+                "itens": itens_pdf + itens_xml_complementares,
+                "itens_pdf_total": len(itens_pdf),
+                "itens_xml_complementares": len(itens_xml_complementares),
+            }
         return jsonify(
             {
                 "ok": True,
@@ -30405,6 +30687,715 @@ def dashboard_vendas_painel():
     except Exception as exc:
         return jsonify({"erro": f"Falha ao ler dashboard de vendas: {str(exc)}"}), 500
 
+
+_VENDAS_DIARIO_IMPORT_LOCK = threading.Lock()
+_VENDAS_DIARIO_SCHEDULER_STARTED = False
+
+
+def _vendas_diario_importar_arquivo(path):
+    text, signature = read_report(path)
+    payload = parse_report(text, os.path.basename(path))
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT id FROM vendas_diario_importacoes WHERE assinatura=%s LIMIT 1", (signature,))
+        existing = cur.fetchone()
+        if existing:
+            return {"arquivo": os.path.basename(path), "status": "ja_importado", "importacao_id": existing[0]}
+        orders = [
+            item for item in payload["orders"]
+            if item["status"] == "positiva" and float(item.get("valor_total") or 0) > 0
+        ]
+        positives = len(orders)
+        negatives = 0
+        total = round(sum(float(item["valor_total"]) for item in orders), 2)
+        cur.execute("""
+            INSERT INTO vendas_diario_importacoes
+                (data_ref, arquivo_nome, arquivo_caminho, assinatura, pedidos, positivos, negativos, valor_total)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+        """, (payload["data_ref"], os.path.basename(path), os.path.abspath(path), signature,
+              len(orders), positives, negatives, total))
+        import_id = cur.lastrowid
+        for order in orders:
+            cur.execute("""
+                INSERT INTO vendas_diario_pedidos
+                    (importacao_id, data_ref, vendedor_codigo, cliente_codigo, cliente_nome, fantasia,
+                     cidade, status, motivo_codigo, motivo, valor_total, peso_bruto)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            """, (import_id, order["data_ref"], order["vendedor_codigo"], order["cliente_codigo"],
+                  order["cliente_nome"], order["fantasia"], order["cidade"], order["status"],
+                  order["motivo_codigo"], order["motivo"], order["valor_total"], order["peso_bruto"]))
+            pedido_id = cur.lastrowid
+            for item in order["items"]:
+                cur.execute("""
+                    INSERT INTO vendas_diario_itens
+                        (pedido_id, produto_codigo, tabela_venda, via, quantidade, unidade, descricao, valor_unitario)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+                """, (pedido_id, item["produto_codigo"], item["tabela"], item["via"], item["quantidade"],
+                      item["unidade"], item["descricao"], item["valor_unitario"]))
+        cur.execute("""
+            INSERT IGNORE INTO vendas_diario_kanban (importacao_id, vendedor_codigo, status)
+            SELECT importacao_id, vendedor_codigo, 'importado'
+            FROM vendas_diario_pedidos
+            WHERE importacao_id=%s
+            GROUP BY importacao_id, vendedor_codigo
+            HAVING SUM(CASE WHEN status='positiva' AND valor_total>0 THEN 1 ELSE 0 END) > 0
+        """, (import_id,))
+        conn.commit()
+        return {"arquivo": os.path.basename(path), "status": "importado" if orders else "sem_vendas", "importacao_id": import_id,
+            "pedidos": len(orders), "positivos": positives, "negativos": 0, "valor_total": total}
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        conn.close()
+
+
+def _vendas_diario_importar_pasta():
+    if not _VENDAS_DIARIO_IMPORT_LOCK.acquire(blocking=False):
+        return {"processando": True, "resultados": []}
+    try:
+        files = discover_txt_files(VENDAS_DIARIO_DIR)
+        results = []
+        for path in files:
+            try:
+                results.append(_vendas_diario_importar_arquivo(path))
+            except Exception as exc:
+                results.append({"arquivo": os.path.basename(path), "status": "erro", "erro": str(exc)})
+        return {"processando": False, "diretorio": VENDAS_DIARIO_DIR, "arquivos": len(files), "resultados": results}
+    finally:
+        _VENDAS_DIARIO_IMPORT_LOCK.release()
+
+
+@app.route("/api/vendas/diario", methods=["GET"])
+def vendas_diario_api():
+    data_ref = _as_str(request.args.get("data"))
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    try:
+        if not data_ref:
+            cur.execute("SELECT MAX(data_ref) AS data_ref FROM vendas_diario_importacoes")
+            row = cur.fetchone() or {}
+            data_ref = _fmt_date(row.get("data_ref"))
+        cur.execute("""
+            SELECT p.id, p.data_ref, p.vendedor_codigo, p.cliente_codigo, p.cliente_nome, p.fantasia,
+                   p.cidade, p.status, p.motivo_codigo, p.motivo, p.valor_total, p.peso_bruto,
+                   COALESCE(iv.itens,0) AS itens,
+                   COALESCE(iv.valor_bonificacao,0) AS valor_bonificacao,
+                   CASE WHEN p.status='positiva'
+                        THEN p.valor_total-COALESCE(iv.valor_bonificacao,0)
+                        ELSE 0 END AS valor_liquido
+            FROM vendas_diario_pedidos p
+            LEFT JOIN (
+                SELECT pedido_id, COUNT(*) itens,
+                       SUM(CASE WHEN tabela_venda=91 THEN quantidade*valor_unitario ELSE 0 END) valor_bonificacao
+                FROM vendas_diario_itens GROUP BY pedido_id
+            ) iv ON iv.pedido_id=p.id
+            WHERE p.data_ref=%s
+              AND NOT EXISTS (
+                  SELECT 1 FROM vendas_diario_kanban kf
+                  LEFT JOIN vendas_diario_kanban kp ON kp.id=kf.card_principal_id
+                  WHERE kf.importacao_id=p.importacao_id
+                    AND kf.vendedor_codigo=p.vendedor_codigo
+                    AND (kf.status='excluido' OR kp.status='excluido')
+              )
+            ORDER BY p.vendedor_codigo, p.cliente_nome
+        """, (data_ref or "1900-01-01",))
+        orders = cur.fetchall() or []
+        cur.execute("SELECT DISTINCT data_ref FROM vendas_diario_importacoes ORDER BY data_ref DESC LIMIT 90")
+        dates = [_fmt_date(row.get("data_ref")) for row in (cur.fetchall() or [])]
+        return jsonify({
+            "data_ref": data_ref,
+            "datas": dates,
+            "pedidos": orders,
+            "resumo": {
+                "pedidos": len(orders),
+                "positivos": sum(1 for row in orders if row.get("status") == "positiva"),
+                "negativos": sum(1 for row in orders if row.get("status") == "negativa"),
+                "valor_total": round(sum(_as_float(row.get("valor_total"), 0) for row in orders if row.get("status") == "positiva"), 2),
+                "valor_bruto": round(sum(_as_float(row.get("valor_total"), 0) for row in orders if row.get("status") == "positiva"), 2),
+                "valor_bonificacao": round(sum(_as_float(row.get("valor_bonificacao"), 0) for row in orders if row.get("status") == "positiva"), 2),
+                "valor_liquido": round(sum(_as_float(row.get("valor_liquido"), 0) for row in orders), 2),
+                "peso_bruto": round(sum(_as_float(row.get("peso_bruto"), 0) for row in orders), 3),
+            },
+            "importacao": {"diretorio": VENDAS_DIARIO_DIR, "horario": VENDAS_DIARIO_HORA},
+        })
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.route("/api/vendas/diario/dashboard", methods=["GET"])
+def vendas_diario_dashboard_api():
+    data_ref = _as_str(request.args.get("data"))
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    try:
+        if not data_ref:
+            cur.execute("SELECT MAX(data_ref) AS data_ref FROM vendas_diario_importacoes")
+            data_ref = _fmt_date((cur.fetchone() or {}).get("data_ref"))
+        cur.execute("""
+            SELECT p.vendedor_codigo,
+                   COUNT(*) AS clientes,
+                   SUM(CASE WHEN p.status='positiva' THEN 1 ELSE 0 END) AS positivos,
+                   SUM(CASE WHEN p.status='negativa' THEN 1 ELSE 0 END) AS negativos,
+                   SUM(CASE WHEN p.status='positiva' THEN p.valor_total ELSE 0 END) AS valor_bruto,
+                   SUM(CASE WHEN p.status='positiva' THEN COALESCE(iv.valor_bonificacao,0) ELSE 0 END) AS valor_bonificacao,
+                   SUM(CASE WHEN p.status='positiva' THEN COALESCE(iv.volume_venda, 0) ELSE 0 END) AS volume_venda,
+                   SUM(CASE WHEN p.status='positiva' THEN COALESCE(iv.volume_bonificado, 0) ELSE 0 END) AS volume_bonificado
+            FROM vendas_diario_pedidos p
+            LEFT JOIN (
+                SELECT pedido_id,
+                       SUM(CASE WHEN tabela_venda<>91 THEN quantidade ELSE 0 END) AS volume_venda,
+                       SUM(CASE WHEN tabela_venda=91 THEN quantidade ELSE 0 END) AS volume_bonificado,
+                       SUM(CASE WHEN tabela_venda=91 THEN quantidade*valor_unitario ELSE 0 END) AS valor_bonificacao
+                FROM vendas_diario_itens
+                GROUP BY pedido_id
+            ) iv ON iv.pedido_id=p.id
+            WHERE p.data_ref=%s
+              AND NOT EXISTS (
+                  SELECT 1 FROM vendas_diario_kanban kf
+                  LEFT JOIN vendas_diario_kanban kp ON kp.id=kf.card_principal_id
+                  WHERE kf.importacao_id=p.importacao_id
+                    AND kf.vendedor_codigo=p.vendedor_codigo
+                    AND (kf.status='excluido' OR kp.status='excluido')
+              )
+            GROUP BY p.vendedor_codigo
+            ORDER BY valor_bruto DESC, p.vendedor_codigo
+        """, (data_ref or "1900-01-01",))
+        sellers = []
+        for row in cur.fetchall() or []:
+            item = dict(row)
+            clients = _as_int(item.get("clientes"), 0)
+            positives = _as_int(item.get("positivos"), 0)
+            rate = round((positives / clients * 100), 1) if clients else 0.0
+            item["positivacao_percentual"] = rate
+            item["valor_bruto"] = round(_as_float(item.get("valor_bruto"), 0), 2)
+            item["valor_bonificacao"] = round(_as_float(item.get("valor_bonificacao"), 0), 2)
+            item["valor_liquido"] = round(item["valor_bruto"] - item["valor_bonificacao"], 2)
+            item["valor_total"] = item["valor_bruto"]
+            item["status"] = "sem_vendas" if positives == 0 else ("atencao" if rate < 30 else "com_vendas")
+            sellers.append(item)
+        cur.execute("SELECT DISTINCT data_ref FROM vendas_diario_importacoes ORDER BY data_ref DESC LIMIT 90")
+        dates = [_fmt_date(row.get("data_ref")) for row in (cur.fetchall() or [])]
+        return jsonify({
+            "data_ref": data_ref,
+            "datas": dates,
+            "vendedores": sellers,
+            "resumo": {
+                "vendedores": len(sellers),
+                "clientes": sum(_as_int(row.get("clientes"), 0) for row in sellers),
+                "positivos": sum(_as_int(row.get("positivos"), 0) for row in sellers),
+                "negativos": sum(_as_int(row.get("negativos"), 0) for row in sellers),
+                "volume_venda": round(sum(_as_float(row.get("volume_venda"), 0) for row in sellers), 3),
+                "volume_bonificado": round(sum(_as_float(row.get("volume_bonificado"), 0) for row in sellers), 3),
+                "valor_total": round(sum(_as_float(row.get("valor_bruto"), 0) for row in sellers), 2),
+                "valor_bruto": round(sum(_as_float(row.get("valor_bruto"), 0) for row in sellers), 2),
+                "valor_bonificacao": round(sum(_as_float(row.get("valor_bonificacao"), 0) for row in sellers), 2),
+                "valor_liquido": round(sum(_as_float(row.get("valor_liquido"), 0) for row in sellers), 2),
+            },
+        })
+    finally:
+        cur.close()
+        conn.close()
+
+
+def _vendas_diario_kanban_sincronizar(cur):
+    cur.execute("""
+        INSERT IGNORE INTO vendas_diario_kanban (importacao_id, vendedor_codigo, status)
+        SELECT importacao_id, vendedor_codigo, 'importado'
+        FROM vendas_diario_pedidos
+        GROUP BY importacao_id, vendedor_codigo
+        HAVING SUM(CASE WHEN status='positiva' AND valor_total>0 THEN 1 ELSE 0 END) > 0
+    """)
+
+
+@app.route("/api/vendas/diario/kanban", methods=["GET"])
+def vendas_diario_kanban_api():
+    data_ref = _as_str(request.args.get("data"))
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    try:
+        _vendas_diario_kanban_sincronizar(cur)
+        conn.commit()
+        if not data_ref:
+            cur.execute("SELECT MAX(data_ref) AS data_ref FROM vendas_diario_importacoes")
+            data_ref = _fmt_date((cur.fetchone() or {}).get("data_ref"))
+        cur.execute("""
+            SELECT k.id, k.importacao_id, k.vendedor_codigo, k.status, k.frete_id, k.nome_frete,
+                   k.cidade, k.cidade_cadastro_id, k.veiculo_id, k.colaborador_motorista_id, k.colaborador_entregador_id,
+                   k.observacao, k.mapa_numero, k.rota, k.peso_total, k.qtd_entregas,
+                   k.volumes_total, k.valor_bonificacao, k.origem_tipo, k.card_principal_id,
+                   k.criado_em, k.atualizado_em,
+                   imp.data_ref, imp.arquivo_nome,
+                   COUNT(DISTINCT kc.id) AS fontes_total,
+                   GROUP_CONCAT(DISTINCT kc.origem_tipo ORDER BY kc.origem_tipo SEPARATOR ',') AS origens_tipos,
+                   SUM(CASE WHEN p.status='positiva' AND p.valor_total>0 THEN 1 ELSE 0 END) AS clientes,
+                   SUM(CASE WHEN p.status='positiva' AND p.valor_total>0 THEN 1 ELSE 0 END) AS positivos,
+                   SUM(CASE WHEN p.status='negativa' THEN 1 ELSE 0 END) AS negativos,
+                   SUM(CASE WHEN p.status='positiva' THEN p.valor_total ELSE 0 END) AS valor_total
+            FROM vendas_diario_kanban k
+            JOIN vendas_diario_importacoes imp ON imp.id=k.importacao_id
+            JOIN vendas_diario_kanban kc ON COALESCE(kc.card_principal_id, kc.id)=k.id
+            JOIN vendas_diario_pedidos p ON p.importacao_id=kc.importacao_id AND p.vendedor_codigo=kc.vendedor_codigo
+            WHERE imp.data_ref=%s AND k.card_principal_id IS NULL AND k.status NOT IN ('enviado_frete', 'excluido')
+            GROUP BY k.id, k.importacao_id, k.vendedor_codigo, k.status, k.frete_id, k.nome_frete,
+                     k.cidade, k.cidade_cadastro_id, k.veiculo_id, k.colaborador_motorista_id, k.colaborador_entregador_id,
+                     k.observacao, k.mapa_numero, k.rota, k.peso_total, k.qtd_entregas,
+                     k.volumes_total, k.valor_bonificacao, k.origem_tipo, k.card_principal_id,
+                     k.criado_em, k.atualizado_em,
+                     imp.data_ref, imp.arquivo_nome
+            HAVING SUM(CASE WHEN p.status='positiva' AND p.valor_total>0 THEN 1 ELSE 0 END) > 0
+            ORDER BY k.id
+        """, (data_ref or "1900-01-01",))
+        cards = cur.fetchall() or []
+        for card in cards:
+            cur.execute("""
+                SELECT kf.id, kf.origem_tipo, kf.importacao_id, kf.vendedor_codigo, kf.mapa_numero, kf.rota, imf.arquivo_nome
+                FROM vendas_diario_kanban kf
+                JOIN vendas_diario_importacoes imf ON imf.id=kf.importacao_id
+                WHERE COALESCE(kf.card_principal_id,kf.id)=%s ORDER BY kf.id
+            """, (card["id"],))
+            card["fontes"] = cur.fetchall() or []
+            cur.execute("""
+                SELECT p.cliente_codigo, p.cliente_nome, p.fantasia, p.cidade,
+                       p.status, p.motivo, p.valor_total
+                FROM vendas_diario_pedidos p
+                JOIN vendas_diario_kanban kf ON kf.importacao_id=p.importacao_id AND kf.vendedor_codigo=p.vendedor_codigo
+                WHERE COALESCE(kf.card_principal_id,kf.id)=%s
+                  AND p.status='positiva' AND p.valor_total>0
+                ORDER BY p.status, p.cliente_nome
+            """, (card["id"],))
+            card["clientes_lista"] = cur.fetchall() or []
+            cur.execute("""
+                SELECT i.produto_codigo, i.descricao, i.unidade,
+                       SUM(CASE WHEN i.tabela_venda<>91 THEN i.quantidade ELSE 0 END) AS quantidade_venda,
+                       SUM(CASE WHEN i.tabela_venda=91 THEN i.quantidade ELSE 0 END) AS quantidade_bonificada,
+                       SUM(CASE WHEN i.tabela_venda<>91 THEN i.quantidade * i.valor_unitario ELSE 0 END) AS valor_venda,
+                       SUM(CASE WHEN i.tabela_venda=91 THEN i.quantidade * i.valor_unitario ELSE 0 END) AS valor_bonificado
+                FROM vendas_diario_itens i
+                JOIN vendas_diario_pedidos p ON p.id=i.pedido_id
+                JOIN vendas_diario_kanban kf ON kf.importacao_id=p.importacao_id AND kf.vendedor_codigo=p.vendedor_codigo
+                WHERE COALESCE(kf.card_principal_id,kf.id)=%s
+                  AND p.status='positiva' AND p.valor_total>0
+                GROUP BY i.produto_codigo, i.descricao, i.unidade
+                ORDER BY i.descricao
+            """, (card["id"],))
+            products = cur.fetchall() or []
+            cur.execute("""
+                SELECT kf.origem_tipo, i.produto_codigo, i.descricao, i.unidade,
+                       SUM(CASE WHEN i.tabela_venda<>91 THEN i.quantidade ELSE 0 END) quantidade_venda,
+                       SUM(CASE WHEN i.tabela_venda=91 THEN i.quantidade ELSE 0 END) quantidade_bonificada,
+                       SUM(CASE WHEN i.tabela_venda<>91 THEN i.quantidade*i.valor_unitario ELSE 0 END) valor_venda
+                FROM vendas_diario_itens i
+                JOIN vendas_diario_pedidos p ON p.id=i.pedido_id
+                JOIN vendas_diario_kanban kf ON kf.importacao_id=p.importacao_id AND kf.vendedor_codigo=p.vendedor_codigo
+                WHERE COALESCE(kf.card_principal_id,kf.id)=%s
+                  AND p.status='positiva' AND p.valor_total>0
+                GROUP BY kf.origem_tipo,i.produto_codigo,i.descricao,i.unidade
+                ORDER BY kf.origem_tipo,i.descricao
+            """, (card["id"],))
+            por_origem = cur.fetchall() or []
+            card["produtos_por_origem"] = por_origem
+            # Documentos convergentes sao evidencia da mesma carga, nao novas
+            # saidas. TXT e mais detalhado; PDF e contingencia. Nunca somar as
+            # duas fontes automaticamente para sugerir baixa.
+            tipos = {_as_str(row.get("origem_tipo")) for row in por_origem}
+            fonte_baixa = "xml" if "xml" in tipos else ("txt" if "txt" in tipos else "pdf")
+            sugestao = [row for row in por_origem if _as_str(row.get("origem_tipo")) == fonte_baixa and _as_float(row.get("quantidade_venda"), 0) > 0]
+            card["produtos"] = products
+            card["sugestao_baixa_fonte"] = fonte_baixa
+            card["sugestao_baixa_estoque"] = sugestao
+        for card in cards:
+            card["sugestoes_uniao"] = [
+                {"id": other["id"], "vendedor_codigo": other["vendedor_codigo"], "origens_tipos": other.get("origens_tipos"),
+                 "rota": other.get("rota"), "mapa_numero": other.get("mapa_numero")}
+                for other in cards if other["id"] != card["id"] and (
+                    (card.get("cidade_cadastro_id") and card.get("cidade_cadastro_id") == other.get("cidade_cadastro_id"))
+                    or (card.get("mapa_numero") and card.get("mapa_numero") == other.get("mapa_numero"))
+                    or (card.get("rota") and _estoque_xml_normalizar_texto(card.get("rota")) == _estoque_xml_normalizar_texto(other.get("rota")))
+                )
+            ]
+        cur.execute("SELECT DISTINCT vendedor_codigo FROM vendas_diario_pedidos WHERE vendedor_codigo<>'' AND vendedor_codigo NOT LIKE 'MAPA-%' ORDER BY vendedor_codigo")
+        vendedores = [_as_str(row.get("vendedor_codigo")) for row in (cur.fetchall() or [])]
+        return jsonify({"data_ref": data_ref, "cards": cards, "vendedores_disponiveis": vendedores})
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.route("/api/vendas/diario/kanban/<int:card_id>/status", methods=["PUT"])
+def vendas_diario_kanban_status_api(card_id):
+    status = _as_str((request.get_json(silent=True) or {}).get("status")).lower()
+    if status not in {"importado", "conferir_estoque", "conferido"}:
+        return jsonify({"erro": "Status invalido."}), 400
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        cur.execute("UPDATE vendas_diario_kanban SET status=%s, atualizado_em=NOW() WHERE id=%s", (status, card_id))
+        if cur.rowcount <= 0:
+            conn.rollback()
+            return jsonify({"erro": "Card nao encontrado."}), 404
+        conn.commit()
+        return jsonify({"ok": True, "id": card_id, "status": status})
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.route("/api/vendas/diario/kanban/<int:card_id>/unir", methods=["POST"])
+def vendas_diario_kanban_unir_api(card_id):
+    data = request.get_json(silent=True) or {}
+    destino_id = _as_int(data.get("destino_card_id"), 0)
+    if not destino_id or destino_id == card_id:
+        return jsonify({"erro": "Selecione outro card como destino."}), 400
+    usuario = _usuario_ator_req()
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute("""
+            SELECT k.*, i.data_ref FROM vendas_diario_kanban k
+            JOIN vendas_diario_importacoes i ON i.id=k.importacao_id
+            WHERE k.id IN (%s,%s) FOR UPDATE
+        """, (card_id, destino_id))
+        rows = {row["id"]: row for row in (cur.fetchall() or [])}
+        origem, destino = rows.get(card_id), rows.get(destino_id)
+        if not origem or not destino or destino.get("card_principal_id"):
+            return jsonify({"erro": "Card de origem ou destino invalido."}), 404
+        if _fmt_date(origem.get("data_ref")) != _fmt_date(destino.get("data_ref")):
+            return jsonify({"erro": "Somente cards da mesma data podem ser unidos."}), 409
+        if _as_int(origem.get("veiculo_id"), 0) and _as_int(destino.get("veiculo_id"), 0) and origem.get("veiculo_id") != destino.get("veiculo_id"):
+            return jsonify({"erro": "Cards ligados a caminhoes diferentes nao podem ser unidos."}), 409
+        if origem.get("status") in {"enviado_frete", "excluido"} or destino.get("status") in {"enviado_frete", "excluido"}:
+            return jsonify({"erro": "Nao e possivel unir cards enviados ou excluidos."}), 409
+        cur.execute("UPDATE vendas_diario_kanban SET card_principal_id=%s, atualizado_em=NOW() WHERE id=%s OR card_principal_id=%s", (destino_id, card_id, card_id))
+        cur.execute("""INSERT INTO vendas_diario_kanban_historico
+            (card_id,acao,card_origem_id,card_destino_id,usuario,detalhes)
+            VALUES (%s,'unido',%s,%s,%s,'Uniao manual confirmada; documentos preservados.')""",
+            (destino_id, card_id, destino_id, usuario))
+        conn.commit()
+        return jsonify({"ok": True, "card_origem_id": card_id, "card_destino_id": destino_id})
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close(); conn.close()
+
+
+@app.route("/api/vendas/diario/kanban/<int:card_id>/separar", methods=["POST"])
+def vendas_diario_kanban_separar_api(card_id):
+    usuario = _usuario_ator_req()
+    conn = get_conn(); cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute("SELECT * FROM vendas_diario_kanban WHERE id=%s FOR UPDATE", (card_id,))
+        card = cur.fetchone()
+        destino_id = _as_int((card or {}).get("card_principal_id"), 0)
+        if not card or not destino_id:
+            return jsonify({"erro": "Esta origem nao esta unida a outro card."}), 409
+        cur.execute("UPDATE vendas_diario_kanban SET card_principal_id=NULL, atualizado_em=NOW() WHERE id=%s", (card_id,))
+        cur.execute("""INSERT INTO vendas_diario_kanban_historico
+            (card_id,acao,card_origem_id,card_destino_id,usuario,detalhes)
+            VALUES (%s,'separado',%s,%s,%s,'Origem removida manualmente do card composto.')""",
+            (card_id, card_id, destino_id, usuario))
+        conn.commit()
+        return jsonify({"ok": True, "card_id": card_id})
+    except Exception:
+        conn.rollback(); raise
+    finally:
+        cur.close(); conn.close()
+
+
+@app.route("/api/vendas/diario/kanban/<int:card_id>", methods=["PUT", "DELETE"])
+def vendas_diario_kanban_card_api(card_id):
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute("SELECT * FROM vendas_diario_kanban WHERE id=%s FOR UPDATE", (card_id,))
+        card = cur.fetchone()
+        if not card:
+            return jsonify({"erro": "Card nao encontrado."}), 404
+        if _as_int(card.get("frete_id"), 0):
+            return jsonify({"erro": "Card ja vinculado a um frete e nao pode ser alterado aqui."}), 409
+        if request.method == "DELETE":
+            cur.execute("""
+                UPDATE vendas_diario_kanban
+                SET status='excluido', atualizado_em=NOW()
+                WHERE id=%s OR card_principal_id=%s
+            """, (card_id, card_id))
+            cur.execute("""INSERT INTO vendas_diario_kanban_historico
+                (card_id,acao,card_origem_id,usuario,detalhes)
+                VALUES (%s,'excluido',%s,%s,'Exclusao logica; dashboard recalculado sem as fontes do card.')""",
+                (card_id, card_id, _usuario_ator_req()))
+            conn.commit()
+            return jsonify({"ok": True, "id": card_id, "status": "excluido"})
+        data = request.get_json(silent=True) or {}
+        status = _as_str(data.get("status") or card.get("status")).lower()
+        if status not in {"importado", "conferir_estoque", "conferido"}:
+            status = "importado"
+        cidade_cadastro_id = _as_int(data.get("cidade_cadastro_id"), 0) or None
+        cidade_canonica = ""
+        if cidade_cadastro_id:
+            cur.execute("SELECT rota FROM comissao_cidades WHERE id=%s LIMIT 1", (cidade_cadastro_id,))
+            cidade_ref = cur.fetchone() or {}
+            cidade_canonica = _as_str(cidade_ref.get("rota"))
+            if not cidade_canonica:
+                return jsonify({"erro": "Cidade cadastrada nao encontrada."}), 400
+        cur.execute("""
+            UPDATE vendas_diario_kanban
+            SET nome_frete=%s, cidade=%s, cidade_cadastro_id=%s, veiculo_id=%s,
+                colaborador_motorista_id=%s, colaborador_entregador_id=%s,
+                observacao=%s, status=%s, atualizado_em=NOW()
+            WHERE id=%s
+        """, (
+            _as_str(data.get("nome_frete")), cidade_canonica, cidade_cadastro_id,
+            _as_int(data.get("veiculo_id"), 0) or None,
+            _as_int(data.get("colaborador_motorista_id"), 0) or None,
+            _as_int(data.get("colaborador_entregador_id"), 0) or None,
+            _as_str(data.get("observacao")), status, card_id,
+        ))
+        conn.commit()
+        return jsonify({"ok": True, "id": card_id})
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.route("/api/vendas/diario/kanban/<int:card_id>/enviar-frete", methods=["POST"])
+def vendas_diario_kanban_enviar_frete_api(card_id):
+    data = request.get_json(silent=True) or {}
+    usuario = _usuario_ator_req()
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute("SELECT * FROM vendas_diario_kanban WHERE id=%s FOR UPDATE", (card_id,))
+        card = cur.fetchone()
+        if not card:
+            return jsonify({"erro": "Card nao encontrado."}), 404
+        if _as_int(card.get("frete_id"), 0):
+            return jsonify({"erro": "Card ja enviado ao Kanban RioB.", "frete_id": card.get("frete_id")}), 409
+        nome = _as_str(data.get("nome_frete") or card.get("nome_frete")) or f"Vendas vendedor {_as_str(card.get('vendedor_codigo'))}"
+        cidade_cadastro_id = _as_int(data.get("cidade_cadastro_id") or card.get("cidade_cadastro_id"), 0) or None
+        cidade = ""
+        if cidade_cadastro_id:
+            cur.execute("SELECT rota FROM comissao_cidades WHERE id=%s LIMIT 1", (cidade_cadastro_id,))
+            cidade = _as_str((cur.fetchone() or {}).get("rota"))
+        veiculo_id = _as_int(data.get("veiculo_id") or card.get("veiculo_id"), 0) or None
+        motorista_id = _as_int(data.get("colaborador_motorista_id") or card.get("colaborador_motorista_id"), 0) or None
+        entregador_id = _as_int(data.get("colaborador_entregador_id") or card.get("colaborador_entregador_id"), 0) or motorista_id
+        observacao = _as_str(data.get("observacao") or card.get("observacao"))
+        faltantes = []
+        if not cidade_cadastro_id or not cidade:
+            faltantes.append("cidade/rota cadastrada")
+        if not veiculo_id:
+            faltantes.append("caminhao")
+        if not motorista_id:
+            faltantes.append("motorista")
+        if faltantes:
+            return jsonify({"erro": "Preencha: " + ", ".join(faltantes) + "."}), 400
+        erro_equipe = _validar_colaboradores_frete(cur, motorista_id, entregador_id)
+        if erro_equipe:
+            return jsonify({"erro": erro_equipe}), 400
+        # Vendas Diario cria uma programacao em "liberado". Caminhao e equipe
+        # podem estar concluindo outra viagem; a disponibilidade sera validada
+        # quando o frete avancar para o carregamento efetivo.
+        legacy_motorista = _resolver_motorista_legacy_id_por_colaborador(cur, motorista_id)
+        legacy_entregador = _resolver_motorista_legacy_id_por_colaborador(cur, entregador_id)
+        cur.execute("""
+            SELECT COALESCE(MAX(src.total),0) AS total, COALESCE(MAX(src.peso),0) AS peso
+            FROM (
+                SELECT kf.id, COUNT(*) total, SUM(p.peso_bruto) peso
+                FROM vendas_diario_kanban kf
+                JOIN vendas_diario_pedidos p ON p.importacao_id=kf.importacao_id AND p.vendedor_codigo=kf.vendedor_codigo
+                WHERE COALESCE(kf.card_principal_id,kf.id)=%s
+                GROUP BY kf.id
+            ) src
+        """, (card_id,))
+        resumo = cur.fetchone() or {}
+        km_atual = _buscar_km_atual_veiculo(cur, veiculo_id)
+        obs_vinculo = f"Origem: Vendas Diario card #{card_id}, importacao #{card['importacao_id']}, vendedor {card['vendedor_codigo']}. {observacao}".strip()
+        peso_frete = _as_float(card.get("peso_total"), 0) or _as_float(resumo.get("peso"), 0)
+        entregas_frete = _as_int(card.get("qtd_entregas"), 0) or _as_int(resumo.get("total"), 0)
+        cur.execute("""
+            INSERT INTO fretes
+                (nome, cidade, data_carga, status, motorista_id, entregador_id,
+                 colaborador_motorista_id, colaborador_entregador_id, veiculo_id,
+                 observacao, km_atual, peso, qtd_entregas, arquivado)
+            VALUES (%s,%s,CURDATE(),'liberado',%s,%s,%s,%s,%s,%s,%s,%s,%s,0)
+        """, (nome, cidade, legacy_motorista, legacy_entregador, motorista_id, entregador_id,
+              veiculo_id, obs_vinculo, km_atual, peso_frete, entregas_frete))
+        frete_id = cur.lastrowid
+        frete = _buscar_frete_detalhado(cur, frete_id)
+        _registrar_historico_frete(cur, frete_id, "criado_vendas_diario", usuario, None, frete)
+        cur.execute("""
+            UPDATE vendas_diario_kanban
+            SET frete_id=%s, nome_frete=%s, cidade=%s, cidade_cadastro_id=%s, veiculo_id=%s,
+                colaborador_motorista_id=%s, colaborador_entregador_id=%s,
+                observacao=%s, status='enviado_frete', atualizado_em=NOW()
+            WHERE id=%s OR card_principal_id=%s
+        """, (frete_id, nome, cidade, cidade_cadastro_id, veiculo_id, motorista_id, entregador_id, observacao, card_id, card_id))
+        conn.commit()
+        return jsonify({"ok": True, "frete_id": frete_id, "frete": frete})
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.route("/api/vendas/diario/importar", methods=["POST"])
+def vendas_diario_importar_api():
+    uploaded = request.files.get("arquivo")
+    if uploaded and getattr(uploaded, "filename", ""):
+        filename = secure_filename(uploaded.filename)
+        if not filename.lower().endswith(".txt"):
+            return jsonify({"erro": "Envie um arquivo TXT de vendas diario."}), 400
+        target_dir = os.path.join(VENDAS_UPLOADS_DIR, "diario")
+        os.makedirs(target_dir, exist_ok=True)
+        target_path = os.path.join(target_dir, f"{uuid.uuid4().hex}_{filename}")
+        uploaded.save(target_path)
+        try:
+            result = _vendas_diario_importar_arquivo(target_path)
+            return jsonify({"processando": False, "arquivos": 1, "resultados": [result]})
+        except Exception as exc:
+            return jsonify({"erro": f"Falha ao importar TXT de vendas diario: {str(exc)}"}), 400
+    result = _vendas_diario_importar_pasta()
+    code = 202 if result.get("processando") else 200
+    return jsonify(result), code
+
+
+@app.route("/api/vendas/diario/importar-carga-pdf", methods=["POST"])
+def vendas_diario_importar_carga_pdf_api():
+    vendedor_codigo = _as_str(request.form.get("vendedor_codigo"))
+    if not vendedor_codigo:
+        return jsonify({"erro": "Selecione o vendedor responsavel pela carga PDF."}), 400
+    uploaded = request.files.get("arquivo")
+    if not uploaded or not getattr(uploaded, "filename", ""):
+        return jsonify({"erro": "Selecione o PDF da carga."}), 400
+    filename = secure_filename(uploaded.filename)
+    if not filename.lower().endswith(".pdf"):
+        return jsonify({"erro": "Envie um arquivo PDF de carga."}), 400
+    target_dir = os.path.join(VENDAS_UPLOADS_DIR, "cargas-pdf")
+    os.makedirs(target_dir, exist_ok=True)
+    target_path = os.path.join(target_dir, f"{uuid.uuid4().hex}_{filename}")
+    uploaded.save(target_path)
+    try:
+        carga = parse_carga_pdf(target_path)
+    except Exception as exc:
+        return jsonify({"erro": f"Falha ao ler PDF da carga: {str(exc)}"}), 400
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute("SELECT id FROM vendas_diario_importacoes WHERE assinatura=%s LIMIT 1 FOR UPDATE", (carga["assinatura"],))
+        existing = cur.fetchone()
+        if existing:
+            cur.execute("SELECT * FROM vendas_diario_kanban WHERE importacao_id=%s AND origem_tipo='pdf' ORDER BY id LIMIT 1 FOR UPDATE", (existing["id"],))
+            card_existente = cur.fetchone()
+            if card_existente and _as_int(card_existente.get("frete_id"), 0):
+                return jsonify({"erro": "Este PDF ja esta vinculado a um frete e nao pode trocar de vendedor.", "card_id": card_existente["id"], "frete_id": card_existente["frete_id"]}), 409
+            if card_existente and _as_str(card_existente.get("status")) != "excluido":
+                return jsonify({
+                    "erro": f"Este PDF ja esta ativo no card #{card_existente['id']} para o vendedor {card_existente['vendedor_codigo']}.",
+                    "status": "ja_importado", "importacao_id": existing["id"],
+                    "card_id": card_existente["id"], "vendedor_codigo": card_existente["vendedor_codigo"],
+                }), 409
+            if card_existente:
+                vendedor_anterior = _as_str(card_existente.get("vendedor_codigo"))
+                cur.execute("UPDATE vendas_diario_pedidos SET vendedor_codigo=%s WHERE importacao_id=%s AND vendedor_codigo=%s", (vendedor_codigo, existing["id"], vendedor_anterior))
+                cur.execute("""UPDATE vendas_diario_kanban
+                    SET vendedor_codigo=%s,status='importado',card_principal_id=NULL,
+                        frete_id=NULL,atualizado_em=NOW() WHERE id=%s""",
+                    (vendedor_codigo, card_existente["id"]))
+                cur.execute("UPDATE vendas_diario_importacoes SET arquivo_nome=%s,arquivo_caminho=%s WHERE id=%s", (filename, target_path, existing["id"]))
+                cur.execute("""INSERT INTO vendas_diario_kanban_historico
+                    (card_id,acao,card_origem_id,usuario,detalhes)
+                    VALUES (%s,'reativado_pdf',%s,%s,%s)""", (
+                    card_existente["id"], card_existente["id"], _usuario_ator_req(),
+                    f"PDF reimportado; vendedor alterado de {vendedor_anterior} para {vendedor_codigo}.",
+                ))
+                conn.commit()
+                return jsonify({"ok": True, "status": "reativado", "importacao_id": existing["id"], "card_id": card_existente["id"], "vendedor_codigo": vendedor_codigo, "carga": carga})
+            return jsonify({"erro": "A importacao deste PDF existe, mas o card de origem nao foi encontrado."}), 409
+        seller_key = vendedor_codigo
+        cities = " / ".join(item["cidade"] for item in carga["cidades"])
+        route = f"{carga['rota_codigo']} - {carga['rota_nome']}"
+        cur.execute("""
+            INSERT INTO vendas_diario_importacoes
+                (data_ref, arquivo_nome, arquivo_caminho, assinatura, pedidos, positivos, negativos, valor_total)
+            VALUES (%s,%s,%s,%s,1,1,0,%s)
+        """, (carga["data_ref"], filename, target_path, carga["assinatura"], carga["valor_total"]))
+        import_id = cur.lastrowid
+        cur.execute("""
+            INSERT INTO vendas_diario_pedidos
+                (importacao_id, data_ref, vendedor_codigo, cliente_codigo, cliente_nome, fantasia,
+                 cidade, status, motivo_codigo, motivo, valor_total, peso_bruto)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,'positiva','','',%s,%s)
+        """, (import_id, carga["data_ref"], seller_key, carga["mapa"], f"Carga mapa {carga['mapa']}", route,
+              cities, carga["valor_total"], carga["peso_total"]))
+        pedido_id = cur.lastrowid
+        for product in carga["produtos"]:
+            for quantity in product["quantidades"]:
+                cur.execute("""
+                    INSERT INTO vendas_diario_itens
+                        (pedido_id, produto_codigo, tabela_venda, via, quantidade, unidade, descricao, valor_unitario)
+                    VALUES (%s,%s,1,0,%s,%s,%s,0)
+                """, (pedido_id, product["codigo"], quantity["quantidade"], quantity["unidade"], product["descricao"]))
+        observation = "Cidades: " + "; ".join(
+            f"{item['cidade']}/{item['uf']} - {item['peso']:.3f} kg - {item['entregas']} entrega(s) - {item['volumes']:.3f} volume(s)"
+            for item in carga["cidades"]
+        )
+        cur.execute("""
+            INSERT INTO vendas_diario_kanban
+                (importacao_id, vendedor_codigo, status, nome_frete, cidade, observacao,
+                 mapa_numero, rota, peso_total, qtd_entregas, volumes_total, valor_bonificacao, origem_tipo)
+            VALUES (%s,%s,'importado',%s,%s,%s,%s,%s,%s,%s,%s,%s,'pdf')
+        """, (import_id, seller_key, f"Carga {carga['mapa']} - Rota {route}", cities, observation,
+              carga["mapa"], route, carga["peso_total"], carga["qtd_entregas"],
+              carga["volumes_total"], carga["valor_bonificacao"]))
+        card_id = cur.lastrowid
+        conn.commit()
+        return jsonify({"ok": True, "status": "importado", "importacao_id": import_id, "card_id": card_id, "carga": carga})
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        conn.close()
+
+@app.route("/api/vendas/diario/vendedores", methods=["GET"])
+def vendas_diario_vendedores_api():
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute("""
+            SELECT CAST(codigo AS CHAR) codigo, nome
+            FROM comissao_cadastros
+            WHERE LOWER(funcao)='vendedor' AND ativo=1 AND codigo IS NOT NULL
+            ORDER BY nome, codigo
+        """)
+        rows = list(cur.fetchall() or [])
+        cur.execute("""
+            SELECT DISTINCT vendedor_codigo codigo, '' nome
+            FROM vendas_diario_pedidos
+            WHERE vendedor_codigo<>'' AND vendedor_codigo NOT LIKE 'MAPA-%'
+            ORDER BY vendedor_codigo
+        """)
+        rows.extend(cur.fetchall() or [])
+        vistos = set()
+        vendedores = []
+        for row in rows:
+            codigo = _as_str(row.get("codigo"))
+            if not codigo or codigo in vistos:
+                continue
+            vistos.add(codigo)
+            vendedores.append({"codigo": codigo, "nome": _as_str(row.get("nome"))})
+        return jsonify({"vendedores": vendedores})
+    finally:
+        cur.close()
+        conn.close()
+
+
 @app.route("/api/vendas/config", methods=["GET", "PUT"])
 def vendas_config_api():
     if request.method == "GET":
@@ -34426,6 +35417,33 @@ def monitor_automacao_proxy(subpath):
 @app.route("/<path:path>")
 def static_files(path):
     return send_from_directory(BASE_DIR, path)
+
+
+def _vendas_diario_scheduler_loop():
+    last_run = ""
+    while True:
+        now = datetime.datetime.now()
+        target = _as_str(VENDAS_DIARIO_HORA)
+        run_key = now.strftime("%Y-%m-%d")
+        if now.strftime("%H:%M") == target and last_run != run_key:
+            last_run = run_key
+            try:
+                result = _vendas_diario_importar_pasta()
+                app.logger.info("Importacao programada de vendas diario: %s", result)
+            except Exception:
+                app.logger.exception("Falha na importacao programada de vendas diario")
+        time.sleep(30)
+
+
+def _iniciar_vendas_diario_scheduler():
+    global _VENDAS_DIARIO_SCHEDULER_STARTED
+    if _VENDAS_DIARIO_SCHEDULER_STARTED or not _as_bool(os.environ.get("RB_VENDAS_DIARIO_AUTO", "1"), True):
+        return
+    _VENDAS_DIARIO_SCHEDULER_STARTED = True
+    threading.Thread(target=_vendas_diario_scheduler_loop, name="vendas-diario-scheduler", daemon=True).start()
+
+
+_iniciar_vendas_diario_scheduler()
 
 if __name__ == "__main__":
     host = os.environ.get("APP_HOST", "0.0.0.0")
