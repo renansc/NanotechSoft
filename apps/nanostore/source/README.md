@@ -1,6 +1,7 @@
 # NanoStore
 
-Projeto novo de gestao para farmacia, separado do `zap`, usando-o apenas como referencia arquitetural.
+Sistema de gestao adaptavel a diferentes operacoes comerciais, separado do
+`zap`, usando-o apenas como referencia arquitetural.
 
 ## O que esta pronto
 
@@ -11,6 +12,26 @@ Projeto novo de gestao para farmacia, separado do `zap`, usando-o apenas como re
 - pagamentos com base para Pix e maquina de cartao
 - configuracao de provedores e canais
 - dashboard web inicial
+- modos de apresentacao para farmacia, loja, distribuidora, comercio, alimentos
+  e prestador de servicos
+
+## Modos de operacao
+
+O seletor no menu lateral grava `STORE_MODE` nas configuracoes do NanoStore.
+Cada perfil altera a hierarquia de navegacao, a terminologia, os indicadores,
+as acoes rapidas e a identidade visual sem duplicar os dados da empresa.
+
+O modo `pharmacy` permanece como padrao. No modo `services`, itens podem ser
+marcados sem controle de estoque e vendidos sem lote; materiais usados pelo
+prestador continuam podendo controlar estoque normalmente. O faturamento de
+mercadorias (NF-e/NFC-e) fica oculto nesse perfil porque servicos exigem um
+fluxo proprio de NFS-e.
+
+No modo `distributor`, a navegacao operacional e reduzida a Caixa, Pedidos e
+Cadastros. O Caixa registra recebimentos, entradas, saidas e retiradas e oferece
+emissao fiscal dos pedidos. Pedidos usam uma fila de separacao e entrega; o
+destino deve ser uma mesa identificada ou uma entrega vinculada a cliente
+cadastrado com telefone e endereco.
 
 ## Rodar localmente
 
@@ -98,6 +119,23 @@ O container da aplicacao tambem inclui `cryptography`, necessario quando o MySQL
 O menu `Faturamento` gera XMLs locais vinculados as vendas e valida a assinatura
 com a chave privada de um certificado A1. Esses arquivos usam um namespace
 proprio, sao marcados como `semValorFiscal` e nunca sao transmitidos a SEFAZ.
+
+O historico oferece a representacao branca em PDF A4 e o documento auxiliar em
+bobinas de 58 mm ou 80 mm. Esses PDFs continuam identificados como simulacao sem
+valor fiscal e nao incluem chave, QR Code ou protocolo de autorizacao ficticios.
+
+## Dados de demonstracao da distribuidora
+
+Na inicializacao, o cadastro idempotente inclui cinco mesas numeradas com nome e
+localizacao e os produtos `TEST-GELO`, `TEST-CERVEJA`, `TEST-REFRIGERANTE` e
+`TEST-CARVAO`, cada um com estoque de teste. Os NCMs e campos estruturais permitem
+testar o fluxo, mas CST/CSOSN, CEST, CFOP, aliquotas e beneficios devem ser
+confirmados pelo contador conforme CRT, UF, embalagem e operacao reais antes de
+qualquer emissao fiscal de producao.
+
+Pedidos podem ser abertos em PDF A4 ou como tiquete de 58 mm/80 mm pelo painel de
+separacao e entrega. A impressao fisica e feita pelo dialogo do navegador, usando
+escala de 100% e o tamanho de papel correspondente.
 
 Configure o certificado somente por variaveis de ambiente:
 

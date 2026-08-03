@@ -1,3 +1,5 @@
+from datetime import date
+from decimal import Decimal
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -28,7 +30,15 @@ def create_app():
 
 
 def seed_defaults():
-    from .models import IntegrationSetting, PharmacyCategory, PharmacySupplier, WorkflowStage
+    from .models import (
+        DistributionTable,
+        IntegrationSetting,
+        PharmacyCategory,
+        PharmacyLot,
+        PharmacyProduct,
+        PharmacySupplier,
+        WorkflowStage,
+    )
 
     if not PharmacyCategory.query.first():
         db.session.add_all(
@@ -45,6 +55,52 @@ def seed_defaults():
             ]
         )
 
+    table_defaults = [
+        (1, "Mesa 1", "Esquerda da porta"),
+        (2, "Mesa 2", "Direita da porta"),
+        (3, "Mesa 3", "Centro"),
+        (4, "Mesa 4", "Fundo esquerdo"),
+        (5, "Mesa 5", "Fundo direito"),
+    ]
+    for number, name, location in table_defaults:
+        if not DistributionTable.query.filter_by(number=number).first():
+            db.session.add(DistributionTable(number=number, name=name, location=location))
+
+    test_category = PharmacyCategory.query.filter_by(name="Produtos de conveniencia").first()
+    if not test_category:
+        test_category = PharmacyCategory(
+            name="Produtos de conveniencia",
+            description="Itens de teste para a operacao da distribuidora.",
+        )
+        db.session.add(test_category)
+        db.session.flush()
+    test_supplier = PharmacySupplier.query.filter_by(name="Distribuidora Exemplo").first()
+    product_defaults = [
+        ("TEST-GELO", "Gelo", "22019000", "10.00", "5.00", date(2028, 12, 31)),
+        ("TEST-CERVEJA", "Cerveja", "22030000", "8.00", "4.50", date(2027, 12, 31)),
+        ("TEST-REFRIGERANTE", "Refrigerante", "22021000", "7.00", "3.50", date(2027, 12, 31)),
+        ("TEST-CARVAO", "Carvao vegetal", "44020000", "25.00", "14.00", date(2030, 12, 31)),
+    ]
+    for sku, name, ncm, sale_price, cost_price, expiration_date in product_defaults:
+        product = PharmacyProduct.query.filter_by(sku=sku).first()
+        if not product:
+            product = PharmacyProduct(
+                sku=sku, name=name, unit="UN", sale_price=Decimal(sale_price),
+                cost_price=Decimal(cost_price), minimum_stock=Decimal("10"),
+                category=test_category, supplier=test_supplier, tracks_inventory=True,
+                ncm=ncm, cest="", cfop="5102", fiscal_origin="0", icms_cst="102",
+                pis_cst="49", cofins_cst="49", tax_unit="UN", gtin_taxable="SEM GTIN",
+            )
+            db.session.add(product)
+            db.session.flush()
+        if not PharmacyLot.query.filter_by(product_id=product.id, lot_code=f"TESTE-{sku}").first():
+            db.session.add(PharmacyLot(
+                product=product, supplier=test_supplier, lot_code=f"TESTE-{sku}",
+                expiration_date=expiration_date, received_at=date.today(),
+                quantity_received=Decimal("100"), quantity_available=Decimal("100"),
+                purchase_price=Decimal(cost_price), location="Estoque de testes",
+            ))
+
     default_settings = {
         "PHARMACY_CARD_PROVIDER": "",
         "PHARMACY_PIX_PROVIDER": "",
@@ -54,6 +110,7 @@ def seed_defaults():
         "PHARMACY_MERCADO_LIVRE_APP_ID": "",
         "PHARMACY_MERCADO_LIVRE_SELLER_ID": "",
         "COMPANY_NAME": "NanoStore Farmacia",
+        "STORE_MODE": "pharmacy",
     }
     for key, value in default_settings.items():
         if not IntegrationSetting.query.filter_by(key=key).first():
@@ -108,6 +165,7 @@ def upgrade_schema():
     if inspector.has_table("pharmacy_product"):
         product_columns = {column["name"] for column in inspector.get_columns("pharmacy_product")}
         fiscal_columns = {
+            "tracks_inventory": "BOOLEAN NOT NULL DEFAULT 1",
             "ncm": "VARCHAR(8) NOT NULL DEFAULT ''", "cest": "VARCHAR(7) NOT NULL DEFAULT ''",
             "cfop": "VARCHAR(4) NOT NULL DEFAULT '5102'", "fiscal_origin": "VARCHAR(1) NOT NULL DEFAULT '0'",
             "icms_cst": "VARCHAR(3) NOT NULL DEFAULT ''", "pis_cst": "VARCHAR(2) NOT NULL DEFAULT ''",
@@ -121,5 +179,21 @@ def upgrade_schema():
         for column, definition in fiscal_columns.items():
             if column not in product_columns:
                 db.session.execute(text(f"ALTER TABLE pharmacy_product ADD COLUMN {column} {definition}"))
+
+    if inspector.has_table("pharmacy_sale_item") and db.engine.dialect.name == "mysql":
+        sale_item_details = {column["name"]: column for column in inspector.get_columns("pharmacy_sale_item")}
+        if sale_item_details.get("lot_id", {}).get("nullable") is False:
+            db.session.execute(text("ALTER TABLE pharmacy_sale_item MODIFY COLUMN lot_id INTEGER NULL"))
+
+    if inspector.has_table("pharmacy_sale"):
+        sale_columns = {column["name"] for column in inspector.get_columns("pharmacy_sale")}
+        delivery_columns = {
+            "customer_id": "INTEGER NULL", "fulfillment_type": "VARCHAR(20) NOT NULL DEFAULT 'counter'",
+            "table_reference": "VARCHAR(40) NOT NULL DEFAULT ''", "delivery_address": "VARCHAR(300) NOT NULL DEFAULT ''",
+            "delivery_status": "VARCHAR(30) NOT NULL DEFAULT 'new'",
+        }
+        for column, definition in delivery_columns.items():
+            if column not in sale_columns:
+                db.session.execute(text(f"ALTER TABLE pharmacy_sale ADD COLUMN {column} {definition}"))
 
     db.session.commit()

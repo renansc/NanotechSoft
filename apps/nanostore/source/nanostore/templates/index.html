@@ -6,33 +6,41 @@
     <title>{{ title }}</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
   </head>
-  <body>
+  <body data-store-mode="{{ mode_key }}" data-mode-accent="{{ store_mode.accent }}">
     <div class="shell">
       <aside class="sidebar">
         <div class="brand">
           <span class="brand-mark">N</span>
           <div>
             <strong>NanoStore</strong>
-            <p>ERP de farmacia</p>
+            <p>{{ store_mode.name }}</p>
           </div>
         </div>
 
         <nav class="menu-tree" aria-label="Menu principal">
+          {% if mode_key == 'distributor' %}
+          <section class="menu-group">
+            <h3>Distribuidora</h3>
+            <button type="button" class="menu-link active" data-target="lancamentos" data-open-subview="lancamentos-caixa">Caixa</button>
+            <button type="button" class="menu-link" data-target="lancamentos" data-open-subview="lancamentos-vendas">Pedidos</button>
+            <button type="button" class="menu-link" data-target="cadastros" data-open-subview="cadastros-produtos">Cadastros</button>
+          </section>
+          {% else %}
           <section class="menu-group">
             <h3>Principal</h3>
             <button type="button" class="menu-link active" data-target="inicio">Inicio</button>
-            <button type="button" class="menu-link" data-target="workflow">Workflow</button>
+            <button type="button" class="menu-link" data-target="workflow">{{ store_mode.workflow }}</button>
           </section>
 
           <section class="menu-group">
             <h3>Cadastros</h3>
-            <button type="button" class="menu-link" data-target="cadastros">Cadastros gerais</button>
+            <button type="button" class="menu-link" data-target="cadastros">{{ store_mode.catalog }}</button>
           </section>
 
           <section class="menu-group">
             <h3>Lancamentos</h3>
-            <button type="button" class="menu-link" data-target="lancamentos">Movimento diario</button>
-            <button type="button" class="menu-link" data-target="faturamento">Faturamento</button>
+            <button type="button" class="menu-link" data-target="lancamentos">{{ store_mode.sales }}</button>
+            {% if store_mode.show_fiscal %}<button type="button" class="menu-link" data-target="faturamento">Faturamento</button>{% endif %}
           </section>
 
           <section class="menu-group">
@@ -44,37 +52,55 @@
             <h3>Configuracao</h3>
             <button type="button" class="menu-link" data-target="configuracao">Parametros e integracoes</button>
           </section>
+          {% endif %}
         </nav>
 
-        <section class="sidebar-card">
-          <h3>Operacao</h3>
-          <ul>
-            <li>Somente o modulo selecionado fica visivel</li>
-            <li>Workflow integrado ao WhatsApp</li>
-            <li>Financeiro com pagos e nao pagos</li>
-          </ul>
-        </section>
       </aside>
 
       <main class="page">
+        <header class="workspace-bar">
+          <div><strong>NanoStore</strong><span>{{ store_mode.name }}</span></div>
+          <section class="mode-switcher">
+            <label for="store-mode-select">Modo da operacao</label>
+            <select id="store-mode-select">
+              {% for key, profile in store_modes.items() %}<option value="{{ key }}" {% if key == mode_key %}selected{% endif %}>{{ profile.name }}</option>{% endfor %}
+            </select>
+            <span id="store-mode-feedback" aria-live="polite"></span>
+          </section>
+        </header>
         <section class="view is-active" id="inicio" data-view>
           <section class="hero">
             <div>
-              <p class="eyebrow">Painel principal</p>
-              <h1>Visao executiva da operacao</h1>
-              <p class="lead">Indicadores gerais da farmacia, com compras, vendas, financeiro, estoque e caixa em uma leitura unica.</p>
+              <p class="eyebrow">{{ store_mode.short_name }}</p>
+              <h1>{{ store_mode.dashboard_title }}</h1>
+              <p class="lead">{{ store_mode.dashboard_copy }}</p>
             </div>
           </section>
 
+          <nav class="action-rail" aria-label="Acoes rapidas">
+            {% if mode_key == 'distributor' %}
+            <button type="button" data-open-view="lancamentos" data-open-subview="lancamentos-vendas">Novo pedido</button>
+            <button type="button" data-open-view="lancamentos" data-open-subview="lancamentos-caixa">Movimentar caixa</button>
+            <button type="button" data-open-view="cadastros" data-open-subview="cadastros-produtos">Novo produto</button>
+            <button type="button" data-open-view="cadastros" data-open-subview="cadastros-clientes">Novo cliente</button>
+            {% else %}
+            <button type="button" data-open-view="lancamentos" data-open-subview="lancamentos-vendas">{{ store_mode.primary_action }}</button>
+            {% if store_mode.show_lots %}<button type="button" data-open-view="lancamentos" data-open-subview="lancamentos-lotes">Registrar entrada</button>{% endif %}
+            <button type="button" data-open-view="cadastros" data-open-subview="cadastros-produtos">Novo {{ store_mode.entity }}</button>
+            <button type="button" data-open-view="workflow" data-open-subview="workflow-kanban">{{ store_mode.workflow }}</button>
+            <button type="button" data-open-view="lancamentos" data-open-subview="lancamentos-caixa">Caixa</button>
+            {% endif %}
+          </nav>
+
           <section class="stats-grid">
-            <article class="card stat"><strong>{{ summary.products_count }}</strong><span>produtos</span></article>
-            <article class="card stat"><strong>{{ summary.active_lots_count }}</strong><span>lotes ativos</span></article>
-            <article class="card stat"><strong>{{ summary.expiring_lots_count }}</strong><span>vencendo em 60 dias</span></article>
+            <article class="card stat"><strong>{{ summary.products_count }}</strong><span>{{ store_mode.catalog|lower }}</span></article>
+            {% if store_mode.show_lots %}<article class="card stat"><strong>{{ summary.active_lots_count }}</strong><span>lotes ativos</span></article>
+            <article class="card stat urgent-stat"><strong>{{ summary.expiring_lots_count }}</strong><span>vencendo em 60 dias</span></article>{% endif %}
             <article class="card stat"><strong>{{ summary.low_stock_count }}</strong><span>abaixo do minimo</span></article>
-            <article class="card stat"><strong>{{ summary.no_stock_count }}</strong><span>sem estoque</span></article>
-            <article class="card stat"><strong>{{ summary.sales_today_count }}</strong><span>vendas hoje</span></article>
+            {% if mode_key != 'services' %}<article class="card stat"><strong>{{ summary.no_stock_count }}</strong><span>sem estoque</span></article>{% endif %}
+            <article class="card stat"><strong>{{ summary.sales_today_count }}</strong><span>{{ 'ordens hoje' if mode_key == 'services' else 'vendas hoje' }}</span></article>
             <article class="card stat"><strong>R$ {{ '%.2f'|format(summary.revenue_today) }}</strong><span>faturamento hoje</span></article>
-            <article class="card stat"><strong>{{ summary.purchases_count }}</strong><span>compras</span></article>
+            {% if mode_key != 'services' %}<article class="card stat"><strong>{{ summary.purchases_count }}</strong><span>{{ store_mode.purchases|lower }}</span></article>{% endif %}
             <article class="card stat"><strong>{{ summary.financial_open_count }}</strong><span>titulos em aberto</span></article>
             <article class="card stat"><strong>{{ summary.overdue_financial_count }}</strong><span>vencidos</span></article>
             <article class="card stat"><strong>R$ {{ '%.2f'|format(summary.receivable_open) }}</strong><span>a receber</span></article>
@@ -86,8 +112,8 @@
         <section class="view" id="workflow" data-view hidden>
           <div class="section-head">
             <div>
-              <p class="eyebrow">Workflow</p>
-              <h2>Kanban e chat interno</h2>
+              <p class="eyebrow">{{ store_mode.workflow }}</p>
+              <h2>{{ 'Agenda operacional e execucao' if mode_key == 'services' else 'Kanban e tratativas' }}</h2>
             </div>
             <p class="section-copy">Cards de atendimento e vendas WhatsApp, com movimentacao por etapa e conversa interna da equipe.</p>
           </div>
@@ -195,19 +221,50 @@
           <div class="section-head">
             <div>
               <p class="eyebrow">Cadastros</p>
-              <h2>Dados mestres</h2>
+              <h2>{{ store_mode.catalog }}</h2>
             </div>
             <p class="section-copy">Tudo que pertence a cadastros fica agrupado aqui.</p>
           </div>
 
           <div class="subnav">
+            {% if mode_key == 'distributor' %}
+            <button type="button" class="subnav-link active" data-subview-target="cadastros-produtos">Produtos</button>
+            <button type="button" class="subnav-link" data-subview-target="cadastros-clientes">Clientes</button>
+            <button type="button" class="subnav-link" data-subview-target="cadastros-mesas">Mesas</button>
+            {% else %}
             <button type="button" class="subnav-link active" data-subview-target="cadastros-categorias">Categorias</button>
             <button type="button" class="subnav-link" data-subview-target="cadastros-fornecedores">Fornecedores</button>
-            <button type="button" class="subnav-link" data-subview-target="cadastros-produtos">Produtos</button>
+            <button type="button" class="subnav-link" data-subview-target="cadastros-produtos">{{ store_mode.catalog }}</button>
             <button type="button" class="subnav-link" data-subview-target="cadastros-kanban">Colunas do kanban</button>
+            {% endif %}
           </div>
 
-          <section class="subview is-active" id="cadastros-categorias" data-subview>
+          {% if mode_key == 'distributor' %}
+          <section class="subview" id="cadastros-clientes" data-subview hidden>
+            <section class="grid single-grid"><article class="card">
+              <h3>Novo cliente</h3>
+              <form data-api="/api/customers">
+                <div class="row"><label class="field-inline"><span>Nome</span><input name="name" required></label><label class="field-inline"><span>Documento</span><input name="document"></label><label class="field-inline"><span>Telefone</span><input name="phone" required></label></div>
+                <div class="row"><label class="field-inline"><span>Endereco</span><input name="address" required></label><label class="field-inline"><span>Numero</span><input name="address_number"></label><label class="field-inline"><span>Bairro</span><input name="neighborhood"></label></div>
+                <div class="row"><label class="field-inline"><span>Cidade</span><input name="city"></label><label class="field-inline"><span>UF</span><input name="state" maxlength="2"></label><label class="field-inline"><span>CEP</span><input name="postal_code"></label></div>
+                <label class="field-inline field-block"><span>Observacoes</span><textarea name="notes"></textarea></label>
+                <button type="submit">Salvar cliente</button>
+              </form>
+            </article></section>
+          </section>
+
+          <section class="subview" id="cadastros-mesas" data-subview hidden>
+            <section class="grid single-grid"><article class="card">
+              <h3>Mesas e locais</h3>
+              <div class="table-wrap"><table>
+                <thead><tr><th>Numero</th><th>Nome</th><th>Local</th><th>Status</th></tr></thead>
+                <tbody>{% for table in distribution_tables %}<tr><td>{{ table.number }}</td><td>{{ table.name }}</td><td>{{ table.location }}</td><td>{{ 'Ativa' if table.is_active else 'Inativa' }}</td></tr>{% else %}<tr><td colspan="4">Nenhuma mesa cadastrada.</td></tr>{% endfor %}</tbody>
+              </table></div>
+            </article></section>
+          </section>
+          {% endif %}
+
+          <section class="subview{% if mode_key != 'distributor' %} is-active{% endif %}" id="cadastros-categorias" data-subview {% if mode_key == 'distributor' %}hidden{% endif %}>
             <section class="grid single-grid">
               <article class="card">
                 <h3>Categoria</h3>
@@ -239,16 +296,19 @@
             </section>
           </section>
 
-          <section class="subview" id="cadastros-produtos" data-subview hidden>
+          <section class="subview{% if mode_key == 'distributor' %} is-active{% endif %}" id="cadastros-produtos" data-subview {% if mode_key != 'distributor' %}hidden{% endif %}>
             <section class="grid single-grid">
               <article class="card">
-                <h3>Produto</h3>
+                <h3>Novo {{ store_mode.entity }}</h3>
                 <form data-api="/api/products">
                   <label class="field-inline"><span>SKU</span><input name="sku" placeholder="SKU" required></label>
-                  <label class="field-inline"><span>Nome</span><input name="name" placeholder="Nome do produto" required></label>
+                  <label class="field-inline"><span>Nome</span><input name="name" placeholder="Nome do {{ store_mode.entity }}" required></label>
                   <label class="field-inline"><span>Codigo de barras</span><input name="barcode" placeholder="Codigo de barras"></label>
+                  <label><input type="checkbox" name="tracks_inventory" {% if store_mode.tracks_inventory %}checked{% endif %}> Controla estoque</label>
+                  {% if mode_key == 'pharmacy' %}
                   <label class="field-inline"><span>Marca</span><input name="brand" placeholder="Marca"></label>
                   <label class="field-inline"><span>Principio ativo</span><input name="active_ingredient" placeholder="Principio ativo"></label>
+                  {% endif %}
                   <div class="row">
                     <label class="field-inline"><span>Preco custo</span><input name="cost_price" placeholder="0.00" value="0"></label>
                     <label class="field-inline"><span>Preco venda</span><input name="sale_price" placeholder="0.00" value="0"></label>
@@ -275,8 +335,9 @@
                       {% endfor %}
                     </select>
                   </label>
-                  <label><input type="checkbox" name="requires_prescription"> Exige receita</label>
-                  <label><input type="checkbox" name="is_controlled"> Controlado</label>
+                  {% if mode_key == 'pharmacy' %}<label><input type="checkbox" name="requires_prescription"> Exige receita</label>
+                  <label><input type="checkbox" name="is_controlled"> Controlado</label>{% endif %}
+                  {% if store_mode.show_fiscal %}
                   <h4>Tributacao</h4>
                   <div class="row">
                     <label class="field-inline"><span>NCM</span><input name="ncm" inputmode="numeric" maxlength="8" placeholder="8 digitos"></label>
@@ -306,6 +367,7 @@
                     <label class="field-inline"><span>IBS municipio %</span><input name="ibs_mun_rate" type="number" min="0" step="0.0001" value="0"></label>
                     <label class="field-inline"><span>CBS %</span><input name="cbs_rate" type="number" min="0" step="0.0001" value="0"></label>
                   </div>
+                  {% endif %}
                   <button type="submit">Salvar produto</button>
                 </form>
               </article>
@@ -360,23 +422,32 @@
         <section class="view" id="lancamentos" data-view hidden>
           <div class="section-head">
             <div>
-              <p class="eyebrow">Lancamentos</p>
-              <h2>Operacao diaria</h2>
+              <p class="eyebrow">{{ store_mode.short_name }}</p>
+              <h2>{{ 'Operacao da distribuidora' if mode_key == 'distributor' else store_mode.sales }}</h2>
             </div>
-            <p class="section-copy">Entradas, compras, vendas, financeiro e caixa no mesmo modulo.</p>
+            <p class="section-copy">{{ 'Recebimentos, saidas, pedidos, separacao e entrega.' if mode_key == 'distributor' else 'Entradas, compras, vendas, financeiro e caixa no mesmo modulo.' }}</p>
           </div>
 
           <div class="subnav">
+            {% if mode_key == 'distributor' %}
+            <button type="button" class="subnav-link active" data-subview-target="lancamentos-caixa">Caixa</button>
+            <button type="button" class="subnav-link" data-subview-target="lancamentos-vendas">Pedidos</button>
+            {% elif store_mode.show_lots %}
             <button type="button" class="subnav-link active" data-subview-target="lancamentos-lotes">Lotes</button>
             <button type="button" class="subnav-link" data-subview-target="lancamentos-estoque">Estoque</button>
             <button type="button" class="subnav-link" data-subview-target="lancamentos-compras">Compras</button>
-            <button type="button" class="subnav-link" data-subview-target="lancamentos-vendas">Vendas</button>
-            <button type="button" class="subnav-link" data-subview-target="lancamentos-cards">Cards</button>
+            <button type="button" class="subnav-link" data-subview-target="lancamentos-vendas">{{ store_mode.sales }}</button>
+            {% else %}
+            <button type="button" class="subnav-link active" data-subview-target="lancamentos-vendas">{{ store_mode.sales }}</button>
+            {% if mode_key != 'services' %}<button type="button" class="subnav-link" data-subview-target="lancamentos-estoque">Estoque</button>
+            <button type="button" class="subnav-link" data-subview-target="lancamentos-compras">Compras</button>{% endif %}
+            {% endif %}
+            {% if mode_key != 'distributor' %}<button type="button" class="subnav-link" data-subview-target="lancamentos-cards">Cards</button>
             <button type="button" class="subnav-link" data-subview-target="lancamentos-financeiro">Financeiro</button>
-            <button type="button" class="subnav-link" data-subview-target="lancamentos-caixa">Caixa</button>
+            <button type="button" class="subnav-link" data-subview-target="lancamentos-caixa">Caixa</button>{% endif %}
           </div>
 
-          <section class="subview is-active" id="lancamentos-lotes" data-subview>
+          <section class="subview{% if store_mode.show_lots and mode_key != 'distributor' %} is-active{% endif %}" id="lancamentos-lotes" data-subview {% if not store_mode.show_lots or mode_key == 'distributor' %}hidden{% endif %}>
             <section class="grid single-grid">
               <article class="card">
                 <h3>Lote</h3>
@@ -581,10 +652,20 @@
           <section class="subview" id="lancamentos-vendas" data-subview hidden>
             <section class="grid single-grid">
               <article class="card">
-                <h3>Venda</h3>
+                <h3>{{ store_mode.sale }}</h3>
                 <form data-api="/api/sales" id="sale-form">
-                  <label class="field-inline"><span>Cliente</span><input name="customer_name" placeholder="Nome do cliente" required></label>
-                  <label class="field-inline"><span>Telefone</span><input name="customer_phone" placeholder="Telefone"></label>
+                  <label class="field-inline"><span>Cliente</span><input id="sale-customer-name" name="customer_name" placeholder="Nome do cliente" required></label>
+                  <label class="field-inline"><span>Telefone</span><input id="sale-customer-phone" name="customer_phone" placeholder="Telefone"></label>
+                  {% if mode_key == 'distributor' %}
+                  <div class="row">
+                    <label class="field-inline"><span>Cliente cadastrado</span><select id="sale-customer-select" name="customer_id"><option value="">Selecione para entrega</option>{% for customer in customers %}<option value="{{ customer.id }}" data-name="{{ customer.name }}" data-phone="{{ customer.phone }}" data-address="{{ customer.address }}, {{ customer.address_number }} - {{ customer.neighborhood }}, {{ customer.city }}/{{ customer.state }} {{ customer.postal_code }}">{{ customer.name }} · {{ customer.phone }}</option>{% endfor %}</select></label>
+                    <label class="field-inline"><span>Destino</span><select id="sale-fulfillment-type" name="fulfillment_type"><option value="table">Mesa</option><option value="delivery">Entrega externa</option></select></label>
+                  </div>
+                  <div class="row">
+                    <label class="field-inline" id="sale-table-field"><span>Mesa</span><select id="sale-table-select" name="table_id" required><option value="">Selecione a mesa</option>{% for table in distribution_tables %}<option value="{{ table.id }}">{{ table.number }} · {{ table.name }} · {{ table.location }}</option>{% endfor %}</select></label>
+                    <label class="field-inline" id="sale-address-field" hidden><span>Endereco de entrega</span><input id="sale-delivery-address" name="delivery_address" placeholder="Endereco completo"></label>
+                  </div>
+                  {% endif %}
                   <label class="field-inline">
                     <span>Canal</span>
                     <select name="source_channel">
@@ -605,9 +686,9 @@
                   <div class="product-picker">
                     <div class="row">
                       <label class="field-inline">
-                        <span>Produto</span>
+                        <span>{{ store_mode.entity|capitalize }}</span>
                         <select id="sale-product-select" data-source="/api/products">
-                          <option value="">Produto</option>
+                          <option value="">{{ store_mode.entity|capitalize }}</option>
                           {% for product in summary.products %}
                           <option
                             value="{{ product.id }}"
@@ -615,8 +696,9 @@
                             data-name="{{ product.name }}"
                             data-price="{{ product.sale_price }}"
                             data-stock="{{ product.stock }}"
+                            data-tracks-inventory="{{ '1' if product.tracks_inventory else '0' }}"
                           >
-                            {{ product.name }} ({{ product.sku }}) • estoque {{ '%.3f'|format(product.stock) }} • R$ {{ '%.2f'|format(product.sale_price) }}
+                            {{ product.name }} ({{ product.sku }}){% if product.tracks_inventory %} • estoque {{ '%.3f'|format(product.stock) }}{% endif %} • R$ {{ '%.2f'|format(product.sale_price) }}
                           </option>
                           {% endfor %}
                         </select>
@@ -629,22 +711,21 @@
                     </div>
                     <button type="button" class="secondary-btn scan-trigger" id="scan-sale-product-btn">Bip por webcam</button>
                     <p class="helper scanner-support-note" hidden>Scanner por webcam indisponivel neste navegador. Use HTTPS confiavel ou selecione o produto manualmente.</p>
-                    <button type="button" id="add-sale-item-btn">Adicionar produto</button>
+                    <button type="button" id="add-sale-item-btn">Adicionar {{ store_mode.entity }}</button>
                   </div>
                   <div class="sale-items-panel">
-                    <h4>Produtos da venda</h4>
-                    <p class="helper">Se voce preencher um produto e clicar em registrar, o sistema tenta incluir esse produto automaticamente.</p>
+                    <h4>Itens</h4>
                     <div id="sale-items-list" class="item-stack empty-list"></div>
                   </div>
                   <div class="sale-items-panel">
-                    <h4>Lista de produtos</h4>
+                    <h4>{{ store_mode.catalog }}</h4>
                     <div class="table-wrap">
                       <table>
                         <thead>
                           <tr>
                             <th>SKU</th>
-                            <th>Produto</th>
-                            <th>Qtd</th>
+                            <th>{{ store_mode.entity|capitalize }}</th>
+                            <th>{{ 'Estoque' if mode_key != 'services' else 'Tipo' }}</th>
                             <th>Valor</th>
                           </tr>
                         </thead>
@@ -653,7 +734,7 @@
                           <tr>
                             <td>{{ product.sku }}</td>
                             <td>{{ product.name }}</td>
-                            <td>{{ '%.3f'|format(product.stock) }}</td>
+                            <td>{{ ('%.3f'|format(product.stock)) if product.tracks_inventory else 'Servico' }}</td>
                             <td>R$ {{ '%.2f'|format(product.sale_price) }}</td>
                           </tr>
                           {% else %}
@@ -666,9 +747,25 @@
                     </div>
                   </div>
                   <input type="hidden" name="items_json" id="sale-items-json" required>
-                  <button type="submit">Registrar venda</button>
+                  <button type="submit">{{ store_mode.primary_action }}</button>
                 </form>
               </article>
+              {% if mode_key == 'distributor' %}
+              <article class="card order-control-panel">
+                <div class="section-head compact-head"><div><p class="eyebrow">Operacao</p><h3>Separacao e entrega</h3></div></div>
+                <div class="stage-admin-list">
+                  {% for sale in fiscal_sales %}
+                  <form class="stage-admin-card order-status-card" data-api="/api/sales/{{ sale.id }}/fulfillment" data-method="PATCH">
+                    <div class="ticket-card-head"><strong>{{ sale.code }}</strong><span class="mini-badge">{{ {'new':'Novo','picking':'Em separacao','ready':'Pronto','out_for_delivery':'Em entrega','delivered':'Entregue','cancelled':'Cancelado'}.get(sale.delivery_status, sale.delivery_status) }}</span></div>
+                    <p class="ticket-copy"><strong>{{ sale.customer_name }}</strong> · R$ {{ '%.2f'|format(sale.total_amount) }}</p>
+                    <p class="muted-line">{{ ('Mesa ' ~ sale.table_reference) if sale.fulfillment_type == 'table' else (sale.delivery_address or 'Destino nao informado') }}</p>
+                    <div class="document-actions"><a class="table-action" target="_blank" href="/api/orders/{{ sale.id }}/pdf?format=a4">PDF A4</a><a class="table-action" target="_blank" href="/api/orders/{{ sale.id }}/pdf?format=thermal58">Tiquete 58 mm</a><a class="table-action" target="_blank" href="/api/orders/{{ sale.id }}/pdf?format=thermal80">Tiquete 80 mm</a></div>
+                    <div class="row"><label class="field-inline"><span>Status</span><select name="delivery_status"><option value="new" {% if sale.delivery_status == 'new' %}selected{% endif %}>Novo</option><option value="picking" {% if sale.delivery_status == 'picking' %}selected{% endif %}>Em separacao</option><option value="ready" {% if sale.delivery_status == 'ready' %}selected{% endif %}>Pronto</option><option value="out_for_delivery" {% if sale.delivery_status == 'out_for_delivery' %}selected{% endif %}>Saiu para entrega</option><option value="delivered" {% if sale.delivery_status == 'delivered' %}selected{% endif %}>Entregue</option><option value="cancelled" {% if sale.delivery_status == 'cancelled' %}selected{% endif %}>Cancelado</option></select></label><button type="submit">Atualizar</button></div>
+                  </form>
+                  {% else %}<p class="helper">Nenhum pedido registrado.</p>{% endfor %}
+                </div>
+              </article>
+              {% endif %}
             </section>
           </section>
 
@@ -740,7 +837,7 @@
             </section>
           </section>
 
-          <section class="subview" id="lancamentos-caixa" data-subview hidden>
+          <section class="subview{% if mode_key == 'distributor' %} is-active{% endif %}" id="lancamentos-caixa" data-subview {% if mode_key != 'distributor' %}hidden{% endif %}>
             <section class="grid">
               <article class="card">
                 <h3>Caixa</h3>
@@ -752,12 +849,12 @@
                 <form data-api="/api/cash/open">
                   <label class="field-inline"><span>Valor de abertura</span><input name="opening_amount" placeholder="0.00" required></label>
                   <label class="field-inline field-block"><span>Observacoes</span><textarea name="notes" placeholder="Observacoes da abertura"></textarea></label>
-                  <button type="submit">Abrir caixa</button>
+                  <button type="submit" {% if summary.cash_status == 'open' %}disabled{% endif %}>Abrir caixa</button>
                 </form>
                 <form data-api="/api/cash/close">
                   <label class="field-inline"><span>Valor de fechamento</span><input name="closing_amount" placeholder="0.00" required></label>
                   <label class="field-inline field-block"><span>Observacoes</span><textarea name="notes" placeholder="Observacoes do fechamento"></textarea></label>
-                  <button type="submit">Fechar caixa</button>
+                  <button type="submit" {% if summary.cash_status != 'open' %}disabled{% endif %}>Fechar caixa</button>
                 </form>
               </article>
               <article class="card">
@@ -774,11 +871,35 @@
                   {% else %}<p class="helper">Nenhuma venda com saldo pendente.</p>{% endfor %}
                 </div>
               </article>
+              {% if mode_key == 'distributor' %}
+              <article class="card">
+                <h3>Entrada ou saida</h3>
+                <form data-api="/api/cash/movements">
+                  <label class="field-inline"><span>Movimento</span><select name="direction"><option value="in">Entrada</option><option value="out">Saida / retirada</option></select></label>
+                  <label class="field-inline"><span>Categoria</span><input name="category" placeholder="Frete, despesa, reforco"></label>
+                  <label class="field-inline"><span>Descricao</span><input name="description" required></label>
+                  <label class="field-inline"><span>Valor</span><input name="amount" type="number" min="0.01" step="0.01" required></label>
+                  <button type="submit" {% if summary.cash_status != 'open' %}disabled{% endif %}>Registrar movimento</button>
+                </form>
+                <div class="cash-ledger">
+                  {% for movement in summary.cash_movements %}<div class="cash-ledger-row"><span>{{ movement.description }}</span><strong class="{{ 'movement-out' if movement.direction == 'out' else 'movement-in' }}">{{ '-' if movement.direction == 'out' else '+' }} R$ {{ '%.2f'|format(movement.amount) }}</strong></div>{% else %}<p class="helper">Nenhum movimento manual.</p>{% endfor %}
+                </div>
+              </article>
+              <article class="card">
+                <h3>Notas dos pedidos</h3>
+                <div class="fiscal-feedback" data-fiscal-feedback aria-live="polite"></div>
+                <div class="stage-admin-list">
+                  {% for sale in fiscal_sales[:10] %}
+                  <div class="stage-admin-card"><div class="ticket-card-head"><strong>{{ sale.code }}</strong><span>R$ {{ '%.2f'|format(sale.total_amount) }}</span></div><p class="muted-line">{{ sale.customer_name }}</p><button type="button" class="secondary-btn fiscal-issue-one" data-sale-id="{{ sale.id }}" {% if not fiscal_status.ready_for_simulation %}disabled{% endif %}>Gerar nota no simulador</button></div>
+                  {% else %}<p class="helper">Nenhum pedido para faturar.</p>{% endfor %}
+                </div>
+              </article>
+              {% endif %}
             </section>
           </section>
         </section>
 
-        <section class="view" id="faturamento" data-view hidden>
+        <section class="view" id="faturamento" data-view {% if not store_mode.show_fiscal %}data-mode-disabled="true"{% endif %} hidden>
           <div class="section-head">
             <div>
               <p class="eyebrow">Faturamento</p>
@@ -838,7 +959,7 @@
               <button type="button" id="fiscal-issue-selected" data-ready="{{ '1' if fiscal_status.ready_for_simulation else '0' }}" disabled>Emitir selecionadas</button>
               <span id="fiscal-selection-count" class="muted-line">0 vendas selecionadas</span>
             </div>
-            <div id="fiscal-feedback" class="fiscal-feedback" aria-live="polite"></div>
+            <div id="fiscal-feedback" class="fiscal-feedback" data-fiscal-feedback aria-live="polite"></div>
 
             <div class="table-wrap">
               <table class="billing-table">
@@ -893,7 +1014,7 @@
                     <td>{{ 'Assinado com certificado vencido' if simulation.status == 'signed_expired_certificate' else 'Assinado e verificado' }}</td>
                     <td>R$ {{ '%.2f'|format(simulation.total_amount) }}</td>
                     <td>{{ simulation.created_at[:19]|replace('T', ' ') }}</td>
-                    <td><a class="table-action" href="{{ simulation.xml_url }}">Baixar XML</a></td>
+                    <td><div class="document-actions"><a class="table-action" href="{{ simulation.xml_url }}">XML</a><a class="table-action" target="_blank" href="{{ simulation.pdf_url }}?format=a4">A4 branca</a><a class="table-action" target="_blank" href="{{ simulation.pdf_url }}?format=thermal58">58 mm</a><a class="table-action" target="_blank" href="{{ simulation.pdf_url }}?format=thermal80">80 mm</a></div></td>
                   </tr>
                   {% else %}
                   <tr><td colspan="7">Nenhuma simulacao emitida.</td></tr>
@@ -1185,12 +1306,13 @@
               </form>
             </article>
 
-            <article class="card">
+            {% if store_mode.show_fiscal %}<article class="card">
               <h3>Tributacao dos produtos</h3>
               <div class="stage-admin-list">
                 {% for product in summary.products %}
                 <form class="stage-admin-card" data-api="/api/products/{{ product.id }}" data-method="PATCH">
                   <div class="ticket-card-head"><strong>{{ product.sku }} · {{ product.name }}</strong><span class="mini-badge">Fiscal</span></div>
+                  <label><input type="checkbox" name="tracks_inventory" {% if product.tracks_inventory %}checked{% endif %}> Controla estoque</label>
                   <div class="row"><label class="field-inline"><span>NCM</span><input name="ncm" value="{{ product.ncm }}" maxlength="8"></label><label class="field-inline"><span>CEST</span><input name="cest" value="{{ product.cest }}" maxlength="7"></label><label class="field-inline"><span>CFOP</span><input name="cfop" value="{{ product.cfop }}" maxlength="4"></label><label class="field-inline"><span>Origem</span><input name="fiscal_origin" value="{{ product.fiscal_origin }}" maxlength="1"></label></div>
                   <div class="row"><label class="field-inline"><span>CST / CSOSN</span><input name="icms_cst" value="{{ product.icms_cst }}" maxlength="3"></label><label class="field-inline"><span>CST PIS</span><input name="pis_cst" value="{{ product.pis_cst }}" maxlength="2"></label><label class="field-inline"><span>CST COFINS</span><input name="cofins_cst" value="{{ product.cofins_cst }}" maxlength="2"></label><label class="field-inline"><span>GTIN tributavel</span><input name="gtin_taxable" value="{{ product.gtin_taxable }}" maxlength="14"></label></div>
                   <div class="row"><label class="field-inline"><span>Un. tributavel</span><input name="tax_unit" value="{{ product.tax_unit }}"></label><label class="field-inline"><span>cBenef</span><input name="benefit_code" value="{{ product.benefit_code }}" maxlength="10"></label><label><input type="checkbox" name="has_tax_benefit" {% if product.has_tax_benefit %}checked{% endif %}> Possui beneficio</label></div>
@@ -1200,7 +1322,19 @@
                 </form>
                 {% else %}<p class="helper">Nenhum produto cadastrado.</p>{% endfor %}
               </div>
-            </article>
+            </article>{% else %}
+            <article class="card">
+              <h3>Catalogo de servicos</h3>
+              <div class="stage-admin-list">
+                {% for product in summary.products %}
+                <form class="stage-admin-card" data-api="/api/products/{{ product.id }}" data-method="PATCH">
+                  <div class="ticket-card-head"><strong>{{ product.sku }} · {{ product.name }}</strong><span class="mini-badge">{{ 'Com estoque' if product.tracks_inventory else 'Servico' }}</span></div>
+                  <label><input type="checkbox" name="tracks_inventory" {% if product.tracks_inventory %}checked{% endif %}> Controla materiais em estoque</label>
+                  <button type="submit">Salvar tipo</button>
+                </form>
+                {% else %}<p class="helper">Nenhum servico cadastrado.</p>{% endfor %}
+              </div>
+            </article>{% endif %}
 
             <article class="card">
               <h3>Margem por categoria</h3>
@@ -1437,18 +1571,47 @@
       }
 
       function activateView(targetId) {
+        const requestedView = document.getElementById(targetId);
+        if (!requestedView || requestedView.dataset.modeDisabled === "true") targetId = "inicio";
         document.querySelectorAll("[data-view]").forEach((section) => {
           const active = section.id === targetId;
           section.hidden = !active;
           section.classList.toggle("is-active", active);
         });
         document.querySelectorAll(".menu-link").forEach((button) => {
-          button.classList.toggle("active", button.dataset.target === targetId);
+          const activeSubview = requestedView?.querySelector(".subnav-link.active")?.dataset.subviewTarget;
+          const matchesSubview = !button.dataset.openSubview || button.dataset.openSubview === activeSubview;
+          button.classList.toggle("active", button.dataset.target === targetId && matchesSubview);
         });
         try {
           localStorage.setItem("nanostore.activeView", targetId);
         } catch {}
       }
+
+      const storeModeSelect = document.getElementById("store-mode-select");
+      const storeModeFeedback = document.getElementById("store-mode-feedback");
+      if (storeModeSelect) {
+        storeModeSelect.addEventListener("change", async () => {
+          storeModeSelect.disabled = true;
+          if (storeModeFeedback) storeModeFeedback.textContent = "Aplicando...";
+          try {
+            await postJson("/api/settings/store-mode", { mode: storeModeSelect.value });
+            try { localStorage.setItem("nanostore.activeView", "inicio"); } catch {}
+            window.location.reload();
+          } catch (error) {
+            storeModeSelect.disabled = false;
+            if (storeModeFeedback) storeModeFeedback.textContent = error.message;
+          }
+        });
+      }
+
+      document.querySelectorAll("[data-open-view]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const targetView = document.getElementById(button.dataset.openView);
+          activateView(button.dataset.openView);
+          if (targetView && button.dataset.openSubview) activateSubview(targetView, button.dataset.openSubview);
+        });
+      });
 
       async function postJson(url, payload, method = "POST") {
         const response = await fetch(url, {
@@ -1465,7 +1628,7 @@
       const fiscalSaleCheckboxes = Array.from(document.querySelectorAll(".fiscal-sale-checkbox"));
       const fiscalIssueSelected = document.getElementById("fiscal-issue-selected");
       const fiscalSelectionCount = document.getElementById("fiscal-selection-count");
-      const fiscalFeedback = document.getElementById("fiscal-feedback");
+      const fiscalFeedbacks = Array.from(document.querySelectorAll("[data-fiscal-feedback]"));
       const fiscalDocumentModel = document.getElementById("fiscal-document-model");
 
       function selectedFiscalSaleIds() {
@@ -1493,24 +1656,24 @@
           trigger.disabled = true;
           trigger.textContent = "Emitindo...";
         }
-        if (fiscalFeedback) {
-          fiscalFeedback.classList.remove("is-error");
-          fiscalFeedback.textContent = "Assinando XMLs localmente...";
-        }
+        fiscalFeedbacks.forEach((feedback) => {
+          feedback.classList.remove("is-error");
+          feedback.textContent = "Assinando XMLs localmente...";
+        });
         try {
           const result = await postJson("/api/fiscal/simulations", {
             sale_ids: saleIds,
             document_model: fiscalDocumentModel ? fiscalDocumentModel.value : "65",
           });
-          if (fiscalFeedback) {
-            fiscalFeedback.textContent = `${result.count} ${result.count === 1 ? "simulacao emitida" : "simulacoes emitidas"}. Nenhum documento foi transmitido.`;
-          }
+          fiscalFeedbacks.forEach((feedback) => {
+            feedback.textContent = `${result.count} ${result.count === 1 ? "simulacao emitida" : "simulacoes emitidas"}. Nenhum documento foi transmitido.`;
+          });
           window.setTimeout(() => window.location.reload(), 700);
         } catch (error) {
-          if (fiscalFeedback) {
-            fiscalFeedback.classList.add("is-error");
-            fiscalFeedback.textContent = error.message;
-          }
+          fiscalFeedbacks.forEach((feedback) => {
+            feedback.classList.add("is-error");
+            feedback.textContent = error.message;
+          });
           if (trigger) {
             trigger.disabled = false;
             trigger.textContent = originalLabel;
@@ -1534,7 +1697,13 @@
       refreshFiscalSelection();
 
       document.querySelectorAll(".menu-link").forEach((button) => {
-        button.addEventListener("click", () => activateView(button.dataset.target));
+        button.addEventListener("click", () => {
+          activateView(button.dataset.target);
+          const view = document.getElementById(button.dataset.target);
+          if (view && button.dataset.openSubview) activateSubview(view, button.dataset.openSubview);
+          document.querySelectorAll(".menu-link").forEach((item) => item.classList.remove("active"));
+          button.classList.add("active");
+        });
       });
 
       function activateSubview(container, targetId) {
@@ -1545,6 +1714,9 @@
         });
         container.querySelectorAll(".subnav-link").forEach((button) => {
           button.classList.toggle("active", button.dataset.subviewTarget === targetId);
+        });
+        document.querySelectorAll(`.menu-link[data-target="${container.id}"][data-open-subview]`).forEach((button) => {
+          button.classList.toggle("active", button.dataset.openSubview === targetId);
         });
       }
 
@@ -1559,9 +1731,10 @@
       });
 
       try {
-        activateView(localStorage.getItem("nanostore.activeView") || "inicio");
+        const activeMode = document.querySelector("[data-store-mode]")?.dataset.storeMode || "pharmacy";
+        activateView(activeMode === "distributor" ? "lancamentos" : (localStorage.getItem("nanostore.activeView") || "inicio"));
         } catch {
-          activateView("inicio");
+          activateView("{{ 'lancamentos' if mode_key == 'distributor' else 'inicio' }}");
         }
 
       const saleItems = [];
@@ -1569,6 +1742,14 @@
       const saleProductQuantity = document.getElementById("sale-product-quantity");
       const saleProductPrice = document.getElementById("sale-product-price");
       const saleProductDiscount = document.getElementById("sale-product-discount");
+      const saleCustomerSelect = document.getElementById("sale-customer-select");
+      const saleCustomerName = document.getElementById("sale-customer-name");
+      const saleCustomerPhone = document.getElementById("sale-customer-phone");
+      const saleFulfillmentType = document.getElementById("sale-fulfillment-type");
+      const saleTableField = document.getElementById("sale-table-field");
+      const saleTableSelect = document.getElementById("sale-table-select");
+      const saleAddressField = document.getElementById("sale-address-field");
+      const saleDeliveryAddress = document.getElementById("sale-delivery-address");
       const saleItemsList = document.getElementById("sale-items-list");
       const saleItemsJson = document.getElementById("sale-items-json");
       const addSaleItemBtn = document.getElementById("add-sale-item-btn");
@@ -1616,6 +1797,28 @@
       const scanTriggers = document.querySelectorAll(".scan-trigger");
       let scannerStream = null;
       let scannerTimer = null;
+
+      function refreshDistributorDestination() {
+        if (!saleFulfillmentType) return;
+        const delivery = saleFulfillmentType.value === "delivery";
+        if (saleTableField) saleTableField.hidden = delivery;
+        if (saleTableSelect) saleTableSelect.required = !delivery;
+        if (saleAddressField) saleAddressField.hidden = !delivery;
+        if (saleCustomerSelect) saleCustomerSelect.required = delivery;
+        if (saleDeliveryAddress) saleDeliveryAddress.required = delivery;
+      }
+
+      if (saleFulfillmentType) saleFulfillmentType.addEventListener("change", refreshDistributorDestination);
+      if (saleCustomerSelect) {
+        saleCustomerSelect.addEventListener("change", () => {
+          const option = saleCustomerSelect.selectedOptions[0];
+          if (!option || !option.value) return;
+          if (saleCustomerName) saleCustomerName.value = option.dataset.name || "";
+          if (saleCustomerPhone) saleCustomerPhone.value = option.dataset.phone || "";
+          if (saleDeliveryAddress) saleDeliveryAddress.value = option.dataset.address || "";
+        });
+      }
+      refreshDistributorDestination();
       let currentScanTarget = "consult";
       let scannerSupported = false;
 
@@ -1645,7 +1848,7 @@
           <tr>
             <td>${product.sku}</td>
             <td>${product.name}</td>
-            <td>${Number(product.stock || 0).toFixed(3)}</td>
+            <td>${product.tracks_inventory ? Number(product.stock || 0).toFixed(3) : "Servico"}</td>
             <td>R$ ${Number(product.sale_price || 0).toFixed(2)}</td>
           </tr>
         `).join("");
@@ -1660,7 +1863,7 @@
         }
         const products = Array.isArray(data.items) ? data.items : [];
         saleProductSelect.innerHTML = `
-          <option value="">Produto</option>
+          <option value="">{{ store_mode.entity|capitalize }}</option>
           ${products.map((product) => `
             <option
               value="${product.id}"
@@ -1668,8 +1871,9 @@
               data-name="${product.name}"
               data-price="${Number(product.sale_price || 0)}"
               data-stock="${Number(product.stock || 0)}"
+              data-tracks-inventory="${product.tracks_inventory ? "1" : "0"}"
             >
-              ${product.name} (${product.sku}) • estoque ${Number(product.stock || 0).toFixed(3)} • R$ ${Number(product.sale_price || 0).toFixed(2)}
+              ${product.name} (${product.sku})${product.tracks_inventory ? ` • estoque ${Number(product.stock || 0).toFixed(3)}` : ""} • R$ ${Number(product.sale_price || 0).toFixed(2)}
             </option>
           `).join("")}
         `;

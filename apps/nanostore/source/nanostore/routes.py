@@ -5,15 +5,19 @@ from uuid import uuid4
 
 from cryptography import x509
 from cryptography.hazmat.primitives import serialization
-from flask import Blueprint, Response, abort, jsonify, render_template, request
-from sqlalchemy import func
+from flask import Blueprint, Response, abort, jsonify, render_template, request, send_file
+from sqlalchemy import case, func
 from werkzeug.exceptions import HTTPException
 
 from .extensions import db
+from .documents import build_fiscal_pdf, build_order_pdf
 from .fiscal import build_signed_simulation, fiscal_certificate_status, load_fiscal_identity
 from .tax import validate_issuer, validate_product
+from .store_modes import STORE_MODES, resolve_store_mode
 from .models import (
+    CashMovement,
     CashSession,
+    DistributionTable,
     FiscalSimulation,
     IntegrationSetting,
     InventoryCount,
@@ -21,6 +25,7 @@ from .models import (
     FinancialEntry,
     InternalChatMessage,
     PharmacyCategory,
+    PharmacyCustomer,
     PharmacyLot,
     PharmacyPayment,
     PharmacyProduct,
@@ -179,6 +184,7 @@ def _serialize_product(product):
         "minimum_stock": float(product.minimum_stock or 0),
         "sale_price": float(product.sale_price or 0),
         "cost_price": float(product.cost_price or 0),
+        "tracks_inventory": product.tracks_inventory,
         "minimum_profit_margin": float(category.minimum_profit_margin or 0) if category else 0.0,
         "suggested_profit_margin": float(category.suggested_profit_margin or 0) if category else 0.0,
         "ncm": product.ncm, "cest": product.cest, "cfop": product.cfop,
@@ -232,6 +238,12 @@ def _serialize_sale(sale):
         "total_amount": float(sale.total_amount or 0),
         "paid_amount": float(paid_amount),
         "balance_amount": float(balance_amount),
+        "fulfillment_type": sale.fulfillment_type,
+        "table_reference": sale.table_reference,
+        "delivery_address": sale.delivery_address,
+        "delivery_status": sale.delivery_status,
+        "customer_id": sale.customer_id,
+        "customer_phone": sale.customer_phone,
         "items": [
             {
                 "product_name": item.product.name if item.product else "",
@@ -293,6 +305,7 @@ def _serialize_fiscal_simulation(simulation):
         "total_amount": float(simulation.total_amount or 0),
         "created_at": simulation.created_at.isoformat() + "Z",
         "xml_url": f"/api/fiscal/simulations/{simulation.id}/xml",
+        "pdf_url": f"/api/fiscal/simulations/{simulation.id}/pdf",
     }
 
 
@@ -336,6 +349,26 @@ def _serialize_payment(payment):
         "pix_qr_code": payment.pix_qr_code,
         "pix_copy_paste": payment.pix_copy_paste,
         "paid_at": payment.paid_at.isoformat() + "Z" if payment.paid_at else "",
+    }
+
+
+def _serialize_customer(customer):
+    address = ", ".join(part for part in (
+        customer.address, customer.address_number, customer.neighborhood, customer.city, customer.state, customer.postal_code
+    ) if part)
+    return {
+        "id": customer.id, "name": customer.name, "document": customer.document,
+        "phone": customer.phone, "address": customer.address, "address_number": customer.address_number,
+        "neighborhood": customer.neighborhood, "city": customer.city, "state": customer.state,
+        "postal_code": customer.postal_code, "full_address": address, "notes": customer.notes,
+    }
+
+
+def _serialize_cash_movement(movement):
+    return {
+        "id": movement.id, "cash_session_id": movement.cash_session_id, "direction": movement.direction,
+        "category": movement.category, "description": movement.description, "amount": float(movement.amount or 0),
+        "created_at": movement.created_at.isoformat() + "Z",
     }
 
 
@@ -461,7 +494,10 @@ def _cash_received_total(cash_session_id):
         PharmacyPayment.status.in_(["paid", "authorized"]),
         PharmacyPayment.method.in_(["cash", "debit_card", "credit_card", "card_machine", "pix"]),
     ).scalar()
-    return Decimal(total or 0)
+    manual_total = db.session.query(func.coalesce(func.sum(
+        case((CashMovement.direction == "in", CashMovement.amount), else_=-CashMovement.amount)
+    ), 0)).filter(CashMovement.cash_session_id == cash_session_id).scalar()
+    return Decimal(total or 0) + Decimal(manual_total or 0)
 
 
 def _sale_paid_amount(sale_id):
@@ -599,6 +635,8 @@ def _summary():
             for sale in PharmacySale.query.order_by(PharmacySale.created_at.desc(), PharmacySale.id.desc()).all()
             if _sale_paid_amount(sale.id) < Decimal(sale.total_amount or 0)
         ],
+        "customers": [_serialize_customer(customer) for customer in PharmacyCustomer.query.order_by(PharmacyCustomer.name.asc()).all()],
+        "cash_movements": [_serialize_cash_movement(movement) for movement in CashMovement.query.order_by(CashMovement.created_at.desc(), CashMovement.id.desc()).limit(50).all()],
         "recent_purchases": [_serialize_purchase(purchase) for purchase in purchases],
         "financial_entries": [_serialize_financial_entry(entry) for entry in financial_entries],
         "paid_financial_entries": [_serialize_financial_entry(entry) for entry in paid_entries],
@@ -652,6 +690,7 @@ def _select_lots(product_id, requested_quantity):
 @bp.route("/")
 def index():
     summary = _summary()
+    mode_key, store_mode = resolve_store_mode(_setting_map().get("STORE_MODE"))
     fiscal_history = FiscalSimulation.query.order_by(FiscalSimulation.created_at.desc(), FiscalSimulation.id.desc()).limit(50).all()
     menu_sections = [
         {"id": "inicio", "title": "Inicio", "description": "Visao geral e indicadores"},
@@ -668,12 +707,17 @@ def index():
         summary=summary,
         categories=PharmacyCategory.query.order_by(PharmacyCategory.name.asc()).all(),
         suppliers=PharmacySupplier.query.order_by(PharmacySupplier.name.asc()).all(),
+        customers=PharmacyCustomer.query.order_by(PharmacyCustomer.name.asc()).all(),
+        distribution_tables=DistributionTable.query.filter_by(is_active=True).order_by(DistributionTable.number.asc()).all(),
         settings_map=_setting_map(),
         https_runtime=_https_runtime_config(),
         fiscal_status=fiscal_certificate_status(),
         fiscal_sales=PharmacySale.query.order_by(PharmacySale.created_at.desc(), PharmacySale.id.desc()).limit(200).all(),
         fiscal_simulations=[_serialize_fiscal_simulation(item) for item in fiscal_history],
         menu_sections=menu_sections,
+        mode_key=mode_key,
+        store_mode=store_mode,
+        store_modes=STORE_MODES,
     )
 
 
@@ -786,6 +830,40 @@ def api_suppliers():
     return jsonify({"ok": True, "id": row.id})
 
 
+@bp.route("/api/customers", methods=["GET", "POST"])
+def api_customers():
+    if request.method == "GET":
+        rows = PharmacyCustomer.query.order_by(PharmacyCustomer.name.asc()).all()
+        return jsonify({"ok": True, "items": [_serialize_customer(row) for row in rows]})
+    payload = request.get_json(force=True)
+    name = (payload.get("name") or "").strip()
+    phone = "".join(char for char in str(payload.get("phone") or "") if char.isdigit())
+    address = (payload.get("address") or "").strip()
+    if not name:
+        abort(400, "Nome do cliente e obrigatorio.")
+    if not phone or not address:
+        abort(400, "Telefone e endereco do cliente sao obrigatorios.")
+    row = PharmacyCustomer(
+        name=name, document=(payload.get("document") or "").strip(), phone=phone, address=address,
+        address_number=(payload.get("address_number") or "").strip(), neighborhood=(payload.get("neighborhood") or "").strip(),
+        city=(payload.get("city") or "").strip(), state=(payload.get("state") or "").strip().upper(),
+        postal_code=(payload.get("postal_code") or "").strip(), notes=(payload.get("notes") or "").strip(),
+    )
+    db.session.add(row)
+    db.session.commit()
+    return jsonify({"ok": True, "customer": _serialize_customer(row)})
+
+
+@bp.route("/api/tables")
+def api_tables():
+    rows = DistributionTable.query.order_by(DistributionTable.number.asc()).all()
+    return jsonify({"ok": True, "items": [
+        {"id": row.id, "number": row.number, "name": row.name, "location": row.location,
+         "reference": row.reference, "is_active": row.is_active}
+        for row in rows
+    ]})
+
+
 @bp.route("/api/products", methods=["GET", "POST"])
 def api_products():
     if request.method == "GET":
@@ -814,6 +892,7 @@ def api_products():
         requires_prescription=_to_bool(payload.get("requires_prescription")),
         is_controlled=_to_bool(payload.get("is_controlled")),
         is_active=not str(payload.get("is_active", "true")).strip().lower() in {"0", "false", "off", "nao"},
+        tracks_inventory=_to_bool(payload.get("tracks_inventory", True)),
         category_id=category.id if category else None,
         supplier_id=payload.get("supplier_id") or None,
     )
@@ -824,6 +903,8 @@ def api_products():
 
 
 def _apply_product_tax(product, payload):
+    if "tracks_inventory" in payload:
+        product.tracks_inventory = _to_bool(payload.get("tracks_inventory"))
     text_fields = (
         "ncm", "cest", "cfop", "fiscal_origin", "icms_cst", "pis_cst", "cofins_cst",
         "tax_unit", "gtin_taxable", "benefit_code", "anvisa_code", "ibs_cbs_cst", "tax_classification",
@@ -837,6 +918,17 @@ def _apply_product_tax(product, payload):
     for field in ("max_consumer_price", "ibs_uf_rate", "ibs_mun_rate", "cbs_rate"):
         if field in payload:
             setattr(product, field, _to_decimal(payload.get(field), field))
+
+
+@bp.route("/api/settings/store-mode", methods=["POST"])
+def api_store_mode():
+    payload = request.get_json(force=True)
+    mode_key = str(payload.get("mode") or "").strip().lower()
+    if mode_key not in STORE_MODES:
+        abort(400, "Modo de apresentacao invalido.")
+    _set_setting("STORE_MODE", mode_key)
+    db.session.commit()
+    return jsonify({"ok": True, "mode": mode_key, "profile": STORE_MODES[mode_key]})
 
 
 @bp.route("/api/products/<int:product_id>", methods=["PATCH"])
@@ -952,17 +1044,37 @@ def api_sales():
     items = payload.get("items") or []
     if not items:
         abort(400, "Informe ao menos um item.")
-    customer_name = (payload.get("customer_name") or "").strip()
+    customer = db.session.get(PharmacyCustomer, payload.get("customer_id")) if payload.get("customer_id") else None
+    fulfillment_type = (payload.get("fulfillment_type") or "counter").strip().lower()
+    if fulfillment_type not in {"counter", "table", "delivery"}:
+        abort(400, "Destino do pedido invalido.")
+    customer_name = (payload.get("customer_name") or (customer.name if customer else "")).strip()
     if not customer_name:
         abort(400, "Cliente obrigatorio.")
+    customer_phone = "".join(ch for ch in str(payload.get("customer_phone") or (customer.phone if customer else "")) if ch.isdigit())
+    selected_table = db.session.get(DistributionTable, payload.get("table_id")) if payload.get("table_id") else None
+    table_reference = selected_table.reference if selected_table else (payload.get("table_reference") or "").strip()
+    delivery_address = (payload.get("delivery_address") or (customer and _serialize_customer(customer)["full_address"]) or "").strip()
+    if fulfillment_type == "table" and (not selected_table or not selected_table.is_active):
+        abort(400, "Selecione uma mesa cadastrada e ativa para o pedido.")
+    if fulfillment_type == "delivery":
+        if not customer:
+            abort(400, "Selecione um cliente cadastrado para entrega.")
+        if not customer_phone or not delivery_address:
+            abort(400, "Entrega exige telefone e endereco do cliente.")
     sale = PharmacySale(
         code=(payload.get("code") or f"NS-{datetime.utcnow():%Y%m%d%H%M%S}-{uuid4().hex[:5].upper()}").strip(),
         customer_name=customer_name,
-        customer_phone=("".join(ch for ch in str(payload.get("customer_phone") or "") if ch.isdigit())),
+        customer_phone=customer_phone,
         source_channel=(payload.get("source_channel") or "balcao").strip().lower(),
         status="open",
         notes=(payload.get("notes") or "").strip(),
         external_order_id=(payload.get("external_order_id") or "").strip(),
+        customer_id=customer.id if customer else None,
+        fulfillment_type=fulfillment_type,
+        table_reference=table_reference,
+        delivery_address=delivery_address,
+        delivery_status="new",
     )
     db.session.add(sale)
     db.session.flush()
@@ -988,30 +1100,30 @@ def api_sales():
                     f"Desconto maior que a margem permitida para {product.name}. "
                     f"Preco minimo: R$ {floor_price:.2f}."
                 )
-            selections = _select_lots(product.id, quantity)
+            if quantity <= 0:
+                raise ValueError(f"Quantidade de {product.name} deve ser maior que zero.")
+            selections = _select_lots(product.id, quantity) if product.tracks_inventory else [(None, quantity)]
             for lot, consume in selections:
                 proportional_discount = (line_discount * consume / quantity).quantize(Decimal("0.01")) if line_discount > 0 else Decimal("0")
                 line_total = (unit_price * consume - proportional_discount).quantize(Decimal("0.01"))
-                lot.quantity_available = Decimal(lot.quantity_available or 0) - consume
+                if lot:
+                    lot.quantity_available = Decimal(lot.quantity_available or 0) - consume
                 db.session.add(
                     PharmacySaleItem(
                         sale_id=sale.id,
                         product_id=product.id,
-                        lot_id=lot.id,
+                        lot_id=lot.id if lot else None,
                         quantity=consume,
                         unit_price=unit_price,
                         discount_amount=proportional_discount,
                         total_amount=line_total,
                     )
                 )
-                _log_stock_movement(
-                    movement_type="sale",
-                    product=product,
-                    lot=lot,
-                    quantity=-consume,
-                    reference_code=sale.code,
-                    notes=f"Saida por venda {sale.code}.",
-                )
+                if lot:
+                    _log_stock_movement(
+                        movement_type="sale", product=product, lot=lot, quantity=-consume,
+                        reference_code=sale.code, notes=f"Saida por venda {sale.code}.",
+                    )
                 subtotal += (unit_price * consume).quantize(Decimal("0.01"))
                 discount_total += proportional_discount
         sale.subtotal_amount = subtotal
@@ -1045,6 +1157,19 @@ def api_sales():
         "sale": _serialize_sale(sale),
         "payment": _serialize_payment(payment) if payment else None,
     })
+
+
+@bp.route("/api/sales/<int:sale_id>/fulfillment", methods=["PATCH"])
+def api_sale_fulfillment(sale_id):
+    sale = db.session.get(PharmacySale, sale_id) or abort(404, "Pedido nao encontrado.")
+    payload = request.get_json(force=True)
+    status = (payload.get("delivery_status") or "").strip().lower()
+    allowed = {"new", "picking", "ready", "out_for_delivery", "delivered", "cancelled"}
+    if status not in allowed:
+        abort(400, "Status de separacao ou entrega invalido.")
+    sale.delivery_status = status
+    db.session.commit()
+    return jsonify({"ok": True, "sale": _serialize_sale(sale)})
 
 
 @bp.route("/api/fiscal/status")
@@ -1127,6 +1252,34 @@ def api_fiscal_simulation_xml(simulation_id):
     response = Response(simulation.xml_content, mimetype="application/xml")
     response.headers["Content-Disposition"] = f'attachment; filename="{simulation.code}.xml"'
     return response
+
+
+@bp.route("/api/fiscal/simulations/<int:simulation_id>/pdf")
+def api_fiscal_simulation_pdf(simulation_id):
+    simulation = db.session.get(FiscalSimulation, simulation_id) or abort(404, "Simulacao fiscal nao encontrada.")
+    format_name = (request.args.get("format") or "a4").strip().lower()
+    try:
+        document = build_fiscal_pdf(simulation, _setting_map(), format_name)
+    except ValueError as exc:
+        abort(400, str(exc))
+    return send_file(
+        document, mimetype="application/pdf", as_attachment=False,
+        download_name=f"{simulation.code}-{format_name}.pdf",
+    )
+
+
+@bp.route("/api/orders/<int:sale_id>/pdf")
+def api_order_pdf(sale_id):
+    sale = db.session.get(PharmacySale, sale_id) or abort(404, "Pedido nao encontrado.")
+    format_name = (request.args.get("format") or "a4").strip().lower()
+    try:
+        document = build_order_pdf(sale, format_name)
+    except ValueError as exc:
+        abort(400, str(exc))
+    return send_file(
+        document, mimetype="application/pdf", as_attachment=False,
+        download_name=f"{sale.code}-{format_name}.pdf",
+    )
 
 
 @bp.route("/api/payments/process", methods=["POST"])
@@ -1371,6 +1524,28 @@ def api_cash_close():
     session.notes = (payload.get("notes") or session.notes or "").strip()
     db.session.commit()
     return jsonify({"ok": True, "difference_amount": float(session.difference_amount or 0)})
+
+
+@bp.route("/api/cash/movements", methods=["POST"])
+def api_cash_movements():
+    session = _current_cash_session() or abort(400, "Abra o caixa antes de registrar movimentos.")
+    payload = request.get_json(force=True)
+    direction = (payload.get("direction") or "").strip().lower()
+    if direction not in {"in", "out"}:
+        abort(400, "Movimento deve ser entrada ou saida.")
+    amount = _to_decimal(payload.get("amount"), "valor")
+    description = (payload.get("description") or "").strip()
+    if amount <= 0 or not description:
+        abort(400, "Descricao e valor maior que zero sao obrigatorios.")
+    movement = CashMovement(
+        cash_session_id=session.id, direction=direction, category=(payload.get("category") or "").strip(),
+        description=description, amount=amount,
+    )
+    db.session.add(movement)
+    db.session.flush()
+    session.expected_amount = Decimal(session.opening_amount or 0) + _cash_received_total(session.id)
+    db.session.commit()
+    return jsonify({"ok": True, "movement": _serialize_cash_movement(movement), "expected_amount": float(session.expected_amount or 0)})
 
 
 @bp.route("/api/stock/adjustments", methods=["POST"])

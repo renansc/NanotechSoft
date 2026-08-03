@@ -24,6 +24,32 @@ class PharmacySupplier(TimestampMixin, db.Model):
     email = db.Column(db.String(255), default="", nullable=False)
 
 
+class PharmacyCustomer(TimestampMixin, db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(140), nullable=False, index=True)
+    document = db.Column(db.String(40), default="", nullable=False, index=True)
+    phone = db.Column(db.String(40), default="", nullable=False)
+    address = db.Column(db.String(255), default="", nullable=False)
+    address_number = db.Column(db.String(30), default="", nullable=False)
+    neighborhood = db.Column(db.String(100), default="", nullable=False)
+    city = db.Column(db.String(100), default="", nullable=False)
+    state = db.Column(db.String(2), default="", nullable=False)
+    postal_code = db.Column(db.String(12), default="", nullable=False)
+    notes = db.Column(db.Text, default="", nullable=False)
+
+
+class DistributionTable(TimestampMixin, db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    number = db.Column(db.Integer, nullable=False, unique=True, index=True)
+    name = db.Column(db.String(80), nullable=False)
+    location = db.Column(db.String(160), nullable=False)
+    is_active = db.Column(db.Boolean, default=True, nullable=False)
+
+    @property
+    def reference(self):
+        return f"{self.number} - {self.name} - {self.location}"
+
+
 class PharmacyProduct(TimestampMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     sku = db.Column(db.String(60), nullable=False, unique=True, index=True)
@@ -38,6 +64,7 @@ class PharmacyProduct(TimestampMixin, db.Model):
     requires_prescription = db.Column(db.Boolean, default=False, nullable=False)
     is_controlled = db.Column(db.Boolean, default=False, nullable=False)
     is_active = db.Column(db.Boolean, default=True, nullable=False)
+    tracks_inventory = db.Column(db.Boolean, default=True, nullable=False)
     ncm = db.Column(db.String(8), default="", nullable=False)
     cest = db.Column(db.String(7), default="", nullable=False)
     cfop = db.Column(db.String(4), default="5102", nullable=False)
@@ -91,13 +118,20 @@ class PharmacySale(TimestampMixin, db.Model):
     total_amount = db.Column(db.Numeric(12, 2), default=0, nullable=False)
     notes = db.Column(db.Text, default="", nullable=False)
     external_order_id = db.Column(db.String(120), default="", nullable=False, index=True)
+    customer_id = db.Column(db.Integer, db.ForeignKey("pharmacy_customer.id"), nullable=True, index=True)
+    fulfillment_type = db.Column(db.String(20), default="counter", nullable=False, index=True)
+    table_reference = db.Column(db.String(40), default="", nullable=False, index=True)
+    delivery_address = db.Column(db.String(300), default="", nullable=False)
+    delivery_status = db.Column(db.String(30), default="new", nullable=False, index=True)
+
+    customer = db.relationship("PharmacyCustomer", backref=db.backref("sales", lazy="dynamic"))
 
 
 class PharmacySaleItem(TimestampMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     sale_id = db.Column(db.Integer, db.ForeignKey("pharmacy_sale.id"), nullable=False, index=True)
     product_id = db.Column(db.Integer, db.ForeignKey("pharmacy_product.id"), nullable=False)
-    lot_id = db.Column(db.Integer, db.ForeignKey("pharmacy_lot.id"), nullable=False)
+    lot_id = db.Column(db.Integer, db.ForeignKey("pharmacy_lot.id"), nullable=True)
     quantity = db.Column(db.Numeric(12, 3), default=0, nullable=False)
     unit_price = db.Column(db.Numeric(12, 2), default=0, nullable=False)
     discount_amount = db.Column(db.Numeric(12, 2), default=0, nullable=False)
@@ -199,6 +233,17 @@ class CashSession(TimestampMixin, db.Model):
     expected_amount = db.Column(db.Numeric(12, 2), default=0, nullable=False)
     difference_amount = db.Column(db.Numeric(12, 2), default=0, nullable=False)
     notes = db.Column(db.Text, default="", nullable=False)
+
+
+class CashMovement(TimestampMixin, db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    cash_session_id = db.Column(db.Integer, db.ForeignKey("cash_session.id"), nullable=False, index=True)
+    direction = db.Column(db.String(10), nullable=False, index=True)
+    category = db.Column(db.String(80), default="", nullable=False, index=True)
+    description = db.Column(db.String(200), nullable=False)
+    amount = db.Column(db.Numeric(12, 2), default=0, nullable=False)
+
+    cash_session = db.relationship("CashSession", backref=db.backref("cash_movements", lazy="dynamic"))
 
 
 class StockMovement(TimestampMixin, db.Model):
