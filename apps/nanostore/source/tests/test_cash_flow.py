@@ -134,7 +134,7 @@ class CashFlowTest(unittest.TestCase):
             html = response.get_data(as_text=True)
             self.assertIn(headline, html, key)
             if key == "distributor":
-                for marker in ("Entrada ou saida", "Separacao e entrega", "Notas dos pedidos", "Novo cliente"):
+                for marker in ("Entrada ou saida", "Kanban de pedidos", "Notas dos pedidos", "Novo cliente do pedido"):
                     self.assertIn(marker, html)
 
     def test_cash_entries_and_withdrawals_change_expected_balance(self):
@@ -176,6 +176,26 @@ class CashFlowTest(unittest.TestCase):
         self.assertEqual(status.status_code, 200)
         db.session.refresh(sale)
         self.assertEqual(sale.delivery_status, "picking")
+
+    def test_order_can_create_and_select_customer_during_sale_flow(self):
+        client = self.app.test_client()
+        response = client.post("/api/customers", json={
+            "name": "Cliente Rapido", "phone": "(41) 99999-1234",
+            "address": "Rua do Pedido", "address_number": "25", "city": "Curitiba", "state": "PR",
+        })
+        self.assertEqual(response.status_code, 200, response.get_json())
+        customer = response.get_json()["customer"]
+        self.assertEqual(customer["phone"], "41999991234")
+        self.assertIn("Rua do Pedido", customer["full_address"])
+
+    def test_order_kanban_accepts_operational_statuses(self):
+        sale = self.make_sale()
+        client = self.app.test_client()
+        for status in ("new", "ready", "out_for_delivery", "delivered"):
+            response = client.patch(f"/api/sales/{sale.id}/fulfillment", json={"delivery_status": status})
+            self.assertEqual(response.status_code, 200, response.get_json())
+            db.session.refresh(sale)
+            self.assertEqual(sale.delivery_status, status)
 
     def test_table_order_requires_table_reference(self):
         response = self.app.test_client().post("/api/sales", json={

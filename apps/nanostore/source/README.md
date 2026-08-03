@@ -33,6 +33,12 @@ emissao fiscal dos pedidos. Pedidos usam uma fila de separacao e entrega; o
 destino deve ser uma mesa identificada ou uma entrega vinculada a cliente
 cadastrado com telefone e endereco.
 
+Na tela de Pedidos, o acompanhamento usa um kanban com as etapas `Novo`,
+`Separado`, `Entrega` e `Delivery`. Os cards podem ser arrastados no desktop ou
+movidos pelos botoes Anterior/Avancar no celular. O formulario do pedido tambem
+abre um cadastro rapido de cliente e seleciona automaticamente o registro criado,
+sem perder os itens que ja estavam sendo lancados.
+
 ## Rodar localmente
 
 ```bash

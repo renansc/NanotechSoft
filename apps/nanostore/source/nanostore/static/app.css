@@ -254,6 +254,64 @@ body[data-store-mode="distributor"] .order-control-panel,
   border-top: 4px solid var(--primary);
 }
 
+.field-with-action {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: end;
+}
+
+.field-with-action .field-inline {
+  min-width: 0;
+}
+
+.order-kanban-panel {
+  overflow: hidden;
+}
+
+.order-kanban {
+  grid-auto-columns: minmax(285px, 1fr);
+}
+
+.order-kanban-column {
+  min-height: 250px;
+  transition: border-color 160ms ease, background 160ms ease;
+}
+
+.order-kanban-column.is-drag-over {
+  border-color: var(--primary);
+  background: var(--paper-soft);
+}
+
+.order-kanban-column [data-order-dropzone] {
+  min-height: 175px;
+}
+
+.order-kanban-card {
+  cursor: grab;
+  transition: opacity 140ms ease, transform 140ms ease;
+}
+
+.order-kanban-card:active {
+  cursor: grabbing;
+}
+
+.order-kanban-card.is-dragging {
+  opacity: 0.48;
+  transform: scale(0.98);
+}
+
+.order-card-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.order-card-actions button {
+  width: 100%;
+}
+
 h2,
 h3 {
   margin-top: 0;
@@ -961,6 +1019,10 @@ th {
   }
 
   .row-auto-fit {
+    grid-template-columns: 1fr;
+  }
+
+  .field-with-action {
     grid-template-columns: 1fr;
   }
 

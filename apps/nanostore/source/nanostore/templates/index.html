@@ -658,7 +658,7 @@
                   <label class="field-inline"><span>Telefone</span><input id="sale-customer-phone" name="customer_phone" placeholder="Telefone"></label>
                   {% if mode_key == 'distributor' %}
                   <div class="row">
-                    <label class="field-inline"><span>Cliente cadastrado</span><select id="sale-customer-select" name="customer_id"><option value="">Selecione para entrega</option>{% for customer in customers %}<option value="{{ customer.id }}" data-name="{{ customer.name }}" data-phone="{{ customer.phone }}" data-address="{{ customer.address }}, {{ customer.address_number }} - {{ customer.neighborhood }}, {{ customer.city }}/{{ customer.state }} {{ customer.postal_code }}">{{ customer.name }} · {{ customer.phone }}</option>{% endfor %}</select></label>
+                    <div class="field-with-action"><label class="field-inline"><span>Cliente cadastrado</span><select id="sale-customer-select" name="customer_id"><option value="">Selecione para entrega</option>{% for customer in customers %}<option value="{{ customer.id }}" data-name="{{ customer.name }}" data-phone="{{ customer.phone }}" data-address="{{ customer.address }}, {{ customer.address_number }} - {{ customer.neighborhood }}, {{ customer.city }}/{{ customer.state }} {{ customer.postal_code }}">{{ customer.name }} · {{ customer.phone }}</option>{% endfor %}</select></label><button type="button" class="secondary-btn" id="open-quick-customer-btn">Novo cliente</button></div>
                     <label class="field-inline"><span>Destino</span><select id="sale-fulfillment-type" name="fulfillment_type"><option value="table">Mesa</option><option value="delivery">Entrega externa</option></select></label>
                   </div>
                   <div class="row">
@@ -751,19 +751,32 @@
                 </form>
               </article>
               {% if mode_key == 'distributor' %}
-              <article class="card order-control-panel">
-                <div class="section-head compact-head"><div><p class="eyebrow">Operacao</p><h3>Separacao e entrega</h3></div></div>
-                <div class="stage-admin-list">
-                  {% for sale in fiscal_sales %}
-                  <form class="stage-admin-card order-status-card" data-api="/api/sales/{{ sale.id }}/fulfillment" data-method="PATCH">
-                    <div class="ticket-card-head"><strong>{{ sale.code }}</strong><span class="mini-badge">{{ {'new':'Novo','picking':'Em separacao','ready':'Pronto','out_for_delivery':'Em entrega','delivered':'Entregue','cancelled':'Cancelado'}.get(sale.delivery_status, sale.delivery_status) }}</span></div>
-                    <p class="ticket-copy"><strong>{{ sale.customer_name }}</strong> · R$ {{ '%.2f'|format(sale.total_amount) }}</p>
-                    <p class="muted-line">{{ ('Mesa ' ~ sale.table_reference) if sale.fulfillment_type == 'table' else (sale.delivery_address or 'Destino nao informado') }}</p>
-                    <div class="document-actions"><a class="table-action" target="_blank" href="/api/orders/{{ sale.id }}/pdf?format=a4">PDF A4</a><a class="table-action" target="_blank" href="/api/orders/{{ sale.id }}/pdf?format=thermal58">Tiquete 58 mm</a><a class="table-action" target="_blank" href="/api/orders/{{ sale.id }}/pdf?format=thermal80">Tiquete 80 mm</a></div>
-                    <div class="row"><label class="field-inline"><span>Status</span><select name="delivery_status"><option value="new" {% if sale.delivery_status == 'new' %}selected{% endif %}>Novo</option><option value="picking" {% if sale.delivery_status == 'picking' %}selected{% endif %}>Em separacao</option><option value="ready" {% if sale.delivery_status == 'ready' %}selected{% endif %}>Pronto</option><option value="out_for_delivery" {% if sale.delivery_status == 'out_for_delivery' %}selected{% endif %}>Saiu para entrega</option><option value="delivered" {% if sale.delivery_status == 'delivered' %}selected{% endif %}>Entregue</option><option value="cancelled" {% if sale.delivery_status == 'cancelled' %}selected{% endif %}>Cancelado</option></select></label><button type="submit">Atualizar</button></div>
-                  </form>
-                  {% else %}<p class="helper">Nenhum pedido registrado.</p>{% endfor %}
-                </div>
+              <article class="card order-control-panel order-kanban-panel">
+                <div class="section-head compact-head"><div><p class="eyebrow">Operacao</p><h3>Kanban de pedidos</h3></div><p class="muted-line" id="order-kanban-feedback" aria-live="polite"></p></div>
+                {% set order_columns = [
+                  {'key': 'new', 'name': 'Novo', 'color': '#2f6fce', 'statuses': ['new', 'picking']},
+                  {'key': 'ready', 'name': 'Separado', 'color': '#c48b2a', 'statuses': ['ready']},
+                  {'key': 'out_for_delivery', 'name': 'Entrega', 'color': '#d26a30', 'statuses': ['out_for_delivery']},
+                  {'key': 'delivered', 'name': 'Delivery', 'color': '#2d8a4d', 'statuses': ['delivered']}
+                ] %}
+                <section class="kanban-board order-kanban" id="order-kanban">
+                  {% for column in order_columns %}
+                  <article class="kanban-column order-kanban-column" data-order-status="{{ column.key }}">
+                    <header class="kanban-head"><div class="kanban-title"><span class="swatch-large" style="background: {{ column.color }}"></span><strong>{{ column.name }}</strong></div><span class="kanban-count" data-order-count>{{ fiscal_sales|selectattr('delivery_status', 'in', column.statuses)|list|length }}</span></header>
+                    <div class="kanban-list" data-order-dropzone>
+                      {% for sale in fiscal_sales if sale.delivery_status in column.statuses %}
+                      <section class="ticket-card order-kanban-card" draggable="true" data-sale-id="{{ sale.id }}" data-order-status="{{ column.key }}">
+                        <div class="ticket-card-head"><strong>{{ sale.code }}</strong><span class="mini-badge">{{ 'Mesa' if sale.fulfillment_type == 'table' else 'Delivery' }}</span></div>
+                        <p class="ticket-copy"><strong>{{ sale.customer_name }}</strong> · R$ {{ '%.2f'|format(sale.total_amount) }}</p>
+                        <p class="muted-line">{{ ('Mesa ' ~ sale.table_reference) if sale.fulfillment_type == 'table' else (sale.delivery_address or 'Destino nao informado') }}</p>
+                        <div class="document-actions"><a class="table-action" target="_blank" href="/api/orders/{{ sale.id }}/pdf?format=a4">PDF A4</a><a class="table-action" target="_blank" href="/api/orders/{{ sale.id }}/pdf?format=thermal58">58 mm</a><a class="table-action" target="_blank" href="/api/orders/{{ sale.id }}/pdf?format=thermal80">80 mm</a></div>
+                        <div class="order-card-actions"><button type="button" class="secondary-btn order-move-btn" data-order-move="prev" aria-label="Mover pedido para a etapa anterior" {% if column.key == 'new' %}disabled{% endif %}>Anterior</button><button type="button" class="order-move-btn" data-order-move="next" aria-label="Mover pedido para a proxima etapa" {% if column.key == 'delivered' %}disabled{% endif %}>Avancar</button></div>
+                      </section>
+                      {% endfor %}
+                    </div>
+                  </article>
+                  {% endfor %}
+                </section>
               </article>
               {% endif %}
             </section>
@@ -1376,6 +1389,23 @@
 
     <button type="button" id="open-item-consult-btn" class="floating-action">Consultar item</button>
 
+    {% if mode_key == 'distributor' %}
+    <div id="quick-customer-modal" class="modal-shell" hidden>
+      <div class="modal-card">
+        <div class="modal-head"><strong>Novo cliente do pedido</strong><button type="button" class="secondary-btn" id="close-quick-customer-btn">Fechar</button></div>
+        <form id="quick-customer-form">
+          <div class="row"><label class="field-inline"><span>Nome</span><input name="name" required></label><label class="field-inline"><span>Telefone</span><input name="phone" inputmode="tel" required></label></div>
+          <div class="row"><label class="field-inline"><span>Documento</span><input name="document"></label><label class="field-inline"><span>CEP</span><input name="postal_code" inputmode="numeric"></label></div>
+          <div class="row"><label class="field-inline"><span>Endereco</span><input name="address" required></label><label class="field-inline"><span>Numero</span><input name="address_number"></label></div>
+          <div class="row"><label class="field-inline"><span>Bairro</span><input name="neighborhood"></label><label class="field-inline"><span>Cidade</span><input name="city"></label><label class="field-inline"><span>UF</span><input name="state" maxlength="2"></label></div>
+          <label class="field-inline field-block"><span>Observacoes</span><textarea name="notes"></textarea></label>
+          <p class="fiscal-feedback" id="quick-customer-feedback" aria-live="polite"></p>
+          <button type="submit">Cadastrar e usar no pedido</button>
+        </form>
+      </div>
+    </div>
+    {% endif %}
+
     <div id="scanner-modal" class="modal-shell" hidden>
       <div class="modal-card">
         <div class="modal-head">
@@ -1743,6 +1773,11 @@
       const saleProductPrice = document.getElementById("sale-product-price");
       const saleProductDiscount = document.getElementById("sale-product-discount");
       const saleCustomerSelect = document.getElementById("sale-customer-select");
+      const openQuickCustomerBtn = document.getElementById("open-quick-customer-btn");
+      const closeQuickCustomerBtn = document.getElementById("close-quick-customer-btn");
+      const quickCustomerModal = document.getElementById("quick-customer-modal");
+      const quickCustomerForm = document.getElementById("quick-customer-form");
+      const quickCustomerFeedback = document.getElementById("quick-customer-feedback");
       const saleCustomerName = document.getElementById("sale-customer-name");
       const saleCustomerPhone = document.getElementById("sale-customer-phone");
       const saleFulfillmentType = document.getElementById("sale-fulfillment-type");
@@ -1819,6 +1854,115 @@
         });
       }
       refreshDistributorDestination();
+
+      function closeQuickCustomerModal() {
+        if (quickCustomerModal) quickCustomerModal.hidden = true;
+      }
+
+      if (openQuickCustomerBtn) openQuickCustomerBtn.addEventListener("click", () => {
+        if (quickCustomerModal) quickCustomerModal.hidden = false;
+        quickCustomerForm?.querySelector('[name="name"]')?.focus();
+      });
+      if (closeQuickCustomerBtn) closeQuickCustomerBtn.addEventListener("click", closeQuickCustomerModal);
+      if (quickCustomerModal) quickCustomerModal.addEventListener("click", (event) => {
+        if (event.target === quickCustomerModal) closeQuickCustomerModal();
+      });
+      if (quickCustomerForm) quickCustomerForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        if (quickCustomerFeedback) {
+          quickCustomerFeedback.classList.remove("is-error");
+          quickCustomerFeedback.textContent = "Cadastrando cliente...";
+        }
+        try {
+          const result = await postJson("/api/customers", formToObject(quickCustomerForm));
+          const customer = result.customer;
+          const option = new Option(`${customer.name} · ${customer.phone}`, String(customer.id), true, true);
+          option.dataset.name = customer.name;
+          option.dataset.phone = customer.phone;
+          option.dataset.address = customer.full_address;
+          saleCustomerSelect?.add(option);
+          saleCustomerSelect?.dispatchEvent(new Event("change"));
+          quickCustomerForm.reset();
+          closeQuickCustomerModal();
+        } catch (error) {
+          if (quickCustomerFeedback) {
+            quickCustomerFeedback.classList.add("is-error");
+            quickCustomerFeedback.textContent = error.message;
+          }
+        }
+      });
+
+      const orderKanban = document.getElementById("order-kanban");
+      const orderStatusOrder = ["new", "ready", "out_for_delivery", "delivered"];
+      const orderKanbanFeedback = document.getElementById("order-kanban-feedback");
+
+      function refreshOrderKanban() {
+        if (!orderKanban) return;
+        orderKanban.querySelectorAll(".order-kanban-column").forEach((column) => {
+          const cards = column.querySelectorAll(".order-kanban-card");
+          const count = column.querySelector("[data-order-count]");
+          if (count) count.textContent = String(cards.length);
+          const columnIndex = orderStatusOrder.indexOf(column.dataset.orderStatus);
+          cards.forEach((card) => {
+            const previous = card.querySelector('[data-order-move="prev"]');
+            const next = card.querySelector('[data-order-move="next"]');
+            if (previous) previous.disabled = columnIndex <= 0;
+            if (next) next.disabled = columnIndex >= orderStatusOrder.length - 1;
+          });
+        });
+      }
+
+      async function moveOrderCard(card, nextStatus) {
+        if (!card || !nextStatus || card.dataset.orderStatus === nextStatus) return;
+        const destination = orderKanban?.querySelector(`.order-kanban-column[data-order-status="${nextStatus}"] [data-order-dropzone]`);
+        if (!destination) return;
+        if (orderKanbanFeedback) orderKanbanFeedback.textContent = "Atualizando pedido...";
+        try {
+          await postJson(`/api/sales/${card.dataset.saleId}/fulfillment`, { delivery_status: nextStatus }, "PATCH");
+          destination.appendChild(card);
+          card.dataset.orderStatus = nextStatus;
+          refreshOrderKanban();
+          if (orderKanbanFeedback) orderKanbanFeedback.textContent = "Pedido atualizado.";
+        } catch (error) {
+          if (orderKanbanFeedback) orderKanbanFeedback.textContent = error.message;
+        }
+      }
+
+      if (orderKanban) {
+        orderKanban.querySelectorAll(".order-kanban-card").forEach((card) => {
+          card.addEventListener("dragstart", (event) => {
+            card.classList.add("is-dragging");
+            event.dataTransfer.setData("text/plain", card.dataset.saleId);
+            event.dataTransfer.effectAllowed = "move";
+          });
+          card.addEventListener("dragend", () => {
+            card.classList.remove("is-dragging");
+            orderKanban.querySelectorAll(".order-kanban-column").forEach((column) => column.classList.remove("is-drag-over"));
+          });
+        });
+        orderKanban.querySelectorAll(".order-kanban-column").forEach((column) => {
+          column.addEventListener("dragover", (event) => {
+            event.preventDefault();
+            column.classList.add("is-drag-over");
+          });
+          column.addEventListener("dragleave", () => column.classList.remove("is-drag-over"));
+          column.addEventListener("drop", async (event) => {
+            event.preventDefault();
+            column.classList.remove("is-drag-over");
+            const saleId = event.dataTransfer.getData("text/plain");
+            await moveOrderCard(orderKanban.querySelector(`.order-kanban-card[data-sale-id="${saleId}"]`), column.dataset.orderStatus);
+          });
+        });
+        orderKanban.addEventListener("click", async (event) => {
+          const button = event.target.closest("[data-order-move]");
+          if (!button || button.disabled) return;
+          const card = button.closest(".order-kanban-card");
+          const currentIndex = orderStatusOrder.indexOf(card.dataset.orderStatus);
+          const offset = button.dataset.orderMove === "prev" ? -1 : 1;
+          await moveOrderCard(card, orderStatusOrder[currentIndex + offset]);
+        });
+        refreshOrderKanban();
+      }
       let currentScanTarget = "consult";
       let scannerSupported = false;
 
