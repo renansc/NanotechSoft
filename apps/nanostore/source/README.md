@@ -39,6 +39,14 @@ movidos pelos botoes Anterior/Avancar no celular. O formulario do pedido tambem
 abre um cadastro rapido de cliente e seleciona automaticamente o registro criado,
 sem perder os itens que ja estavam sendo lancados.
 
+Os pedidos do kanban podem ser editados ou excluidos. A edicao recalcula itens,
+estoque e conta a receber, preservando pagamentos existentes; o novo total nao
+pode ficar abaixo do valor ja recebido. A exclusao realiza cancelamento
+auditavel, devolve os itens ao estoque, cancela a conta a receber e estorna os
+pagamentos. Quando o recebimento pertence ao caixa aberto, ele deixa de compor o
+saldo esperado; quando pertence a um caixa anterior, a devolucao e registrada
+como saida no caixa atualmente aberto.
+
 O menu da distribuidora comeca pelo `Dashboard`, que concentra os relatorios de
 uso diario: saldo e atividade do caixa aberto, lista e totais de pedidos por
 etapa, quantidade e valor de venda estimado do estoque, saldo por produto e

@@ -229,6 +229,11 @@ def _serialize_stock_movement(movement):
 def _serialize_sale(sale):
     paid_amount = _sale_paid_amount(sale.id)
     balance_amount = max(Decimal(sale.total_amount or 0) - paid_amount, Decimal("0"))
+    table_id = next(
+        (table.id for table in DistributionTable.query.filter_by(is_active=True).all()
+         if table.reference == sale.table_reference),
+        None,
+    ) if sale.fulfillment_type == "table" else None
     return {
         "id": sale.id,
         "code": sale.code,
@@ -240,15 +245,24 @@ def _serialize_sale(sale):
         "balance_amount": float(balance_amount),
         "fulfillment_type": sale.fulfillment_type,
         "table_reference": sale.table_reference,
+        "table_id": table_id,
         "delivery_address": sale.delivery_address,
         "delivery_status": sale.delivery_status,
         "customer_id": sale.customer_id,
         "customer_phone": sale.customer_phone,
+        "notes": sale.notes,
+        "external_order_id": sale.external_order_id,
+        "subtotal_amount": float(sale.subtotal_amount or 0),
+        "discount_amount": float(sale.discount_amount or 0),
         "items": [
             {
+                "product_id": item.product_id,
+                "sku": item.product.sku if item.product else "",
                 "product_name": item.product.name if item.product else "",
                 "lot_code": item.lot.lot_code if item.lot else "",
                 "quantity": float(item.quantity or 0),
+                "unit_price": float(item.unit_price or 0),
+                "discount_amount": float(item.discount_amount or 0),
                 "total_amount": float(item.total_amount or 0),
             }
             for item in sale.items.order_by(PharmacySaleItem.id.asc()).all()
@@ -529,7 +543,72 @@ def _sync_sale_receivable(sale):
             receivable.paid_at = datetime.utcnow()
 
 
+def _add_sale_items(sale, items, movement_type="sale"):
+    subtotal = Decimal("0")
+    discount_total = Decimal("0")
+    for raw_item in items:
+        product = None
+        if raw_item.get("product_id"):
+            product = db.session.get(PharmacyProduct, int(raw_item["product_id"]))
+        elif raw_item.get("sku"):
+            product = PharmacyProduct.query.filter(
+                func.lower(PharmacyProduct.sku) == str(raw_item["sku"]).strip().lower()
+            ).first()
+        if not product:
+            raise ValueError("Produto nao encontrado em um dos itens.")
+        quantity = _to_decimal(raw_item.get("quantity"), f"quantidade de {product.name}")
+        unit_price = _to_decimal(raw_item.get("unit_price"), f"preco de {product.name}", default=str(product.sale_price or "0"))
+        line_discount = _to_decimal(raw_item.get("discount_amount"), f"desconto de {product.name}")
+        if quantity <= 0:
+            raise ValueError(f"Quantidade de {product.name} deve ser maior que zero.")
+        floor_price = _margin_floor_price(product.cost_price or 0, product.category)
+        final_unit_price = (unit_price - (line_discount / quantity)).quantize(Decimal("0.01"))
+        if final_unit_price < floor_price:
+            raise ValueError(
+                f"Desconto maior que a margem permitida para {product.name}. "
+                f"Preco minimo: R$ {floor_price:.2f}."
+            )
+        selections = _select_lots(product.id, quantity) if product.tracks_inventory else [(None, quantity)]
+        remaining_discount = line_discount
+        for index, (lot, consume) in enumerate(selections):
+            proportional_discount = (
+                remaining_discount if index == len(selections) - 1
+                else (line_discount * consume / quantity).quantize(Decimal("0.01"))
+            )
+            remaining_discount -= proportional_discount
+            line_total = (unit_price * consume - proportional_discount).quantize(Decimal("0.01"))
+            if lot:
+                lot.quantity_available = Decimal(lot.quantity_available or 0) - consume
+            db.session.add(PharmacySaleItem(
+                sale_id=sale.id, product_id=product.id, lot_id=lot.id if lot else None,
+                quantity=consume, unit_price=unit_price,
+                discount_amount=proportional_discount, total_amount=line_total,
+            ))
+            if lot:
+                _log_stock_movement(
+                    movement_type=movement_type, product=product, lot=lot, quantity=-consume,
+                    reference_code=sale.code, notes=f"Saida por {'edicao da venda' if movement_type == 'sale_edit' else 'venda'} {sale.code}.",
+                )
+            subtotal += (unit_price * consume).quantize(Decimal("0.01"))
+            discount_total += proportional_discount
+    return subtotal, discount_total
+
+
+def _restore_sale_stock(sale, movement_type, notes):
+    for item in sale.items.order_by(PharmacySaleItem.id.asc()).all():
+        if item.lot:
+            item.lot.quantity_available = Decimal(item.lot.quantity_available or 0) + Decimal(item.quantity or 0)
+            _log_stock_movement(
+                movement_type=movement_type, product=item.product, lot=item.lot,
+                quantity=Decimal(item.quantity or 0), reference_code=sale.code, notes=notes,
+            )
+        db.session.delete(item)
+    db.session.flush()
+
+
 def _record_sale_payment(sale, payload, amount=None):
+    if sale.status == "cancelled" or sale.delivery_status == "cancelled":
+        raise ValueError("Pedido cancelado nao pode receber pagamentos.")
     method = (payload.get("method") or payload.get("payment_method") or "").strip().lower()
     if method not in {"pix", "card_machine", "credit_card", "debit_card", "cash"}:
         raise ValueError("Metodo de pagamento invalido.")
@@ -585,7 +664,10 @@ def _summary():
     expiring_lots = [lot for lot in lots if Decimal(lot.quantity_available or 0) > 0 and lot.expiration_date <= limit]
     low_stock = [product for product in products if _product_stock(product.id) <= Decimal(product.minimum_stock or 0)]
     no_stock = [product for product in products if _product_stock(product.id) <= Decimal("0")]
-    sales_today = PharmacySale.query.filter(func.date(PharmacySale.created_at) == today.isoformat()).all()
+    sales_today = PharmacySale.query.filter(
+        func.date(PharmacySale.created_at) == today.isoformat(),
+        PharmacySale.status != "cancelled",
+    ).all()
     revenue_today = sum((sale.total_amount or Decimal("0")) for sale in sales_today)
     overdue_entries = FinancialEntry.query.filter(
         FinancialEntry.status.in_(["open", "partial"]),
@@ -608,7 +690,10 @@ def _summary():
                 "direction": movement.direction, "amount": float(movement.amount or 0),
                 "occurred_at": movement.created_at.isoformat() + "Z",
             })
-        for payment in PharmacyPayment.query.filter_by(cash_session_id=cash_session.id).order_by(PharmacyPayment.created_at.desc()).limit(20).all():
+        for payment in PharmacyPayment.query.filter(
+            PharmacyPayment.cash_session_id == cash_session.id,
+            PharmacyPayment.status.in_(["paid", "authorized"]),
+        ).order_by(PharmacyPayment.created_at.desc()).limit(20).all():
             cash_activity.append({
                 "kind": "Recebimento", "description": payment.sale.code if payment.sale else payment.transaction_reference,
                 "direction": "in", "amount": float(payment.amount or 0),
@@ -742,7 +827,9 @@ def index():
         settings_map=_setting_map(),
         https_runtime=_https_runtime_config(),
         fiscal_status=fiscal_certificate_status(),
-        fiscal_sales=PharmacySale.query.order_by(PharmacySale.created_at.desc(), PharmacySale.id.desc()).limit(200).all(),
+        fiscal_sales=PharmacySale.query.filter(
+            PharmacySale.status != "cancelled"
+        ).order_by(PharmacySale.created_at.desc(), PharmacySale.id.desc()).limit(200).all(),
         fiscal_simulations=[_serialize_fiscal_simulation(item) for item in fiscal_history],
         menu_sections=menu_sections,
         mode_key=mode_key,
@@ -1114,53 +1201,8 @@ def api_sales():
     db.session.add(sale)
     db.session.flush()
 
-    subtotal = Decimal("0")
-    discount_total = Decimal("0")
     try:
-        for raw_item in items:
-            product = None
-            if raw_item.get("product_id"):
-                product = db.session.get(PharmacyProduct, int(raw_item["product_id"]))
-            elif raw_item.get("sku"):
-                product = PharmacyProduct.query.filter(func.lower(PharmacyProduct.sku) == str(raw_item["sku"]).strip().lower()).first()
-            if not product:
-                raise ValueError("Produto nao encontrado em um dos itens.")
-            quantity = _to_decimal(raw_item.get("quantity"), f"quantidade de {product.name}")
-            unit_price = _to_decimal(raw_item.get("unit_price"), f"preco de {product.name}", default=str(product.sale_price or "0"))
-            line_discount = _to_decimal(raw_item.get("discount_amount"), f"desconto de {product.name}")
-            floor_price = _margin_floor_price(product.cost_price or 0, product.category)
-            final_unit_price = (unit_price - (line_discount / quantity)).quantize(Decimal("0.01")) if quantity > 0 else unit_price
-            if final_unit_price < floor_price:
-                raise ValueError(
-                    f"Desconto maior que a margem permitida para {product.name}. "
-                    f"Preco minimo: R$ {floor_price:.2f}."
-                )
-            if quantity <= 0:
-                raise ValueError(f"Quantidade de {product.name} deve ser maior que zero.")
-            selections = _select_lots(product.id, quantity) if product.tracks_inventory else [(None, quantity)]
-            for lot, consume in selections:
-                proportional_discount = (line_discount * consume / quantity).quantize(Decimal("0.01")) if line_discount > 0 else Decimal("0")
-                line_total = (unit_price * consume - proportional_discount).quantize(Decimal("0.01"))
-                if lot:
-                    lot.quantity_available = Decimal(lot.quantity_available or 0) - consume
-                db.session.add(
-                    PharmacySaleItem(
-                        sale_id=sale.id,
-                        product_id=product.id,
-                        lot_id=lot.id if lot else None,
-                        quantity=consume,
-                        unit_price=unit_price,
-                        discount_amount=proportional_discount,
-                        total_amount=line_total,
-                    )
-                )
-                if lot:
-                    _log_stock_movement(
-                        movement_type="sale", product=product, lot=lot, quantity=-consume,
-                        reference_code=sale.code, notes=f"Saida por venda {sale.code}.",
-                    )
-                subtotal += (unit_price * consume).quantize(Decimal("0.01"))
-                discount_total += proportional_discount
+        subtotal, discount_total = _add_sale_items(sale, items)
         sale.subtotal_amount = subtotal
         sale.discount_amount = discount_total
         sale.total_amount = (subtotal - discount_total).quantize(Decimal("0.01"))
@@ -1194,9 +1236,124 @@ def api_sales():
     })
 
 
+@bp.route("/api/sales/<int:sale_id>", methods=["GET", "PATCH", "DELETE"])
+def api_sale_detail(sale_id):
+    sale = db.session.get(PharmacySale, sale_id) or abort(404, "Pedido nao encontrado.")
+    if request.method == "GET":
+        return jsonify({"ok": True, "sale": _serialize_sale(sale)})
+    if sale.status == "cancelled" or sale.delivery_status == "cancelled":
+        abort(400, "Pedido ja cancelado.")
+
+    if request.method == "DELETE":
+        active_payments = sale.payments.filter(PharmacyPayment.status.in_(["paid", "authorized"])).all()
+        current_cash = _current_cash_session()
+        refund_outside_current = sum(
+            (Decimal(payment.amount or 0) for payment in active_payments
+             if not current_cash or payment.cash_session_id != current_cash.id),
+            Decimal("0"),
+        )
+        if refund_outside_current > 0 and not current_cash:
+            abort(400, "Abra o caixa para registrar o estorno deste pedido.")
+        try:
+            _restore_sale_stock(
+                sale, "sale_cancel", f"Retorno ao estoque pelo cancelamento da venda {sale.code}.",
+            )
+            for payment in active_payments:
+                payment.status = "reversed"
+            if refund_outside_current > 0:
+                db.session.add(CashMovement(
+                    cash_session_id=current_cash.id, direction="out", category="Estorno de venda",
+                    description=f"Estorno do pedido {sale.code}", amount=refund_outside_current,
+                ))
+            sale.status = "cancelled"
+            sale.delivery_status = "cancelled"
+            receivable = FinancialEntry.query.filter_by(
+                source_ref=sale.code, entry_type="receivable"
+            ).order_by(FinancialEntry.id.desc()).first()
+            if receivable:
+                receivable.status = "cancelled"
+                receivable.paid_at = None
+            if current_cash:
+                db.session.flush()
+                current_cash.expected_amount = Decimal(current_cash.opening_amount or 0) + _cash_received_total(current_cash.id)
+            db.session.commit()
+        except ValueError as exc:
+            db.session.rollback()
+            abort(400, str(exc))
+        return jsonify({
+            "ok": True, "sale": _serialize_sale(sale),
+            "refunded_amount": float(sum((Decimal(payment.amount or 0) for payment in active_payments), Decimal("0"))),
+        })
+
+    payload = request.get_json(force=True)
+    items = payload.get("items") or []
+    if not items:
+        abort(400, "Informe ao menos um item.")
+    customer = db.session.get(PharmacyCustomer, payload.get("customer_id")) if payload.get("customer_id") else None
+    fulfillment_type = (payload.get("fulfillment_type") or sale.fulfillment_type or "counter").strip().lower()
+    customer_name = (payload.get("customer_name") or (customer.name if customer else "")).strip()
+    customer_phone = "".join(ch for ch in str(payload.get("customer_phone") or (customer.phone if customer else "")) if ch.isdigit())
+    selected_table = db.session.get(DistributionTable, payload.get("table_id")) if payload.get("table_id") else None
+    table_reference = selected_table.reference if selected_table else (payload.get("table_reference") or "").strip()
+    delivery_address = (payload.get("delivery_address") or (customer and _serialize_customer(customer)["full_address"]) or "").strip()
+    if fulfillment_type not in {"counter", "table", "delivery"}:
+        abort(400, "Destino do pedido invalido.")
+    if not customer_name:
+        abort(400, "Cliente obrigatorio.")
+    if fulfillment_type == "table" and (not selected_table or not selected_table.is_active):
+        abort(400, "Selecione uma mesa cadastrada e ativa para o pedido.")
+    if fulfillment_type == "delivery" and (not customer or not customer_phone or not delivery_address):
+        abort(400, "Entrega exige cliente cadastrado, telefone e endereco.")
+
+    paid_amount = _sale_paid_amount(sale.id)
+    try:
+        _restore_sale_stock(sale, "sale_edit_return", f"Retorno temporario pela edicao da venda {sale.code}.")
+        subtotal, discount_total = _add_sale_items(sale, items, movement_type="sale_edit")
+        total_amount = (subtotal - discount_total).quantize(Decimal("0.01"))
+        if total_amount < paid_amount:
+            raise ValueError(
+                f"O novo total nao pode ser menor que o valor ja recebido de R$ {paid_amount:.2f}. "
+                "Cancele o pedido para realizar o estorno."
+            )
+        sale.customer_name = customer_name
+        sale.customer_phone = customer_phone
+        sale.customer_id = customer.id if customer else None
+        sale.fulfillment_type = fulfillment_type
+        sale.table_reference = table_reference if fulfillment_type == "table" else ""
+        sale.delivery_address = delivery_address if fulfillment_type == "delivery" else ""
+        sale.source_channel = (payload.get("source_channel") or sale.source_channel).strip().lower()
+        sale.external_order_id = (payload.get("external_order_id") or "").strip()
+        sale.notes = (payload.get("notes") or "").strip()
+        sale.subtotal_amount = subtotal
+        sale.discount_amount = discount_total
+        sale.total_amount = total_amount
+        receivable = FinancialEntry.query.filter_by(
+            source_ref=sale.code, entry_type="receivable"
+        ).order_by(FinancialEntry.id.desc()).first()
+        if receivable:
+            receivable.amount = total_amount
+            receivable.counterparty = customer_name
+            receivable.notes = sale.notes
+        elif total_amount > 0:
+            db.session.add(FinancialEntry(
+                entry_type="receivable", category="Venda", description=f"Recebimento da venda {sale.code}",
+                counterparty=customer_name, amount=total_amount, status="open",
+                due_date=date.today(), source_ref=sale.code, notes=sale.notes,
+            ))
+        db.session.flush()
+        _sync_sale_receivable(sale)
+        db.session.commit()
+    except (ValueError, TypeError) as exc:
+        db.session.rollback()
+        abort(400, str(exc))
+    return jsonify({"ok": True, "sale": _serialize_sale(sale)})
+
+
 @bp.route("/api/sales/<int:sale_id>/fulfillment", methods=["PATCH"])
 def api_sale_fulfillment(sale_id):
     sale = db.session.get(PharmacySale, sale_id) or abort(404, "Pedido nao encontrado.")
+    if sale.status == "cancelled" or sale.delivery_status == "cancelled":
+        abort(400, "Pedido cancelado nao pode mudar de etapa.")
     payload = request.get_json(force=True)
     status = (payload.get("delivery_status") or "").strip().lower()
     allowed = {"new", "picking", "ready", "out_for_delivery", "delivered", "cancelled"}
@@ -1245,6 +1402,8 @@ def api_fiscal_simulations():
             sale = db.session.get(PharmacySale, sale_id)
             if not sale:
                 raise ValueError(f"Venda {sale_id} nao encontrada.")
+            if sale.status == "cancelled":
+                raise ValueError(f"O pedido {sale.code} esta cancelado e nao pode ser faturado.")
             for item in sale.items.order_by(PharmacySaleItem.id.asc()).all():
                 validation_errors.extend(validate_product(item.product, settings.get("FISCAL_CRT", ""), document_model))
             if validation_errors:

@@ -339,6 +339,28 @@ body[data-store-mode="distributor"] .order-control-panel,
   width: 100%;
 }
 
+.danger-btn {
+  border-color: #b73a2e;
+  background: #b73a2e;
+  color: #fff;
+}
+
+.operation-notice {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding: 12px;
+  border: 1px solid #c48b2a;
+  border-radius: 6px;
+  background: #fff8e8;
+}
+
+.operation-notice[hidden] {
+  display: none;
+}
+
 .dashboard-heading {
   align-items: center;
 }
@@ -1045,6 +1067,10 @@ th {
 }
 
 @media (max-width: 980px) {
+  .operation-notice {
+    grid-template-columns: 1fr;
+  }
+
   .shell {
     grid-template-columns: 1fr;
   }

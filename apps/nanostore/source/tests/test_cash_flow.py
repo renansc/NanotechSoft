@@ -9,7 +9,7 @@ from flask import Flask
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from nanostore.extensions import db
-from nanostore.models import CashMovement, CashSession, DistributionTable, FinancialEntry, IntegrationSetting, PharmacyCustomer, PharmacyLot, PharmacyPayment, PharmacyProduct, PharmacySale
+from nanostore.models import CashMovement, CashSession, DistributionTable, FinancialEntry, IntegrationSetting, PharmacyCustomer, PharmacyLot, PharmacyPayment, PharmacyProduct, PharmacySale, StockMovement
 from nanostore.routes import bp
 
 
@@ -138,6 +138,7 @@ class CashFlowTest(unittest.TestCase):
                     "Dashboard operacional", 'data-dashboard-report="cash"', 'data-dashboard-report="orders"',
                     'data-dashboard-report="stock"', "Entrada ou saida", "Kanban de pedidos",
                     "Notas dos pedidos", "Novo cliente do pedido", "Codigo / bipe", "Ler pela webcam",
+                    "data-order-edit", "data-order-delete",
                 ):
                     self.assertIn(marker, html)
 
@@ -277,6 +278,109 @@ class CashFlowTest(unittest.TestCase):
         })
         self.assertEqual(duplicate.status_code, 400)
         self.assertIn("ja cadastrado", duplicate.get_json()["error"])
+
+    def make_stocked_order(self, payment_method="pending", quantity="1", price="10"):
+        product = PharmacyProduct(sku="EDIT-1", name="Produto editavel", sale_price=Decimal(price))
+        db.session.add(product)
+        db.session.flush()
+        lot = PharmacyLot(
+            product_id=product.id, lot_code="EDIT-L1", expiration_date=date(2028, 1, 1), received_at=date.today(),
+            quantity_received=Decimal("5"), quantity_available=Decimal("5"), purchase_price=Decimal("4"),
+        )
+        db.session.add(lot)
+        db.session.commit()
+        response = self.app.test_client().post("/api/sales", json={
+            "customer_name": "Cliente original", "payment_method": payment_method,
+            "items": [{"product_id": product.id, "quantity": quantity, "unit_price": price}],
+        })
+        self.assertEqual(response.status_code, 200, response.get_json())
+        return PharmacySale.query.one(), product, lot
+
+    def test_order_edit_replaces_items_stock_and_receivable(self):
+        sale, product, lot = self.make_stocked_order()
+        response = self.app.test_client().patch(f"/api/sales/{sale.id}", json={
+            "customer_name": "Cliente alterado", "fulfillment_type": "counter",
+            "items": [{"product_id": product.id, "quantity": "2", "unit_price": "10"}],
+        })
+        self.assertEqual(response.status_code, 200, response.get_json())
+        db.session.refresh(sale)
+        db.session.refresh(lot)
+        receivable = FinancialEntry.query.filter_by(source_ref=sale.code).one()
+        self.assertEqual(sale.customer_name, "Cliente alterado")
+        self.assertEqual(Decimal(sale.total_amount), Decimal("20"))
+        self.assertEqual(Decimal(lot.quantity_available), Decimal("3"))
+        self.assertEqual(Decimal(receivable.amount), Decimal("20"))
+        self.assertEqual(sale.items.count(), 1)
+
+    def test_paid_order_edit_preserves_cash_and_rejects_total_below_paid(self):
+        cash = CashSession(status="open", opening_amount=Decimal("50"), expected_amount=Decimal("50"))
+        db.session.add(cash)
+        db.session.commit()
+        sale, product, lot = self.make_stocked_order(payment_method="cash")
+        increased = self.app.test_client().patch(f"/api/sales/{sale.id}", json={
+            "customer_name": "Cliente original", "fulfillment_type": "counter",
+            "items": [{"product_id": product.id, "quantity": "2", "unit_price": "10"}],
+        })
+        self.assertEqual(increased.status_code, 200, increased.get_json())
+        db.session.refresh(cash)
+        db.session.refresh(sale)
+        self.assertEqual(Decimal(cash.expected_amount), Decimal("60"))
+        self.assertEqual(sale.status, "partially_paid")
+
+        rejected = self.app.test_client().patch(f"/api/sales/{sale.id}", json={
+            "customer_name": "Cliente original", "fulfillment_type": "counter",
+            "items": [{"product_id": product.id, "quantity": "1", "unit_price": "5"}],
+        })
+        self.assertEqual(rejected.status_code, 400, rejected.get_json())
+        db.session.refresh(sale)
+        db.session.refresh(lot)
+        self.assertEqual(Decimal(sale.total_amount), Decimal("20"))
+        self.assertEqual(Decimal(lot.quantity_available), Decimal("3"))
+
+    def test_delete_paid_order_reverses_current_cash_and_restores_stock(self):
+        cash = CashSession(status="open", opening_amount=Decimal("50"), expected_amount=Decimal("50"))
+        db.session.add(cash)
+        db.session.commit()
+        sale, _, lot = self.make_stocked_order(payment_method="cash")
+        response = self.app.test_client().delete(f"/api/sales/{sale.id}")
+        self.assertEqual(response.status_code, 200, response.get_json())
+        db.session.refresh(cash)
+        db.session.refresh(sale)
+        db.session.refresh(lot)
+        self.assertEqual(Decimal(cash.expected_amount), Decimal("50"))
+        self.assertEqual(Decimal(lot.quantity_available), Decimal("5"))
+        self.assertEqual(sale.status, "cancelled")
+        self.assertEqual(PharmacyPayment.query.one().status, "reversed")
+        self.assertEqual(FinancialEntry.query.filter_by(source_ref=sale.code).one().status, "cancelled")
+        self.assertEqual(StockMovement.query.filter_by(movement_type="sale_cancel").count(), 1)
+        payment_attempt = self.app.test_client().post(
+            "/api/payments/process", json={"sale_id": sale.id, "method": "cash", "amount": "10"},
+        )
+        status_attempt = self.app.test_client().patch(
+            f"/api/sales/{sale.id}/fulfillment", json={"delivery_status": "new"},
+        )
+        self.assertEqual(payment_attempt.status_code, 400)
+        self.assertEqual(status_attempt.status_code, 400)
+
+    def test_delete_order_from_closed_cash_records_refund_in_current_cash(self):
+        old_cash = CashSession(status="open", opening_amount=Decimal("50"), expected_amount=Decimal("50"))
+        db.session.add(old_cash)
+        db.session.commit()
+        sale, _, _ = self.make_stocked_order(payment_method="cash")
+        old_cash.status = "closed"
+        old_cash.closing_amount = old_cash.expected_amount
+        current_cash = CashSession(status="open", opening_amount=Decimal("100"), expected_amount=Decimal("100"))
+        db.session.add(current_cash)
+        db.session.commit()
+
+        response = self.app.test_client().delete(f"/api/sales/{sale.id}")
+        self.assertEqual(response.status_code, 200, response.get_json())
+        db.session.refresh(old_cash)
+        db.session.refresh(current_cash)
+        refund = CashMovement.query.filter_by(cash_session_id=current_cash.id, category="Estorno de venda").one()
+        self.assertEqual(Decimal(old_cash.expected_amount), Decimal("60"))
+        self.assertEqual(Decimal(current_cash.expected_amount), Decimal("90"))
+        self.assertEqual(Decimal(refund.amount), Decimal("10"))
 
 
 if __name__ == "__main__":
