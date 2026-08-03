@@ -70,7 +70,7 @@ services:
       - key: RAIOXPACS_PGDATABASE
         value: raioxpacs
       - key: RAIOXPACS_PGSSLMODE
-        value: prefer
+        value: require
       - key: RAIOXPACS_AUTO_BOOTSTRAP_SCHEMA
         value: "1"
       - key: RAIOXPACS_PUBLIC_BASE_URL

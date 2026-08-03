@@ -1,4 +1,6 @@
 .env
+.env.*
+!.env.example
 .env_*
 .venv/
 __pycache__/
@@ -31,6 +33,8 @@ apps/**/instance/
 apps/**/uploads/
 apps/**/certs/
 apps/**/logs/
+
+.deploy-backups/
 
 apps/riob-cameras/data/
 apps/riob-cameras/source/data/

@@ -122,18 +122,25 @@ Um `200` em `/healthz` comprova apenas que o portal esta respondendo; ele nao
 valida o subprocesso RioB nem a presenca dos dados de negocio.
 
 O RaioxPacs usa PostgreSQL separado do MySQL do portal. No deploy Docker local,
-o servico `pacs-postgres` e publicado em `RAIOXPACS_POSTGRES_PORT`, por padrao
-`5433`, e o container `app` recebe `RAIOXPACS_PGHOST=pacs-postgres`,
+o servico `pacs-postgres` e publicado somente no loopback do host em
+`127.0.0.1:RAIOXPACS_POSTGRES_PORT`, por padrao `127.0.0.1:5433`, e o container
+`app` recebe `RAIOXPACS_PGHOST=pacs-postgres`,
 `RAIOXPACS_PGPORT=5432`, `RAIOXPACS_PGUSER`, `RAIOXPACS_PGPASSWORD` e
-`RAIOXPACS_PGDATABASE`. Para o Render acessar esse banco local via
-direcionamento de portas, configure no web service:
+`RAIOXPACS_PGDATABASE`.
+
+O PostgreSQL nao e publicado diretamente. O servico
+`pacs-postgres-gateway` publica a porta externa e aceita somente os blocos de
+saida do Render declarados em `deploy/postgres-gateway/haproxy.cfg`; qualquer
+outra origem e recusada antes de chegar ao banco. O PostgreSQL usa TLS e a URL
+externa deve manter `sslmode=require`. Se os IPs de saida do Render mudarem,
+atualize a allowlist antes do deploy. Depois configure no web service:
 
 - `RAIOXPACS_PGHOST`: IP/DNS publico que chega ao servidor Docker local.
 - `RAIOXPACS_PGPORT`: porta encaminhada, por padrao `5433`.
 - `RAIOXPACS_PGUSER`: usuario do Postgres, por padrao `postgres`.
 - `RAIOXPACS_PGPASSWORD`: senha configurada no `.env`.
 - `RAIOXPACS_PGDATABASE`: banco do PACS, por padrao `raioxpacs`.
-- `RAIOXPACS_PGSSLMODE`: `prefer` para encaminhamento local comum, ou `require` se houver SSL.
+- `RAIOXPACS_PGSSLMODE`: `require` para qualquer conexao externa.
 
 Tambem e possivel preencher `RAIOXPACS_DATABASE_URL` no Render; se ela existir,
 ela tem prioridade sobre as variaveis `RAIOXPACS_PG*`.

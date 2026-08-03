@@ -51,6 +51,7 @@ is_risky_path() {
   [[ "$path" == "__pycache__/"* ]] && return 0
   [[ "$path" == *.log ]] && return 0
   [[ "$path" == backups/* ]] && return 0
+  [[ "$path" == .deploy-backups/* ]] && return 0
   [[ "$path" == deploy/tmp/* ]] && return 0
   [[ "$path" == "apps/riob/source/config" || "$path" == apps/riob/source/config/* ]] && return 0
   [[ "$path" == apps/riob/source/.continue/* ]] && return 0
