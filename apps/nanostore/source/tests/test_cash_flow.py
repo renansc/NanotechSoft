@@ -119,7 +119,7 @@ class CashFlowTest(unittest.TestCase):
     def test_every_store_mode_renders_its_interface(self):
         expected = {
             "pharmacy": "Operacao da farmacia", "store": "Painel da loja",
-            "distributor": "Central de distribuicao", "commerce": "Gestao comercial",
+            "distributor": "Dashboard operacional", "commerce": "Gestao comercial",
             "food": "Operacao de alimentos", "services": "Central de servicos",
         }
         setting = IntegrationSetting(key="STORE_MODE", value="pharmacy")
@@ -134,8 +134,39 @@ class CashFlowTest(unittest.TestCase):
             html = response.get_data(as_text=True)
             self.assertIn(headline, html, key)
             if key == "distributor":
-                for marker in ("Entrada ou saida", "Kanban de pedidos", "Notas dos pedidos", "Novo cliente do pedido"):
+                for marker in (
+                    "Dashboard operacional", 'data-dashboard-report="cash"', 'data-dashboard-report="orders"',
+                    'data-dashboard-report="stock"', "Entrada ou saida", "Kanban de pedidos",
+                    "Notas dos pedidos", "Novo cliente do pedido",
+                ):
                     self.assertIn(marker, html)
+
+    def test_distributor_dashboard_summarizes_cash_orders_and_stock(self):
+        setting = IntegrationSetting(key="STORE_MODE", value="distributor")
+        cash = CashSession(status="open", opening_amount=Decimal("50"), expected_amount=Decimal("50"))
+        item = PharmacyProduct(
+            sku="DASH-1", name="Produto Dashboard", sale_price=Decimal("12"),
+            minimum_stock=Decimal("2"),
+        )
+        db.session.add_all([setting, cash, item])
+        db.session.flush()
+        db.session.add_all([
+            PharmacyLot(
+                product_id=item.id, lot_code="DASH-L1", expiration_date=date(2028, 1, 1), received_at=date.today(),
+                quantity_received=Decimal("5"), quantity_available=Decimal("5"), purchase_price=Decimal("6"),
+            ),
+            CashMovement(
+                cash_session_id=cash.id, direction="in", category="Teste",
+                description="Reforco dashboard", amount=Decimal("25"),
+            ),
+            PharmacySale(code="DASH-PEDIDO", customer_name="Cliente Dashboard", total_amount=Decimal("12"), delivery_status="ready"),
+        ])
+        db.session.commit()
+        response = self.app.test_client().get("/")
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        html = response.get_data(as_text=True)
+        for marker in ("Produto Dashboard", "Reforco dashboard", "DASH-PEDIDO", "Separado"):
+            self.assertIn(marker, html)
 
     def test_cash_entries_and_withdrawals_change_expected_balance(self):
         cash = CashSession(status="open", opening_amount=Decimal("100"), expected_amount=Decimal("100"))

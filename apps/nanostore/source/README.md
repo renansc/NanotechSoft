@@ -39,6 +39,11 @@ movidos pelos botoes Anterior/Avancar no celular. O formulario do pedido tambem
 abre um cadastro rapido de cliente e seleciona automaticamente o registro criado,
 sem perder os itens que ja estavam sendo lancados.
 
+O menu da distribuidora comeca pelo `Dashboard`, que concentra os relatorios de
+uso diario: saldo e atividade do caixa aberto, lista e totais de pedidos por
+etapa, quantidade e valor de venda estimado do estoque, saldo por produto e
+alertas de reposicao. Cada painel possui atalho para a operacao correspondente.
+
 ## Rodar localmente
 
 ```bash

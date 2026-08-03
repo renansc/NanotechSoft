@@ -21,7 +21,8 @@
           {% if mode_key == 'distributor' %}
           <section class="menu-group">
             <h3>Distribuidora</h3>
-            <button type="button" class="menu-link active" data-target="lancamentos" data-open-subview="lancamentos-caixa">Caixa</button>
+            <button type="button" class="menu-link active" data-target="inicio">Dashboard</button>
+            <button type="button" class="menu-link" data-target="lancamentos" data-open-subview="lancamentos-caixa">Caixa</button>
             <button type="button" class="menu-link" data-target="lancamentos" data-open-subview="lancamentos-vendas">Pedidos</button>
             <button type="button" class="menu-link" data-target="cadastros" data-open-subview="cadastros-produtos">Cadastros</button>
           </section>
@@ -69,6 +70,55 @@
           </section>
         </header>
         <section class="view is-active" id="inicio" data-view>
+          {% if mode_key == 'distributor' %}
+          <div class="section-head dashboard-heading">
+            <div><p class="eyebrow">Distribuicao</p><h1>Dashboard operacional</h1></div>
+            <p class="section-copy">Caixa, pedidos e estoque atual em uma unica leitura.</p>
+          </div>
+
+          <nav class="action-rail" aria-label="Acoes rapidas">
+            <button type="button" data-open-view="lancamentos" data-open-subview="lancamentos-vendas">Novo pedido</button>
+            <button type="button" data-open-view="lancamentos" data-open-subview="lancamentos-caixa">Movimentar caixa</button>
+            <button type="button" data-open-view="cadastros" data-open-subview="cadastros-produtos">Consultar estoque</button>
+            <button type="button" data-open-view="cadastros" data-open-subview="cadastros-clientes">Novo cliente</button>
+          </nav>
+
+          <section class="stats-grid distributor-dashboard-stats">
+            <article class="card stat"><strong>R$ {{ '%.2f'|format(summary.cash_expected_amount) }}</strong><span>saldo esperado no caixa</span></article>
+            <article class="card stat"><strong>{{ summary.sales_today_count }}</strong><span>pedidos hoje</span></article>
+            <article class="card stat"><strong>{{ summary.order_status_counts.new + summary.order_status_counts.ready + summary.order_status_counts.out_for_delivery }}</strong><span>pedidos em andamento</span></article>
+            <article class="card stat"><strong>{{ '%.3f'|format(summary.stock_quantity) }}</strong><span>unidades em estoque</span></article>
+            <article class="card stat urgent-stat"><strong>{{ summary.low_stock_count }}</strong><span>itens para repor</span></article>
+          </section>
+
+          <section class="dashboard-report-grid">
+            <article class="card dashboard-report" data-dashboard-report="cash">
+              <div class="section-head compact-head"><div><p class="eyebrow">Caixa atual</p><h3>Movimentacao de caixa</h3></div><button type="button" class="secondary-btn" data-open-view="lancamentos" data-open-subview="lancamentos-caixa">Abrir caixa</button></div>
+              <div class="dashboard-summary-line"><span>{{ 'Aberto' if summary.cash_status == 'open' else 'Fechado' }}</span><strong>R$ {{ '%.2f'|format(summary.cash_expected_amount) }}</strong></div>
+              <div class="table-wrap dashboard-table-wrap"><table><thead><tr><th>Data</th><th>Tipo</th><th>Descricao</th><th>Valor</th></tr></thead><tbody>
+                {% for activity in summary.cash_activity[:10] %}<tr><td>{{ activity.occurred_at[:16]|replace('T', ' ') }}</td><td>{{ activity.kind }}</td><td>{{ activity.description }}</td><td class="{{ 'movement-out' if activity.direction == 'out' else 'movement-in' }}">{{ '-' if activity.direction == 'out' else '+' }} R$ {{ '%.2f'|format(activity.amount) }}</td></tr>
+                {% else %}<tr><td colspan="4">Nenhuma movimentacao no caixa atual.</td></tr>{% endfor %}
+              </tbody></table></div>
+            </article>
+
+            <article class="card dashboard-report" data-dashboard-report="orders">
+              <div class="section-head compact-head"><div><p class="eyebrow">Operacao</p><h3>Lista de pedidos</h3></div><button type="button" class="secondary-btn" data-open-view="lancamentos" data-open-subview="lancamentos-vendas">Abrir kanban</button></div>
+              <div class="order-status-summary"><span>Novo <strong>{{ summary.order_status_counts.new }}</strong></span><span>Separado <strong>{{ summary.order_status_counts.ready }}</strong></span><span>Entrega <strong>{{ summary.order_status_counts.out_for_delivery }}</strong></span><span>Delivery <strong>{{ summary.order_status_counts.delivered }}</strong></span></div>
+              <div class="table-wrap dashboard-table-wrap"><table><thead><tr><th>Pedido</th><th>Cliente</th><th>Destino</th><th>Status</th><th>Total</th></tr></thead><tbody>
+                {% for sale in summary.recent_sales %}<tr><td><strong>{{ sale.code }}</strong></td><td>{{ sale.customer_name }}</td><td>{{ ('Mesa ' ~ sale.table_reference) if sale.fulfillment_type == 'table' else (sale.delivery_address or 'Balcao') }}</td><td>{{ {'new':'Novo','picking':'Novo','ready':'Separado','out_for_delivery':'Entrega','delivered':'Delivery','cancelled':'Cancelado'}.get(sale.delivery_status, sale.delivery_status) }}</td><td>R$ {{ '%.2f'|format(sale.total_amount) }}</td></tr>
+                {% else %}<tr><td colspan="5">Nenhum pedido registrado.</td></tr>{% endfor %}
+              </tbody></table></div>
+            </article>
+
+            <article class="card dashboard-report dashboard-stock-report" data-dashboard-report="stock">
+              <div class="section-head compact-head"><div><p class="eyebrow">Armazem</p><h3>Estoque atual</h3></div><div class="dashboard-value"><span>Valor de venda</span><strong>R$ {{ '%.2f'|format(summary.stock_sale_value) }}</strong></div></div>
+              <div class="table-wrap dashboard-table-wrap"><table><thead><tr><th>SKU</th><th>Produto</th><th>Saldo</th><th>Minimo</th><th>Valor unitario</th><th>Situacao</th></tr></thead><tbody>
+                {% for product in summary.products %}<tr><td>{{ product.sku }}</td><td><strong>{{ product.name }}</strong></td><td>{{ '%.3f'|format(product.stock) }}</td><td>{{ '%.3f'|format(product.minimum_stock) }}</td><td>R$ {{ '%.2f'|format(product.sale_price) }}</td><td><span class="stock-state {{ 'is-low' if product.stock <= product.minimum_stock else 'is-ok' }}">{{ 'Repor' if product.stock <= product.minimum_stock else 'Disponivel' }}</span></td></tr>
+                {% else %}<tr><td colspan="6">Nenhum produto cadastrado.</td></tr>{% endfor %}
+              </tbody></table></div>
+            </article>
+          </section>
+          {% else %}
           <section class="hero">
             <div>
               <p class="eyebrow">{{ store_mode.short_name }}</p>
@@ -107,6 +157,7 @@
             <article class="card stat"><strong>R$ {{ '%.2f'|format(summary.payable_open) }}</strong><span>a pagar</span></article>
             <article class="card stat"><strong>{{ summary.cash_status }}</strong><span>caixa</span></article>
           </section>
+          {% endif %}
         </section>
 
         <section class="view" id="workflow" data-view hidden>
@@ -1761,10 +1812,9 @@
       });
 
       try {
-        const activeMode = document.querySelector("[data-store-mode]")?.dataset.storeMode || "pharmacy";
-        activateView(activeMode === "distributor" ? "lancamentos" : (localStorage.getItem("nanostore.activeView") || "inicio"));
+        activateView(localStorage.getItem("nanostore.activeView") || "inicio");
         } catch {
-          activateView("{{ 'lancamentos' if mode_key == 'distributor' else 'inicio' }}");
+          activateView("inicio");
         }
 
       const saleItems = [];

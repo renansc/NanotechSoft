@@ -312,6 +312,101 @@ body[data-store-mode="distributor"] .order-control-panel,
   width: 100%;
 }
 
+.dashboard-heading {
+  align-items: center;
+}
+
+.dashboard-heading h1 {
+  margin: 0;
+  font-size: 1.8rem;
+}
+
+.distributor-dashboard-stats {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.dashboard-report-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 14px;
+}
+
+.dashboard-report {
+  min-width: 0;
+}
+
+.dashboard-stock-report {
+  grid-column: 1 / -1;
+}
+
+.dashboard-table-wrap {
+  max-height: 360px;
+}
+
+.dashboard-summary-line {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.dashboard-summary-line span,
+.dashboard-value span {
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.dashboard-summary-line strong,
+.dashboard-value strong {
+  font-size: 1.2rem;
+}
+
+.dashboard-value {
+  display: grid;
+  justify-items: end;
+  gap: 3px;
+}
+
+.order-status-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.order-status-summary span {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 8px 9px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--paper-soft);
+  font-size: 0.82rem;
+}
+
+.stock-state {
+  display: inline-block;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.stock-state.is-ok {
+  background: #dff2e7;
+  color: #17643b;
+}
+
+.stock-state.is-low {
+  background: #f8e2d8;
+  color: #953d2f;
+}
+
 h2,
 h3 {
   margin-top: 0;
@@ -987,15 +1082,47 @@ th {
   .kanban-board {
     grid-auto-columns: minmax(78vw, 1fr);
   }
+
+  .distributor-dashboard-stats {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .dashboard-report-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboard-stock-report {
+    grid-column: auto;
+  }
 }
 
 @media (max-width: 720px) {
+  html,
+  body,
+  .shell,
+  .sidebar,
+  .page,
+  .workspace-bar,
+  .menu-tree {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  body {
+    overflow-x: hidden;
+  }
+
   .page {
     padding: 18px;
     overflow-x: hidden;
   }
 
   h1 { font-size: 2rem; }
+
+  .dashboard-heading h1 {
+    font-size: 1.65rem;
+    overflow-wrap: anywhere;
+  }
 
   .workspace-bar {
     align-items: stretch;
@@ -1011,6 +1138,11 @@ th {
   .mode-switcher select { width: 100%; }
 
   .stats-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .distributor-dashboard-stats,
+  .order-status-summary {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 

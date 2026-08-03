@@ -600,6 +600,32 @@ def _summary():
         FinancialEntry.status.in_(["open", "partial"]),
     ).scalar()
     cash_session = _current_cash_session()
+    cash_activity = []
+    if cash_session:
+        for movement in CashMovement.query.filter_by(cash_session_id=cash_session.id).order_by(CashMovement.created_at.desc()).limit(20).all():
+            cash_activity.append({
+                "kind": "Movimento", "description": movement.description,
+                "direction": movement.direction, "amount": float(movement.amount or 0),
+                "occurred_at": movement.created_at.isoformat() + "Z",
+            })
+        for payment in PharmacyPayment.query.filter_by(cash_session_id=cash_session.id).order_by(PharmacyPayment.created_at.desc()).limit(20).all():
+            cash_activity.append({
+                "kind": "Recebimento", "description": payment.sale.code if payment.sale else payment.transaction_reference,
+                "direction": "in", "amount": float(payment.amount or 0),
+                "occurred_at": (payment.paid_at or payment.created_at).isoformat() + "Z",
+            })
+    cash_activity.sort(key=lambda item: item["occurred_at"], reverse=True)
+    product_rows = [_serialize_product(product) for product in products]
+    stock_quantity = sum(Decimal(str(product["stock"])) for product in product_rows if product["tracks_inventory"])
+    stock_sale_value = sum(
+        Decimal(str(product["stock"])) * Decimal(str(product["sale_price"]))
+        for product in product_rows if product["tracks_inventory"]
+    )
+    order_status_counts = {status: 0 for status in ("new", "ready", "out_for_delivery", "delivered")}
+    for status, count in db.session.query(PharmacySale.delivery_status, func.count(PharmacySale.id)).group_by(PharmacySale.delivery_status).all():
+        normalized = "new" if status == "picking" else status
+        if normalized in order_status_counts:
+            order_status_counts[normalized] += int(count)
     payment_method_totals = {}
     for payment in PharmacyPayment.query.filter(PharmacyPayment.status.in_(["paid", "authorized"])).all():
         key = payment.method or "outros"
@@ -624,7 +650,10 @@ def _summary():
         "cash_status": cash_session.status if cash_session else "closed",
         "cash_opening_amount": float(cash_session.opening_amount or 0) if cash_session else 0.0,
         "cash_expected_amount": float(cash_session.expected_amount or 0) if cash_session else 0.0,
-        "products": [_serialize_product(product) for product in products],
+        "products": product_rows,
+        "stock_quantity": float(stock_quantity),
+        "stock_sale_value": float(stock_sale_value),
+        "order_status_counts": order_status_counts,
         "all_lots": [_serialize_lot(lot) for lot in lots],
         "expiring_lots": [_serialize_lot(lot) for lot in expiring_lots],
         "low_stock_products": [_serialize_product(product) for product in low_stock],
@@ -637,6 +666,7 @@ def _summary():
         ],
         "customers": [_serialize_customer(customer) for customer in PharmacyCustomer.query.order_by(PharmacyCustomer.name.asc()).all()],
         "cash_movements": [_serialize_cash_movement(movement) for movement in CashMovement.query.order_by(CashMovement.created_at.desc(), CashMovement.id.desc()).limit(50).all()],
+        "cash_activity": cash_activity[:20],
         "recent_purchases": [_serialize_purchase(purchase) for purchase in purchases],
         "financial_entries": [_serialize_financial_entry(entry) for entry in financial_entries],
         "paid_financial_entries": [_serialize_financial_entry(entry) for entry in paid_entries],
