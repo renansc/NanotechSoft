@@ -99,4 +99,27 @@ def upgrade_schema():
         if db.engine.dialect.name == "mysql" and item_details.get("product_id", {}).get("nullable") is False:
             db.session.execute(text("ALTER TABLE purchase_order_item MODIFY COLUMN product_id INTEGER NULL"))
 
+    if inspector.has_table("pharmacy_payment"):
+        payment_columns = {column["name"] for column in inspector.get_columns("pharmacy_payment")}
+        if "cash_session_id" not in payment_columns:
+            db.session.execute(text("ALTER TABLE pharmacy_payment ADD COLUMN cash_session_id INTEGER NULL"))
+            db.session.execute(text("CREATE INDEX ix_pharmacy_payment_cash_session_id ON pharmacy_payment (cash_session_id)"))
+
+    if inspector.has_table("pharmacy_product"):
+        product_columns = {column["name"] for column in inspector.get_columns("pharmacy_product")}
+        fiscal_columns = {
+            "ncm": "VARCHAR(8) NOT NULL DEFAULT ''", "cest": "VARCHAR(7) NOT NULL DEFAULT ''",
+            "cfop": "VARCHAR(4) NOT NULL DEFAULT '5102'", "fiscal_origin": "VARCHAR(1) NOT NULL DEFAULT '0'",
+            "icms_cst": "VARCHAR(3) NOT NULL DEFAULT ''", "pis_cst": "VARCHAR(2) NOT NULL DEFAULT ''",
+            "cofins_cst": "VARCHAR(2) NOT NULL DEFAULT ''", "tax_unit": "VARCHAR(6) NOT NULL DEFAULT 'UN'",
+            "gtin_taxable": "VARCHAR(14) NOT NULL DEFAULT 'SEM GTIN'", "benefit_code": "VARCHAR(10) NOT NULL DEFAULT ''",
+            "has_tax_benefit": "BOOLEAN NOT NULL DEFAULT 0", "anvisa_code": "VARCHAR(13) NOT NULL DEFAULT ''",
+            "max_consumer_price": "NUMERIC(12,2) NOT NULL DEFAULT 0", "ibs_cbs_cst": "VARCHAR(3) NOT NULL DEFAULT ''",
+            "tax_classification": "VARCHAR(6) NOT NULL DEFAULT ''", "ibs_uf_rate": "NUMERIC(7,4) NOT NULL DEFAULT 0",
+            "ibs_mun_rate": "NUMERIC(7,4) NOT NULL DEFAULT 0", "cbs_rate": "NUMERIC(7,4) NOT NULL DEFAULT 0",
+        }
+        for column, definition in fiscal_columns.items():
+            if column not in product_columns:
+                db.session.execute(text(f"ALTER TABLE pharmacy_product ADD COLUMN {column} {definition}"))
+
     db.session.commit()

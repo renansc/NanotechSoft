@@ -7,6 +7,7 @@ Projeto novo de gestao para farmacia, separado do `zap`, usando-o apenas como re
 - cadastro de categorias, fornecedores e produtos
 - controle por lote, validade e localizacao
 - vendas por balcao, WhatsApp, WooCommerce, WordPress, Mercado Livre e delivery
+- faturamento individual e em massa com XML de simulacao assinado
 - pagamentos com base para Pix e maquina de cartao
 - configuracao de provedores e canais
 - dashboard web inicial
@@ -91,6 +92,40 @@ docker compose logs db
 Para MySQL `8.4`, o parametro antigo `default-authentication-plugin=mysql_native_password` nao funciona mais. O projeto foi ajustado para usar `--mysql-native-password=ON`, que e o formato compativel com MySQL 8.4.
 
 O container da aplicacao tambem inclui `cryptography`, necessario quando o MySQL usa autenticacao `caching_sha2_password`.
+
+## Simulador de faturamento
+
+O menu `Faturamento` gera XMLs locais vinculados as vendas e valida a assinatura
+com a chave privada de um certificado A1. Esses arquivos usam um namespace
+proprio, sao marcados como `semValorFiscal` e nunca sao transmitidos a SEFAZ.
+
+Configure o certificado somente por variaveis de ambiente:
+
+```bash
+NANOSTORE_FISCAL_CERT_PATH=/caminho/seguro/emitente.pfx
+NANOSTORE_FISCAL_CERT_PASSWORD=senha-do-certificado
+```
+
+Certificados vencidos podem ser usados apenas para exercitar o simulador. Uma
+integracao futura com homologacao deve exigir certificado vigente, cadastro
+fiscal completo, schemas oficiais e bloqueio independente para producao.
+
+Antes de gerar a simulacao, o modulo valida o emitente e os itens: CNPJ
+compativel com o certificado, IE, UF, municipio IBGE, CRT, NCM, CEST quando
+informado, CFOP de saida, origem, CST/CSOSN, PIS, COFINS, unidade e GTIN
+tributaveis, cBenef para produto marcado com beneficio e os campos ANVISA/PMC
+de medicamentos na NF-e. Para CRT 3 tambem exige CST IBS/CBS e cClassTrib.
+
+Referencias oficiais usadas na implementacao:
+
+- Portal Nacional da NF-e: Manual de Orientacao do Contribuinte 7.0
+- Portal Nacional da NF-e: Notas Tecnicas 2021.004 e 2025.002
+- Receita Federal: tabela NCM vigente
+- Receita Estadual do Parana: tabela oficial de codigo de beneficio fiscal
+
+O cadastro e o simulador fazem validacao preventiva. O calculo tributario e a
+transmissao oficial ainda dependem de motor fiscal homologado, tabelas vigentes
+e credenciamento/CSC da empresa na SEFAZ.
 
 ## VSCodium
 

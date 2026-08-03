@@ -230,6 +230,124 @@ h3 {
   margin-bottom: 14px;
 }
 
+.fiscal-mode-banner {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  border: 1px solid #d9a441;
+  border-radius: 8px;
+  background: #fff7df;
+  color: #714b08;
+}
+
+.fiscal-status-grid {
+  margin-bottom: 14px;
+}
+
+.fiscal-status-grid .stat strong {
+  overflow-wrap: anywhere;
+}
+
+.certificate-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--primary);
+  border-radius: 8px;
+  background: var(--paper);
+}
+
+.certificate-strip > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.certificate-strip span {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.certificate-strip.is-expired,
+.certificate-strip.is-error {
+  border-left-color: #b54832;
+}
+
+.fiscal-state {
+  flex: 0 0 auto;
+  font-weight: 700;
+}
+
+.billing-panel,
+.billing-history {
+  margin-bottom: 14px;
+}
+
+.billing-toolbar {
+  display: grid;
+  grid-template-columns: minmax(180px, 240px) auto minmax(160px, 1fr);
+  align-items: end;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.billing-toolbar label {
+  gap: 5px;
+}
+
+.billing-toolbar button {
+  min-height: 44px;
+}
+
+.billing-toolbar .muted-line {
+  align-self: center;
+}
+
+.fiscal-feedback {
+  min-height: 24px;
+  margin-bottom: 8px;
+  color: var(--primary-dark);
+  font-weight: 600;
+}
+
+.fiscal-feedback.is-error {
+  color: #a33b2c;
+}
+
+.billing-table .selection-cell {
+  width: 44px;
+  text-align: center;
+}
+
+.billing-table input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--primary);
+}
+
+.billing-table button {
+  min-width: 88px;
+  padding: 9px 12px;
+}
+
+.table-action {
+  display: inline-block;
+  color: var(--primary-dark);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.compact-head {
+  margin-bottom: 4px;
+}
+
 .subnav {
   display: flex;
   gap: 10px;
@@ -502,6 +620,11 @@ button {
   border-radius: 14px;
 }
 
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
 input,
 textarea,
 select {
@@ -679,6 +802,16 @@ th {
     align-items: start;
   }
 
+  .fiscal-mode-banner,
+  .certificate-strip {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .fiscal-state {
+    flex: auto;
+  }
+
   .kanban-board {
     grid-auto-columns: minmax(78vw, 1fr);
   }
@@ -716,5 +849,10 @@ th {
 
   .https-tools-grid {
     grid-template-columns: 1fr;
+  }
+
+  .billing-toolbar {
+    grid-template-columns: 1fr;
+    align-items: stretch;
   }
 }

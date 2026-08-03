@@ -32,6 +32,7 @@
           <section class="menu-group">
             <h3>Lancamentos</h3>
             <button type="button" class="menu-link" data-target="lancamentos">Movimento diario</button>
+            <button type="button" class="menu-link" data-target="faturamento">Faturamento</button>
           </section>
 
           <section class="menu-group">
@@ -276,6 +277,35 @@
                   </label>
                   <label><input type="checkbox" name="requires_prescription"> Exige receita</label>
                   <label><input type="checkbox" name="is_controlled"> Controlado</label>
+                  <h4>Tributacao</h4>
+                  <div class="row">
+                    <label class="field-inline"><span>NCM</span><input name="ncm" inputmode="numeric" maxlength="8" placeholder="8 digitos"></label>
+                    <label class="field-inline"><span>CEST</span><input name="cest" inputmode="numeric" maxlength="7" placeholder="Quando aplicavel"></label>
+                    <label class="field-inline"><span>CFOP</span><input name="cfop" inputmode="numeric" maxlength="4" value="5102"></label>
+                    <label class="field-inline"><span>Origem</span><input name="fiscal_origin" inputmode="numeric" maxlength="1" value="0"></label>
+                  </div>
+                  <div class="row">
+                    <label class="field-inline"><span>CST / CSOSN</span><input name="icms_cst" maxlength="3"></label>
+                    <label class="field-inline"><span>CST PIS</span><input name="pis_cst" maxlength="2"></label>
+                    <label class="field-inline"><span>CST COFINS</span><input name="cofins_cst" maxlength="2"></label>
+                    <label class="field-inline"><span>Un. tributavel</span><input name="tax_unit" maxlength="6" value="UN"></label>
+                  </div>
+                  <div class="row">
+                    <label class="field-inline"><span>GTIN tributavel</span><input name="gtin_taxable" maxlength="14" value="SEM GTIN"></label>
+                    <label class="field-inline"><span>cBenef</span><input name="benefit_code" maxlength="10"></label>
+                    <label><input type="checkbox" name="has_tax_benefit"> Possui beneficio fiscal</label>
+                  </div>
+                  <div class="row">
+                    <label class="field-inline"><span>Codigo ANVISA</span><input name="anvisa_code" maxlength="13"></label>
+                    <label class="field-inline"><span>PMC</span><input name="max_consumer_price" type="number" min="0" step="0.01" value="0"></label>
+                    <label class="field-inline"><span>CST IBS/CBS</span><input name="ibs_cbs_cst" maxlength="3"></label>
+                    <label class="field-inline"><span>cClassTrib</span><input name="tax_classification" maxlength="6"></label>
+                  </div>
+                  <div class="row">
+                    <label class="field-inline"><span>IBS UF %</span><input name="ibs_uf_rate" type="number" min="0" step="0.0001" value="0"></label>
+                    <label class="field-inline"><span>IBS municipio %</span><input name="ibs_mun_rate" type="number" min="0" step="0.0001" value="0"></label>
+                    <label class="field-inline"><span>CBS %</span><input name="cbs_rate" type="number" min="0" step="0.0001" value="0"></label>
+                  </div>
                   <button type="submit">Salvar produto</button>
                 </form>
               </article>
@@ -567,6 +597,10 @@
                     </select>
                   </label>
                   <label class="field-inline"><span>Pedido externo</span><input name="external_order_id" placeholder="Codigo do pedido"></label>
+                  <div class="row">
+                    <label class="field-inline"><span>Recebimento</span><select name="payment_method"><option value="pending">Deixar pendente</option><option value="cash">Dinheiro</option><option value="pix">Pix</option><option value="debit_card">Cartao de debito</option><option value="credit_card">Cartao de credito</option><option value="card_machine">Maquina de cartao</option></select></label>
+                    <label class="field-inline"><span>Valor recebido</span><input name="payment_amount" type="number" min="0.01" step="0.01" placeholder="Total da venda"></label>
+                  </div>
                   <label class="field-inline field-block"><span>Observacoes</span><textarea name="notes" placeholder="Observacoes"></textarea></label>
                   <div class="product-picker">
                     <div class="row">
@@ -726,7 +760,147 @@
                   <button type="submit">Fechar caixa</button>
                 </form>
               </article>
+              <article class="card">
+                <h3>Recebimentos pendentes</h3>
+                <div class="stage-admin-list">
+                  {% for sale in summary.pending_sales %}
+                  <form class="stage-admin-card" data-api="/api/payments/process">
+                    <input type="hidden" name="sale_id" value="{{ sale.id }}">
+                    <div class="ticket-card-head"><strong>{{ sale.code }}</strong><span class="mini-badge">R$ {{ '%.2f'|format(sale.balance_amount) }}</span></div>
+                    <label class="field-inline"><span>Forma</span><select name="method"><option value="cash">Dinheiro</option><option value="pix">Pix</option><option value="debit_card">Cartao de debito</option><option value="credit_card">Cartao de credito</option><option value="card_machine">Maquina de cartao</option></select></label>
+                    <label class="field-inline"><span>Valor</span><input name="amount" type="number" min="0.01" step="0.01" value="{{ '%.2f'|format(sale.balance_amount) }}" required></label>
+                    <button type="submit" {% if summary.cash_status != 'open' %}disabled{% endif %}>Receber</button>
+                  </form>
+                  {% else %}<p class="helper">Nenhuma venda com saldo pendente.</p>{% endfor %}
+                </div>
+              </article>
             </section>
+          </section>
+        </section>
+
+        <section class="view" id="faturamento" data-view hidden>
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Faturamento</p>
+              <h2>Emissao das vendas</h2>
+            </div>
+            <p class="section-copy">Ambiente local de simulacao, isolado da SEFAZ.</p>
+          </div>
+
+          <div class="fiscal-mode-banner" role="status">
+            <strong>Simulacao sem valor fiscal</strong>
+            <span>Nenhum documento desta tela e transmitido ou autorizado pela SEFAZ.</span>
+          </div>
+
+          <section class="stats-grid fiscal-status-grid">
+            <article class="card stat">
+              <strong>{{ 'Configurado' if fiscal_status.configured else 'Pendente' }}</strong>
+              <span>certificado A1</span>
+            </article>
+            <article class="card stat">
+              <strong>{{ fiscal_status.cnpj or '-' }}</strong>
+              <span>CNPJ do emitente</span>
+            </article>
+            <article class="card stat">
+              <strong>{{ 'Vencido' if fiscal_status.expired else ('Valido' if fiscal_status.valid_for_transmission else 'Indisponivel') }}</strong>
+              <span>validade do certificado</span>
+            </article>
+            <article class="card stat">
+              <strong>{{ fiscal_simulations|length }}</strong>
+              <span>simulacoes recentes</span>
+            </article>
+          </section>
+
+          {% if fiscal_status.configured %}
+          <section class="certificate-strip {{ 'is-expired' if fiscal_status.expired else 'is-valid' }}">
+            <div>
+              <strong>{{ fiscal_status.holder }}</strong>
+              <span>{{ fiscal_status.file_name }} · valido ate {{ fiscal_status.not_after[:10] }}</span>
+            </div>
+            <span class="fiscal-state">{{ 'Uso permitido apenas no simulador' if fiscal_status.expired else 'Assinatura local disponivel' }}</span>
+          </section>
+          {% else %}
+          <section class="certificate-strip is-error">
+            <strong>Certificado indisponivel</strong>
+            <span>{{ fiscal_status.error }}</span>
+          </section>
+          {% endif %}
+
+          <section class="card billing-panel">
+            <div class="billing-toolbar">
+              <label>
+                <span>Modelo</span>
+                <select id="fiscal-document-model">
+                  <option value="65">NFC-e 65</option>
+                  <option value="55">NF-e 55</option>
+                </select>
+              </label>
+              <button type="button" id="fiscal-issue-selected" data-ready="{{ '1' if fiscal_status.ready_for_simulation else '0' }}" disabled>Emitir selecionadas</button>
+              <span id="fiscal-selection-count" class="muted-line">0 vendas selecionadas</span>
+            </div>
+            <div id="fiscal-feedback" class="fiscal-feedback" aria-live="polite"></div>
+
+            <div class="table-wrap">
+              <table class="billing-table">
+                <thead>
+                  <tr>
+                    <th class="selection-cell"><input type="checkbox" id="fiscal-select-all" aria-label="Selecionar todas as vendas"></th>
+                    <th>Venda</th>
+                    <th>Cliente</th>
+                    <th>Canal</th>
+                    <th>Itens</th>
+                    <th>Total</th>
+                    <th>Simulacoes</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for sale in fiscal_sales %}
+                  <tr>
+                    <td class="selection-cell"><input type="checkbox" class="fiscal-sale-checkbox" value="{{ sale.id }}" aria-label="Selecionar venda {{ sale.code }}"></td>
+                    <td><strong>{{ sale.code }}</strong></td>
+                    <td>{{ sale.customer_name }}</td>
+                    <td>{{ sale.source_channel }}</td>
+                    <td>{{ sale.items.count() }}</td>
+                    <td>R$ {{ '%.2f'|format(sale.total_amount) }}</td>
+                    <td>{{ sale.fiscal_simulations.count() }}</td>
+                    <td><button type="button" class="secondary-btn fiscal-issue-one" data-sale-id="{{ sale.id }}" {% if not fiscal_status.ready_for_simulation %}disabled{% endif %}>Emitir</button></td>
+                  </tr>
+                  {% else %}
+                  <tr><td colspan="8">Nenhuma venda disponivel para faturamento.</td></tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="card billing-history">
+            <div class="section-head compact-head">
+              <div>
+                <p class="eyebrow">Historico</p>
+                <h3>XMLs assinados</h3>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>Simulacao</th><th>Venda</th><th>Modelo</th><th>Status</th><th>Total</th><th>Gerado em</th><th></th></tr></thead>
+                <tbody>
+                  {% for simulation in fiscal_simulations %}
+                  <tr>
+                    <td>{{ simulation.code }}</td>
+                    <td>{{ simulation.sale_code }}</td>
+                    <td>{{ simulation.document_model }}</td>
+                    <td>{{ 'Assinado com certificado vencido' if simulation.status == 'signed_expired_certificate' else 'Assinado e verificado' }}</td>
+                    <td>R$ {{ '%.2f'|format(simulation.total_amount) }}</td>
+                    <td>{{ simulation.created_at[:19]|replace('T', ' ') }}</td>
+                    <td><a class="table-action" href="{{ simulation.xml_url }}">Baixar XML</a></td>
+                  </tr>
+                  {% else %}
+                  <tr><td colspan="7">Nenhuma simulacao emitida.</td></tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
           </section>
         </section>
 
@@ -986,6 +1160,20 @@
             <article class="card">
               <h3>Integracoes</h3>
               <form id="settings-form">
+                <h4>Emitente fiscal</h4>
+                <label class="field-inline"><span>Razao social</span><input name="FISCAL_LEGAL_NAME" value="{{ settings_map.get('FISCAL_LEGAL_NAME', '') }}" required></label>
+                <div class="row">
+                  <label class="field-inline"><span>CNPJ</span><input name="FISCAL_CNPJ" value="{{ settings_map.get('FISCAL_CNPJ', '') }}" maxlength="18" required></label>
+                  <label class="field-inline"><span>Inscricao estadual</span><input name="FISCAL_IE" value="{{ settings_map.get('FISCAL_IE', '') }}" required></label>
+                  <label class="field-inline"><span>CRT</span><select name="FISCAL_CRT" required><option value="">Selecione</option>{% for value, label in [('1', 'Simples Nacional'), ('2', 'Simples excesso sublimite'), ('3', 'Regime normal'), ('4', 'MEI')] %}<option value="{{ value }}" {% if settings_map.get('FISCAL_CRT') == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+                </div>
+                <div class="row">
+                  <label class="field-inline"><span>UF</span><input name="FISCAL_UF" value="{{ settings_map.get('FISCAL_UF', 'PR') }}" maxlength="2" required></label>
+                  <label class="field-inline"><span>Codigo IBGE municipio</span><input name="FISCAL_CITY_CODE" value="{{ settings_map.get('FISCAL_CITY_CODE', '') }}" maxlength="7" required></label>
+                  <label class="field-inline"><span>Serie NF-e</span><input name="FISCAL_SERIES_55" value="{{ settings_map.get('FISCAL_SERIES_55', '1') }}"></label>
+                  <label class="field-inline"><span>Serie NFC-e</span><input name="FISCAL_SERIES_65" value="{{ settings_map.get('FISCAL_SERIES_65', '1') }}"></label>
+                </div>
+                <h4>Provedores</h4>
                 <label class="field-inline"><span>Cartao</span><input name="PHARMACY_CARD_PROVIDER" value="{{ settings_map.get('PHARMACY_CARD_PROVIDER', '') }}" placeholder="Provedor maquina/cartao"></label>
                 <label class="field-inline"><span>Pix</span><input name="PHARMACY_PIX_PROVIDER" value="{{ settings_map.get('PHARMACY_PIX_PROVIDER', '') }}" placeholder="Provedor Pix"></label>
                 <label class="field-inline"><span>WhatsApp</span><input name="PHARMACY_WHATSAPP_NUMBER" value="{{ settings_map.get('PHARMACY_WHATSAPP_NUMBER', '') }}" placeholder="Numero WhatsApp"></label>
@@ -995,6 +1183,23 @@
                 <label class="field-inline"><span>Mercado Livre Seller ID</span><input name="PHARMACY_MERCADO_LIVRE_SELLER_ID" value="{{ settings_map.get('PHARMACY_MERCADO_LIVRE_SELLER_ID', '') }}" placeholder="Seller ID Mercado Livre"></label>
                 <button type="submit">Salvar configuracoes</button>
               </form>
+            </article>
+
+            <article class="card">
+              <h3>Tributacao dos produtos</h3>
+              <div class="stage-admin-list">
+                {% for product in summary.products %}
+                <form class="stage-admin-card" data-api="/api/products/{{ product.id }}" data-method="PATCH">
+                  <div class="ticket-card-head"><strong>{{ product.sku }} · {{ product.name }}</strong><span class="mini-badge">Fiscal</span></div>
+                  <div class="row"><label class="field-inline"><span>NCM</span><input name="ncm" value="{{ product.ncm }}" maxlength="8"></label><label class="field-inline"><span>CEST</span><input name="cest" value="{{ product.cest }}" maxlength="7"></label><label class="field-inline"><span>CFOP</span><input name="cfop" value="{{ product.cfop }}" maxlength="4"></label><label class="field-inline"><span>Origem</span><input name="fiscal_origin" value="{{ product.fiscal_origin }}" maxlength="1"></label></div>
+                  <div class="row"><label class="field-inline"><span>CST / CSOSN</span><input name="icms_cst" value="{{ product.icms_cst }}" maxlength="3"></label><label class="field-inline"><span>CST PIS</span><input name="pis_cst" value="{{ product.pis_cst }}" maxlength="2"></label><label class="field-inline"><span>CST COFINS</span><input name="cofins_cst" value="{{ product.cofins_cst }}" maxlength="2"></label><label class="field-inline"><span>GTIN tributavel</span><input name="gtin_taxable" value="{{ product.gtin_taxable }}" maxlength="14"></label></div>
+                  <div class="row"><label class="field-inline"><span>Un. tributavel</span><input name="tax_unit" value="{{ product.tax_unit }}"></label><label class="field-inline"><span>cBenef</span><input name="benefit_code" value="{{ product.benefit_code }}" maxlength="10"></label><label><input type="checkbox" name="has_tax_benefit" {% if product.has_tax_benefit %}checked{% endif %}> Possui beneficio</label></div>
+                  <div class="row"><label class="field-inline"><span>ANVISA</span><input name="anvisa_code" value="{{ product.anvisa_code }}" maxlength="13"></label><label class="field-inline"><span>PMC</span><input name="max_consumer_price" type="number" step="0.01" min="0" value="{{ product.max_consumer_price }}"></label><label class="field-inline"><span>CST IBS/CBS</span><input name="ibs_cbs_cst" value="{{ product.ibs_cbs_cst }}" maxlength="3"></label><label class="field-inline"><span>cClassTrib</span><input name="tax_classification" value="{{ product.tax_classification }}" maxlength="6"></label></div>
+                  <div class="row"><label class="field-inline"><span>IBS UF %</span><input name="ibs_uf_rate" type="number" step="0.0001" min="0" value="{{ product.ibs_uf_rate }}"></label><label class="field-inline"><span>IBS municipio %</span><input name="ibs_mun_rate" type="number" step="0.0001" min="0" value="{{ product.ibs_mun_rate }}"></label><label class="field-inline"><span>CBS %</span><input name="cbs_rate" type="number" step="0.0001" min="0" value="{{ product.cbs_rate }}"></label></div>
+                  <button type="submit">Salvar tributacao</button>
+                </form>
+                {% else %}<p class="helper">Nenhum produto cadastrado.</p>{% endfor %}
+              </div>
             </article>
 
             <article class="card">
@@ -1255,6 +1460,78 @@
         if (!response.ok || data.ok === false) throw new Error(data.error || "Falha na requisicao.");
         return data;
       }
+
+      const fiscalSelectAll = document.getElementById("fiscal-select-all");
+      const fiscalSaleCheckboxes = Array.from(document.querySelectorAll(".fiscal-sale-checkbox"));
+      const fiscalIssueSelected = document.getElementById("fiscal-issue-selected");
+      const fiscalSelectionCount = document.getElementById("fiscal-selection-count");
+      const fiscalFeedback = document.getElementById("fiscal-feedback");
+      const fiscalDocumentModel = document.getElementById("fiscal-document-model");
+
+      function selectedFiscalSaleIds() {
+        return fiscalSaleCheckboxes.filter((checkbox) => checkbox.checked).map((checkbox) => Number(checkbox.value));
+      }
+
+      function refreshFiscalSelection() {
+        const count = selectedFiscalSaleIds().length;
+        if (fiscalSelectionCount) {
+          fiscalSelectionCount.textContent = `${count} ${count === 1 ? "venda selecionada" : "vendas selecionadas"}`;
+        }
+        if (fiscalIssueSelected) {
+          fiscalIssueSelected.disabled = fiscalIssueSelected.dataset.ready !== "1" || count === 0;
+        }
+        if (fiscalSelectAll) {
+          fiscalSelectAll.checked = fiscalSaleCheckboxes.length > 0 && count === fiscalSaleCheckboxes.length;
+          fiscalSelectAll.indeterminate = count > 0 && count < fiscalSaleCheckboxes.length;
+        }
+      }
+
+      async function issueFiscalSimulations(saleIds, trigger) {
+        if (!saleIds.length) return;
+        const originalLabel = trigger ? trigger.textContent : "";
+        if (trigger) {
+          trigger.disabled = true;
+          trigger.textContent = "Emitindo...";
+        }
+        if (fiscalFeedback) {
+          fiscalFeedback.classList.remove("is-error");
+          fiscalFeedback.textContent = "Assinando XMLs localmente...";
+        }
+        try {
+          const result = await postJson("/api/fiscal/simulations", {
+            sale_ids: saleIds,
+            document_model: fiscalDocumentModel ? fiscalDocumentModel.value : "65",
+          });
+          if (fiscalFeedback) {
+            fiscalFeedback.textContent = `${result.count} ${result.count === 1 ? "simulacao emitida" : "simulacoes emitidas"}. Nenhum documento foi transmitido.`;
+          }
+          window.setTimeout(() => window.location.reload(), 700);
+        } catch (error) {
+          if (fiscalFeedback) {
+            fiscalFeedback.classList.add("is-error");
+            fiscalFeedback.textContent = error.message;
+          }
+          if (trigger) {
+            trigger.disabled = false;
+            trigger.textContent = originalLabel;
+          }
+        }
+      }
+
+      if (fiscalSelectAll) {
+        fiscalSelectAll.addEventListener("change", () => {
+          fiscalSaleCheckboxes.forEach((checkbox) => { checkbox.checked = fiscalSelectAll.checked; });
+          refreshFiscalSelection();
+        });
+      }
+      fiscalSaleCheckboxes.forEach((checkbox) => checkbox.addEventListener("change", refreshFiscalSelection));
+      if (fiscalIssueSelected) {
+        fiscalIssueSelected.addEventListener("click", () => issueFiscalSimulations(selectedFiscalSaleIds(), fiscalIssueSelected));
+      }
+      document.querySelectorAll(".fiscal-issue-one").forEach((button) => {
+        button.addEventListener("click", () => issueFiscalSimulations([Number(button.dataset.saleId)], button));
+      });
+      refreshFiscalSelection();
 
       document.querySelectorAll(".menu-link").forEach((button) => {
         button.addEventListener("click", () => activateView(button.dataset.target));

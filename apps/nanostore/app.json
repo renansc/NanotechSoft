@@ -34,6 +34,10 @@
       {
         "nome": "Financeiro NanoStore",
         "url": "/apps/nanostore#lancamentos"
+      },
+      {
+        "nome": "Faturamento NanoStore",
+        "url": "/apps/nanostore#faturamento"
       }
     ],
     "relatorios": [

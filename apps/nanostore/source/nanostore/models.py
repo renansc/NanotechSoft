@@ -38,6 +38,24 @@ class PharmacyProduct(TimestampMixin, db.Model):
     requires_prescription = db.Column(db.Boolean, default=False, nullable=False)
     is_controlled = db.Column(db.Boolean, default=False, nullable=False)
     is_active = db.Column(db.Boolean, default=True, nullable=False)
+    ncm = db.Column(db.String(8), default="", nullable=False)
+    cest = db.Column(db.String(7), default="", nullable=False)
+    cfop = db.Column(db.String(4), default="5102", nullable=False)
+    fiscal_origin = db.Column(db.String(1), default="0", nullable=False)
+    icms_cst = db.Column(db.String(3), default="", nullable=False)
+    pis_cst = db.Column(db.String(2), default="", nullable=False)
+    cofins_cst = db.Column(db.String(2), default="", nullable=False)
+    tax_unit = db.Column(db.String(6), default="UN", nullable=False)
+    gtin_taxable = db.Column(db.String(14), default="SEM GTIN", nullable=False)
+    benefit_code = db.Column(db.String(10), default="", nullable=False)
+    has_tax_benefit = db.Column(db.Boolean, default=False, nullable=False)
+    anvisa_code = db.Column(db.String(13), default="", nullable=False)
+    max_consumer_price = db.Column(db.Numeric(12, 2), default=0, nullable=False)
+    ibs_cbs_cst = db.Column(db.String(3), default="", nullable=False)
+    tax_classification = db.Column(db.String(6), default="", nullable=False)
+    ibs_uf_rate = db.Column(db.Numeric(7, 4), default=0, nullable=False)
+    ibs_mun_rate = db.Column(db.Numeric(7, 4), default=0, nullable=False)
+    cbs_rate = db.Column(db.Numeric(7, 4), default=0, nullable=False)
     category_id = db.Column(db.Integer, db.ForeignKey("pharmacy_category.id"))
     supplier_id = db.Column(db.Integer, db.ForeignKey("pharmacy_supplier.id"))
 
@@ -90,9 +108,26 @@ class PharmacySaleItem(TimestampMixin, db.Model):
     lot = db.relationship("PharmacyLot")
 
 
+class FiscalSimulation(TimestampMixin, db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    code = db.Column(db.String(80), nullable=False, unique=True, index=True)
+    sale_id = db.Column(db.Integer, db.ForeignKey("pharmacy_sale.id"), nullable=False, index=True)
+    document_model = db.Column(db.String(2), nullable=False, default="65", index=True)
+    environment = db.Column(db.String(20), nullable=False, default="simulation", index=True)
+    status = db.Column(db.String(40), nullable=False, index=True)
+    issuer_cnpj = db.Column(db.String(20), default="", nullable=False, index=True)
+    total_amount = db.Column(db.Numeric(12, 2), default=0, nullable=False)
+    certificate_serial = db.Column(db.String(160), default="", nullable=False)
+    certificate_fingerprint = db.Column(db.String(128), default="", nullable=False)
+    xml_content = db.Column(db.Text, nullable=False)
+
+    sale = db.relationship("PharmacySale", backref=db.backref("fiscal_simulations", lazy="dynamic"))
+
+
 class PharmacyPayment(TimestampMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     sale_id = db.Column(db.Integer, db.ForeignKey("pharmacy_sale.id"), nullable=False, index=True)
+    cash_session_id = db.Column(db.Integer, db.ForeignKey("cash_session.id"), nullable=True, index=True)
     method = db.Column(db.String(40), nullable=False, index=True)
     provider = db.Column(db.String(80), default="", nullable=False)
     amount = db.Column(db.Numeric(12, 2), default=0, nullable=False)
@@ -105,6 +140,7 @@ class PharmacyPayment(TimestampMixin, db.Model):
     paid_at = db.Column(db.DateTime, nullable=True)
 
     sale = db.relationship("PharmacySale", backref=db.backref("payments", lazy="dynamic"))
+    cash_session = db.relationship("CashSession", backref=db.backref("payments", lazy="dynamic"))
 
 
 class PurchaseOrder(TimestampMixin, db.Model):

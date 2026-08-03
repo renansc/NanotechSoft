@@ -10,8 +10,11 @@ from sqlalchemy import func
 from werkzeug.exceptions import HTTPException
 
 from .extensions import db
+from .fiscal import build_signed_simulation, fiscal_certificate_status, load_fiscal_identity
+from .tax import validate_issuer, validate_product
 from .models import (
     CashSession,
+    FiscalSimulation,
     IntegrationSetting,
     InventoryCount,
     InventoryCountItem,
@@ -178,6 +181,16 @@ def _serialize_product(product):
         "cost_price": float(product.cost_price or 0),
         "minimum_profit_margin": float(category.minimum_profit_margin or 0) if category else 0.0,
         "suggested_profit_margin": float(category.suggested_profit_margin or 0) if category else 0.0,
+        "ncm": product.ncm, "cest": product.cest, "cfop": product.cfop,
+        "fiscal_origin": product.fiscal_origin, "icms_cst": product.icms_cst,
+        "pis_cst": product.pis_cst, "cofins_cst": product.cofins_cst,
+        "tax_unit": product.tax_unit, "gtin_taxable": product.gtin_taxable,
+        "benefit_code": product.benefit_code, "has_tax_benefit": product.has_tax_benefit,
+        "anvisa_code": product.anvisa_code,
+        "max_consumer_price": float(product.max_consumer_price or 0),
+        "ibs_cbs_cst": product.ibs_cbs_cst, "tax_classification": product.tax_classification,
+        "ibs_uf_rate": float(product.ibs_uf_rate or 0), "ibs_mun_rate": float(product.ibs_mun_rate or 0),
+        "cbs_rate": float(product.cbs_rate or 0),
     }
 
 
@@ -208,6 +221,8 @@ def _serialize_stock_movement(movement):
 
 
 def _serialize_sale(sale):
+    paid_amount = _sale_paid_amount(sale.id)
+    balance_amount = max(Decimal(sale.total_amount or 0) - paid_amount, Decimal("0"))
     return {
         "id": sale.id,
         "code": sale.code,
@@ -215,6 +230,8 @@ def _serialize_sale(sale):
         "source_channel": sale.source_channel,
         "status": sale.status,
         "total_amount": float(sale.total_amount or 0),
+        "paid_amount": float(paid_amount),
+        "balance_amount": float(balance_amount),
         "items": [
             {
                 "product_name": item.product.name if item.product else "",
@@ -224,6 +241,58 @@ def _serialize_sale(sale):
             }
             for item in sale.items.order_by(PharmacySaleItem.id.asc()).all()
         ],
+    }
+
+
+def _sale_fiscal_payload(sale):
+    settings = _setting_map()
+    return {
+        "code": sale.code,
+        "customer_name": sale.customer_name,
+        "source_channel": sale.source_channel,
+        "subtotal_amount": sale.subtotal_amount,
+        "discount_amount": sale.discount_amount,
+        "total_amount": sale.total_amount,
+        "issuer": {key: settings.get(key, "") for key in (
+            "FISCAL_LEGAL_NAME", "FISCAL_CNPJ", "FISCAL_IE", "FISCAL_UF", "FISCAL_CITY_CODE", "FISCAL_CRT"
+        )},
+        "items": [
+            {
+                "sku": item.product.sku if item.product else "",
+                "product_name": item.product.name if item.product else "",
+                "lot_code": item.lot.lot_code if item.lot else "",
+                "quantity": item.quantity,
+                "unit_price": item.unit_price,
+                "discount_amount": item.discount_amount,
+                "total_amount": item.total_amount,
+                "ncm": item.product.ncm, "cest": item.product.cest, "cfop": item.product.cfop,
+                "origin": item.product.fiscal_origin, "icms_cst": item.product.icms_cst,
+                "pis_cst": item.product.pis_cst, "cofins_cst": item.product.cofins_cst,
+                "tax_unit": item.product.tax_unit, "gtin_taxable": item.product.gtin_taxable,
+                "benefit_code": item.product.benefit_code, "anvisa_code": item.product.anvisa_code,
+                "max_consumer_price": item.product.max_consumer_price,
+                "ibs_cbs_cst": item.product.ibs_cbs_cst, "tax_classification": item.product.tax_classification,
+                "ibs_uf_rate": item.product.ibs_uf_rate, "ibs_mun_rate": item.product.ibs_mun_rate,
+                "cbs_rate": item.product.cbs_rate,
+            }
+            for item in sale.items.order_by(PharmacySaleItem.id.asc()).all()
+        ],
+    }
+
+
+def _serialize_fiscal_simulation(simulation):
+    return {
+        "id": simulation.id,
+        "code": simulation.code,
+        "sale_id": simulation.sale_id,
+        "sale_code": simulation.sale.code if simulation.sale else "",
+        "document_model": simulation.document_model,
+        "environment": simulation.environment,
+        "status": simulation.status,
+        "issuer_cnpj": simulation.issuer_cnpj,
+        "total_amount": float(simulation.total_amount or 0),
+        "created_at": simulation.created_at.isoformat() + "Z",
+        "xml_url": f"/api/fiscal/simulations/{simulation.id}/xml",
     }
 
 
@@ -258,11 +327,14 @@ def _serialize_payment(payment):
     return {
         "id": payment.id,
         "sale_code": payment.sale.code if payment.sale else "",
+        "cash_session_id": payment.cash_session_id,
         "method": payment.method,
         "provider": payment.provider,
         "amount": float(payment.amount or 0),
         "status": payment.status,
         "transaction_reference": payment.transaction_reference,
+        "pix_qr_code": payment.pix_qr_code,
+        "pix_copy_paste": payment.pix_copy_paste,
         "paid_at": payment.paid_at.isoformat() + "Z" if payment.paid_at else "",
     }
 
@@ -383,12 +455,85 @@ def _current_cash_session():
     return CashSession.query.filter_by(status="open").order_by(CashSession.opened_at.desc(), CashSession.id.desc()).first()
 
 
-def _cash_received_total():
+def _cash_received_total(cash_session_id):
     total = db.session.query(func.coalesce(func.sum(PharmacyPayment.amount), 0)).filter(
+        PharmacyPayment.cash_session_id == cash_session_id,
         PharmacyPayment.status.in_(["paid", "authorized"]),
         PharmacyPayment.method.in_(["cash", "debit_card", "credit_card", "card_machine", "pix"]),
     ).scalar()
     return Decimal(total or 0)
+
+
+def _sale_paid_amount(sale_id):
+    total = db.session.query(func.coalesce(func.sum(PharmacyPayment.amount), 0)).filter(
+        PharmacyPayment.sale_id == sale_id,
+        PharmacyPayment.status.in_(["paid", "authorized"]),
+    ).scalar()
+    return Decimal(total or 0)
+
+
+def _sync_sale_receivable(sale):
+    paid_amount = _sale_paid_amount(sale.id)
+    total_amount = Decimal(sale.total_amount or 0)
+    receivable = FinancialEntry.query.filter_by(source_ref=sale.code, entry_type="receivable").order_by(FinancialEntry.id.desc()).first()
+    if paid_amount <= 0:
+        sale.status = "open"
+        if receivable:
+            receivable.status = "open"
+            receivable.paid_at = None
+    elif paid_amount < total_amount:
+        sale.status = "partially_paid"
+        if receivable:
+            receivable.status = "partial"
+            receivable.paid_at = None
+    else:
+        sale.status = "paid"
+        if receivable:
+            receivable.status = "paid"
+            receivable.paid_at = datetime.utcnow()
+
+
+def _record_sale_payment(sale, payload, amount=None):
+    method = (payload.get("method") or payload.get("payment_method") or "").strip().lower()
+    if method not in {"pix", "card_machine", "credit_card", "debit_card", "cash"}:
+        raise ValueError("Metodo de pagamento invalido.")
+    cash_session = _current_cash_session()
+    if not cash_session:
+        raise ValueError("Abra o caixa antes de receber uma venda.")
+
+    balance = max(Decimal(sale.total_amount or 0) - _sale_paid_amount(sale.id), Decimal("0"))
+    payment_amount = amount if amount is not None else _to_decimal(
+        payload.get("amount") or payload.get("payment_amount"), "valor", default=str(balance)
+    )
+    if payment_amount <= 0:
+        raise ValueError("O valor do pagamento deve ser maior que zero.")
+    if payment_amount > balance:
+        raise ValueError(f"O pagamento excede o saldo da venda de R$ {balance:.2f}.")
+
+    settings = _setting_map()
+    provider = (payload.get("provider") or "").strip() or (
+        settings.get("PHARMACY_PIX_PROVIDER", "") if method == "pix" else settings.get("PHARMACY_CARD_PROVIDER", "")
+    )
+    reference = f"{method.upper()}-{uuid4().hex[:10].upper()}"
+    payment = PharmacyPayment(
+        sale_id=sale.id,
+        cash_session_id=cash_session.id,
+        method=method,
+        provider=provider,
+        amount=payment_amount,
+        status="paid" if method == "cash" else "authorized",
+        transaction_reference=reference,
+        pix_qr_code=f"PIX|{sale.code}|{payment_amount:.2f}|{reference}" if method == "pix" else "",
+        pix_copy_paste=f"000201{sale.code}{reference}" if method == "pix" else "",
+        card_brand=(payload.get("card_brand") or "").strip(),
+        installments=max(1, int(payload.get("installments") or 1)),
+        paid_at=datetime.utcnow(),
+    )
+    db.session.add(payment)
+    db.session.flush()
+    _sync_sale_receivable(sale)
+    cash_session.expected_amount = Decimal(cash_session.opening_amount or 0) + _cash_received_total(cash_session.id)
+    return payment
 
 
 def _summary():
@@ -420,7 +565,7 @@ def _summary():
     ).scalar()
     cash_session = _current_cash_session()
     payment_method_totals = {}
-    for payment in PharmacyPayment.query.all():
+    for payment in PharmacyPayment.query.filter(PharmacyPayment.status.in_(["paid", "authorized"])).all():
         key = payment.method or "outros"
         payment_method_totals[key] = payment_method_totals.get(key, 0.0) + float(payment.amount or 0)
     paid_entries = FinancialEntry.query.filter_by(status="paid").order_by(FinancialEntry.updated_at.desc(), FinancialEntry.id.desc()).limit(20).all()
@@ -449,6 +594,11 @@ def _summary():
         "low_stock_products": [_serialize_product(product) for product in low_stock],
         "no_stock_products": [_serialize_product(product) for product in no_stock],
         "recent_sales": [_serialize_sale(sale) for sale in PharmacySale.query.order_by(PharmacySale.created_at.desc()).limit(8).all()],
+        "pending_sales": [
+            _serialize_sale(sale)
+            for sale in PharmacySale.query.order_by(PharmacySale.created_at.desc(), PharmacySale.id.desc()).all()
+            if _sale_paid_amount(sale.id) < Decimal(sale.total_amount or 0)
+        ],
         "recent_purchases": [_serialize_purchase(purchase) for purchase in purchases],
         "financial_entries": [_serialize_financial_entry(entry) for entry in financial_entries],
         "paid_financial_entries": [_serialize_financial_entry(entry) for entry in paid_entries],
@@ -502,11 +652,13 @@ def _select_lots(product_id, requested_quantity):
 @bp.route("/")
 def index():
     summary = _summary()
+    fiscal_history = FiscalSimulation.query.order_by(FiscalSimulation.created_at.desc(), FiscalSimulation.id.desc()).limit(50).all()
     menu_sections = [
         {"id": "inicio", "title": "Inicio", "description": "Visao geral e indicadores"},
         {"id": "workflow", "title": "Workflow", "description": "Kanban, WhatsApp e chat interno"},
         {"id": "cadastros", "title": "Cadastros", "description": "Produtos, categorias e fornecedores"},
         {"id": "lancamentos", "title": "Lancamentos", "description": "Lotes, vendas, compras e financeiro"},
+        {"id": "faturamento", "title": "Faturamento", "description": "Notas individuais e em massa das vendas"},
         {"id": "relatorios", "title": "Relatorios", "description": "Estoque, vencimentos, caixa e performance"},
         {"id": "configuracao", "title": "Configuracao", "description": "Provedores e canais de integracao"},
     ]
@@ -518,6 +670,9 @@ def index():
         suppliers=PharmacySupplier.query.order_by(PharmacySupplier.name.asc()).all(),
         settings_map=_setting_map(),
         https_runtime=_https_runtime_config(),
+        fiscal_status=fiscal_certificate_status(),
+        fiscal_sales=PharmacySale.query.order_by(PharmacySale.created_at.desc(), PharmacySale.id.desc()).limit(200).all(),
+        fiscal_simulations=[_serialize_fiscal_simulation(item) for item in fiscal_history],
         menu_sections=menu_sections,
     )
 
@@ -662,9 +817,37 @@ def api_products():
         category_id=category.id if category else None,
         supplier_id=payload.get("supplier_id") or None,
     )
+    _apply_product_tax(product, payload)
     db.session.add(product)
     db.session.commit()
     return jsonify({"ok": True, "product": _serialize_product(product)})
+
+
+def _apply_product_tax(product, payload):
+    text_fields = (
+        "ncm", "cest", "cfop", "fiscal_origin", "icms_cst", "pis_cst", "cofins_cst",
+        "tax_unit", "gtin_taxable", "benefit_code", "anvisa_code", "ibs_cbs_cst", "tax_classification",
+    )
+    for field in text_fields:
+        if field in payload:
+            value = str(payload.get(field) or "").strip().upper()
+            setattr(product, field, value)
+    if "has_tax_benefit" in payload:
+        product.has_tax_benefit = _to_bool(payload.get("has_tax_benefit"))
+    for field in ("max_consumer_price", "ibs_uf_rate", "ibs_mun_rate", "cbs_rate"):
+        if field in payload:
+            setattr(product, field, _to_decimal(payload.get(field), field))
+
+
+@bp.route("/api/products/<int:product_id>", methods=["PATCH"])
+def api_product_update(product_id):
+    product = db.session.get(PharmacyProduct, product_id) or abort(404, "Produto nao encontrado.")
+    payload = request.get_json(force=True)
+    _apply_product_tax(product, payload)
+    db.session.commit()
+    settings = _setting_map()
+    errors = validate_product(product, settings.get("FISCAL_CRT", ""), payload.get("document_model", "65"))
+    return jsonify({"ok": True, "product": _serialize_product(product), "fiscal_errors": errors})
 
 
 @bp.route("/api/products/lookup")
@@ -848,71 +1031,115 @@ def api_sales():
                     notes=sale.notes,
                 )
             )
+        payment = None
+        payment_method = (payload.get("payment_method") or "pending").strip().lower()
+        if payment_method != "pending":
+            payment = _record_sale_payment(sale, payload)
         _ensure_workflow_ticket_for_sale(sale)
         db.session.commit()
     except ValueError as exc:
         db.session.rollback()
         abort(400, str(exc))
-    return jsonify({"ok": True, "sale": _serialize_sale(sale)})
+    return jsonify({
+        "ok": True,
+        "sale": _serialize_sale(sale),
+        "payment": _serialize_payment(payment) if payment else None,
+    })
+
+
+@bp.route("/api/fiscal/status")
+def api_fiscal_status():
+    return jsonify({"ok": True, **fiscal_certificate_status()})
+
+
+@bp.route("/api/fiscal/simulations", methods=["POST"])
+def api_fiscal_simulations():
+    payload = request.get_json(force=True)
+    raw_sale_ids = payload.get("sale_ids")
+    if raw_sale_ids is None and payload.get("sale_id") is not None:
+        raw_sale_ids = [payload.get("sale_id")]
+    if not isinstance(raw_sale_ids, list) or not raw_sale_ids:
+        abort(400, "Selecione ao menos uma venda para faturar.")
+
+    sale_ids = []
+    for raw_sale_id in raw_sale_ids:
+        try:
+            sale_id = int(raw_sale_id)
+        except (TypeError, ValueError):
+            abort(400, "Identificador de venda invalido.")
+        if sale_id not in sale_ids:
+            sale_ids.append(sale_id)
+    if len(sale_ids) > 100:
+        abort(400, "O faturamento em massa aceita no maximo 100 vendas por lote.")
+
+    document_model = str(payload.get("document_model") or "65").strip()
+    if document_model not in {"55", "65"}:
+        abort(400, "Modelo fiscal deve ser 55 ou 65.")
+
+    try:
+        identity = load_fiscal_identity()
+        settings = _setting_map()
+        validation_errors = validate_issuer(settings, identity["cnpj"])
+        simulations = []
+        for sale_id in sale_ids:
+            sale = db.session.get(PharmacySale, sale_id)
+            if not sale:
+                raise ValueError(f"Venda {sale_id} nao encontrada.")
+            for item in sale.items.order_by(PharmacySaleItem.id.asc()).all():
+                validation_errors.extend(validate_product(item.product, settings.get("FISCAL_CRT", ""), document_model))
+            if validation_errors:
+                unique_errors = list(dict.fromkeys(validation_errors))
+                raise ValueError("Cadastro fiscal incompleto: " + " | ".join(unique_errors))
+            result = build_signed_simulation(_sale_fiscal_payload(sale), document_model, identity=identity)
+            simulation = FiscalSimulation(
+                code=result["code"],
+                sale_id=sale.id,
+                document_model=result["document_model"],
+                environment="simulation",
+                status=result["status"],
+                issuer_cnpj=result["issuer_cnpj"],
+                total_amount=sale.total_amount,
+                certificate_serial=result["certificate_serial"],
+                certificate_fingerprint=result["certificate_fingerprint"],
+                xml_content=result["xml"],
+            )
+            db.session.add(simulation)
+            simulations.append(simulation)
+        db.session.commit()
+    except (RuntimeError, ValueError) as exc:
+        db.session.rollback()
+        abort(400, str(exc))
+
+    return jsonify(
+        {
+            "ok": True,
+            "count": len(simulations),
+            "transmitted": False,
+            "warning": "Simulacao local concluida. Nenhum documento foi transmitido a SEFAZ.",
+            "items": [_serialize_fiscal_simulation(item) for item in simulations],
+        }
+    )
+
+
+@bp.route("/api/fiscal/simulations/<int:simulation_id>/xml")
+def api_fiscal_simulation_xml(simulation_id):
+    simulation = db.session.get(FiscalSimulation, simulation_id) or abort(404, "Simulacao fiscal nao encontrada.")
+    response = Response(simulation.xml_content, mimetype="application/xml")
+    response.headers["Content-Disposition"] = f'attachment; filename="{simulation.code}.xml"'
+    return response
 
 
 @bp.route("/api/payments/process", methods=["POST"])
 def api_payments():
     payload = request.get_json(force=True)
     sale = db.session.get(PharmacySale, payload.get("sale_id")) or abort(404, "Venda nao encontrada.")
-    method = (payload.get("method") or "").strip().lower()
-    if method not in {"pix", "card_machine", "credit_card", "debit_card", "cash"}:
-        abort(400, "Metodo invalido.")
-    amount = _to_decimal(payload.get("amount"), "valor", default=str(sale.total_amount or "0"))
-    settings = _setting_map()
-    provider = (payload.get("provider") or "").strip() or (
-        settings.get("PHARMACY_PIX_PROVIDER", "") if method == "pix" else settings.get("PHARMACY_CARD_PROVIDER", "")
-    )
-    reference = f"{method.upper()}-{uuid4().hex[:10].upper()}"
-    payment = PharmacyPayment(
-        sale_id=sale.id,
-        method=method,
-        provider=provider,
-        amount=amount,
-        status="pending" if method == "pix" else "authorized",
-        transaction_reference=reference,
-        pix_qr_code=f"PIX|{sale.code}|{amount:.2f}|{reference}" if method == "pix" else "",
-        pix_copy_paste=f"000201{sale.code}{reference}" if method == "pix" else "",
-        card_brand=(payload.get("card_brand") or "").strip(),
-        installments=max(1, int(payload.get("installments") or 1)),
-        paid_at=datetime.utcnow() if method == "cash" else None,
-    )
-    db.session.add(payment)
-    if method == "cash":
-        payment.status = "paid"
-        sale.status = "paid"
-    elif method != "pix":
-        sale.status = "partially_paid"
-    receivable_entry = FinancialEntry.query.filter_by(source_ref=sale.code, entry_type="receivable").order_by(FinancialEntry.id.desc()).first()
-    if receivable_entry:
-        if payment.status == "paid":
-            receivable_entry.status = "paid"
-            receivable_entry.paid_at = datetime.utcnow()
-        elif payment.status == "authorized":
-            receivable_entry.status = "partial"
-    cash_session = _current_cash_session()
-    if cash_session and payment.status in {"paid", "authorized"}:
-        cash_session.expected_amount = Decimal(cash_session.expected_amount or 0) + amount
-    db.session.commit()
-    return jsonify(
-        {
-            "ok": True,
-            "payment": {
-                "method": payment.method,
-                "provider": payment.provider,
-                "amount": float(payment.amount or 0),
-                "status": payment.status,
-                "transaction_reference": payment.transaction_reference,
-                "pix_qr_code": payment.pix_qr_code,
-                "pix_copy_paste": payment.pix_copy_paste,
-            }
-        }
-    )
+    try:
+        payment = _record_sale_payment(sale, payload)
+        db.session.commit()
+    except ValueError as exc:
+        db.session.rollback()
+        abort(400, str(exc))
+    return jsonify({"ok": True, "payment": _serialize_payment(payment), "sale": _serialize_sale(sale)})
 
 
 @bp.route("/api/orders/external", methods=["POST"])
@@ -1139,8 +1366,7 @@ def api_cash_close():
     session.closed_at = datetime.utcnow()
     session.status = "closed"
     session.closing_amount = closing_amount
-    if Decimal(session.expected_amount or 0) <= 0:
-        session.expected_amount = Decimal(session.opening_amount or 0) + _cash_received_total()
+    session.expected_amount = Decimal(session.opening_amount or 0) + _cash_received_total(session.id)
     session.difference_amount = closing_amount - Decimal(session.expected_amount or 0)
     session.notes = (payload.get("notes") or session.notes or "").strip()
     db.session.commit()
