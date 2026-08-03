@@ -1,8 +1,8 @@
-# Operacao e Deploy da Laboratorio Santa Terezinha
+# Operacao e Deploy do NanotechSoft PACS
 
 ## 1. Principios operacionais
 
-A Laboratorio Santa Terezinha foi pensada para ser simples de subir, mas ela depende de tres verdades:
+O NanotechSoft PACS foi pensado para ser simples de subir, mas depende de tres verdades:
 
 1. o banco precisa estar acessivel;
 2. a porta HTTP precisa seguir `PORT` ou `APP_PORT`;

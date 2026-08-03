@@ -1,4 +1,4 @@
-# Diagramas e Processos da Laboratorio Santa Terezinha
+# Diagramas e Processos do NanotechSoft PACS
 
 ## 1. Como usar este arquivo
 
@@ -11,7 +11,7 @@ Abra este documento em:
 
 ```mermaid
 flowchart LR
-    Browser[Equipe no navegador] --> Flask[Cockpit Flask / Gunicorn da Laboratorio Santa Terezinha]
+    Browser[Equipe no navegador] --> Flask[Cockpit Flask / Gunicorn do NanotechSoft PACS]
     Flask --> Service[ClinicService]
     Service --> DB[(PostgreSQL)]
     Service --> Runtime[(runtime/imagebox + cameras + backups)]

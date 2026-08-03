@@ -534,6 +534,7 @@
     <div class="section-subnav estoque-subnav">
       <button type="button" id="estoqueViewBtnLancar" class="section-subnav-btn active" onclick="setEstoqueView('lancar')">Lançar Estoque</button>
       <button type="button" id="estoqueViewBtnConferir" class="section-subnav-btn" onclick="setEstoqueView('posicao')">Posicao Atual</button>
+      <button type="button" id="estoqueViewBtnAcerto" class="section-subnav-btn hidden" onclick="setEstoqueView('acerto')">Acerto de Estoque</button>
       <button type="button" id="estoqueViewBtnCadastrar" class="section-subnav-btn" onclick="setEstoqueView('cadastrar')">Cadastrar</button>
       <button type="button" id="estoqueViewBtnRastreio" class="section-subnav-btn" onclick="setEstoqueView('rastreio')">Rastreio lotes</button>
     </div>
@@ -820,6 +821,23 @@
               </tr>
             </thead>
             <tbody id="estoqueMovimentosBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div id="estoqueViewAcerto" class="hidden">
+      <div class="boxFrota">
+        <h3>Acerto de Estoque</h3>
+        <div class="estoque-conferencia-resumo">Área exclusiva do administrador. Informe a contagem física; o sistema converte tudo para unidades e registra a diferença no histórico.</div>
+        <div class="estoque-inline-actions">
+          <input type="search" id="estoqueAcertoBusca" placeholder="Buscar produto ou codigo" oninput="renderAcertoEstoque()">
+          <button type="button" onclick="carregarAcertoEstoque()">Atualizar posição</button>
+        </div>
+        <div style="overflow:auto; max-height:560px;">
+          <table>
+            <thead><tr><th>Produto</th><th>Saldo atual</th><th>Pallets</th><th id="estoqueAcertoVolumeHeader">Pacotes/Caixas</th><th>Unidades</th><th>Novo total</th><th>Motivo</th><th>Ação</th></tr></thead>
+            <tbody id="estoqueAcertoBody"><tr><td colspan="8">Carregando produtos...</td></tr></tbody>
           </table>
         </div>
       </div>

@@ -16,10 +16,10 @@ from .db import Database
 from .services import ClinicService
 from .utils import normalize_json
 
-APP_NAME = "Laboratorio Santa Terezinha"
-BROWSER_TITLE = "Lab. S. Terezinha"
-VIEWER_NAME = "Viewer Laboratorio Santa Terezinha"
-SHARE_NAME = "Compartilhamento de Imagens Santa Terezinha"
+APP_NAME = "NanotechSoft PACS"
+BROWSER_TITLE = "NanotechSoft PACS"
+VIEWER_NAME = "Viewer NanotechSoft PACS"
+SHARE_NAME = "Compartilhamento de Imagens NanotechSoft PACS"
 CONFIG_ADMIN_PASSWORD = "St123456!"
 CONFIG_ADMIN_PASSWORDS = {
     password
@@ -146,6 +146,9 @@ def create_app() -> Flask:
             return "admin"
         return str(session.get("user_role") or "technician").strip().lower() or "technician"
 
+    def portal_user_is_admin() -> bool:
+        return (request.headers.get("X-Portal-Usuario-Perfil") or "").strip().lower() == "admin"
+
     def current_department_id() -> int | None:
         raw = session.get(department_session_key())
         try:
@@ -224,8 +227,8 @@ def create_app() -> Flask:
             "index.html",
             app_name=APP_NAME,
             browser_title=BROWSER_TITLE,
-            menu_brand_line_1="Laboratorio Santa",
-            menu_brand_line_2="Terezinha",
+            menu_brand_line_1="NanotechSoft",
+            menu_brand_line_2="PACS",
             asset_version=asset_version,
             pacs_web_url=settings.pacs_web_url,
             pacs_imagebox_path=settings.pacs_imagebox_path,
@@ -261,37 +264,21 @@ def create_app() -> Flask:
             department_id = int(request.form.get("department_id") or 0)
         except ValueError:
             department_id = 0
-        profile = str(request.form.get("profile") or "technician").strip().lower() or "technician"
-        password = str(request.form.get("password") or "")
         departments = service.list_chat_departments()
         selected = next((item for item in departments if int(item["id"]) == department_id), None)
-        if profile != "admin" and not selected:
+        if not selected:
             return render_template(
                 "login.html",
                 app_name=APP_NAME,
                 browser_title=BROWSER_TITLE,
                 asset_version=asset_version,
                 departments=departments,
-                selected_profile=profile,
+                selected_profile="technician",
                 selected_department_id=department_id,
                 error="Selecione um departamento valido.",
             ), 400
-        if profile == "admin":
-            if password not in CONFIG_ADMIN_PASSWORDS:
-                return render_template(
-                    "login.html",
-                    app_name=APP_NAME,
-                    browser_title=BROWSER_TITLE,
-                    asset_version=asset_version,
-                    departments=departments,
-                    selected_profile=profile,
-                    selected_department_id=department_id,
-                    error="Senha admin invalida.",
-                ), 401
-            session.pop(department_session_key(), None)
-        else:
-            session[department_session_key()] = int(selected["id"])
-        if profile == "admin":
+        session[department_session_key()] = int(selected["id"])
+        if portal_user_is_admin():
             session["user_role"] = "admin"
             session[admin_session_key()] = True
         else:

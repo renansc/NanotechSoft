@@ -10174,6 +10174,17 @@ def _usuario_publico_dict(row):
         "data_cadastro": _fmt_dt(row.get("data_cadastro")),
     }
 
+def _perfil_portal_req():
+    return _as_str(request.headers.get("X-Usuario-Perfil")).strip().lower()
+
+def _usuario_portal_admin():
+    return _perfil_portal_req() == "admin"
+
+def _exigir_admin_portal():
+    if _usuario_portal_admin():
+        return None
+    return jsonify({"erro": "somente administradores podem usar esta area"}), 403
+
 def _buscar_usuario_id_cur(cur, user_id):
     cur.execute(
         """
@@ -12482,6 +12493,7 @@ def status():
             cur_user.close()
             if row_user:
                 usuario_logado = _usuario_publico_dict(row_user)
+                usuario_logado["perfil"] = _perfil_portal_req() or "usuario"
         conn.close()
         db_ok = True
     except:
@@ -19479,7 +19491,12 @@ def listar_produtos_estoque():
     rows = cur.fetchall() or []
     cur.close()
     conn.close()
-    return jsonify([_produto_estoque_publico(r) for r in rows])
+    produtos = []
+    for row in rows:
+        item = _produto_estoque_publico(row)
+        item["pallet_meta"] = _estoque_pallet_meta(item)
+        produtos.append(item)
+    return jsonify(produtos)
 
 
 def _estoque_lote_publico_base(lote_codigo):
@@ -20032,12 +20049,14 @@ def atualizar_produto_estoque(produto_id):
 
 @app.route("/api/estoque/produtos/<int:produto_id>/ajuste", methods=["POST"])
 def ajustar_produto_estoque(produto_id):
+    bloqueio = _exigir_admin_portal()
+    if bloqueio:
+        return bloqueio
     usuario = _usuario_ator_req()
     data = request.json or {}
-    quantidade_ajuste = _as_float(data.get("quantidade_ajuste"), 0.0)
     motivo = _as_str(data.get("motivo_ajuste") or data.get("motivo"))
-    if abs(quantidade_ajuste) <= 0:
-        return jsonify({"erro": "informe uma quantidade de ajuste diferente de zero"}), 400
+    if not motivo:
+        return jsonify({"erro": "informe o motivo do acerto de estoque"}), 400
 
     conn = get_conn()
     cur = conn.cursor(dictionary=True)
@@ -20052,6 +20071,16 @@ def ajustar_produto_estoque(produto_id):
             codigo_produto_nfe=produto.get("codigo_produto_nfe"),
             nome_produto=produto.get("nome_produto"),
         )
+        if "quantidade_atual" in data:
+            quantidade_desejada = round(_as_float(data.get("quantidade_atual"), saldo_antes), 3)
+            if quantidade_desejada < 0:
+                return jsonify({"erro": "a quantidade atual nao pode ser negativa"}), 400
+            quantidade_ajuste = round(quantidade_desejada - saldo_antes, 3)
+        else:
+            quantidade_ajuste = round(_as_float(data.get("quantidade_ajuste"), 0.0), 3)
+            quantidade_desejada = round(saldo_antes + quantidade_ajuste, 3)
+        if abs(quantidade_ajuste) <= 0:
+            return jsonify({"erro": "a quantidade informada ja corresponde ao saldo atual"}), 400
         tipo_movimento = "entrada" if quantidade_ajuste > 0 else "saida"
         quantidade_movimento = abs(round(quantidade_ajuste, 3))
         numero_nota = f"AJUSTE-{produto_id}"
@@ -20087,7 +20116,7 @@ def ajustar_produto_estoque(produto_id):
         cur.close()
         conn.close()
 
-    saldo_depois = round(saldo_antes + quantidade_ajuste, 3)
+    saldo_depois = quantidade_desejada
     return jsonify({
         "ok": True,
         "produto": _produto_estoque_publico(produto),
@@ -22035,7 +22064,9 @@ def usuario_logado_api():
         return jsonify({"erro": "usuario nao encontrado"}), 404
     if _as_int(row.get("ativo"), 1) != 1:
         return jsonify({"erro": "usuario inativo"}), 403
-    return jsonify({"ok": True, "usuario": _usuario_publico_dict(row)})
+    usuario = _usuario_publico_dict(row)
+    usuario["perfil"] = _perfil_portal_req() or "usuario"
+    return jsonify({"ok": True, "usuario": usuario})
 
 @app.route("/api/chat/conversa", methods=["GET"])
 def chat_conversa():

@@ -1,8 +1,8 @@
-# Arquitetura da Laboratorio Santa Terezinha
+# Arquitetura do NanotechSoft PACS
 
 ## 1. Visao geral
 
-A Laboratorio Santa Terezinha opera um cockpit unico de RIS e PACS, reunindo:
+O NanotechSoft PACS opera um cockpit único de RIS e PACS, reunindo:
 
 - cadastro clinico e financeiro, com submenu Cadastros para Pacientes e Exames;
 - operacao do fluxo do exame;

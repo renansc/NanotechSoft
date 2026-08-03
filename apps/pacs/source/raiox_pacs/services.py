@@ -2294,7 +2294,7 @@ class ClinicService:
         order = self.get_exam_order(order_id)
         company_header = [
             "CNPJ: 75.743.419/0005-66",
-            "Razao Social: Laboratorio de Patologia Clinica Santa Terezinha Ltda - EPP",
+            "Sistema: NanotechSoft PACS",
             "Endereco: Av. Munhoz da Rocha, 1298 - Vila Sao Lourenco, Mandaguacu - PR, 87160-000",
             "Telefone: (44) 3245-3324",
         ]
@@ -2324,7 +2324,7 @@ class ClinicService:
         return build_text_pdf(
             "Orcamento de exames",
             lines,
-            subtitle="Laboratorio Santa Terezinha",
+            subtitle="NanotechSoft PACS",
             header_lines=company_header,
             footer_lines=[
                 "Av. Munhoz da Rocha, 1298 - Vila Sao Lourenco, Mandaguacu - PR, 87160-000",
@@ -3433,7 +3433,7 @@ class ClinicService:
         subtitle = report.get("filters", {}).get("summary_label") or report.get("description") or ""
         company_header = [
             "CNPJ: 75.743.419/0005-66",
-            "Razao Social: Laboratorio de Patologia Clinica Santa Terezinha Ltda - EPP",
+            "Sistema: NanotechSoft PACS",
             "Endereco: Av. Munhoz da Rocha, 1298 - Vila Sao Lourenco, Mandaguacu - PR, 87160-000",
             "Telefone: (44) 3245-3324",
         ]

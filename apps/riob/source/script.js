@@ -7933,6 +7933,9 @@ function atualizarUsuarioLogadoUI() {
   }
   atualizarEstadoSipChat();
   atualizarStatusCodbarSistema();
+  const admin = String(usuarioLogado?.perfil || "").toLowerCase() === "admin";
+  document.getElementById("estoqueViewBtnAcerto")?.classList.toggle("hidden", !admin);
+  if (!admin && window.__estoqueView === "acerto") setEstoqueView("posicao");
 }
 
 function _syncBlockingPopupState() {
@@ -15165,6 +15168,7 @@ function _estoqueProdutoCadastroNormalizado(item = {}){
     embalagem_tipo_padrao: _estoqueEmbalagemPadrao(item.embalagem_tipo_padrao || item.embalagem_tipo || item.unidade || ""),
     fator_embalagem_padrao: fatorCadastro > 0 ? fatorCadastro : 1,
     cadastro_explicitado: Number(item.cadastro_explicitado || 0) === 1 ? 1 : 0,
+    pallet_meta: item.pallet_meta || {},
   };
   produto.produto_base_key = String(item.produto_base_key || "").trim() || _estoqueProdutoBaseKey(produto);
   return produto;
@@ -16693,7 +16697,10 @@ async function confirmarImportacaoNfeEstoque(){
 }
 
 function setEstoqueView(view){
-  const nextView = view === "posicao"
+  const admin = String(usuarioLogado?.perfil || "").toLowerCase() === "admin";
+  const nextView = view === "acerto" && admin
+    ? "acerto"
+    : view === "posicao"
     ? "posicao"
     : (view === "cadastrar" ? "cadastrar" : (view === "rastreio" ? "rastreio" : "lancar"));
   estoqueState.view = nextView;
@@ -16701,25 +16708,31 @@ function setEstoqueView(view){
 
   const viewLancar = document.getElementById("estoqueViewLancar");
   const viewConferir = document.getElementById("estoqueViewConferir");
+  const viewAcerto = document.getElementById("estoqueViewAcerto");
   const viewCadastrar = document.getElementById("estoqueViewCadastrar");
   const viewRastreio = document.getElementById("estoqueViewRastreio");
   const btnLancar = document.getElementById("estoqueViewBtnLancar");
   const btnConferir = document.getElementById("estoqueViewBtnConferir");
+  const btnAcerto = document.getElementById("estoqueViewBtnAcerto");
   const btnCadastrar = document.getElementById("estoqueViewBtnCadastrar");
   const btnRastreio = document.getElementById("estoqueViewBtnRastreio");
 
   if (viewLancar) viewLancar.classList.toggle("hidden", nextView !== "lancar");
   if (viewConferir) viewConferir.classList.toggle("hidden", nextView !== "posicao");
+  if (viewAcerto) viewAcerto.classList.toggle("hidden", nextView !== "acerto");
   if (viewCadastrar) viewCadastrar.classList.toggle("hidden", nextView !== "cadastrar");
   if (viewRastreio) viewRastreio.classList.toggle("hidden", nextView !== "rastreio");
   if (btnLancar) btnLancar.classList.toggle("active", nextView === "lancar");
   if (btnConferir) btnConferir.classList.toggle("active", nextView === "posicao");
+  if (btnAcerto) btnAcerto.classList.toggle("active", nextView === "acerto");
   if (btnCadastrar) btnCadastrar.classList.toggle("active", nextView === "cadastrar");
   if (btnRastreio) btnRastreio.classList.toggle("active", nextView === "rastreio");
 
   renderEstoqueImportPreview();
   atualizarStatusCodbarSistema();
-  if (nextView === "cadastrar") {
+  if (nextView === "acerto") {
+    carregarAcertoEstoque().catch((e) => console.warn("acerto estoque erro:", e));
+  } else if (nextView === "cadastrar") {
     carregarSaldoEstoque().catch((e) => {
       console.warn("saldo estoque erro:", e);
     });
@@ -17076,8 +17089,9 @@ function editarProdutoEstoqueCadastro(id){
   });
   const ajusteBox = document.getElementById("estoqueCadastroAjusteBox");
   const ajusteBtn = document.getElementById("estoqueCadastroAjusteBtn");
-  if (ajusteBox) ajusteBox.classList.remove("hidden");
-  if (ajusteBtn) ajusteBtn.classList.remove("hidden");
+  const admin = String(usuarioLogado?.perfil || "").toLowerCase() === "admin";
+  if (ajusteBox) ajusteBox.classList.toggle("hidden", !admin);
+  if (ajusteBtn) ajusteBtn.classList.toggle("hidden", !admin);
   const status = document.getElementById("estoqueCadastroStatus");
   if (status) {
     status.textContent = `Editando cadastro de embalagem: ${item.nome_produto || item.codigo_barras || item.codigo_produto_nfe || item.id} | Saldo atual: ${_estoqueFormatQtd(_saldoProdutoCadastroAtual(item))}`;
@@ -18315,6 +18329,83 @@ function renderSaldoEstoqueFiltrado(){
       <td>${_escHtml(_fmtDateBr(r.ultima_movimentacao))}</td>
     </tr>
   `, 9) : `<tr><td colspan="9">Sem itens no estoque para os filtros selecionados.</td></tr>`;
+}
+
+function _acertoEstoqueValores(produto = {}){
+  const meta = produto.pallet_meta || {};
+  const saldo = Math.max(0, Number(_saldoProdutoCadastroAtual(produto) || 0));
+  const porPallet = Number(meta.unidades_por_pallet || 0);
+  const porVolume = Number(meta.unidades_por_volume || 0);
+  const pallets = porPallet > 0 ? Math.floor(saldo / porPallet) : 0;
+  const resto = saldo - (pallets * porPallet);
+  const volumes = porVolume > 0 ? Math.floor(resto / porVolume) : 0;
+  const unidades = resto - (volumes * porVolume);
+  return { saldo, pallets, volumes, unidades, porPallet, porVolume };
+}
+
+function _acertoEstoqueTotalLinha(produtoId){
+  const row = document.querySelector(`#estoqueAcertoBody tr[data-produto-id="${Number(produtoId || 0)}"]`);
+  const produto = (estoqueState.cadastroProdutos || []).find((item) => Number(item.id || 0) === Number(produtoId || 0));
+  if (!row || !produto) return 0;
+  const meta = produto.pallet_meta || {};
+  const numero = (campo) => Math.max(0, Number(row.querySelector(`[data-field="${campo}"]`)?.value || 0));
+  const total = (numero("pallets") * Number(meta.unidades_por_pallet || 0))
+    + (numero("volumes") * Number(meta.unidades_por_volume || 0))
+    + numero("unidades");
+  const output = row.querySelector("[data-field='total']");
+  if (output) output.textContent = _estoqueFormatQtd(total);
+  return total;
+}
+
+function renderAcertoEstoque(){
+  const body = document.getElementById("estoqueAcertoBody");
+  if (!body) return;
+  const termo = _estoqueTextoBusca(document.getElementById("estoqueAcertoBusca")?.value || "");
+  const produtos = _estoqueOrdenarPorGrupo(estoqueState.cadastroProdutos || []).filter((produto) => {
+    if (!termo) return true;
+    return _estoqueTextoBusca([produto.nome_produto, produto.produto_base_nome, produto.codigo_barras, produto.codigo_produto_nfe].join(" ")).includes(termo);
+  });
+  body.innerHTML = produtos.length ? produtos.map((produto) => {
+    const v = _acertoEstoqueValores(produto);
+    const meta = produto.pallet_meta || {};
+    const identificado = !!meta.identificado;
+    const disabled = identificado ? "" : " disabled";
+    return `<tr data-produto-id="${Number(produto.id || 0)}">
+      <td><strong>${_escHtml(produto.produto_base_nome || produto.nome_produto || "-")}</strong><br><small>${_escHtml(produto.codigo_barras || produto.codigo_produto_nfe || "Sem codigo")}</small></td>
+      <td>${_escHtml(_estoqueFormatPallet({ ...produto, pallet_meta: meta }, v.saldo))}</td>
+      <td><input type="number" min="0" step="1" data-field="pallets" value="${v.pallets}" oninput="_acertoEstoqueTotalLinha(${produto.id})"${disabled}></td>
+      <td><input type="number" min="0" step="1" data-field="volumes" value="${v.volumes}" title="${_escAttr(meta.rotulo_volume || "pacotes/caixas")}" oninput="_acertoEstoqueTotalLinha(${produto.id})"${disabled}><small>${_escHtml(meta.rotulo_volume || "regra não identificada")}</small></td>
+      <td><input type="number" min="0" step="0.001" data-field="unidades" value="${v.unidades}" oninput="_acertoEstoqueTotalLinha(${produto.id})"></td>
+      <td><strong data-field="total">${_escHtml(_estoqueFormatQtd(v.saldo))}</strong></td>
+      <td><input type="text" data-field="motivo" placeholder="Motivo obrigatório"></td>
+      <td><button type="button" onclick="salvarAcertoEstoque(${produto.id})">Salvar acerto</button></td>
+    </tr>`;
+  }).join("") : `<tr><td colspan="8">Nenhum produto encontrado.</td></tr>`;
+}
+
+async function carregarAcertoEstoque(){
+  if (String(usuarioLogado?.perfil || "").toLowerCase() !== "admin") return;
+  await Promise.all([carregarSaldoEstoque(), ensureProdutosEstoqueCache(true)]);
+  renderAcertoEstoque();
+}
+
+async function salvarAcertoEstoque(produtoId){
+  const row = document.querySelector(`#estoqueAcertoBody tr[data-produto-id="${Number(produtoId || 0)}"]`);
+  if (!row) return;
+  const motivo = String(row.querySelector("[data-field='motivo']")?.value || "").trim();
+  if (!motivo) return alert("Informe o motivo do acerto de estoque.");
+  const quantidade_atual = _acertoEstoqueTotalLinha(produtoId);
+  if (!confirm(`Confirmar o novo saldo de ${_estoqueFormatQtd(quantidade_atual)} unidades?`)) return;
+  const resp = await apiFetch(`/api/estoque/produtos/${Number(produtoId)}/ajuste`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ quantidade_atual, motivo_ajuste: motivo }),
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) return alert(data.erro || "Falha ao salvar o acerto.");
+  alert(`Acerto registrado. Saldo anterior: ${_estoqueFormatQtd(data.saldo_antes)}; novo saldo: ${_estoqueFormatQtd(data.saldo_depois)}.`);
+  await carregarAcertoEstoque();
+  if (window.__dashView === "estoque") await renderDashboardEstoque();
 }
 
 async function carregarMovimentosEstoque(){

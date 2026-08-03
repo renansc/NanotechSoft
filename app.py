@@ -1946,6 +1946,7 @@ def local_riob_proxy_response(app_key, subpath=""):
     headers["X-Usuario-Id"] = str(usuario["id"])
     headers["X-Usuario-Nome"] = usuario.get("nome") or usuario.get("login") or ""
     headers["X-Usuario-Login"] = usuario["login"]
+    headers["X-Usuario-Perfil"] = usuario.get("perfil") or "usuario"
     headers["X-Forwarded-Prefix"] = f"/apps/{app_key}"
     data = request.get_data() if request.method in {"POST", "PUT", "PATCH"} else None
     req = urllib.request.Request(upstream_url, data=data, headers=headers, method=request.method)
@@ -2044,6 +2045,7 @@ def riob_proxy_response(app_key="riob", subpath="", embedded=False):
     headers["X-Usuario-Id"] = str(usuario["id"])
     headers["X-Usuario-Nome"] = usuario.get("nome") or usuario.get("login") or ""
     headers["X-Usuario-Login"] = usuario["login"]
+    headers["X-Usuario-Perfil"] = usuario.get("perfil") or "usuario"
     headers["X-Forwarded-Prefix"] = "/apps/riob"
 
     data = request.get_data() if request.method in {"POST", "PUT", "PATCH"} else None
@@ -4051,6 +4053,27 @@ def raioxpacs_navigation_bridge():
 """
 
 
+def raioxpacs_theme_bridge():
+    theme = current_theme_key()
+    palettes = {
+        "rio_branco": ("#f4f6f9", "#ffffff", "#fff8ed", "#263238", "#667085", "#ff9800", "#c66900", "#d9e1ea"),
+        "autoblue": ("#f4f8fd", "#ffffff", "#eef6ff", "#263238", "#5b6f86", "#003366", "#004c99", "#cbd7e6"),
+        "fin-blue": ("#0b1020", "#111a33", "#0f1730", "#e8ecff", "#aeb7e7", "#5eead4", "#60a5fa", "rgba(255,255,255,.16)"),
+        "pontobege": ("#f5efe4", "#fffaf1", "#f7dfc8", "#183237", "#5f6d63", "#e08b3e", "#bb5b2a", "rgba(24,50,55,.14)"),
+        "zapgreen": ("#07111f", "#0d1727", "#13263a", "#e5eefc", "#99a8c2", "#25d366", "#128c4a", "rgba(148,163,184,.18)"),
+        "pacsred": ("#f6f7f9", "#ffffff", "#fff1f2", "#2d3038", "#6b7280", "#c81e3a", "#8f1d2c", "#e5d3d7"),
+    }
+    bg, surface, alt, ink, muted, accent, strong, line = palettes.get(theme, palettes["rio_branco"])
+    return f"""
+<style id="nanotechsoft-pacs-global-theme">
+body.theme-{theme} {{ --bg:{bg}; --surface:{surface}; --surface-alt:{alt}; --ink:{ink}; --text:{ink}; --muted:{muted}; --accent:{accent}; --accent-strong:{strong}; --line:{line}; --line-strong:{line}; background:{bg}!important; color:{ink}!important; }}
+body.theme-{theme} .sidebar, body.theme-{theme} .login-hero {{ background:linear-gradient(160deg,{strong},{accent})!important; }}
+body.theme-{theme} .panel, body.theme-{theme} .card, body.theme-{theme} .login-card, body.theme-{theme} .topbar, body.theme-{theme} .viewer-frame, body.theme-{theme} .viewer-empty, body.theme-{theme} table, body.theme-{theme} dialog {{ background:{surface}!important; color:{ink}!important; border-color:{line}!important; }}
+body.theme-{theme} input, body.theme-{theme} select, body.theme-{theme} textarea {{ background:{surface}!important; color:{ink}!important; border-color:{line}!important; }}
+</style>
+"""
+
+
 def rewrite_raioxpacs_body(body, content_type, subpath="", integrated=True):
     lowered = (content_type or "").lower()
     is_text = (
@@ -4064,6 +4087,15 @@ def rewrite_raioxpacs_body(body, content_type, subpath="", integrated=True):
     text = body.decode("utf-8", errors="replace")
     text = rewrite_raioxpacs_text(text, integrated=integrated)
     if "text/html" in lowered or subpath.endswith((".html", ".htm")):
+        theme = current_theme_key()
+        text = re.sub(
+            r'(<body\b[^>]*\bclass=["\'])([^"\']*)(["\'])',
+            lambda match: f"{match.group(1)}{match.group(2)} theme-{theme}{match.group(3)}",
+            text, count=1, flags=re.I,
+        )
+        if not re.search(r'<body\b[^>]*\bclass=', text, flags=re.I):
+            text = re.sub(r'<body\b', f'<body class="theme-{theme}"', text, count=1, flags=re.I)
+        text = re.sub(r'</head>', raioxpacs_theme_bridge() + '</head>', text, count=1, flags=re.I)
         text = inject_before_body_close(text, raioxpacs_navigation_bridge())
     return text.encode("utf-8")
 
@@ -4123,6 +4155,15 @@ def raioxpacs_proxy_response(subpath="", integrated=True):
         if lowered == "cookie":
             value = transform_raioxpacs_cookie_header(value)
         headers[key] = value
+    portal_user = None
+    if session.get("usuario_id"):
+        try:
+            portal_user = get_user_by_id(int(session["usuario_id"]))
+        except Exception:
+            portal_user = None
+    headers["X-Portal-Usuario-Id"] = str((portal_user or {}).get("id") or "")
+    headers["X-Portal-Usuario-Login"] = str((portal_user or {}).get("login") or "visitante")
+    headers["X-Portal-Usuario-Perfil"] = str((portal_user or {}).get("perfil") or "visitante")
     data = request.get_data() if request.method in {"POST", "PUT", "PATCH", "DELETE"} else None
     req = urllib.request.Request(upstream_url, data=data, headers=headers, method=request.method)
 
@@ -4185,27 +4226,23 @@ def raioxpacs_public_share_api(subpath):
 
 
 @app.route("/apps/pacs", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
-@login_required
 def raioxpacs_proxy_root():
     return raioxpacs_proxy_response("")
 
 
 @app.route("/apps/pacs/original", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
-@login_required
 def raioxpacs_original_root():
     return raioxpacs_proxy_response("", integrated=False)
 
 
 @app.route("/apps/pacs/original/", defaults={"subpath": ""}, methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
 @app.route("/apps/pacs/original/<path:subpath>", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
-@login_required
 def raioxpacs_original_proxy(subpath):
     return raioxpacs_proxy_response(subpath, integrated=False)
 
 
 @app.route("/apps/pacs/", defaults={"subpath": ""}, methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
 @app.route("/apps/pacs/<path:subpath>", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
-@login_required
 def raioxpacs_proxy(subpath):
     return raioxpacs_proxy_response(subpath)
 

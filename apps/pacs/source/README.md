@@ -1,6 +1,6 @@
-# Laboratorio Santa Terezinha
+# NanotechSoft PACS
 
-Projeto para operar a unidade da Laboratorio Santa Terezinha com RIS e PACS proprio, sem depender mais do CharruaSoft.
+Projeto NanotechSoft PACS para operação integrada de RIS e PACS próprio, sem depender mais do CharruaSoft.
 
 ## O que este MVP entrega
 

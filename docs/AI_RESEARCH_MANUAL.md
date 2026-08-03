@@ -71,6 +71,9 @@ em `deploy/`, mas o operador sempre chama os arquivos da raiz.
 ### `git-safe-push.sh`
 
 - Uso: validar, criar commit e enviar automaticamente a branch atual ao GitHub.
+- Neste projeto, o envio ao `origin` por Git/SSH esta previamente autorizado;
+  nao exigir GitHub CLI (`gh`) quando o remoto SSH estiver funcional. Use o
+  script canonico e respeite o escopo explicitamente autorizado pelo usuario.
 - Deve bloquear `.env`, credenciais, backups, dados de runtime e outros arquivos
   sensíveis.
 - Com worktree misto, use `--only CAMINHO` repetidamente.
