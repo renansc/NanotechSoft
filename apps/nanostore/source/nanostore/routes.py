@@ -902,8 +902,13 @@ def api_products():
     payload = request.get_json(force=True)
     name = (payload.get("name") or "").strip()
     sku = (payload.get("sku") or "").strip()
+    barcode = (payload.get("barcode") or "").strip()
     if not name or not sku:
         abort(400, "Nome e SKU sao obrigatorios.")
+    if PharmacyProduct.query.filter(func.lower(PharmacyProduct.sku) == sku.lower()).first():
+        abort(400, "SKU ja cadastrado em outro produto.")
+    if barcode and PharmacyProduct.query.filter(func.lower(PharmacyProduct.barcode) == barcode.lower()).first():
+        abort(400, "Codigo de barras ja cadastrado em outro produto.")
     category = db.session.get(PharmacyCategory, payload.get("category_id")) if payload.get("category_id") else None
     cost_price = _to_decimal(payload.get("cost_price"), "preco de custo")
     sale_price = _to_decimal(payload.get("sale_price"), "preco de venda")
@@ -912,7 +917,7 @@ def api_products():
     product = PharmacyProduct(
         sku=sku,
         name=name,
-        barcode=((payload.get("barcode") or "").strip() or None),
+        barcode=barcode or None,
         brand=(payload.get("brand") or "").strip(),
         active_ingredient=(payload.get("active_ingredient") or "").strip(),
         unit=(payload.get("unit") or "un").strip() or "un",

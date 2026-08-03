@@ -44,6 +44,12 @@ uso diario: saldo e atividade do caixa aberto, lista e totais de pedidos por
 etapa, quantidade e valor de venda estimado do estoque, saldo por produto e
 alertas de reposicao. Cada painel possui atalho para a operacao correspondente.
 
+O cadastro de produtos e o lancamento de pedidos aceitam codigo de barras por
+leitor USB (bipe seguido de Enter) ou pela webcam em navegador com HTTPS. No
+cadastro, o codigo capturado preenche o novo produto; no pedido, um produto ja
+cadastrado e localizado e adicionado imediatamente, somando a quantidade quando
+o mesmo codigo e lido novamente. Codigos de barras duplicados sao rejeitados.
+
 ## Rodar localmente
 
 ```bash

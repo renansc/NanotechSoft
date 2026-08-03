@@ -265,6 +265,33 @@ body[data-store-mode="distributor"] .order-control-panel,
   min-width: 0;
 }
 
+.barcode-capture {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: end;
+}
+
+.barcode-capture button {
+  min-height: 44px;
+  white-space: nowrap;
+}
+
+.barcode-feedback {
+  min-height: 20px;
+  margin: -2px 0 2px;
+}
+
+.barcode-feedback.is-success {
+  color: #17643b;
+  font-weight: 700;
+}
+
+.barcode-feedback.is-error {
+  color: #a33b2c;
+  font-weight: 700;
+}
+
 .order-kanban-panel {
   overflow: hidden;
 }
@@ -1155,6 +1182,10 @@ th {
   }
 
   .field-with-action {
+    grid-template-columns: 1fr;
+  }
+
+  .barcode-capture {
     grid-template-columns: 1fr;
   }
 

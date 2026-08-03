@@ -137,7 +137,7 @@ class CashFlowTest(unittest.TestCase):
                 for marker in (
                     "Dashboard operacional", 'data-dashboard-report="cash"', 'data-dashboard-report="orders"',
                     'data-dashboard-report="stock"', "Entrada ou saida", "Kanban de pedidos",
-                    "Notas dos pedidos", "Novo cliente do pedido",
+                    "Notas dos pedidos", "Novo cliente do pedido", "Codigo / bipe", "Ler pela webcam",
                 ):
                     self.assertIn(marker, html)
 
@@ -261,6 +261,22 @@ class CashFlowTest(unittest.TestCase):
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response.mimetype, "application/pdf")
             self.assertTrue(response.data.startswith(b"%PDF"))
+
+    def test_product_barcode_can_be_registered_looked_up_and_not_duplicated(self):
+        client = self.app.test_client()
+        created = client.post("/api/products", json={
+            "sku": "BIP-1", "name": "Produto com bipe", "barcode": "7891234567890",
+            "sale_price": "15", "cost_price": "8", "tracks_inventory": True,
+        })
+        self.assertEqual(created.status_code, 200, created.get_json())
+        lookup = client.get("/api/products/lookup?code=7891234567890")
+        self.assertEqual(lookup.status_code, 200, lookup.get_json())
+        self.assertEqual(lookup.get_json()["product"]["sku"], "BIP-1")
+        duplicate = client.post("/api/products", json={
+            "sku": "BIP-2", "name": "Codigo repetido", "barcode": "7891234567890",
+        })
+        self.assertEqual(duplicate.status_code, 400)
+        self.assertIn("ja cadastrado", duplicate.get_json()["error"])
 
 
 if __name__ == "__main__":

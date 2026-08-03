@@ -351,10 +351,14 @@
             <section class="grid single-grid">
               <article class="card">
                 <h3>Novo {{ store_mode.entity }}</h3>
-                <form data-api="/api/products">
+                <form data-api="/api/products" id="product-form">
                   <label class="field-inline"><span>SKU</span><input name="sku" placeholder="SKU" required></label>
                   <label class="field-inline"><span>Nome</span><input name="name" placeholder="Nome do {{ store_mode.entity }}" required></label>
-                  <label class="field-inline"><span>Codigo de barras</span><input name="barcode" placeholder="Codigo de barras"></label>
+                  <div class="barcode-capture">
+                    <label class="field-inline"><span>Codigo de barras</span><input id="product-barcode-input" name="barcode" placeholder="Clique aqui e use o leitor" autocomplete="off"></label>
+                    <button type="button" class="secondary-btn scan-trigger" id="scan-product-barcode-btn">Ler pela webcam</button>
+                  </div>
+                  <p class="helper barcode-feedback" id="product-barcode-feedback" aria-live="polite">Leitor USB: mantenha o campo selecionado e faca o bipe.</p>
                   <label><input type="checkbox" name="tracks_inventory" {% if store_mode.tracks_inventory %}checked{% endif %}> Controla estoque</label>
                   {% if mode_key == 'pharmacy' %}
                   <label class="field-inline"><span>Marca</span><input name="brand" placeholder="Marca"></label>
@@ -760,8 +764,12 @@
                       <label class="field-inline"><span>Valor unitario</span><input id="sale-product-price" type="number" step="0.01" min="0" placeholder="0.00"></label>
                       <label class="field-inline"><span>Desconto</span><input id="sale-product-discount" type="number" step="0.01" min="0" placeholder="0.00"></label>
                     </div>
-                    <button type="button" class="secondary-btn scan-trigger" id="scan-sale-product-btn">Bip por webcam</button>
-                    <p class="helper scanner-support-note" hidden>Scanner por webcam indisponivel neste navegador. Use HTTPS confiavel ou selecione o produto manualmente.</p>
+                    <div class="barcode-capture">
+                      <label class="field-inline"><span>Codigo / bipe</span><input id="sale-barcode-input" placeholder="Clique aqui e faca o bipe" autocomplete="off"></label>
+                      <button type="button" class="secondary-btn scan-trigger" id="scan-sale-product-btn">Ler pela webcam</button>
+                    </div>
+                    <p class="helper barcode-feedback" id="sale-barcode-feedback" aria-live="polite">O leitor USB lanca o item ao enviar Enter.</p>
+                    <p class="helper scanner-support-note" hidden>Webcam indisponivel neste navegador. O leitor USB continua funcionando.</p>
                     <button type="button" id="add-sale-item-btn">Adicionar {{ store_mode.entity }}</button>
                   </div>
                   <div class="sale-items-panel">
@@ -1691,6 +1699,9 @@
           const targetView = document.getElementById(button.dataset.openView);
           activateView(button.dataset.openView);
           if (targetView && button.dataset.openSubview) activateSubview(targetView, button.dataset.openSubview);
+          if (button.dataset.openSubview === "lancamentos-vendas") {
+            window.setTimeout(() => document.getElementById("sale-barcode-input")?.focus(), 0);
+          }
         });
       });
 
@@ -1784,6 +1795,9 @@
           if (view && button.dataset.openSubview) activateSubview(view, button.dataset.openSubview);
           document.querySelectorAll(".menu-link").forEach((item) => item.classList.remove("active"));
           button.classList.add("active");
+          if (button.dataset.openSubview === "lancamentos-vendas") {
+            window.setTimeout(() => document.getElementById("sale-barcode-input")?.focus(), 0);
+          }
         });
       });
 
@@ -1863,7 +1877,12 @@
       const countItemsJson = document.getElementById("count-items-json");
       const addCountItemBtn = document.getElementById("add-count-item-btn");
       const countItems = [];
+      const productBarcodeInput = document.getElementById("product-barcode-input");
+      const productBarcodeFeedback = document.getElementById("product-barcode-feedback");
+      const scanProductBarcodeBtn = document.getElementById("scan-product-barcode-btn");
       const scanSaleProductBtn = document.getElementById("scan-sale-product-btn");
+      const saleBarcodeInput = document.getElementById("sale-barcode-input");
+      const saleBarcodeFeedback = document.getElementById("sale-barcode-feedback");
       const scanCountProductBtn = document.getElementById("scan-count-product-btn");
       const scannerModal = document.getElementById("scanner-modal");
       const closeScannerModalBtn = document.getElementById("close-scanner-modal-btn");
@@ -2143,16 +2162,38 @@
       }
 
       async function applyLookupResult(target, code) {
-        const data = await lookupProductByCode(code);
+        const normalizedCode = String(code || "").trim();
+        if (!normalizedCode) throw new Error("Codigo obrigatorio.");
+        if (target === "register") {
+          if (productBarcodeInput) productBarcodeInput.value = normalizedCode;
+          if (productBarcodeFeedback) {
+            productBarcodeFeedback.classList.remove("is-error");
+            productBarcodeFeedback.classList.add("is-success");
+            productBarcodeFeedback.textContent = `Codigo ${normalizedCode} capturado. Complete o cadastro.`;
+          }
+          document.querySelector('#product-form [name="sku"]')?.focus();
+          return { barcode: normalizedCode };
+        }
+        const data = await lookupProductByCode(normalizedCode);
         const product = data.product;
         if (target === "sale") {
           if (saleProductSelect) {
             saleProductSelect.value = String(product.id);
+            if (!saleProductSelect.value) {
+              await hydrateSaleProducts();
+              saleProductSelect.value = String(product.id);
+            }
             saleProductSelect.dispatchEvent(new Event("change"));
           }
-          if (saleProductQuantity && !saleProductQuantity.value) {
-            saleProductQuantity.value = "1";
+          if (saleProductQuantity) saleProductQuantity.value = "1";
+          if (!addCurrentSaleDraft()) throw new Error("Nao foi possivel adicionar o produto ao pedido.");
+          if (saleBarcodeInput) saleBarcodeInput.value = "";
+          if (saleBarcodeFeedback) {
+            saleBarcodeFeedback.classList.remove("is-error");
+            saleBarcodeFeedback.classList.add("is-success");
+            saleBarcodeFeedback.textContent = `${product.name} adicionado ao pedido.`;
           }
+          saleBarcodeInput?.focus();
         } else if (target === "count") {
           if (countProductSelect) {
             countProductSelect.value = String(product.id);
@@ -2172,7 +2213,11 @@
           scannerModalTitle.textContent =
             target === "sale" ? "Bip de item para venda" :
             target === "count" ? "Bip de item para contagem" :
+            target === "register" ? "Codigo de barras do novo produto" :
             "Consulta rapida de item";
+        }
+        if (scannerManualSubmitBtn) {
+          scannerManualSubmitBtn.textContent = target === "register" ? "Usar codigo" : "Buscar";
         }
         scannerModal.hidden = false;
         scannerStatus.textContent = "Iniciando webcam...";
@@ -2196,7 +2241,10 @@
                   stopScanner();
                   await applyLookupResult(currentScanTarget, value);
                 }
-              } catch {}
+              } catch (error) {
+                stopScanner();
+                alert(error.message || "Nao foi possivel ler o codigo.");
+              }
             }, 600);
           } else {
             scannerStatus.textContent = "Digite o codigo manualmente. Seu navegador nao suporta leitura automatica nativa.";
@@ -2298,14 +2346,25 @@
         const unitPrice = Number((saleProductPrice && saleProductPrice.value) || 0);
         const discountAmount = Number((saleProductDiscount && saleProductDiscount.value) || 0);
         if (quantity <= 0) return false;
-        saleItems.push({
-          product_id: Number(option.value),
-          sku: option.dataset.sku,
-          name: option.dataset.name,
-          quantity: String(quantity),
-          unit_price: String(unitPrice),
-          discount_amount: String(discountAmount),
-        });
+        const productId = Number(option.value);
+        const existing = saleItems.find((item) =>
+          item.product_id === productId &&
+          Number(item.unit_price) === unitPrice &&
+          Number(item.discount_amount || 0) === 0 &&
+          discountAmount === 0
+        );
+        if (existing) {
+          existing.quantity = String(Number(existing.quantity) + quantity);
+        } else {
+          saleItems.push({
+            product_id: productId,
+            sku: option.dataset.sku,
+            name: option.dataset.name,
+            quantity: String(quantity),
+            unit_price: String(unitPrice),
+            discount_amount: String(discountAmount),
+          });
+        }
         saleProductSelect.value = "";
         saleProductQuantity.value = "";
         saleProductPrice.value = "";
@@ -2551,6 +2610,41 @@
       refreshPurchaseItems();
       refreshCountItems();
 
+      async function submitBarcodeCapture(target, input, feedback) {
+        const code = input?.value.trim();
+        if (!code) return;
+        if (feedback) {
+          feedback.classList.remove("is-error", "is-success");
+          feedback.textContent = "Lendo codigo...";
+        }
+        try {
+          await applyLookupResult(target, code);
+        } catch (error) {
+          if (feedback) {
+            feedback.classList.add("is-error");
+            feedback.textContent = error.message;
+          }
+          input?.select();
+        }
+      }
+
+      if (productBarcodeInput) {
+        productBarcodeInput.addEventListener("keydown", (event) => {
+          if (event.key !== "Enter") return;
+          event.preventDefault();
+          submitBarcodeCapture("register", productBarcodeInput, productBarcodeFeedback);
+        });
+      }
+      if (saleBarcodeInput) {
+        saleBarcodeInput.addEventListener("keydown", (event) => {
+          if (event.key !== "Enter") return;
+          event.preventDefault();
+          submitBarcodeCapture("sale", saleBarcodeInput, saleBarcodeFeedback);
+        });
+      }
+      if (scanProductBarcodeBtn) {
+        scanProductBarcodeBtn.addEventListener("click", function () { startScanner("register"); });
+      }
       if (scanSaleProductBtn) {
         scanSaleProductBtn.addEventListener("click", function () { startScanner("sale"); });
       }
