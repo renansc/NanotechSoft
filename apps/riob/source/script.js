@@ -9906,14 +9906,34 @@ function _bindFreteCardEvents(card){
   });
 }
 
+function _normalizarLocalUnificacaoFrete(valor){
+  return (valor || "").toString().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLocaleLowerCase("pt-BR");
+}
+
+function _freteLocaisUnificacao(frete){
+  const locais = new Set();
+  [frete?.cidade, frete?.carga_cidade, frete?.carga_cidades, frete?.carga_rota].forEach((valor) => {
+    (valor || "").toString().split(/(?:\r?\n|[;,|/]|\s+-\s+)+/).forEach((parte) => {
+      const local = _normalizarLocalUnificacaoFrete(parte);
+      if (local) locais.add(local);
+    });
+  });
+  return locais;
+}
+
+function _fretesMesmaRotaOuCidade(origem, destino){
+  const rotaOrigem = _normalizarLocalUnificacaoFrete(origem?.carga_rota);
+  const rotaDestino = _normalizarLocalUnificacaoFrete(destino?.carga_rota);
+  if (rotaOrigem && rotaDestino && rotaOrigem === rotaDestino) return true;
+  const locaisDestino = _freteLocaisUnificacao(destino);
+  return Array.from(_freteLocaisUnificacao(origem)).some((local) => locaisDestino.has(local));
+}
+
 function _fretesDestinoUnificacao(origem){
   return (fretes || []).filter((item) => {
     if (!item || Number(item.id) === Number(origem?.id) || item.arquivado) return false;
-    const mesmaData = !origem?.data_carga || !item.data_carga || item.data_carga === origem.data_carga;
-    const mesmoStatus = item.status === origem?.status;
     const veiculoCompativel = !origem?.veiculo_id || !item.veiculo_id || Number(item.veiculo_id) === Number(origem.veiculo_id);
-    const cargaCompativel = !origem?.carga_id || !item.carga_id || Number(item.carga_id) === Number(origem.carga_id);
-    return mesmaData && mesmoStatus && veiculoCompativel && cargaCompativel;
+    return veiculoCompativel && _fretesMesmaRotaOuCidade(origem, item);
   }).sort((a, b) => {
     const cidadeOrigem = (origem?.cidade || "").toString().trim().toLocaleLowerCase("pt-BR");
     const aMesmaCidade = cidadeOrigem && (a.cidade || "").toString().trim().toLocaleLowerCase("pt-BR") === cidadeOrigem;
@@ -9927,7 +9947,7 @@ function abrirUnificacaoFrete(origemId, destinoPreselecionadoId = 0){
   if (!origem) return;
   const destinos = _fretesDestinoUnificacao(origem);
   if (!destinos.length) {
-    alert("Nao existe outro card compativel na mesma data e coluna.");
+    alert("Nao existe outro card ativo da mesma rota ou cidade com veiculo compativel.");
     return;
   }
   document.getElementById("freteUnificarOrigemId").value = String(origem.id);

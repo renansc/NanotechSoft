@@ -21448,6 +21448,30 @@ def criar_frete():
     return jsonify({"ok": True, "id": frete_id, "frete": frete})
 
 
+def _frete_locais_unificacao(frete):
+    locais = set()
+    for valor in (
+        (frete or {}).get("cidade"),
+        (frete or {}).get("carga_cidade"),
+        (frete or {}).get("carga_cidades"),
+        (frete or {}).get("carga_rota"),
+    ):
+        for parte in re.split(r"\s*/\s*", _as_str(valor)):
+            for cidade in _frete_cidades_lista(parte):
+                chave = _normalizar_chave_texto(cidade)
+                if chave:
+                    locais.add(chave)
+    return locais
+
+
+def _fretes_mesma_rota_ou_cidade(origem, destino):
+    rota_origem = _normalizar_chave_texto((origem or {}).get("carga_rota"))
+    rota_destino = _normalizar_chave_texto((destino or {}).get("carga_rota"))
+    mesma_rota = bool(rota_origem and rota_destino and rota_origem == rota_destino)
+    mesma_cidade = bool(_frete_locais_unificacao(origem) & _frete_locais_unificacao(destino))
+    return mesma_rota or mesma_cidade
+
+
 def _erro_unificacao_fretes(origem, destino):
     if not origem or not destino:
         return "Card de origem ou destino nao encontrado."
@@ -21455,20 +21479,12 @@ def _erro_unificacao_fretes(origem, destino):
         return "Selecione outro card como destino."
     if _as_bool(origem.get("arquivado"), False) or _as_bool(destino.get("arquivado"), False):
         return "Cards arquivados nao podem ser unificados."
-    data_origem = _fmt_date(origem.get("data_carga") or origem.get("created_at"))
-    data_destino = _fmt_date(destino.get("data_carga") or destino.get("created_at"))
-    if data_origem and data_destino and data_origem != data_destino:
-        return "Somente cards da mesma data de carga podem ser unificados."
-    if _as_str(origem.get("status")) != _as_str(destino.get("status")):
-        return "Mova os dois cards para a mesma coluna antes de unificar."
+    if not _fretes_mesma_rota_ou_cidade(origem, destino):
+        return "Somente cards da mesma rota ou cidade podem ser unificados."
     veiculo_origem = _as_int(origem.get("veiculo_id"), 0)
     veiculo_destino = _as_int(destino.get("veiculo_id"), 0)
     if veiculo_origem and veiculo_destino and veiculo_origem != veiculo_destino:
         return "Cards ligados a veiculos diferentes nao podem ser unificados."
-    carga_origem = _as_int(origem.get("carga_id"), 0)
-    carga_destino = _as_int(destino.get("carga_id"), 0)
-    if carga_origem and carga_destino and carga_origem != carga_destino:
-        return "Cards ligados a cargas cadastradas diferentes nao podem ser unificados."
     return ""
 
 
