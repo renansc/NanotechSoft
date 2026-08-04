@@ -9560,6 +9560,16 @@ function _atualizarScrollbarAuxiliarKanban(){
   _bindKanbanScrollbarAuxiliar(kanban, barra);
   _bindKanbanDesktopAutoScroll(kanban);
 
+  const rect = kanban.getBoundingClientRect();
+  const margemViewport = 12;
+  const esquerda = Math.max(margemViewport, rect.left);
+  let direita = Math.min(window.innerWidth - margemViewport, rect.right);
+  const chatFab = document.getElementById("chatFab");
+  if (chatFab?.getClientRects().length) {
+    direita = Math.min(direita, chatFab.getBoundingClientRect().left - 10);
+  }
+  barra.style.left = `${Math.round(esquerda)}px`;
+  barra.style.width = `${Math.max(120, Math.round(direita - esquerda))}px`;
   inner.style.width = `${Math.ceil(kanban.scrollWidth)}px`;
   const precisaBarra = kanban.scrollWidth > (kanban.clientWidth + 2);
   barra.classList.toggle("is-active", precisaBarra);

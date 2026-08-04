@@ -72,6 +72,7 @@ Esta revisao da documentacao passa a registrar explicitamente:
 - o kanban de Vendas diario funciona como fila acumulada de execucao, sem filtro de data; a data continua sendo aplicada somente ao resumo e a lista de pedidos, enquanto cards pendentes permanecem visiveis ate serem enviados ou excluidos
 - durante a importacao, cards pendentes da mesma data e com rota ou cidade coincidente sao unidos automaticamente em um card composto; os documentos de origem permanecem separados para auditoria e peso, entregas, volumes e mapas sao apresentados de forma consolidada
 - no Kanban RioB, cards ativos compativeis podem ser unidos pelo botao `Unificar` ou arrastando um card sobre outro; os vinculos operacionais sao transferidos ao destino em uma transacao e o card de origem fica arquivado no historico
+- no desktop, a barra horizontal auxiliar do Kanban RioB permanece fixa no rodape da tela e sincronizada com as colunas, permitindo acessar todos os status mesmo quando os cards deixam a pagina alta
 - os alertas sonoros do chat interno para novas mensagens e eventos de chamada SIP
 - o passo a passo dedicado de operacao com NF-e / Receita, deixando explicito o que hoje e automatico no DF-e e o que ainda depende de XML/manual
 - o fluxo portal assistido da Receita com abertura da consulta publica ja preparada com a chave bipada, para reduzir a operacao manual ao reCAPTCHA e ao uso do bookmarklet

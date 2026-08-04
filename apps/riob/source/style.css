@@ -192,17 +192,21 @@ input,select{
 
 .kanban-scrollbar{
   display:none;
-  position:sticky;
-  bottom:0;
-  z-index:40;
-  margin-top:10px;
+  position:fixed;
+  left:12px;
+  bottom:8px;
+  z-index:12000;
+  margin:0;
   overflow-x:auto;
   overflow-y:hidden;
-  height:18px;
+  width:calc(100vw - 24px);
+  height:22px;
   background:rgba(255,255,255,.96);
   border:1px solid #cbd5e1;
-  border-radius:999px;
+  border-radius:6px;
   box-shadow:0 6px 18px rgba(15,23,42,.12);
+  scrollbar-color:#475569 #e2e8f0;
+  scrollbar-width:auto;
 }
 
 .kanban-scrollbar.is-active{
@@ -214,12 +218,18 @@ input,select{
 }
 
 .kanban-scrollbar::-webkit-scrollbar{
-  height:12px;
+  height:16px;
 }
 
 .kanban-scrollbar::-webkit-scrollbar-thumb{
-  background:#64748b;
-  border-radius:999px;
+  background:#475569;
+  border:2px solid #e2e8f0;
+  border-radius:6px;
+}
+
+.kanban-scrollbar::-webkit-scrollbar-track{
+  background:#e2e8f0;
+  border-radius:6px;
 }
 
 .kanban-col.highlight{
