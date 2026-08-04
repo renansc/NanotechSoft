@@ -16,6 +16,39 @@ class FreteXmlViagemTests(unittest.TestCase):
         self.assertIn("caminhao definido", server._erro_unificacao_fretes(origem, {**origem, "id": 360, "veiculo_id": None}))
         self.assertIn("mesmo caminhao", server._erro_unificacao_fretes(origem, {**origem, "id": 360, "veiculo_id": 29}))
 
+    def test_serialized_freight_exposes_undo_only_for_active_unions(self):
+        sem_uniao = server._serialize_frete_row({"id": 10, "unificacoes_ativas": 0})
+        com_uniao = server._serialize_frete_row({"id": 11, "unificacoes_ativas": 2})
+
+        self.assertFalse(sem_uniao["pode_desagrupar"])
+        self.assertEqual(0, sem_uniao["unificacoes_ativas"])
+        self.assertTrue(com_uniao["pode_desagrupar"])
+        self.assertEqual(2, com_uniao["unificacoes_ativas"])
+
+    def test_undo_moves_only_the_recorded_links_back_to_the_source(self):
+        class Cursor:
+            def __init__(self):
+                self.calls = []
+                self.rowcount = 0
+
+            def execute(self, sql, params):
+                self.calls.append((" ".join(sql.split()), params))
+                self.rowcount = len(params) - 2
+
+        cursor = Cursor()
+        contagens = server._atualizar_vinculos_desagrupamento(
+            cursor,
+            {"vendas_diario": [12, 11, 12], "notas_saida": [31]},
+            destino_id=200,
+            origem_id=100,
+        )
+
+        self.assertEqual(2, contagens["vendas_diario"])
+        self.assertEqual(1, contagens["notas_saida"])
+        self.assertEqual((100, 200, 11, 12), cursor.calls[0][1])
+        self.assertEqual((100, 200, 31), cursor.calls[1][1])
+        self.assertTrue(all("AND id IN" in sql for sql, _ in cursor.calls))
+
     def test_grouped_freight_cities_are_normalized_and_deduplicated(self):
         cidades = server._frete_cidades_lista(
             "Londrina - Cambé",

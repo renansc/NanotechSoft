@@ -8021,7 +8021,7 @@ const FRETE_STATUS_OPCOES = [
   { key: "paradoVasio", label: "Parado (vazio)" },
   { key: "paradoCarregado", label: "Parado (carregado)" },
 ];
-const FRETE_CARD_TEMPLATE_VERSION = "kanban-unificar-cards-20260804";
+const FRETE_CARD_TEMPLATE_VERSION = "kanban-desagrupar-cards-20260804";
 const ESCALA_STATUS_KEYS = ["liberado", "paradoVasio", "carregando", "carregado", "paradoCarregado"];
 const ESCALA_STATUS_OPCOES = ESCALA_STATUS_KEYS
   .map((key) => FRETE_STATUS_OPCOES.find((item) => item.key === key))
@@ -9797,6 +9797,7 @@ function _freteCardTemplate(frete){
       </div>
       <div class="frete-card-footer">
         <button class="btn-arquivar-frete hidden" type="button">Arquivar</button>
+        <button class="btn-desagrupar-frete hidden" type="button">Desagrupar</button>
         <button class="btn-unificar-frete" type="button">Unificar</button>
         <button class="btn-dados" type="button">Dados</button>
       </div>
@@ -9828,6 +9829,7 @@ function _preencherFreteCard(card, frete){
 
   const btnDados = card.querySelector(".btn-dados");
   const btnUnificar = card.querySelector(".btn-unificar-frete");
+  const btnDesagrupar = card.querySelector(".btn-desagrupar-frete");
   const btnArquivar = card.querySelector(".btn-arquivar-frete");
   const btnExcluir = card.querySelector(".btn-excluir-icon");
   const btnMoverPrev = card.querySelector(".btn-mover-mobile-prev");
@@ -9835,6 +9837,11 @@ function _preencherFreteCard(card, frete){
 
   if (btnDados) btnDados.onclick = () => _abrirFreteDadosDoCard(frete.id, "dados");
   if (btnUnificar) btnUnificar.onclick = () => abrirUnificacaoFrete(frete.id);
+  if (btnDesagrupar) {
+    const podeDesagrupar = Boolean(frete.pode_desagrupar || Number(frete.unificacoes_ativas || 0) > 0);
+    btnDesagrupar.classList.toggle("hidden", !podeDesagrupar);
+    btnDesagrupar.onclick = podeDesagrupar ? () => desagruparFrete(frete.id) : null;
+  }
   if (btnArquivar) {
     const podeArquivar = _fretePodeArquivarManual(frete);
     btnArquivar.classList.toggle("hidden", !podeArquivar);
@@ -9967,6 +9974,25 @@ async function confirmarUnificacaoFrete(){
     alert(error?.message || "Nao foi possivel unificar os cards.");
   } finally {
     if (botao) botao.disabled = false;
+  }
+}
+
+async function desagruparFrete(destinoId){
+  const destino = _findFreteById(destinoId);
+  if (!destino) return;
+  if (!confirm(`Desfazer a ultima unificacao do card #${destinoId}? Os cards e seus vinculos voltarao ao estado anterior.`)) return;
+  try {
+    const resp = await apiFetch(`/api/fretes/${destinoId}/desagrupar`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({}),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data?.erro || "Nao foi possivel desagrupar os cards.");
+    await carregarFretes();
+    await atualizarDash();
+  } catch (error) {
+    alert(error?.message || "Nao foi possivel desagrupar os cards.");
   }
 }
 

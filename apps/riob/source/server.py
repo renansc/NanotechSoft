@@ -911,6 +911,92 @@ def ensure_schema():
         )
         """)
         cur.execute("""
+        CREATE TABLE IF NOT EXISTS fretes_unificacoes (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            frete_origem_id INT NOT NULL,
+            frete_destino_id INT NOT NULL,
+            historico_origem_id INT NULL,
+            usuario VARCHAR(180) NOT NULL DEFAULT 'desconhecido',
+            origem_antes_json LONGTEXT NOT NULL,
+            destino_antes_json LONGTEXT NOT NULL,
+            vinculos_json LONGTEXT NULL,
+            status VARCHAR(20) NOT NULL DEFAULT 'ativo',
+            criado_em DATETIME DEFAULT CURRENT_TIMESTAMP,
+            desfeito_em DATETIME NULL,
+            desfeito_por VARCHAR(180) DEFAULT '',
+            UNIQUE KEY uq_fretes_unificacoes_historico (historico_origem_id),
+            INDEX idx_fretes_unificacoes_origem (frete_origem_id),
+            INDEX idx_fretes_unificacoes_destino_status (frete_destino_id, status),
+            CONSTRAINT fk_fretes_unificacoes_origem
+                FOREIGN KEY (frete_origem_id) REFERENCES fretes(id)
+                ON UPDATE CASCADE ON DELETE RESTRICT,
+            CONSTRAINT fk_fretes_unificacoes_destino
+                FOREIGN KEY (frete_destino_id) REFERENCES fretes(id)
+                ON UPDATE CASCADE ON DELETE RESTRICT
+        )
+        """)
+
+        # Torna reversiveis tambem as unificacoes feitas antes desta tabela.
+        cur.execute(
+            """
+            SELECT id, frete_id, usuario, dados_antes_json, dados_depois_json, criado_em
+            FROM fretes_historico
+            WHERE acao='unificado_origem'
+            ORDER BY id
+            """
+        )
+        unificacoes_legadas = cur.fetchall() or []
+        cur.execute(
+            """
+            SELECT frete_id, dados_antes_json, dados_depois_json, criado_em
+            FROM fretes_historico
+            WHERE acao='unificado_destino'
+            ORDER BY id
+            """
+        )
+        historicos_destino = cur.fetchall() or []
+        for historico_origem in unificacoes_legadas:
+            try:
+                depois_origem = json.loads(historico_origem[4] or "{}")
+                destino_id = int(depois_origem.get("frete_destino_id") or 0)
+                origem_id = int(historico_origem[1] or 0)
+            except Exception:
+                continue
+            if origem_id <= 0 or destino_id <= 0:
+                continue
+            destino_antes_json = "{}"
+            for historico_destino in reversed(historicos_destino):
+                if int(historico_destino[0] or 0) != destino_id:
+                    continue
+                try:
+                    depois_destino = json.loads(historico_destino[2] or "{}")
+                except Exception:
+                    continue
+                if int(depois_destino.get("frete_origem_id") or 0) == origem_id:
+                    destino_antes_json = historico_destino[1] or "{}"
+                    break
+            if destino_antes_json == "{}":
+                continue
+            cur.execute(
+                """
+                INSERT IGNORE INTO fretes_unificacoes (
+                    frete_origem_id, frete_destino_id, historico_origem_id,
+                    usuario, origem_antes_json, destino_antes_json,
+                    vinculos_json, status, criado_em
+                ) VALUES (%s,%s,%s,%s,%s,%s,%s,'ativo',%s)
+                """,
+                (
+                    origem_id,
+                    destino_id,
+                    int(historico_origem[0]),
+                    str(historico_origem[2] or "desconhecido"),
+                    historico_origem[3] or "{}",
+                    destino_antes_json,
+                    "{}",
+                    historico_origem[5],
+                ),
+            )
+        cur.execute("""
         CREATE TABLE IF NOT EXISTS estoque_movimentos (
             id INT AUTO_INCREMENT PRIMARY KEY,
             codigo_barras VARCHAR(120) DEFAULT '',
@@ -7766,7 +7852,8 @@ FRETE_SELECT_SQL = """
         COALESCE(v.nome, vr.nome) AS veiculo_nome_resolvido,
         COALESCE(v.placa, vr.placa) AS veiculo_placa_resolvida,
         COALESCE(v.km_atual, vr.km_atual) AS veiculo_km_atual_resolvido,
-        COALESCE(xft.total_xml, 0) AS xml_entregas_total
+        COALESCE(xft.total_xml, 0) AS xml_entregas_total,
+        COALESCE(fu.unificacoes_ativas, 0) AS unificacoes_ativas
     FROM fretes f
     LEFT JOIN colaboradores cm ON f.colaborador_motorista_id = cm.id
     LEFT JOIN colaboradores ce ON f.colaborador_entregador_id = ce.id
@@ -7802,6 +7889,13 @@ FRETE_SELECT_SQL = """
         ) xml_notas
         GROUP BY frete_id
     ) xft ON xft.frete_id = f.id
+    LEFT JOIN (
+        SELECT fu.frete_destino_id, COUNT(*) AS unificacoes_ativas
+        FROM fretes_unificacoes fu
+        JOIN fretes fo ON fo.id=fu.frete_origem_id AND COALESCE(fo.arquivado,0)=1
+        WHERE fu.status='ativo'
+        GROUP BY fu.frete_destino_id
+    ) fu ON fu.frete_destino_id = f.id
 """
 
 def _serialize_frete_row(row):
@@ -7871,6 +7965,8 @@ def _serialize_frete_row(row):
         "finalizado_em": _fmt_dt(row.get("finalizado_em")),
         "arquivado": bool(_as_int(row.get("arquivado"), 0)),
         "horas_em_retornando": _as_int(row.get("horas_em_retornando"), 0),
+        "unificacoes_ativas": _as_int(row.get("unificacoes_ativas"), 0),
+        "pode_desagrupar": _as_int(row.get("unificacoes_ativas"), 0) > 0,
         "pode_arquivar_manual": (
             _as_str(row.get("status")) == "retornando"
             and not bool(_as_int(row.get("arquivado"), 0))
@@ -7956,6 +8052,16 @@ def _montar_detalhes_historico_frete(acao, antes=None, depois=None):
             f"Recebeu o card #{_frete_hist_val(ref.get('frete_origem_id'))} "
             f"({_frete_hist_val(ref.get('frete_origem_nome'))}) por unificacao manual."
         )
+    if acao == "desagrupado_origem":
+        return (
+            f"Card restaurado ao desagrupar do frete "
+            f"#{_frete_hist_val(ref.get('frete_destino_id'))}."
+        )
+    if acao == "desagrupado_destino":
+        return (
+            f"Desfeita a unificacao com o card "
+            f"#{_frete_hist_val(ref.get('frete_origem_id'))}."
+        )
     if acao == "criado_automaticamente_xml":
         return (
             f"Card criado automaticamente para a NF-e "
@@ -8016,6 +8122,7 @@ def _registrar_historico_frete(cur, frete_id, acao, usuario, antes=None, depois=
             json.dumps(depois or {}, ensure_ascii=False),
         )
     )
+    return cur.lastrowid
 
 FRETE_ARQUIVO_MANUAL_HORAS = 24
 FRETE_ARQUIVO_AUTOMATICO_HORAS = 48
@@ -21464,6 +21571,180 @@ def _erro_unificacao_fretes(origem, destino):
     return ""
 
 
+def _ids_vinculos_frete(cur, frete_id):
+    consultas = {
+        "vendas_diario": "SELECT id FROM vendas_diario_kanban WHERE frete_id=%s",
+        "notas_saida": "SELECT id FROM estoque_xml_frete_vinculos WHERE frete_id=%s",
+        "notas_pendentes": "SELECT id FROM estoque_xml_frete_pre_vinculos WHERE frete_id=%s",
+        "notas_sugeridas": "SELECT id FROM estoque_xml_frete_vinculos WHERE frete_sugerido_id=%s",
+        "devolucoes": "SELECT id FROM devolucoes WHERE frete_id=%s",
+        "movimentos_estoque": """
+            SELECT id FROM estoque_movimentos
+            WHERE referencia_id=%s
+              AND LOWER(TRIM(COALESCE(referencia_tipo,'')))='frete'
+        """,
+    }
+    vinculos = {}
+    for chave, sql in consultas.items():
+        cur.execute(sql, (frete_id,))
+        vinculos[chave] = [
+            _as_int(row.get("id"), 0)
+            for row in (cur.fetchall() or [])
+            if _as_int(row.get("id"), 0) > 0
+        ]
+    return vinculos
+
+
+def _ids_vinculos_unificacao_legada(cur, unificacao, origem_antes):
+    destino_id = _as_int(unificacao.get("frete_destino_id"), 0)
+    origem_id = _as_int(unificacao.get("frete_origem_id"), 0)
+    criado_em = unificacao.get("criado_em")
+    observacao = _as_str(origem_antes.get("observacao"))
+    vendas_ids = sorted({
+        _as_int(valor, 0)
+        for valor in re.findall(r"Vendas\s+Diario\s+card\s*#(\d+)", observacao, flags=re.IGNORECASE)
+        if _as_int(valor, 0) > 0
+    })
+    mapas = sorted({
+        _as_str(valor)
+        for valor in re.findall(r"Mapa\s*:\s*([A-Za-z0-9._/-]+)", observacao, flags=re.IGNORECASE)
+        if _as_str(valor)
+    })
+    nota_keys = set()
+    cur.execute(
+        """
+        SELECT dados_antes_json, dados_depois_json
+        FROM fretes_historico
+        WHERE frete_id=%s
+          AND criado_em<=%s
+          AND acao IN ('nota_saida_vinculada','nota_saida_pre_vinculada')
+        """,
+        (origem_id, criado_em),
+    )
+    for historico in cur.fetchall() or []:
+        for campo in ("dados_antes_json", "dados_depois_json"):
+            try:
+                dados = json.loads(historico.get(campo) or "{}")
+            except Exception:
+                dados = {}
+            nota_key = _as_str(dados.get("nota_key"))
+            if nota_key:
+                nota_keys.add(nota_key)
+
+    vinculos = {
+        "vendas_diario": [],
+        "notas_saida": [],
+        "notas_pendentes": [],
+        "notas_sugeridas": [],
+        "devolucoes": [],
+        "movimentos_estoque": [],
+    }
+    if vendas_ids:
+        placeholders = ",".join(["%s"] * len(vendas_ids))
+        cur.execute(
+            f"SELECT id FROM vendas_diario_kanban WHERE frete_id=%s AND id IN ({placeholders})",
+            (destino_id, *vendas_ids),
+        )
+        vinculos["vendas_diario"] = [_as_int(row.get("id"), 0) for row in (cur.fetchall() or [])]
+
+    filtros = []
+    valores_filtros = []
+    if nota_keys:
+        filtros.append(f"nota_key IN ({','.join(['%s'] * len(nota_keys))})")
+        valores_filtros.extend(sorted(nota_keys))
+    if mapas:
+        filtros.append(f"mapa_xml IN ({','.join(['%s'] * len(mapas))})")
+        valores_filtros.extend(mapas)
+    filtros_pre = list(filtros)
+    valores_pre = list(valores_filtros)
+    carga_origem_id = _as_int(origem_antes.get("carga_id"), 0)
+    try:
+        destino_antes = json.loads(unificacao.get("destino_antes_json") or "{}")
+    except Exception:
+        destino_antes = {}
+    if carga_origem_id and carga_origem_id != _as_int(destino_antes.get("carga_id"), 0):
+        filtros.append("carga_id=%s")
+        valores_filtros.append(carga_origem_id)
+    if filtros:
+        cur.execute(
+            f"SELECT id FROM estoque_xml_frete_vinculos WHERE frete_id=%s AND ({' OR '.join(filtros)})",
+            (destino_id, *valores_filtros),
+        )
+        vinculos["notas_saida"] = [_as_int(row.get("id"), 0) for row in (cur.fetchall() or [])]
+        cur.execute(
+            f"SELECT id FROM estoque_xml_frete_vinculos WHERE frete_sugerido_id=%s AND ({' OR '.join(filtros)})",
+            (destino_id, *valores_filtros),
+        )
+        vinculos["notas_sugeridas"] = [_as_int(row.get("id"), 0) for row in (cur.fetchall() or [])]
+    if filtros_pre:
+        cur.execute(
+            f"SELECT id FROM estoque_xml_frete_pre_vinculos WHERE frete_id=%s AND ({' OR '.join(filtros_pre)})",
+            (destino_id, *valores_pre),
+        )
+        vinculos["notas_pendentes"] = [_as_int(row.get("id"), 0) for row in (cur.fetchall() or [])]
+    return vinculos
+
+
+def _atualizar_vinculos_desagrupamento(cur, vinculos, destino_id, origem_id):
+    operacoes = {
+        "vendas_diario": ("vendas_diario_kanban", "frete_id", "atualizado_em=NOW()"),
+        "notas_saida": ("estoque_xml_frete_vinculos", "frete_id", ""),
+        "notas_pendentes": ("estoque_xml_frete_pre_vinculos", "frete_id", "atualizado_em=NOW()"),
+        "notas_sugeridas": ("estoque_xml_frete_vinculos", "frete_sugerido_id", ""),
+        "devolucoes": ("devolucoes", "frete_id", ""),
+        "movimentos_estoque": ("estoque_movimentos", "referencia_id", ""),
+    }
+    contagens = {}
+    for chave, (tabela, campo, extra) in operacoes.items():
+        ids = sorted({_as_int(item, 0) for item in (vinculos.get(chave) or []) if _as_int(item, 0) > 0})
+        if not ids:
+            contagens[chave] = 0
+            continue
+        placeholders = ",".join(["%s"] * len(ids))
+        complemento = f", {extra}" if extra else ""
+        cur.execute(
+            f"UPDATE {tabela} SET {campo}=%s{complemento} WHERE {campo}=%s AND id IN ({placeholders})",
+            (origem_id, destino_id, *ids),
+        )
+        contagens[chave] = max(0, cur.rowcount)
+    return contagens
+
+
+def _restaurar_snapshot_frete(cur, frete_id, snapshot):
+    cur.execute(
+        """
+        UPDATE fretes
+        SET nome=%s, cidade=%s, data_carga=%s, status=%s,
+            motorista_id=%s, entregador_id=%s,
+            colaborador_motorista_id=%s, colaborador_entregador_id=%s,
+            veiculo_id=%s, carga_id=%s, observacao=%s, lote_manual=%s,
+            km_atual=%s, peso=%s, qtd_entregas=%s,
+            finalizado_em=%s, arquivado=%s, updated_at=NOW()
+        WHERE id=%s
+        """,
+        (
+            _as_str(snapshot.get("nome")),
+            _as_str(snapshot.get("cidade")),
+            snapshot.get("data_carga") or None,
+            _as_str(snapshot.get("status")) or "liberado",
+            _as_int(snapshot.get("motorista_id"), 0) or None,
+            _as_int(snapshot.get("entregador_id"), 0) or None,
+            _as_int(snapshot.get("colaborador_motorista_id"), 0) or None,
+            _as_int(snapshot.get("colaborador_entregador_id"), 0) or None,
+            _as_int(snapshot.get("veiculo_id"), 0) or None,
+            _as_int(snapshot.get("carga_id"), 0) or None,
+            _as_str(snapshot.get("observacao")),
+            _normalizar_lotes_frete(snapshot.get("lote_manual")),
+            _as_int(snapshot.get("km_atual"), 0),
+            _as_float(snapshot.get("peso"), 0),
+            _as_int(snapshot.get("qtd_entregas"), 0),
+            snapshot.get("finalizado_em") or None,
+            1 if _as_bool(snapshot.get("arquivado"), False) else 0,
+            frete_id,
+        ),
+    )
+
+
 @app.route("/api/fretes/<int:id>/unificar", methods=["POST"])
 def unificar_frete(id):
     data = request.get_json(silent=True) or {}
@@ -21489,6 +21770,25 @@ def unificar_frete(id):
         if erro:
             conn.rollback()
             return jsonify({"erro": erro}), 409
+
+        vinculos = _ids_vinculos_frete(cursor, id)
+        cursor.execute(
+            """
+            INSERT INTO fretes_unificacoes (
+                frete_origem_id, frete_destino_id, usuario,
+                origem_antes_json, destino_antes_json, vinculos_json, status
+            ) VALUES (%s,%s,%s,%s,%s,%s,'ativo')
+            """,
+            (
+                id,
+                destino_id,
+                usuario,
+                json.dumps(origem, ensure_ascii=False),
+                json.dumps(destino, ensure_ascii=False),
+                json.dumps(vinculos, ensure_ascii=False),
+            ),
+        )
+        unificacao_id = _as_int(cursor.lastrowid, 0)
 
         contagens = {}
         transferencias = (
@@ -21594,7 +21894,7 @@ def unificar_frete(id):
             destino,
             {**(depois_destino or {}), "frete_origem_id": id, "frete_origem_nome": origem.get("nome")},
         )
-        _registrar_historico_frete(
+        historico_origem_id = _registrar_historico_frete(
             cursor,
             id,
             "unificado_origem",
@@ -21602,9 +21902,14 @@ def unificar_frete(id):
             origem,
             {**(depois_origem or {}), "frete_destino_id": destino_id, "frete_destino_nome": destino.get("nome")},
         )
+        cursor.execute(
+            "UPDATE fretes_unificacoes SET historico_origem_id=%s WHERE id=%s",
+            (historico_origem_id, unificacao_id),
+        )
         conn.commit()
         return jsonify({
             "ok": True,
+            "unificacao_id": unificacao_id,
             "frete_origem_id": id,
             "frete_destino_id": destino_id,
             "frete": depois_destino,
@@ -21616,6 +21921,112 @@ def unificar_frete(id):
     finally:
         cursor.close()
         conn.close()
+
+
+@app.route("/api/fretes/<int:id>/desagrupar", methods=["POST"])
+def desagrupar_frete(id):
+    usuario = _usuario_ator_req()
+    conn = get_conn()
+    cursor = conn.cursor(dictionary=True)
+    try:
+        cursor.execute(
+            """
+            SELECT *
+            FROM fretes_unificacoes
+            WHERE frete_destino_id=%s AND status='ativo'
+            ORDER BY id DESC
+            LIMIT 1
+            FOR UPDATE
+            """,
+            (id,),
+        )
+        unificacao = cursor.fetchone()
+        if not unificacao:
+            conn.rollback()
+            return jsonify({"erro": "Este card nao possui unificacao ativa para desfazer."}), 409
+
+        origem_id = _as_int(unificacao.get("frete_origem_id"), 0)
+        cursor.execute(
+            "SELECT id FROM fretes WHERE id IN (%s,%s) ORDER BY id FOR UPDATE",
+            (origem_id, id),
+        )
+        if len(cursor.fetchall() or []) != 2:
+            conn.rollback()
+            return jsonify({"erro": "Card de origem ou destino nao encontrado."}), 404
+
+        origem_atual = _buscar_frete_detalhado(cursor, origem_id)
+        destino_atual = _buscar_frete_detalhado(cursor, id)
+        if not origem_atual or not destino_atual:
+            conn.rollback()
+            return jsonify({"erro": "Card de origem ou destino nao encontrado."}), 404
+        if not origem_atual.get("arquivado"):
+            conn.rollback()
+            return jsonify({"erro": "O card de origem ja esta ativo; a unificacao nao pode ser desfeita novamente."}), 409
+
+        try:
+            origem_antes = json.loads(unificacao.get("origem_antes_json") or "{}")
+            destino_antes = json.loads(unificacao.get("destino_antes_json") or "{}")
+            vinculos = json.loads(unificacao.get("vinculos_json") or "{}")
+        except Exception:
+            conn.rollback()
+            return jsonify({"erro": "O historico desta unificacao esta incompleto."}), 409
+        if not origem_antes or not destino_antes:
+            conn.rollback()
+            return jsonify({"erro": "O historico desta unificacao esta incompleto."}), 409
+
+        legado = not isinstance(vinculos, dict) or "vendas_diario" not in vinculos
+        if legado:
+            vinculos = _ids_vinculos_unificacao_legada(cursor, unificacao, origem_antes)
+        transferidos = _atualizar_vinculos_desagrupamento(cursor, vinculos, id, origem_id)
+
+        _restaurar_snapshot_frete(cursor, id, destino_antes)
+        origem_antes["arquivado"] = False
+        _restaurar_snapshot_frete(cursor, origem_id, origem_antes)
+
+        cursor.execute(
+            """
+            UPDATE fretes_unificacoes
+            SET status='desfeito', desfeito_em=NOW(), desfeito_por=%s
+            WHERE id=%s AND status='ativo'
+            """,
+            (usuario, unificacao.get("id")),
+        )
+        depois_destino = _buscar_frete_detalhado(cursor, id)
+        depois_origem = _buscar_frete_detalhado(cursor, origem_id)
+        _registrar_historico_frete(
+            cursor,
+            id,
+            "desagrupado_destino",
+            usuario,
+            destino_atual,
+            {**(depois_destino or {}), "frete_origem_id": origem_id},
+        )
+        _registrar_historico_frete(
+            cursor,
+            origem_id,
+            "desagrupado_origem",
+            usuario,
+            origem_atual,
+            {**(depois_origem or {}), "frete_destino_id": id},
+        )
+        conn.commit()
+        return jsonify({
+            "ok": True,
+            "unificacao_id": _as_int(unificacao.get("id"), 0),
+            "frete_origem_id": origem_id,
+            "frete_destino_id": id,
+            "frete_origem": depois_origem,
+            "frete_destino": depois_destino,
+            "restaurados": transferidos,
+            "legado": legado,
+        })
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cursor.close()
+        conn.close()
+
 
 @app.route("/api/fretes/<int:id>", methods=["DELETE"])
 def deletar_frete(id):

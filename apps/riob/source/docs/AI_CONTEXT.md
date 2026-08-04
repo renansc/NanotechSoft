@@ -88,6 +88,9 @@ If you need context fast, read these files first:
   cards having the same assigned truck. Dates, statuses, routes, cities, loads,
   drivers, and helpers may differ; the destination status wins. Transfer all
   operational links transactionally and retain the archived source history.
+  Each union must persist its before snapshots and exact transferred record IDs;
+  undo unions in reverse order, restoring both cards and their operational links
+  transactionally while retaining union and undo audit entries.
 - Daily-sales evidence can arrive as TXT, load PDF, and outgoing NF-e XML. TXT
   keeps its seller from the source; PDF must not be imported without an operator
   selecting the responsible seller. Compatible sources are suggestions only:
