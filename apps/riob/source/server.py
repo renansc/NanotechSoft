@@ -30733,10 +30733,13 @@ def _vendas_diario_importar_arquivo(path):
     conn = get_conn()
     cur = conn.cursor()
     try:
-        cur.execute("SELECT id FROM vendas_diario_importacoes WHERE assinatura=%s LIMIT 1", (signature,))
+        cur.execute("SELECT id, data_ref FROM vendas_diario_importacoes WHERE assinatura=%s LIMIT 1", (signature,))
         existing = cur.fetchone()
         if existing:
-            return {"arquivo": os.path.basename(path), "status": "ja_importado", "importacao_id": existing[0]}
+            return {
+                "arquivo": os.path.basename(path), "status": "ja_importado",
+                "importacao_id": existing[0], "data_ref": _fmt_date(existing[1]),
+            }
         orders = [
             item for item in payload["orders"]
             if item["status"] == "positiva" and float(item.get("valor_total") or 0) > 0
@@ -30778,6 +30781,7 @@ def _vendas_diario_importar_arquivo(path):
         """, (import_id,))
         conn.commit()
         return {"arquivo": os.path.basename(path), "status": "importado" if orders else "sem_vendas", "importacao_id": import_id,
+            "data_ref": payload["data_ref"],
             "pedidos": len(orders), "positivos": positives, "negativos": 0, "valor_total": total}
     except Exception:
         conn.rollback()
@@ -30827,9 +30831,15 @@ def _vendas_diario_importar_pasta():
                     results.append(result)
             except Exception as exc:
                 results.append({"arquivo": os.path.basename(path), "tipo": "pdf", "status": "erro", "erro": str(exc)})
+        imported_dates = sorted({
+            _as_str(item.get("data_ref") or (item.get("carga") or {}).get("data_ref"))
+            for item in results
+            if _as_str(item.get("data_ref") or (item.get("carga") or {}).get("data_ref"))
+        })
         return {
             "processando": False,
             "diretorio": VENDAS_DIARIO_DIR,
+            "data_ref": imported_dates[-1] if imported_dates else "",
             "arquivos": len(txt_files) + len(pdf_files),
             "txt": {"diretorio": VENDAS_DIARIO_TXT_DIR, "arquivos": len(txt_files)},
             "pdf": {"diretorio": VENDAS_DIARIO_PDF_DIR, "arquivos": len(pdf_files)},
@@ -30989,15 +30999,11 @@ def _vendas_diario_kanban_sincronizar(cur):
 
 @app.route("/api/vendas/diario/kanban", methods=["GET"])
 def vendas_diario_kanban_api():
-    data_ref = _as_str(request.args.get("data"))
     conn = get_conn()
     cur = conn.cursor(dictionary=True)
     try:
         _vendas_diario_kanban_sincronizar(cur)
         conn.commit()
-        if not data_ref:
-            cur.execute("SELECT MAX(data_ref) AS data_ref FROM vendas_diario_importacoes")
-            data_ref = _fmt_date((cur.fetchone() or {}).get("data_ref"))
         cur.execute("""
             SELECT k.id, k.importacao_id, k.vendedor_codigo, k.status, k.frete_id, k.nome_frete,
                    k.cidade, k.cidade_cadastro_id, k.veiculo_id, k.colaborador_motorista_id, k.colaborador_entregador_id,
@@ -31015,7 +31021,7 @@ def vendas_diario_kanban_api():
             JOIN vendas_diario_importacoes imp ON imp.id=k.importacao_id
             JOIN vendas_diario_kanban kc ON COALESCE(kc.card_principal_id, kc.id)=k.id
             JOIN vendas_diario_pedidos p ON p.importacao_id=kc.importacao_id AND p.vendedor_codigo=kc.vendedor_codigo
-            WHERE imp.data_ref=%s AND k.card_principal_id IS NULL AND k.status NOT IN ('enviado_frete', 'excluido')
+            WHERE k.card_principal_id IS NULL AND k.status NOT IN ('enviado_frete', 'excluido')
             GROUP BY k.id, k.importacao_id, k.vendedor_codigo, k.status, k.frete_id, k.nome_frete,
                      k.cidade, k.cidade_cadastro_id, k.veiculo_id, k.colaborador_motorista_id, k.colaborador_entregador_id,
                      k.observacao, k.mapa_numero, k.rota, k.peso_total, k.qtd_entregas,
@@ -31023,8 +31029,8 @@ def vendas_diario_kanban_api():
                      k.criado_em, k.atualizado_em,
                      imp.data_ref, imp.arquivo_nome
             HAVING SUM(CASE WHEN p.status='positiva' AND p.valor_total>0 THEN 1 ELSE 0 END) > 0
-            ORDER BY k.id
-        """, (data_ref or "1900-01-01",))
+            ORDER BY imp.data_ref, k.id
+        """)
         cards = cur.fetchall() or []
         for card in cards:
             cur.execute("""
@@ -31095,7 +31101,7 @@ def vendas_diario_kanban_api():
             ]
         cur.execute("SELECT DISTINCT vendedor_codigo FROM vendas_diario_pedidos WHERE vendedor_codigo<>'' AND vendedor_codigo NOT LIKE 'MAPA-%' ORDER BY vendedor_codigo")
         vendedores = [_as_str(row.get("vendedor_codigo")) for row in (cur.fetchall() or [])]
-        return jsonify({"data_ref": data_ref, "cards": cards, "vendedores_disponiveis": vendedores})
+        return jsonify({"cards": cards, "vendedores_disponiveis": vendedores})
     finally:
         cur.close()
         conn.close()

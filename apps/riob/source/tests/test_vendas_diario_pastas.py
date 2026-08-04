@@ -25,7 +25,7 @@ class VendasDiarioPastasTest(unittest.TestCase):
 
             with mock.patch.object(server, "VENDAS_DIARIO_TXT_DIR", os.fspath(txt_dir)), \
                     mock.patch.object(server, "VENDAS_DIARIO_PDF_DIR", os.fspath(pdf_dir)), \
-                    mock.patch.object(server, "_vendas_diario_importar_arquivo", return_value={"status": "importado"}) as txt_import, \
+                    mock.patch.object(server, "_vendas_diario_importar_arquivo", return_value={"status": "importado", "data_ref": "2026-08-04"}) as txt_import, \
                     mock.patch.object(server, "parse_cargas_pdf", return_value=[{"pagina": 1, "mapa": "060401"}]), \
                     mock.patch.object(server, "_vendas_diario_importar_carga_pdf_arquivo", return_value={"status": "importado"}) as pdf_import:
                 result = server._vendas_diario_importar_pasta()
@@ -34,6 +34,7 @@ class VendasDiarioPastasTest(unittest.TestCase):
             self.assertEqual(2, result["arquivos"])
             self.assertEqual(1, result["txt"]["arquivos"])
             self.assertEqual(1, result["pdf"]["arquivos"])
+            self.assertEqual("2026-08-04", result["data_ref"])
             self.assertEqual(["txt", "pdf"], [item["tipo"] for item in result["resultados"]])
             txt_import.assert_called_once_with(os.fspath(txt_path))
             pdf_import.assert_called_once_with(

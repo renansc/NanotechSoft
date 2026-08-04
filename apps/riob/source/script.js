@@ -2878,7 +2878,7 @@ async function carregarVendasDiario(){
     return;
   }
   if (dataInput && data.data_ref) dataInput.value = data.data_ref;
-  if (info) info.textContent = `Fonte: ${data?.importacao?.diretorio || "-"} | Importacao automatica: ${data?.importacao?.horario || "08:00"}`;
+  if (info) info.textContent = `TXT: ${data?.importacao?.diretorio_txt || data?.importacao?.diretorio || "-"} | PDF: ${data?.importacao?.diretorio_pdf || "-"} | Importacao automatica: ${data?.importacao?.horario || "08:00"}`;
   const resumo = data?.resumo || {};
   const cards = document.getElementById("vendasDiarioResumo");
   if (cards) cards.innerHTML = _renderCardsVendasResumo([
@@ -2910,7 +2910,7 @@ function _renderCardKanbanVendasDiario(card){
   const tituloCard = card.mapa_numero ? `Carga ${card.mapa_numero}` : `Vendedor ${card.vendedor_codigo || "-"}`;
   return `<article class="vendas-diario-kanban-card" onclick="abrirCardVendasDiario(${Number(card.id) || 0})">
     <header><strong>${_escHtml(tituloCard)}</strong><span>${_escHtml(_fmtMoneyVendas(card.valor_total))}</span></header>
-    <div class="hint">${_escHtml(card.arquivo_nome || "-")} | ${_escHtml(_fmtNumVendas(card.clientes))} clientes</div>
+    <div class="hint">${_escHtml(_fmtDataCurtaBr(card.data_ref) || card.data_ref || "-")} | ${_escHtml(card.arquivo_nome || "-")} | ${_escHtml(_fmtNumVendas(card.clientes))} clientes</div>
     ${card.rota ? `<div class="hint"><strong>Rota:</strong> ${_escHtml(card.rota)} | ${_escHtml(_fmtNumVendas(card.peso_total, 3))} kg | ${_escHtml(_fmtNumVendas(card.qtd_entregas))} entregas | ${_escHtml(_fmtNumVendas(card.volumes_total, 3))} volumes</div>` : ""}
     <div class="hint"><strong>Origens:</strong> ${_escHtml(card.origens_tipos || card.origem_tipo || "txt")} (${fontes.length || 1} documento(s))</div>
     <div class="vendas-diario-card-indicadores"><span>${_escHtml(_fmtNumVendas(card.positivos))} clientes com venda</span><span>${_escHtml(_fmtNumVendas(produtos.length))} produtos</span></div>
@@ -2933,10 +2933,7 @@ function _renderCardKanbanVendasDiario(card){
 }
 
 async function carregarKanbanVendasDiario(){
-  const data = document.getElementById("vendasDiarioData")?.value || "";
-  const params = new URLSearchParams();
-  if (data) params.set("data", data);
-  const resp = await apiFetch(`/api/vendas/diario/kanban${params.toString() ? `?${params}` : ""}`);
+  const resp = await apiFetch("/api/vendas/diario/kanban");
   const payload = await resp.json().catch(() => ({}));
   if (!resp.ok) return;
   const cards = Array.isArray(payload?.cards) ? payload.cards : [];
@@ -3092,6 +3089,9 @@ async function importarVendasDiario(){
   const imported = (data?.resultados || []).filter((item) => item.status === "importado").length;
   const txtCount = Number(data?.txt?.arquivos || 0);
   const pdfCount = Number(data?.pdf?.arquivos || 0);
+  const importedDate = String(data?.data_ref || "");
+  const dateInput = document.getElementById("vendasDiarioData");
+  if (dateInput && importedDate) dateInput.value = importedDate;
   if (info) info.textContent = txtCount || pdfCount
     ? `${imported} novo(s) importado(s). Lidos ${txtCount} TXT e ${pdfCount} PDF.`
     : `${imported} arquivo(s) novo(s) importado(s).`;
