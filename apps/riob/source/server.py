@@ -30831,6 +30831,7 @@ def _vendas_diario_importar_pasta():
                     results.append(result)
             except Exception as exc:
                 results.append({"arquivo": os.path.basename(path), "tipo": "pdf", "status": "erro", "erro": str(exc)})
+        grouping = _vendas_diario_unificar_cards_semelhantes()
         imported_dates = sorted({
             _as_str(item.get("data_ref") or (item.get("carga") or {}).get("data_ref"))
             for item in results
@@ -30843,6 +30844,7 @@ def _vendas_diario_importar_pasta():
             "arquivos": len(txt_files) + len(pdf_files),
             "txt": {"diretorio": VENDAS_DIARIO_TXT_DIR, "arquivos": len(txt_files)},
             "pdf": {"diretorio": VENDAS_DIARIO_PDF_DIR, "arquivos": len(pdf_files)},
+            "unificacao": grouping,
             "resultados": results,
         }
     finally:
@@ -30997,6 +30999,105 @@ def _vendas_diario_kanban_sincronizar(cur):
     """)
 
 
+def _vendas_diario_cidades_card(card):
+    return {
+        _estoque_xml_normalizar_texto(part)
+        for part in re.split(r"\s*(?:/|;|,)\s*", _as_str((card or {}).get("cidade")))
+        if _estoque_xml_normalizar_texto(part)
+    }
+
+
+def _vendas_diario_cards_compativeis(first, second):
+    if _fmt_date(first.get("data_ref")) != _fmt_date(second.get("data_ref")):
+        return False
+    first_vehicle = _as_int(first.get("veiculo_id"), 0)
+    second_vehicle = _as_int(second.get("veiculo_id"), 0)
+    if first_vehicle and second_vehicle and first_vehicle != second_vehicle:
+        return False
+    first_route = _estoque_xml_normalizar_texto(first.get("rota"))
+    second_route = _estoque_xml_normalizar_texto(second.get("rota"))
+    same_route = bool(first_route and second_route and first_route == second_route)
+    same_city = bool(_vendas_diario_cidades_card(first) & _vendas_diario_cidades_card(second))
+    return same_route or same_city
+
+
+def _vendas_diario_unificar_cards_semelhantes(usuario="importacao_automatica"):
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute("""
+            SELECT k.*, i.data_ref
+            FROM vendas_diario_kanban k
+            JOIN vendas_diario_importacoes i ON i.id=k.importacao_id
+            WHERE k.card_principal_id IS NULL
+              AND k.frete_id IS NULL
+              AND k.status NOT IN ('enviado_frete', 'excluido')
+            ORDER BY i.data_ref, k.id
+            FOR UPDATE
+        """)
+        cards = list(cur.fetchall() or [])
+        parent = {card["id"]: card["id"] for card in cards}
+
+        def find(card_id):
+            while parent[card_id] != card_id:
+                parent[card_id] = parent[parent[card_id]]
+                card_id = parent[card_id]
+            return card_id
+
+        def union(first_id, second_id):
+            first_root, second_root = find(first_id), find(second_id)
+            if first_root != second_root:
+                parent[max(first_root, second_root)] = min(first_root, second_root)
+
+        for index, card in enumerate(cards):
+            for other in cards[index + 1:]:
+                if _vendas_diario_cards_compativeis(card, other):
+                    union(card["id"], other["id"])
+
+        groups = {}
+        for card in cards:
+            groups.setdefault(find(card["id"]), []).append(card)
+
+        grouped_cards = 0
+        grouped_sets = 0
+        status_order = {"importado": 0, "conferir_estoque": 1, "conferido": 2}
+        for members in groups.values():
+            if len(members) < 2:
+                continue
+            members.sort(key=lambda item: item["id"])
+            principal = members[0]
+            status = min(
+                (_as_str(item.get("status")) for item in members),
+                key=lambda value: status_order.get(value, 0),
+            )
+            cur.execute(
+                "UPDATE vendas_diario_kanban SET status=%s, atualizado_em=NOW() WHERE id=%s",
+                (status, principal["id"]),
+            )
+            for child in members[1:]:
+                cur.execute(
+                    "UPDATE vendas_diario_kanban SET card_principal_id=%s, atualizado_em=NOW() WHERE id=%s",
+                    (principal["id"], child["id"]),
+                )
+                cur.execute("""INSERT INTO vendas_diario_kanban_historico
+                    (card_id,acao,card_origem_id,card_destino_id,usuario,detalhes)
+                    VALUES (%s,'unido_automaticamente',%s,%s,%s,%s)
+                """, (
+                    principal["id"], child["id"], principal["id"], usuario,
+                    "Uniao automatica por data e rota ou cidade coincidente; documentos preservados.",
+                ))
+                grouped_cards += 1
+            grouped_sets += 1
+        conn.commit()
+        return {"grupos": grouped_sets, "cards_unificados": grouped_cards}
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        conn.close()
+
+
 @app.route("/api/vendas/diario/kanban", methods=["GET"])
 def vendas_diario_kanban_api():
     conn = get_conn()
@@ -31007,8 +31108,13 @@ def vendas_diario_kanban_api():
         cur.execute("""
             SELECT k.id, k.importacao_id, k.vendedor_codigo, k.status, k.frete_id, k.nome_frete,
                    k.cidade, k.cidade_cadastro_id, k.veiculo_id, k.colaborador_motorista_id, k.colaborador_entregador_id,
-                   k.observacao, k.mapa_numero, k.rota, k.peso_total, k.qtd_entregas,
-                   k.volumes_total, k.valor_bonificacao, k.origem_tipo, k.card_principal_id,
+                   k.observacao, k.mapa_numero, k.rota,
+                   (SELECT COALESCE(SUM(ks.peso_total),0) FROM vendas_diario_kanban ks WHERE COALESCE(ks.card_principal_id,ks.id)=k.id) AS peso_total,
+                   (SELECT COALESCE(SUM(ks.qtd_entregas),0) FROM vendas_diario_kanban ks WHERE COALESCE(ks.card_principal_id,ks.id)=k.id) AS qtd_entregas,
+                   (SELECT COALESCE(SUM(ks.volumes_total),0) FROM vendas_diario_kanban ks WHERE COALESCE(ks.card_principal_id,ks.id)=k.id) AS volumes_total,
+                   (SELECT COALESCE(SUM(ks.valor_bonificacao),0) FROM vendas_diario_kanban ks WHERE COALESCE(ks.card_principal_id,ks.id)=k.id) AS valor_bonificacao,
+                   (SELECT GROUP_CONCAT(NULLIF(ks.mapa_numero,'') ORDER BY ks.id SEPARATOR ', ') FROM vendas_diario_kanban ks WHERE COALESCE(ks.card_principal_id,ks.id)=k.id) AS mapas_numeros,
+                   k.origem_tipo, k.card_principal_id,
                    k.criado_em, k.atualizado_em,
                    imp.data_ref, imp.arquivo_nome,
                    COUNT(DISTINCT kc.id) AS fontes_total,
@@ -31024,8 +31130,7 @@ def vendas_diario_kanban_api():
             WHERE k.card_principal_id IS NULL AND k.status NOT IN ('enviado_frete', 'excluido')
             GROUP BY k.id, k.importacao_id, k.vendedor_codigo, k.status, k.frete_id, k.nome_frete,
                      k.cidade, k.cidade_cadastro_id, k.veiculo_id, k.colaborador_motorista_id, k.colaborador_entregador_id,
-                     k.observacao, k.mapa_numero, k.rota, k.peso_total, k.qtd_entregas,
-                     k.volumes_total, k.valor_bonificacao, k.origem_tipo, k.card_principal_id,
+                     k.observacao, k.mapa_numero, k.rota, k.origem_tipo, k.card_principal_id,
                      k.criado_em, k.atualizado_em,
                      imp.data_ref, imp.arquivo_nome
             HAVING SUM(CASE WHEN p.status='positiva' AND p.valor_total>0 THEN 1 ELSE 0 END) > 0
@@ -31461,6 +31566,7 @@ def vendas_diario_importar_carga_pdf_api():
         result = _vendas_diario_importar_carga_pdf_arquivo(
             target_path, vendedor_codigo=vendedor_codigo, usuario=_usuario_ator_req()
         )
+        result["unificacao"] = _vendas_diario_unificar_cards_semelhantes(usuario=_usuario_ator_req())
     except Exception as exc:
         return jsonify({"erro": f"Falha ao ler ou importar PDF da carga: {str(exc)}"}), 400
     return jsonify(result), (409 if result.get("status") == "erro" else 200)

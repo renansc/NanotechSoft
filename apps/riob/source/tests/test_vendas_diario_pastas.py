@@ -12,6 +12,18 @@ class VendasDiarioPastasTest(unittest.TestCase):
         self.assertEqual("6", server._vendas_diario_vendedor_por_carga({"mapa": "060401"}))
         self.assertEqual("15", server._vendas_diario_vendedor_por_carga({"mapa": "153101"}))
 
+    def test_cards_match_by_route_or_city_only_on_same_date(self):
+        astorga = {"data_ref": "2026-08-04", "rota": "521 - Astorga", "cidade": "Astorga", "veiculo_id": None}
+        same_route = {"data_ref": "2026-08-04", "rota": "521 - ASTORGA", "cidade": "", "veiculo_id": None}
+        same_city = {"data_ref": "2026-08-04", "rota": "Outra rota", "cidade": "Astorga / Iguaracu", "veiculo_id": None}
+        other_date = {"data_ref": "2026-08-05", "rota": "521 - ASTORGA", "cidade": "Astorga", "veiculo_id": None}
+        other_vehicle = {"data_ref": "2026-08-04", "rota": "521 - ASTORGA", "cidade": "Astorga", "veiculo_id": 2}
+
+        self.assertTrue(server._vendas_diario_cards_compativeis(astorga, same_route))
+        self.assertTrue(server._vendas_diario_cards_compativeis(astorga, same_city))
+        self.assertFalse(server._vendas_diario_cards_compativeis(astorga, other_date))
+        self.assertFalse(server._vendas_diario_cards_compativeis({**astorga, "veiculo_id": 1}, other_vehicle))
+
     def test_automatic_import_reads_txt_and_pdf_directories(self):
         with tempfile.TemporaryDirectory() as root:
             txt_dir = Path(root) / "CargasTxt"
@@ -27,7 +39,8 @@ class VendasDiarioPastasTest(unittest.TestCase):
                     mock.patch.object(server, "VENDAS_DIARIO_PDF_DIR", os.fspath(pdf_dir)), \
                     mock.patch.object(server, "_vendas_diario_importar_arquivo", return_value={"status": "importado", "data_ref": "2026-08-04"}) as txt_import, \
                     mock.patch.object(server, "parse_cargas_pdf", return_value=[{"pagina": 1, "mapa": "060401"}]), \
-                    mock.patch.object(server, "_vendas_diario_importar_carga_pdf_arquivo", return_value={"status": "importado"}) as pdf_import:
+                    mock.patch.object(server, "_vendas_diario_importar_carga_pdf_arquivo", return_value={"status": "importado"}) as pdf_import, \
+                    mock.patch.object(server, "_vendas_diario_unificar_cards_semelhantes", return_value={"grupos": 1, "cards_unificados": 1}):
                 result = server._vendas_diario_importar_pasta()
 
             self.assertFalse(result["processando"])
@@ -54,7 +67,8 @@ class VendasDiarioPastasTest(unittest.TestCase):
                     mock.patch.object(server, "VENDAS_DIARIO_PDF_DIR", os.fspath(pdf_dir)), \
                     mock.patch.object(server, "_vendas_diario_importar_arquivo", side_effect=ValueError("TXT invalido")), \
                     mock.patch.object(server, "parse_cargas_pdf", return_value=[{"pagina": 1, "mapa": "060401"}]), \
-                    mock.patch.object(server, "_vendas_diario_importar_carga_pdf_arquivo", return_value={"status": "importado"}):
+                    mock.patch.object(server, "_vendas_diario_importar_carga_pdf_arquivo", return_value={"status": "importado"}), \
+                    mock.patch.object(server, "_vendas_diario_unificar_cards_semelhantes", return_value={"grupos": 1, "cards_unificados": 1}):
                 result = server._vendas_diario_importar_pasta()
 
             self.assertEqual("erro", result["resultados"][0]["status"])

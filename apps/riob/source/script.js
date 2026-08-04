@@ -2907,11 +2907,14 @@ function _renderCardKanbanVendasDiario(card){
   const statusOptions = [
     ["importado", "Importado"], ["conferir_estoque", "Conferir estoque"], ["conferido", "Conferido"],
   ];
-  const tituloCard = card.mapa_numero ? `Carga ${card.mapa_numero}` : `Vendedor ${card.vendedor_codigo || "-"}`;
+  const tituloCard = fontes.length > 1 && card.rota
+    ? `Rota ${card.rota}`
+    : (card.mapa_numero ? `Carga ${card.mapa_numero}` : `Vendedor ${card.vendedor_codigo || "-"}`);
   return `<article class="vendas-diario-kanban-card" onclick="abrirCardVendasDiario(${Number(card.id) || 0})">
     <header><strong>${_escHtml(tituloCard)}</strong><span>${_escHtml(_fmtMoneyVendas(card.valor_total))}</span></header>
     <div class="hint">${_escHtml(_fmtDataCurtaBr(card.data_ref) || card.data_ref || "-")} | ${_escHtml(card.arquivo_nome || "-")} | ${_escHtml(_fmtNumVendas(card.clientes))} clientes</div>
     ${card.rota ? `<div class="hint"><strong>Rota:</strong> ${_escHtml(card.rota)} | ${_escHtml(_fmtNumVendas(card.peso_total, 3))} kg | ${_escHtml(_fmtNumVendas(card.qtd_entregas))} entregas | ${_escHtml(_fmtNumVendas(card.volumes_total, 3))} volumes</div>` : ""}
+    ${card.mapas_numeros ? `<div class="hint"><strong>Mapas:</strong> ${_escHtml(card.mapas_numeros)}</div>` : ""}
     <div class="hint"><strong>Origens:</strong> ${_escHtml(card.origens_tipos || card.origem_tipo || "txt")} (${fontes.length || 1} documento(s))</div>
     <div class="vendas-diario-card-indicadores"><span>${_escHtml(_fmtNumVendas(card.positivos))} clientes com venda</span><span>${_escHtml(_fmtNumVendas(produtos.length))} produtos</span></div>
     <div class="vendas-diario-card-acoes" onclick="event.stopPropagation()">
