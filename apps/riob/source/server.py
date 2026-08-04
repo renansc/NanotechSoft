@@ -7946,6 +7946,16 @@ def _montar_detalhes_historico_frete(acao, antes=None, depois=None):
             f"NF-e de saida {_frete_hist_val(ref.get('numero_nota') or ref.get('chave_nfe'))} "
             f"transferida para este frete a partir de {_frete_hist_val(ref.get('frete_origem_nome') or ref.get('frete_origem_id'))}."
         )
+    if acao == "unificado_origem":
+        return (
+            f"Card unificado ao frete #{_frete_hist_val(ref.get('frete_destino_id'))} "
+            f"({_frete_hist_val(ref.get('frete_destino_nome'))}); vinculos transferidos e origem arquivada."
+        )
+    if acao == "unificado_destino":
+        return (
+            f"Recebeu o card #{_frete_hist_val(ref.get('frete_origem_id'))} "
+            f"({_frete_hist_val(ref.get('frete_origem_nome'))}) por unificacao manual."
+        )
     if acao == "criado_automaticamente_xml":
         return (
             f"Card criado automaticamente para a NF-e "
@@ -21436,6 +21446,184 @@ def criar_frete():
     cursor.close()
     conn.close()
     return jsonify({"ok": True, "id": frete_id, "frete": frete})
+
+
+def _erro_unificacao_fretes(origem, destino):
+    if not origem or not destino:
+        return "Card de origem ou destino nao encontrado."
+    if _as_int(origem.get("id"), 0) == _as_int(destino.get("id"), 0):
+        return "Selecione outro card como destino."
+    if _as_bool(origem.get("arquivado"), False) or _as_bool(destino.get("arquivado"), False):
+        return "Cards arquivados nao podem ser unificados."
+    data_origem = _fmt_date(origem.get("data_carga") or origem.get("created_at"))
+    data_destino = _fmt_date(destino.get("data_carga") or destino.get("created_at"))
+    if data_origem and data_destino and data_origem != data_destino:
+        return "Somente cards da mesma data de carga podem ser unificados."
+    if _as_str(origem.get("status")) != _as_str(destino.get("status")):
+        return "Mova os dois cards para a mesma coluna antes de unificar."
+    veiculo_origem = _as_int(origem.get("veiculo_id"), 0)
+    veiculo_destino = _as_int(destino.get("veiculo_id"), 0)
+    if veiculo_origem and veiculo_destino and veiculo_origem != veiculo_destino:
+        return "Cards ligados a veiculos diferentes nao podem ser unificados."
+    carga_origem = _as_int(origem.get("carga_id"), 0)
+    carga_destino = _as_int(destino.get("carga_id"), 0)
+    if carga_origem and carga_destino and carga_origem != carga_destino:
+        return "Cards ligados a cargas cadastradas diferentes nao podem ser unificados."
+    return ""
+
+
+@app.route("/api/fretes/<int:id>/unificar", methods=["POST"])
+def unificar_frete(id):
+    data = request.get_json(silent=True) or {}
+    destino_id = _as_int(data.get("destino_frete_id"), 0)
+    if destino_id <= 0 or destino_id == id:
+        return jsonify({"erro": "Selecione outro card como destino."}), 400
+
+    usuario = _usuario_ator_req()
+    conn = get_conn()
+    cursor = conn.cursor(dictionary=True)
+    try:
+        cursor.execute(
+            "SELECT id FROM fretes WHERE id IN (%s,%s) ORDER BY id FOR UPDATE",
+            (id, destino_id),
+        )
+        if len(cursor.fetchall() or []) != 2:
+            conn.rollback()
+            return jsonify({"erro": "Card de origem ou destino nao encontrado."}), 404
+
+        origem = _buscar_frete_detalhado(cursor, id)
+        destino = _buscar_frete_detalhado(cursor, destino_id)
+        erro = _erro_unificacao_fretes(origem, destino)
+        if erro:
+            conn.rollback()
+            return jsonify({"erro": erro}), 409
+
+        contagens = {}
+        transferencias = (
+            ("vendas_diario", "UPDATE vendas_diario_kanban SET frete_id=%s, atualizado_em=NOW() WHERE frete_id=%s"),
+            ("notas_saida", "UPDATE estoque_xml_frete_vinculos SET frete_id=%s WHERE frete_id=%s"),
+            ("notas_pendentes", "UPDATE estoque_xml_frete_pre_vinculos SET frete_id=%s, atualizado_em=NOW() WHERE frete_id=%s"),
+            ("devolucoes", "UPDATE devolucoes SET frete_id=%s WHERE frete_id=%s"),
+        )
+        for chave, sql in transferencias:
+            cursor.execute(sql, (destino_id, id))
+            contagens[chave] = max(0, cursor.rowcount)
+        cursor.execute(
+            "UPDATE estoque_xml_frete_vinculos SET frete_sugerido_id=%s WHERE frete_sugerido_id=%s",
+            (destino_id, id),
+        )
+        cursor.execute(
+            """
+            UPDATE estoque_movimentos
+            SET referencia_id=%s
+            WHERE referencia_id=%s AND LOWER(TRIM(COALESCE(referencia_tipo,'')))='frete'
+            """,
+            (destino_id, id),
+        )
+        contagens["movimentos_estoque"] = max(0, cursor.rowcount)
+
+        cidades = _frete_cidades_lista(destino.get("cidade"), origem.get("cidade"))
+        cidade = " - ".join(cidades)[:180]
+        lotes = _normalizar_lotes_frete(
+            ", ".join(filter(None, [destino.get("lote_manual"), origem.get("lote_manual")]))
+        )
+        observacoes = [_as_str(destino.get("observacao"))]
+        observacao_origem = _as_str(origem.get("observacao"))
+        if observacao_origem and observacao_origem not in observacoes:
+            observacoes.append(f"Card #{id}: {observacao_origem}")
+        observacao = "\n".join(filter(None, observacoes))
+
+        cursor.execute(
+            """
+            SELECT COALESCE(SUM(peso_total),0) AS peso,
+                   COALESCE(SUM(qtd_entregas),0) AS entregas
+            FROM vendas_diario_kanban
+            WHERE frete_id=%s
+            """,
+            (destino_id,),
+        )
+        resumo_vendas = cursor.fetchone() or {}
+        peso = max(
+            _as_float(destino.get("peso"), 0) + _as_float(origem.get("peso"), 0),
+            _as_float(resumo_vendas.get("peso"), 0),
+        )
+        entregas = max(
+            _as_int(destino.get("qtd_entregas"), 0) + _as_int(origem.get("qtd_entregas"), 0),
+            _as_int(resumo_vendas.get("entregas"), 0),
+        )
+        cursor.execute(
+            """
+            UPDATE fretes
+            SET cidade=%s,
+                veiculo_id=COALESCE(veiculo_id,%s),
+                motorista_id=COALESCE(motorista_id,%s),
+                entregador_id=COALESCE(entregador_id,%s),
+                colaborador_motorista_id=COALESCE(colaborador_motorista_id,%s),
+                colaborador_entregador_id=COALESCE(colaborador_entregador_id,%s),
+                carga_id=COALESCE(carga_id,%s),
+                lote_manual=%s, observacao=%s, peso=%s, qtd_entregas=%s,
+                updated_at=NOW()
+            WHERE id=%s
+            """,
+            (
+                cidade,
+                _as_int(origem.get("veiculo_id"), 0) or None,
+                _as_int(origem.get("motorista_id"), 0) or None,
+                _as_int(origem.get("entregador_id"), 0) or None,
+                _as_int(origem.get("colaborador_motorista_id"), 0) or None,
+                _as_int(origem.get("colaborador_entregador_id"), 0) or None,
+                _as_int(origem.get("carga_id"), 0) or None,
+                lotes, observacao, peso, entregas, destino_id,
+            ),
+        )
+        cursor.execute(
+            """
+            UPDATE fretes
+            SET arquivado=1,
+                observacao=CONCAT_WS('\n',NULLIF(observacao,''),%s),
+                updated_at=NOW()
+            WHERE id=%s
+            """,
+            (f"Card unificado manualmente ao frete #{destino_id}.", id),
+        )
+
+        _sincronizar_dados_viagem_xml_frete(
+            cursor,
+            destino_id,
+            _as_int(destino.get("veiculo_id"), 0) or _as_int(origem.get("veiculo_id"), 0),
+        )
+        depois_destino = _buscar_frete_detalhado(cursor, destino_id)
+        depois_origem = _buscar_frete_detalhado(cursor, id)
+        _registrar_historico_frete(
+            cursor,
+            destino_id,
+            "unificado_destino",
+            usuario,
+            destino,
+            {**(depois_destino or {}), "frete_origem_id": id, "frete_origem_nome": origem.get("nome")},
+        )
+        _registrar_historico_frete(
+            cursor,
+            id,
+            "unificado_origem",
+            usuario,
+            origem,
+            {**(depois_origem or {}), "frete_destino_id": destino_id, "frete_destino_nome": destino.get("nome")},
+        )
+        conn.commit()
+        return jsonify({
+            "ok": True,
+            "frete_origem_id": id,
+            "frete_destino_id": destino_id,
+            "frete": depois_destino,
+            "transferidos": contagens,
+        })
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cursor.close()
+        conn.close()
 
 @app.route("/api/fretes/<int:id>", methods=["DELETE"])
 def deletar_frete(id):

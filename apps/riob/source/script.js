@@ -3017,6 +3017,9 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && !document.getElementById("vendasDiarioCardModal")?.classList.contains("hidden")) {
     fecharCardVendasDiario();
   }
+  if (event.key === "Escape" && !document.getElementById("freteUnificarModal")?.classList.contains("hidden")) {
+    fecharUnificacaoFrete();
+  }
 });
 
 async function salvarCardVendasDiario(){
@@ -8018,7 +8021,7 @@ const FRETE_STATUS_OPCOES = [
   { key: "paradoVasio", label: "Parado (vazio)" },
   { key: "paradoCarregado", label: "Parado (carregado)" },
 ];
-const FRETE_CARD_TEMPLATE_VERSION = "kanban-arquivar-retornando-backend-20260714";
+const FRETE_CARD_TEMPLATE_VERSION = "kanban-unificar-cards-20260804";
 const ESCALA_STATUS_KEYS = ["liberado", "paradoVasio", "carregando", "carregado", "paradoCarregado"];
 const ESCALA_STATUS_OPCOES = ESCALA_STATUS_KEYS
   .map((key) => FRETE_STATUS_OPCOES.find((item) => item.key === key))
@@ -9784,6 +9787,7 @@ function _freteCardTemplate(frete){
       </div>
       <div class="frete-card-footer">
         <button class="btn-arquivar-frete hidden" type="button">Arquivar</button>
+        <button class="btn-unificar-frete" type="button">Unificar</button>
         <button class="btn-dados" type="button">Dados</button>
       </div>
     </div>
@@ -9813,12 +9817,14 @@ function _preencherFreteCard(card, frete){
   _atualizarBotoesMovimentoMobile(card, data.status);
 
   const btnDados = card.querySelector(".btn-dados");
+  const btnUnificar = card.querySelector(".btn-unificar-frete");
   const btnArquivar = card.querySelector(".btn-arquivar-frete");
   const btnExcluir = card.querySelector(".btn-excluir-icon");
   const btnMoverPrev = card.querySelector(".btn-mover-mobile-prev");
   const btnMoverNext = card.querySelector(".btn-mover-mobile-next");
 
   if (btnDados) btnDados.onclick = () => _abrirFreteDadosDoCard(frete.id, "dados");
+  if (btnUnificar) btnUnificar.onclick = () => abrirUnificacaoFrete(frete.id);
   if (btnArquivar) {
     const podeArquivar = _fretePodeArquivarManual(frete);
     btnArquivar.classList.toggle("hidden", !podeArquivar);
@@ -9852,13 +9858,112 @@ function _bindFreteCardEvents(card){
   const cardBody = card.querySelector(".card-body");
   if (header) {
     header.draggable = true;
-    header.ondragstart = (e) => e.dataTransfer.setData("id", id);
+    header.ondragstart = (e) => {
+      window.__freteDragId = Number(id) || 0;
+      e.dataTransfer.setData("id", id);
+    };
+    header.ondragend = () => {
+      window.__freteDragId = 0;
+      document.querySelectorAll(".frete-unificar-alvo").forEach((item) => item.classList.remove("frete-unificar-alvo"));
+    };
   }
   if (cardBody) {
     cardBody.addEventListener("click", (event) => {
       if (event.target.closest("button")) return;
       _abrirFreteDadosDoCard(id, "dados");
     });
+  }
+  card.addEventListener("dragover", (event) => {
+    const origemId = Number(window.__freteDragId || event.dataTransfer?.getData("id") || 0);
+    const destinoId = Number(card.dataset.freteId || 0);
+    if (!origemId || origemId === destinoId) return;
+    event.preventDefault();
+    event.stopPropagation();
+    card.classList.add("frete-unificar-alvo");
+    if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+  });
+  card.addEventListener("dragleave", (event) => {
+    if (!card.contains(event.relatedTarget)) card.classList.remove("frete-unificar-alvo");
+  });
+  card.addEventListener("drop", (event) => {
+    const origemId = Number(event.dataTransfer?.getData("id") || 0);
+    const destinoId = Number(card.dataset.freteId || 0);
+    card.classList.remove("frete-unificar-alvo");
+    if (!origemId || origemId === destinoId) return;
+    event.preventDefault();
+    event.stopPropagation();
+    abrirUnificacaoFrete(origemId, destinoId);
+  });
+}
+
+function _fretesDestinoUnificacao(origem){
+  return (fretes || []).filter((item) => {
+    if (!item || Number(item.id) === Number(origem?.id) || item.arquivado) return false;
+    const mesmaData = !origem?.data_carga || !item.data_carga || item.data_carga === origem.data_carga;
+    const mesmoStatus = item.status === origem?.status;
+    const veiculoCompativel = !origem?.veiculo_id || !item.veiculo_id || Number(item.veiculo_id) === Number(origem.veiculo_id);
+    const cargaCompativel = !origem?.carga_id || !item.carga_id || Number(item.carga_id) === Number(origem.carga_id);
+    return mesmaData && mesmoStatus && veiculoCompativel && cargaCompativel;
+  }).sort((a, b) => {
+    const cidadeOrigem = (origem?.cidade || "").toString().trim().toLocaleLowerCase("pt-BR");
+    const aMesmaCidade = cidadeOrigem && (a.cidade || "").toString().trim().toLocaleLowerCase("pt-BR") === cidadeOrigem;
+    const bMesmaCidade = cidadeOrigem && (b.cidade || "").toString().trim().toLocaleLowerCase("pt-BR") === cidadeOrigem;
+    return Number(bMesmaCidade) - Number(aMesmaCidade) || Number(b.id) - Number(a.id);
+  });
+}
+
+function abrirUnificacaoFrete(origemId, destinoPreselecionadoId = 0){
+  const origem = _findFreteById(origemId);
+  if (!origem) return;
+  const destinos = _fretesDestinoUnificacao(origem);
+  if (!destinos.length) {
+    alert("Nao existe outro card compativel na mesma data e coluna.");
+    return;
+  }
+  document.getElementById("freteUnificarOrigemId").value = String(origem.id);
+  document.getElementById("freteUnificarOrigemResumo").textContent = `Origem: #${origem.id} - ${_resumoFreteCabecalho(origem) || origem.nome || "-"}`;
+  const select = document.getElementById("freteUnificarDestinoId");
+  select.innerHTML = destinos.map((item) => `<option value="${Number(item.id)}">#${Number(item.id)} - ${_escHtml(_resumoFreteCabecalho(item) || item.nome || "-")} | ${_escHtml(_freteStatusLabel(item.status))}</option>`).join("");
+  if (destinos.some((item) => Number(item.id) === Number(destinoPreselecionadoId))) {
+    select.value = String(destinoPreselecionadoId);
+  }
+  _abrirPopupBloqueante(document.getElementById("freteUnificarModal"));
+  select.focus();
+}
+
+function fecharUnificacaoFrete(){
+  _fecharPopupBloqueante(document.getElementById("freteUnificarModal"));
+  document.querySelectorAll(".frete-unificar-alvo").forEach((item) => item.classList.remove("frete-unificar-alvo"));
+}
+
+function fecharUnificacaoFreteBackdrop(event){
+  if (event?.target === document.getElementById("freteUnificarModal")) fecharUnificacaoFrete();
+}
+
+async function confirmarUnificacaoFrete(){
+  const origemId = Number(document.getElementById("freteUnificarOrigemId")?.value || 0);
+  const destinoId = Number(document.getElementById("freteUnificarDestinoId")?.value || 0);
+  const origem = _findFreteById(origemId);
+  const destino = _findFreteById(destinoId);
+  if (!origemId || !destinoId || origemId === destinoId || !origem || !destino) return;
+  if (!confirm(`Transferir tudo do card #${origemId} para o card #${destinoId}?`)) return;
+  const botao = document.getElementById("freteUnificarConfirmar");
+  if (botao) botao.disabled = true;
+  try {
+    const resp = await apiFetch(`/api/fretes/${origemId}/unificar`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({destino_frete_id: destinoId}),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data?.erro || "Nao foi possivel unificar os cards.");
+    fecharUnificacaoFrete();
+    await carregarFretes();
+    await atualizarDash();
+  } catch (error) {
+    alert(error?.message || "Nao foi possivel unificar os cards.");
+  } finally {
+    if (botao) botao.disabled = false;
   }
 }
 

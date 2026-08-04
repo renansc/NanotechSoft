@@ -2806,6 +2806,21 @@ button:hover{ background:#e68900; }
 .btn-dados:hover{
   background:#f8fafc;
 }
+.btn-unificar-frete{
+  padding:4px 8px;
+  border-radius:6px;
+  border:1px solid #0f766e;
+  background:#ecfdf5;
+  color:#115e59;
+  font-weight:700;
+  font-size:11px;
+  line-height:1.1;
+  cursor:pointer;
+}
+.btn-unificar-frete:hover{background:#d1fae5}
+.card.frete-unificar-alvo{outline:3px solid #0f766e;outline-offset:2px;background:#ecfdf5}
+.frete-unificar-modal-content{width:min(620px,94vw)}
+.frete-unificar-aviso{padding:10px 12px;border-left:4px solid #0f766e;background:#f0fdfa;color:#134e4a;font-size:13px;line-height:1.45}
 .btn-arquivar-frete{
   padding:4px 8px;
   border-radius:6px;

@@ -4,6 +4,18 @@ import server
 
 
 class FreteXmlViagemTests(unittest.TestCase):
+    def test_allows_compatible_freight_cards_to_be_merged(self):
+        origem = {"id": 361, "data_carga": "2026-08-04", "status": "liberado", "veiculo_id": 14, "carga_id": None, "arquivado": False}
+        destino = {"id": 360, "data_carga": "2026-08-04", "status": "liberado", "veiculo_id": 14, "carga_id": None, "arquivado": False}
+
+        self.assertEqual("", server._erro_unificacao_fretes(origem, destino))
+
+    def test_blocks_merge_between_different_trucks_or_columns(self):
+        origem = {"id": 361, "data_carga": "2026-08-04", "status": "liberado", "veiculo_id": 14, "arquivado": False}
+
+        self.assertIn("mesma coluna", server._erro_unificacao_fretes(origem, {**origem, "id": 360, "status": "carregando"}))
+        self.assertIn("veiculos diferentes", server._erro_unificacao_fretes(origem, {**origem, "id": 360, "veiculo_id": 29}))
+
     def test_grouped_freight_cities_are_normalized_and_deduplicated(self):
         cidades = server._frete_cidades_lista(
             "Londrina - Cambé",

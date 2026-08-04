@@ -512,6 +512,25 @@
     </div>
   </section>
 
+  <div id="freteUnificarModal" class="vendas-diario-modal hidden" role="dialog" aria-modal="true" onclick="fecharUnificacaoFreteBackdrop(event)">
+    <div class="vendas-diario-modal-content frete-unificar-modal-content" onclick="event.stopPropagation()">
+      <span class="close" onclick="fecharUnificacaoFrete()">&times;</span>
+      <h3>Unificar cards do Kanban</h3>
+      <input type="hidden" id="freteUnificarOrigemId">
+      <div id="freteUnificarOrigemResumo" class="hint"></div>
+      <div class="vendas-diario-modal-grid">
+        <label class="vendas-diario-modal-full">Transferir para o card
+          <select id="freteUnificarDestinoId"></select>
+        </label>
+      </div>
+      <div class="frete-unificar-aviso">Os documentos, notas, movimentos e demais vinculos serao transferidos para o destino. O card de origem sera arquivado e continuara disponivel no historico.</div>
+      <div class="vendas-toolbar vendas-diario-modal-actions">
+        <button id="freteUnificarConfirmar" type="button" onclick="confirmarUnificacaoFrete()">Unificar cards</button>
+        <button type="button" class="btn-secondary" onclick="fecharUnificacaoFrete()">Cancelar</button>
+      </div>
+    </div>
+  </div>
+
   <!-- =====================================================
        (MENU) FRETES ARQUIVADOS
   ====================================================== -->
