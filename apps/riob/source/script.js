@@ -15931,11 +15931,11 @@ function renderImportacoesXmlEstoque(){
   if (!body || !resumo) return;
   _atualizarFiltrosImportacoesXmlEstoque();
   const rows = _filtrarImportacoesXmlEstoque();
-  const chavesDisponiveis = new Set(
-    (estoqueState.importacoesXml || []).map((row) => String(row.nota_key || "")).filter(Boolean)
+  const chavesVisiveis = new Set(
+    rows.map((row) => String(row.nota_key || "")).filter(Boolean)
   );
   estoqueState.importacoesXmlSelecionadas = (estoqueState.importacoesXmlSelecionadas || []).filter(
-    (chave) => chavesDisponiveis.has(String(chave))
+    (chave) => chavesVisiveis.has(String(chave))
   );
   const selecionadas = new Set(estoqueState.importacoesXmlSelecionadas || []);
   const entradas = rows.filter((row) => row.tipo_movimento === "entrada").length;
@@ -16000,6 +16000,13 @@ function renderImportacoesXmlEstoque(){
   _atualizarControlesLoteImportacoesXml(rows);
 }
 
+function _chavesImportacoesXmlSelecionadasVisiveis(){
+  const selecionadas = new Set(estoqueState.importacoesXmlSelecionadas || []);
+  return _filtrarImportacoesXmlEstoque()
+    .map((row) => String(row.nota_key || ""))
+    .filter((chave) => chave && selecionadas.has(chave));
+}
+
 function _atualizarControlesLoteImportacoesXml(rowsVisiveis = null){
   const rows = Array.isArray(rowsVisiveis)
     ? rowsVisiveis
@@ -16017,15 +16024,15 @@ function _atualizarControlesLoteImportacoesXml(rowsVisiveis = null){
     const progresso = estoqueState.importacoesXmlLoteProgresso || {};
     botao.textContent = estoqueState.importacoesXmlLoteExecutando
       ? `Contabilizando lote ${Number(progresso.loteAtual || 1)}/${Number(progresso.totalLotes || 1)}`
-      : `Contabilizar no estoque (${selecionadas.size})`;
-    botao.disabled = !selecionadas.size || estoqueState.importacoesXmlLoteExecutando;
+      : `Contabilizar no estoque (${visiveisSelecionadas})`;
+    botao.disabled = !visiveisSelecionadas || estoqueState.importacoesXmlLoteExecutando;
   }
   const botaoManutencao = document.getElementById("estoqueXmlManutencaoLoteBtn");
   if (botaoManutencao) {
     botaoManutencao.textContent = estoqueState.importacoesXmlLoteExecutando
       ? "Enviando para manutencao..."
-      : `Classificar como manutencao (${selecionadas.size})`;
-    botaoManutencao.disabled = !selecionadas.size || estoqueState.importacoesXmlLoteExecutando;
+      : `Classificar como manutencao (${visiveisSelecionadas})`;
+    botaoManutencao.disabled = !visiveisSelecionadas || estoqueState.importacoesXmlLoteExecutando;
   }
 }
 
@@ -16178,7 +16185,7 @@ async function desativarRegraClassificacaoXml(regraId) {
 
 async function direcionarSelecionadasXmlManutencao(){
   if (estoqueState.importacoesXmlLoteExecutando) return;
-  const chaves = Array.from(new Set(estoqueState.importacoesXmlSelecionadas || [])).filter(Boolean);
+  const chaves = _chavesImportacoesXmlSelecionadasVisiveis();
   if (!chaves.length) {
     alert("Selecione ao menos uma NF-e para enviar para manutencao.");
     return;
@@ -16256,7 +16263,7 @@ async function direcionarSelecionadasXmlManutencao(){
 
 async function importarSelecionadasXmlEstoque(){
   if (estoqueState.importacoesXmlLoteExecutando) return;
-  const chaves = Array.from(new Set(estoqueState.importacoesXmlSelecionadas || [])).filter(Boolean);
+  const chaves = _chavesImportacoesXmlSelecionadasVisiveis();
   if (!chaves.length) {
     alert("Selecione ao menos uma NF-e para importar.");
     return;
@@ -16271,6 +16278,7 @@ async function importarSelecionadasXmlEstoque(){
   }
 
   estoqueState.importacoesXmlLoteExecutando = true;
+  const tipoMovimentoFiltro = String(document.getElementById("estoqueXmlPendentesTipo")?.value || "");
   const tamanhoLote = Math.max(1, Number(estoqueState.importacoesXmlMeta?.lote_maximo || 500));
   const lotesChaves = _dividirImportacoesXmlEmLotes(chaves, tamanhoLote);
   const totalLotes = lotesChaves.length;
@@ -16305,7 +16313,10 @@ async function importarSelecionadasXmlEstoque(){
       const respPreparo = await apiFetch("/api/estoque/importacoes-xml/lote/preparar", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ chaves: chavesLote }),
+        body: JSON.stringify({
+          chaves: chavesLote,
+          tipo_movimento: tipoMovimentoFiltro || null,
+        }),
       });
       const dataPreparo = await respPreparo.json().catch(() => ({}));
       if (!respPreparo.ok) {

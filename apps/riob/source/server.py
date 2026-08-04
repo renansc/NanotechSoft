@@ -17433,6 +17433,9 @@ def detalhar_importacao_xml_estoque():
 @app.route("/api/estoque/importacoes-xml/lote/preparar", methods=["POST"])
 def preparar_lote_importacoes_xml_estoque():
     data = request.get_json(silent=True) or {}
+    tipo_movimento = _as_str(data.get("tipo_movimento")).lower()
+    if tipo_movimento and tipo_movimento not in {"entrada", "saida"}:
+        return jsonify({"erro": "tipo de movimento invalido para o filtro"}), 400
     chaves_brutas = data.get("chaves") if isinstance(data.get("chaves"), list) else []
     chaves = []
     for valor in chaves_brutas:
@@ -17482,6 +17485,15 @@ def preparar_lote_importacoes_xml_estoque():
                 )
                 continue
             resumo = _estoque_xml_nota_publica(nota, referencias)
+            if tipo_movimento and resumo.get("tipo_movimento") != tipo_movimento:
+                erros.append(
+                    {
+                        "chave": nota_key,
+                        "numero_nota": resumo.get("numero_nota"),
+                        "erro": "nota fora do filtro de tipo de movimento selecionado",
+                    }
+                )
+                continue
             if resumo.get("status") == "consolidado":
                 erros.append(
                     {
