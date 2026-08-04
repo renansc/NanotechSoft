@@ -21448,30 +21448,6 @@ def criar_frete():
     return jsonify({"ok": True, "id": frete_id, "frete": frete})
 
 
-def _frete_locais_unificacao(frete):
-    locais = set()
-    for valor in (
-        (frete or {}).get("cidade"),
-        (frete or {}).get("carga_cidade"),
-        (frete or {}).get("carga_cidades"),
-        (frete or {}).get("carga_rota"),
-    ):
-        for parte in re.split(r"\s*/\s*", _as_str(valor)):
-            for cidade in _frete_cidades_lista(parte):
-                chave = _normalizar_chave_texto(cidade)
-                if chave:
-                    locais.add(chave)
-    return locais
-
-
-def _fretes_mesma_rota_ou_cidade(origem, destino):
-    rota_origem = _normalizar_chave_texto((origem or {}).get("carga_rota"))
-    rota_destino = _normalizar_chave_texto((destino or {}).get("carga_rota"))
-    mesma_rota = bool(rota_origem and rota_destino and rota_origem == rota_destino)
-    mesma_cidade = bool(_frete_locais_unificacao(origem) & _frete_locais_unificacao(destino))
-    return mesma_rota or mesma_cidade
-
-
 def _erro_unificacao_fretes(origem, destino):
     if not origem or not destino:
         return "Card de origem ou destino nao encontrado."
@@ -21479,12 +21455,12 @@ def _erro_unificacao_fretes(origem, destino):
         return "Selecione outro card como destino."
     if _as_bool(origem.get("arquivado"), False) or _as_bool(destino.get("arquivado"), False):
         return "Cards arquivados nao podem ser unificados."
-    if not _fretes_mesma_rota_ou_cidade(origem, destino):
-        return "Somente cards da mesma rota ou cidade podem ser unificados."
     veiculo_origem = _as_int(origem.get("veiculo_id"), 0)
     veiculo_destino = _as_int(destino.get("veiculo_id"), 0)
-    if veiculo_origem and veiculo_destino and veiculo_origem != veiculo_destino:
-        return "Cards ligados a veiculos diferentes nao podem ser unificados."
+    if not veiculo_origem or not veiculo_destino:
+        return "Os dois cards precisam ter um caminhao definido para serem unificados."
+    if veiculo_origem != veiculo_destino:
+        return "Somente cards do mesmo caminhao podem ser unificados."
     return ""
 
 

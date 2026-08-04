@@ -84,10 +84,10 @@ If you need context fast, read these files first:
   later XMLs whose cities belong to that route must reuse one active route card
   even before a truck is linked. Never merge active cards assigned to different
   trucks.
-- Manual freight-card union in the main RioB Kanban may cross load dates and
-  statuses when route or destination city matches; the destination status wins.
-  Continue blocking active cards assigned to different trucks, transfer all
-  operational links transactionally, and retain the archived source history.
+- Manual freight-card union in the main RioB Kanban depends only on both active
+  cards having the same assigned truck. Dates, statuses, routes, cities, loads,
+  drivers, and helpers may differ; the destination status wins. Transfer all
+  operational links transactionally and retain the archived source history.
 - Daily-sales evidence can arrive as TXT, load PDF, and outgoing NF-e XML. TXT
   keeps its seller from the source; PDF must not be imported without an operator
   selecting the responsible seller. Compatible sources are suggestions only:
