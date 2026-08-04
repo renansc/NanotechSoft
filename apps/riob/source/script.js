@@ -3090,7 +3090,11 @@ async function importarVendasDiario(){
     return;
   }
   const imported = (data?.resultados || []).filter((item) => item.status === "importado").length;
-  if (info) info.textContent = `${imported} arquivo(s) novo(s) importado(s).`;
+  const txtCount = Number(data?.txt?.arquivos || 0);
+  const pdfCount = Number(data?.pdf?.arquivos || 0);
+  if (info) info.textContent = txtCount || pdfCount
+    ? `${imported} novo(s) importado(s). Lidos ${txtCount} TXT e ${pdfCount} PDF.`
+    : `${imported} arquivo(s) novo(s) importado(s).`;
   const input = document.getElementById("vendasDiarioArquivo");
   if (input) input.value = "";
   selecionarArquivoVendasDiario();

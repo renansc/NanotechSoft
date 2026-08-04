@@ -68,7 +68,7 @@ Esta revisao da documentacao passa a registrar explicitamente:
 - o app Android complementar em `mobile-companion-android/`, que usa OCR local no proprio aparelho e envia os itens para a API de importacao do estoque
 - a configuracao NF-e em `Config -> NF-e`, incluindo portal assistido, DF-e, ambiente SEFAZ, UF autora, certificado, senha e ultimo NSU
 - o modulo `Vendas -> Relatorio`, com leitura do CSV externo, importacao persistida no banco e configuracao em `Config -> Vendas`, incluindo importacao manual do CSV, lista de relatorios importados, selecao do relatorio ativo e agrupadores por vendedor, cidade e produto
-- o modulo `Vendas -> Vendas diario`, com importacao idempotente dos TXT de Conferencia de Pedidos, consulta por data e leitura automatica da pasta montada `RB_VENDAS_DIARIO_DIR` todos os dias no horario `RB_VENDAS_DIARIO_HORA` (08:00 por padrao)
+- o modulo `Vendas -> Vendas diario`, com importacao idempotente dos TXT de Conferencia de Pedidos e PDFs de carga, consulta por data e leitura automatica das pastas montadas `RB_VENDAS_DIARIO_TXT_DIR` e `RB_VENDAS_DIARIO_PDF_DIR` todos os dias no horario `RB_VENDAS_DIARIO_HORA` (08:00 por padrao)
 - os alertas sonoros do chat interno para novas mensagens e eventos de chamada SIP
 - o passo a passo dedicado de operacao com NF-e / Receita, deixando explicito o que hoje e automatico no DF-e e o que ainda depende de XML/manual
 - o fluxo portal assistido da Receita com abertura da consulta publica ja preparada com a chave bipada, para reduzir a operacao manual ao reCAPTCHA e ao uso do bookmarklet

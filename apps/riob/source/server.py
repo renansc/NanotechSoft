@@ -39,7 +39,7 @@ from urllib.parse import urlparse, unquote
 import paramiko
 import nfe_ws
 from vendas_diario import discover_txt_files, parse_report, read_report
-from vendas_carga_pdf import parse_carga_pdf
+from vendas_carga_pdf import parse_carga_pdf, parse_cargas_pdf
 
 app = Flask(__name__, static_folder='.')
 
@@ -130,6 +130,10 @@ VENDAS_REPORTS_DIR = os.path.join(VENDAS_CACHE_DIR, "reports")
 VENDAS_CONFIG_FILE = os.path.join(DATA_ROOT, "vendas-config.json")
 VENDAS_IMPORT_RULES_FILE = os.path.join(VENDAS_RELATORIOS_DIR, "config-rel-vendas")
 VENDAS_DIARIO_DIR = os.environ.get("RB_VENDAS_DIARIO_DIR", "/imports/vendas-diario")
+VENDAS_DIARIO_TXT_DIR = os.environ.get("RB_VENDAS_DIARIO_TXT_DIR", VENDAS_DIARIO_DIR)
+VENDAS_DIARIO_PDF_DIR = os.environ.get(
+    "RB_VENDAS_DIARIO_PDF_DIR", os.path.join(VENDAS_DIARIO_DIR, "pdf")
+)
 VENDAS_DIARIO_HORA = os.environ.get("RB_VENDAS_DIARIO_HORA", "08:00")
 DB_BACKUP_DIR = os.environ.get("RB_DB_BACKUP_DIR", os.path.join(BASE_DIR, "backupsSql"))
 CAMERAS_DATA_DIR = os.environ.get("CAMERAS_DATA_DIR", os.path.join(BASE_DIR, "cameras"))
@@ -30783,18 +30787,54 @@ def _vendas_diario_importar_arquivo(path):
         conn.close()
 
 
+def _descobrir_arquivos_por_extensao(directory, extension):
+    if not directory or not os.path.isdir(directory):
+        return []
+    return sorted(
+        (
+            os.path.join(directory, name)
+            for name in os.listdir(directory)
+            if name.lower().endswith(extension.lower()) and os.path.isfile(os.path.join(directory, name))
+        ),
+        key=lambda path: os.path.getmtime(path),
+    )
+
+
 def _vendas_diario_importar_pasta():
     if not _VENDAS_DIARIO_IMPORT_LOCK.acquire(blocking=False):
         return {"processando": True, "resultados": []}
     try:
-        files = discover_txt_files(VENDAS_DIARIO_DIR)
+        txt_files = discover_txt_files(VENDAS_DIARIO_TXT_DIR)
+        pdf_files = _descobrir_arquivos_por_extensao(VENDAS_DIARIO_PDF_DIR, ".pdf")
         results = []
-        for path in files:
+        for path in txt_files:
             try:
-                results.append(_vendas_diario_importar_arquivo(path))
+                result = _vendas_diario_importar_arquivo(path)
+                result["tipo"] = "txt"
+                results.append(result)
             except Exception as exc:
-                results.append({"arquivo": os.path.basename(path), "status": "erro", "erro": str(exc)})
-        return {"processando": False, "diretorio": VENDAS_DIARIO_DIR, "arquivos": len(files), "resultados": results}
+                results.append({"arquivo": os.path.basename(path), "tipo": "txt", "status": "erro", "erro": str(exc)})
+        for path in pdf_files:
+            try:
+                cargas = parse_cargas_pdf(path)
+                for carga in cargas:
+                    result = _vendas_diario_importar_carga_pdf_arquivo(
+                        path, usuario="importacao_automatica", carga=carga
+                    )
+                    result["arquivo"] = os.path.basename(path)
+                    result["pagina"] = carga.get("pagina")
+                    result["tipo"] = "pdf"
+                    results.append(result)
+            except Exception as exc:
+                results.append({"arquivo": os.path.basename(path), "tipo": "pdf", "status": "erro", "erro": str(exc)})
+        return {
+            "processando": False,
+            "diretorio": VENDAS_DIARIO_DIR,
+            "arquivos": len(txt_files) + len(pdf_files),
+            "txt": {"diretorio": VENDAS_DIARIO_TXT_DIR, "arquivos": len(txt_files)},
+            "pdf": {"diretorio": VENDAS_DIARIO_PDF_DIR, "arquivos": len(pdf_files)},
+            "resultados": results,
+        }
     finally:
         _VENDAS_DIARIO_IMPORT_LOCK.release()
 
@@ -30850,7 +30890,12 @@ def vendas_diario_api():
                 "valor_liquido": round(sum(_as_float(row.get("valor_liquido"), 0) for row in orders), 2),
                 "peso_bruto": round(sum(_as_float(row.get("peso_bruto"), 0) for row in orders), 3),
             },
-            "importacao": {"diretorio": VENDAS_DIARIO_DIR, "horario": VENDAS_DIARIO_HORA},
+            "importacao": {
+                "diretorio": VENDAS_DIARIO_DIR,
+                "diretorio_txt": VENDAS_DIARIO_TXT_DIR,
+                "diretorio_pdf": VENDAS_DIARIO_PDF_DIR,
+                "horario": VENDAS_DIARIO_HORA,
+            },
         })
     finally:
         cur.close()
@@ -31296,25 +31341,20 @@ def vendas_diario_importar_api():
     return jsonify(result), code
 
 
-@app.route("/api/vendas/diario/importar-carga-pdf", methods=["POST"])
-def vendas_diario_importar_carga_pdf_api():
-    vendedor_codigo = _as_str(request.form.get("vendedor_codigo"))
-    if not vendedor_codigo:
-        return jsonify({"erro": "Selecione o vendedor responsavel pela carga PDF."}), 400
-    uploaded = request.files.get("arquivo")
-    if not uploaded or not getattr(uploaded, "filename", ""):
-        return jsonify({"erro": "Selecione o PDF da carga."}), 400
-    filename = secure_filename(uploaded.filename)
-    if not filename.lower().endswith(".pdf"):
-        return jsonify({"erro": "Envie um arquivo PDF de carga."}), 400
-    target_dir = os.path.join(VENDAS_UPLOADS_DIR, "cargas-pdf")
-    os.makedirs(target_dir, exist_ok=True)
-    target_path = os.path.join(target_dir, f"{uuid.uuid4().hex}_{filename}")
-    uploaded.save(target_path)
-    try:
-        carga = parse_carga_pdf(target_path)
-    except Exception as exc:
-        return jsonify({"erro": f"Falha ao ler PDF da carga: {str(exc)}"}), 400
+def _vendas_diario_vendedor_por_carga(carga):
+    mapa = re.sub(r"\D", "", _as_str((carga or {}).get("mapa")))
+    if len(mapa) < 5:
+        raise ValueError("Nao foi possivel identificar o vendedor pelo numero do mapa do PDF.")
+    prefixo = mapa[:-4]
+    if not prefixo or not prefixo.isdigit():
+        raise ValueError("Numero do mapa invalido para identificar o vendedor.")
+    return str(int(prefixo))
+
+
+def _vendas_diario_importar_carga_pdf_arquivo(path, vendedor_codigo="", usuario="desconhecido", carga=None):
+    filename = os.path.basename(path)
+    carga = carga or parse_carga_pdf(path)
+    vendedor_codigo = _as_str(vendedor_codigo) or _vendas_diario_vendedor_por_carga(carga)
     conn = get_conn()
     cur = conn.cursor(dictionary=True)
     try:
@@ -31324,13 +31364,14 @@ def vendas_diario_importar_carga_pdf_api():
             cur.execute("SELECT * FROM vendas_diario_kanban WHERE importacao_id=%s AND origem_tipo='pdf' ORDER BY id LIMIT 1 FOR UPDATE", (existing["id"],))
             card_existente = cur.fetchone()
             if card_existente and _as_int(card_existente.get("frete_id"), 0):
-                return jsonify({"erro": "Este PDF ja esta vinculado a um frete e nao pode trocar de vendedor.", "card_id": card_existente["id"], "frete_id": card_existente["frete_id"]}), 409
+                return {"status": "erro", "erro": "Este PDF ja esta vinculado a um frete e nao pode trocar de vendedor.", "card_id": card_existente["id"], "frete_id": card_existente["frete_id"]}
             if card_existente and _as_str(card_existente.get("status")) != "excluido":
-                return jsonify({
-                    "erro": f"Este PDF ja esta ativo no card #{card_existente['id']} para o vendedor {card_existente['vendedor_codigo']}.",
+                return {
+                    "ok": True,
                     "status": "ja_importado", "importacao_id": existing["id"],
                     "card_id": card_existente["id"], "vendedor_codigo": card_existente["vendedor_codigo"],
-                }), 409
+                    "carga": carga,
+                }
             if card_existente:
                 vendedor_anterior = _as_str(card_existente.get("vendedor_codigo"))
                 cur.execute("UPDATE vendas_diario_pedidos SET vendedor_codigo=%s WHERE importacao_id=%s AND vendedor_codigo=%s", (vendedor_codigo, existing["id"], vendedor_anterior))
@@ -31338,16 +31379,16 @@ def vendas_diario_importar_carga_pdf_api():
                     SET vendedor_codigo=%s,status='importado',card_principal_id=NULL,
                         frete_id=NULL,atualizado_em=NOW() WHERE id=%s""",
                     (vendedor_codigo, card_existente["id"]))
-                cur.execute("UPDATE vendas_diario_importacoes SET arquivo_nome=%s,arquivo_caminho=%s WHERE id=%s", (filename, target_path, existing["id"]))
+                cur.execute("UPDATE vendas_diario_importacoes SET arquivo_nome=%s,arquivo_caminho=%s WHERE id=%s", (filename, path, existing["id"]))
                 cur.execute("""INSERT INTO vendas_diario_kanban_historico
                     (card_id,acao,card_origem_id,usuario,detalhes)
                     VALUES (%s,'reativado_pdf',%s,%s,%s)""", (
-                    card_existente["id"], card_existente["id"], _usuario_ator_req(),
+                    card_existente["id"], card_existente["id"], usuario,
                     f"PDF reimportado; vendedor alterado de {vendedor_anterior} para {vendedor_codigo}.",
                 ))
                 conn.commit()
-                return jsonify({"ok": True, "status": "reativado", "importacao_id": existing["id"], "card_id": card_existente["id"], "vendedor_codigo": vendedor_codigo, "carga": carga})
-            return jsonify({"erro": "A importacao deste PDF existe, mas o card de origem nao foi encontrado."}), 409
+                return {"ok": True, "status": "reativado", "importacao_id": existing["id"], "card_id": card_existente["id"], "vendedor_codigo": vendedor_codigo, "carga": carga}
+            return {"status": "erro", "erro": "A importacao deste PDF existe, mas o card de origem nao foi encontrado."}
         seller_key = vendedor_codigo
         cities = " / ".join(item["cidade"] for item in carga["cidades"])
         route = f"{carga['rota_codigo']} - {carga['rota_nome']}"
@@ -31355,7 +31396,7 @@ def vendas_diario_importar_carga_pdf_api():
             INSERT INTO vendas_diario_importacoes
                 (data_ref, arquivo_nome, arquivo_caminho, assinatura, pedidos, positivos, negativos, valor_total)
             VALUES (%s,%s,%s,%s,1,1,0,%s)
-        """, (carga["data_ref"], filename, target_path, carga["assinatura"], carga["valor_total"]))
+        """, (carga["data_ref"], filename, path, carga["assinatura"], carga["valor_total"]))
         import_id = cur.lastrowid
         cur.execute("""
             INSERT INTO vendas_diario_pedidos
@@ -31386,13 +31427,37 @@ def vendas_diario_importar_carga_pdf_api():
               carga["volumes_total"], carga["valor_bonificacao"]))
         card_id = cur.lastrowid
         conn.commit()
-        return jsonify({"ok": True, "status": "importado", "importacao_id": import_id, "card_id": card_id, "carga": carga})
+        return {"ok": True, "status": "importado", "importacao_id": import_id, "card_id": card_id, "vendedor_codigo": vendedor_codigo, "carga": carga}
     except Exception:
         conn.rollback()
         raise
     finally:
         cur.close()
         conn.close()
+
+
+@app.route("/api/vendas/diario/importar-carga-pdf", methods=["POST"])
+def vendas_diario_importar_carga_pdf_api():
+    vendedor_codigo = _as_str(request.form.get("vendedor_codigo"))
+    if not vendedor_codigo:
+        return jsonify({"erro": "Selecione o vendedor responsavel pela carga PDF."}), 400
+    uploaded = request.files.get("arquivo")
+    if not uploaded or not getattr(uploaded, "filename", ""):
+        return jsonify({"erro": "Selecione o PDF da carga."}), 400
+    filename = secure_filename(uploaded.filename)
+    if not filename.lower().endswith(".pdf"):
+        return jsonify({"erro": "Envie um arquivo PDF de carga."}), 400
+    target_dir = os.path.join(VENDAS_UPLOADS_DIR, "cargas-pdf")
+    os.makedirs(target_dir, exist_ok=True)
+    target_path = os.path.join(target_dir, f"{uuid.uuid4().hex}_{filename}")
+    uploaded.save(target_path)
+    try:
+        result = _vendas_diario_importar_carga_pdf_arquivo(
+            target_path, vendedor_codigo=vendedor_codigo, usuario=_usuario_ator_req()
+        )
+    except Exception as exc:
+        return jsonify({"erro": f"Falha ao ler ou importar PDF da carga: {str(exc)}"}), 400
+    return jsonify(result), (409 if result.get("status") == "erro" else 200)
 
 @app.route("/api/vendas/diario/vendedores", methods=["GET"])
 def vendas_diario_vendedores_api():

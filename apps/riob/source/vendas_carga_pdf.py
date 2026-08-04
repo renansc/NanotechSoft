@@ -24,12 +24,7 @@ def _decimal(value):
         return 0.0
 
 
-def parse_carga_pdf(path):
-    with open(path, "rb") as pdf_file:
-        raw = pdf_file.read()
-    signature = hashlib.sha256(raw).hexdigest()
-    reader = PdfReader(path)
-    text = "\n".join(page.extract_text(extraction_mode="layout") or "" for page in reader.pages)
+def _parse_carga_text(text, signature, page_number=1):
     date_match = re.search(r"(\d{1,2})\s+de\s+([a-zç]+)\s+de\s+(\d{4})", text, re.IGNORECASE)
     if not date_match:
         raise ValueError("Data da carga nao encontrada no PDF.")
@@ -79,6 +74,7 @@ def parse_carga_pdf(path):
         return _decimal(match.group(1)) if match else 0.0
     return {
         "assinatura": signature,
+        "pagina": page_number,
         "data_ref": data_ref.isoformat(),
         "mapa": map_match.group(1),
         "rota_codigo": route_match.group(1),
@@ -91,3 +87,22 @@ def parse_carga_pdf(path):
         "valor_total": total(r"Valor Total Liquido:\s*([\d.,]+)"),
         "valor_bonificacao": total(r"Valor Bonifica[cç][aã]o:\s*([\d.,]+)"),
     }
+
+
+def parse_cargas_pdf(path):
+    with open(path, "rb") as pdf_file:
+        raw = pdf_file.read()
+    reader = PdfReader(path)
+    pages = []
+    page_count = len(reader.pages)
+    for index, page in enumerate(reader.pages, start=1):
+        text = page.extract_text(extraction_mode="layout") or ""
+        signature_source = raw if page_count == 1 else raw + f"#page:{index}".encode("ascii")
+        pages.append(_parse_carga_text(text, hashlib.sha256(signature_source).hexdigest(), index))
+    if not pages:
+        raise ValueError("O PDF nao possui paginas de carga.")
+    return pages
+
+
+def parse_carga_pdf(path):
+    return parse_cargas_pdf(path)[0]
