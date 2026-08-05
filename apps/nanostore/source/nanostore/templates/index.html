@@ -7,7 +7,7 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
   </head>
   <body data-store-mode="{{ mode_key }}" data-mode-accent="{{ store_mode.accent }}">
-    <div class="shell">
+    <div class="shell" id="nanostore-shell">
       <aside class="sidebar">
         <div class="brand">
           <span class="brand-mark">N</span>
@@ -15,6 +15,7 @@
             <strong>NanoStore</strong>
             <p>{{ store_mode.name }}</p>
           </div>
+          <button type="button" class="sidebar-toggle" id="sidebar-toggle" aria-expanded="true" title="Recolher menu" aria-label="Recolher menu lateral">&#x2039;</button>
         </div>
 
         <nav class="menu-tree" aria-label="Menu principal">
@@ -1692,8 +1693,33 @@
             <p class="section-copy">Tudo de configuracao fica agrupado aqui, separado dos demais modulos.</p>
           </div>
 
-          <section class="grid">
-            <article class="card card-https-tools" data-cert-hosts='{{ https_runtime.cert_hosts|tojson }}' data-http-port="{{ https_runtime.http_port }}" data-https-port="{{ https_runtime.https_port }}" data-public-base-url="{{ https_runtime.public_base_url }}" data-https-enabled="{{ '1' if https_runtime.enabled else '0' }}">
+          <nav class="subnav config-subnav" aria-label="Grupos de configuracao">
+            <button type="button" class="subnav-link active" data-subview-target="config-emitente">Emitente fiscal</button>
+            {% if store_mode.show_fiscal %}<button type="button" class="subnav-link" data-subview-target="config-tributacao">Tributacao dos produtos</button>{% else %}<button type="button" class="subnav-link" data-subview-target="config-tributacao">Catalogo de servicos</button>{% endif %}
+            <button type="button" class="subnav-link" data-subview-target="config-margens">Margens</button>
+            <button type="button" class="subnav-link" data-subview-target="config-conexao">HTTPS e camera</button>
+            <button type="button" class="subnav-link" data-subview-target="config-integracoes">Integracoes</button>
+          </nav>
+
+          <section class="subview is-active" id="config-emitente" data-subview>
+            <article class="card config-card">
+              <div class="section-head compact-head"><div><p class="eyebrow">Fiscal</p><h3>Emitente fiscal</h3></div></div>
+              <form class="settings-form config-form-grid">
+                <label class="field-block config-field-wide"><span>Razao social</span><input name="FISCAL_LEGAL_NAME" value="{{ settings_map.get('FISCAL_LEGAL_NAME', '') }}" required></label>
+                <label class="field-block"><span>CNPJ</span><input name="FISCAL_CNPJ" value="{{ settings_map.get('FISCAL_CNPJ', '') }}" maxlength="18" required></label>
+                <label class="field-block"><span>Inscricao estadual</span><input name="FISCAL_IE" value="{{ settings_map.get('FISCAL_IE', '') }}" required></label>
+                <label class="field-block"><span>CRT</span><select name="FISCAL_CRT" required><option value="">Selecione</option>{% for value, label in [('1', 'Simples Nacional'), ('2', 'Simples excesso sublimite'), ('3', 'Regime normal'), ('4', 'MEI')] %}<option value="{{ value }}" {% if settings_map.get('FISCAL_CRT') == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+                <label class="field-block"><span>UF</span><input name="FISCAL_UF" value="{{ settings_map.get('FISCAL_UF', 'PR') }}" maxlength="2" required></label>
+                <label class="field-block"><span>Codigo IBGE municipio</span><input name="FISCAL_CITY_CODE" value="{{ settings_map.get('FISCAL_CITY_CODE', '') }}" maxlength="7" required></label>
+                <label class="field-block"><span>Serie NF-e</span><input name="FISCAL_SERIES_55" value="{{ settings_map.get('FISCAL_SERIES_55', '1') }}"></label>
+                <label class="field-block"><span>Serie NFC-e</span><input name="FISCAL_SERIES_65" value="{{ settings_map.get('FISCAL_SERIES_65', '1') }}"></label>
+                <div class="config-form-actions"><button type="submit">Salvar emitente</button></div>
+              </form>
+            </article>
+          </section>
+
+          <section class="subview" id="config-conexao" data-subview hidden>
+            <article class="card card-https-tools config-card" data-cert-hosts='{{ https_runtime.cert_hosts|tojson }}' data-http-port="{{ https_runtime.http_port }}" data-https-port="{{ https_runtime.https_port }}" data-public-base-url="{{ https_runtime.public_base_url }}" data-https-enabled="{{ '1' if https_runtime.enabled else '0' }}">
               <h3>HTTPS e camera</h3>
               <div class="status-stack">
                 <div class="status-line"><strong>HTTP atual:</strong> <span id="http-current-url">http://127.0.0.1:8080</span></div>
@@ -1719,36 +1745,26 @@
               </div>
               <div id="https-tools-feedback" class="helper"></div>
             </article>
+          </section>
 
-            <article class="card">
+          <section class="subview" id="config-integracoes" data-subview hidden>
+            <article class="card config-card">
               <h3>Integracoes</h3>
-              <form id="settings-form">
-                <h4>Emitente fiscal</h4>
-                <label class="field-inline"><span>Razao social</span><input name="FISCAL_LEGAL_NAME" value="{{ settings_map.get('FISCAL_LEGAL_NAME', '') }}" required></label>
-                <div class="row">
-                  <label class="field-inline"><span>CNPJ</span><input name="FISCAL_CNPJ" value="{{ settings_map.get('FISCAL_CNPJ', '') }}" maxlength="18" required></label>
-                  <label class="field-inline"><span>Inscricao estadual</span><input name="FISCAL_IE" value="{{ settings_map.get('FISCAL_IE', '') }}" required></label>
-                  <label class="field-inline"><span>CRT</span><select name="FISCAL_CRT" required><option value="">Selecione</option>{% for value, label in [('1', 'Simples Nacional'), ('2', 'Simples excesso sublimite'), ('3', 'Regime normal'), ('4', 'MEI')] %}<option value="{{ value }}" {% if settings_map.get('FISCAL_CRT') == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
-                </div>
-                <div class="row">
-                  <label class="field-inline"><span>UF</span><input name="FISCAL_UF" value="{{ settings_map.get('FISCAL_UF', 'PR') }}" maxlength="2" required></label>
-                  <label class="field-inline"><span>Codigo IBGE municipio</span><input name="FISCAL_CITY_CODE" value="{{ settings_map.get('FISCAL_CITY_CODE', '') }}" maxlength="7" required></label>
-                  <label class="field-inline"><span>Serie NF-e</span><input name="FISCAL_SERIES_55" value="{{ settings_map.get('FISCAL_SERIES_55', '1') }}"></label>
-                  <label class="field-inline"><span>Serie NFC-e</span><input name="FISCAL_SERIES_65" value="{{ settings_map.get('FISCAL_SERIES_65', '1') }}"></label>
-                </div>
-                <h4>Provedores</h4>
-                <label class="field-inline"><span>Cartao</span><input name="PHARMACY_CARD_PROVIDER" value="{{ settings_map.get('PHARMACY_CARD_PROVIDER', '') }}" placeholder="Provedor maquina/cartao"></label>
-                <label class="field-inline"><span>Pix</span><input name="PHARMACY_PIX_PROVIDER" value="{{ settings_map.get('PHARMACY_PIX_PROVIDER', '') }}" placeholder="Provedor Pix"></label>
-                <label class="field-inline"><span>WhatsApp</span><input name="PHARMACY_WHATSAPP_NUMBER" value="{{ settings_map.get('PHARMACY_WHATSAPP_NUMBER', '') }}" placeholder="Numero WhatsApp"></label>
-                <label class="field-inline"><span>WooCommerce URL</span><input name="PHARMACY_WOOCOMMERCE_URL" value="{{ settings_map.get('PHARMACY_WOOCOMMERCE_URL', '') }}" placeholder="URL WooCommerce"></label>
-                <label class="field-inline"><span>WooCommerce chave</span><input name="PHARMACY_WOOCOMMERCE_KEY" value="{{ settings_map.get('PHARMACY_WOOCOMMERCE_KEY', '') }}" placeholder="Chave WooCommerce"></label>
-                <label class="field-inline"><span>Mercado Livre App ID</span><input name="PHARMACY_MERCADO_LIVRE_APP_ID" value="{{ settings_map.get('PHARMACY_MERCADO_LIVRE_APP_ID', '') }}" placeholder="App ID Mercado Livre"></label>
-                <label class="field-inline"><span>Mercado Livre Seller ID</span><input name="PHARMACY_MERCADO_LIVRE_SELLER_ID" value="{{ settings_map.get('PHARMACY_MERCADO_LIVRE_SELLER_ID', '') }}" placeholder="Seller ID Mercado Livre"></label>
-                <button type="submit">Salvar configuracoes</button>
+              <form class="settings-form config-form-grid">
+                <label class="field-block"><span>Cartao</span><input name="PHARMACY_CARD_PROVIDER" value="{{ settings_map.get('PHARMACY_CARD_PROVIDER', '') }}" placeholder="Provedor maquina/cartao"></label>
+                <label class="field-block"><span>Pix</span><input name="PHARMACY_PIX_PROVIDER" value="{{ settings_map.get('PHARMACY_PIX_PROVIDER', '') }}" placeholder="Provedor Pix"></label>
+                <label class="field-block"><span>WhatsApp</span><input name="PHARMACY_WHATSAPP_NUMBER" value="{{ settings_map.get('PHARMACY_WHATSAPP_NUMBER', '') }}" placeholder="Numero WhatsApp"></label>
+                <label class="field-block"><span>WooCommerce URL</span><input name="PHARMACY_WOOCOMMERCE_URL" value="{{ settings_map.get('PHARMACY_WOOCOMMERCE_URL', '') }}" placeholder="URL WooCommerce"></label>
+                <label class="field-block"><span>WooCommerce chave</span><input name="PHARMACY_WOOCOMMERCE_KEY" value="{{ settings_map.get('PHARMACY_WOOCOMMERCE_KEY', '') }}" placeholder="Chave WooCommerce"></label>
+                <label class="field-block"><span>Mercado Livre App ID</span><input name="PHARMACY_MERCADO_LIVRE_APP_ID" value="{{ settings_map.get('PHARMACY_MERCADO_LIVRE_APP_ID', '') }}" placeholder="App ID Mercado Livre"></label>
+                <label class="field-block"><span>Mercado Livre Seller ID</span><input name="PHARMACY_MERCADO_LIVRE_SELLER_ID" value="{{ settings_map.get('PHARMACY_MERCADO_LIVRE_SELLER_ID', '') }}" placeholder="Seller ID Mercado Livre"></label>
+                <div class="config-form-actions"><button type="submit">Salvar integracoes</button></div>
               </form>
             </article>
+          </section>
 
-            {% if store_mode.show_fiscal %}<article class="card">
+          <section class="subview" id="config-tributacao" data-subview hidden>
+            {% if store_mode.show_fiscal %}<article class="card config-card">
               <h3>Tributacao dos produtos</h3>
               <div class="stage-admin-list">
                 {% for product in summary.products %}
@@ -1765,7 +1781,7 @@
                 {% else %}<p class="helper">Nenhum produto cadastrado.</p>{% endfor %}
               </div>
             </article>{% else %}
-            <article class="card">
+            <article class="card config-card">
               <h3>Catalogo de servicos</h3>
               <div class="stage-admin-list">
                 {% for product in summary.products %}
@@ -1777,8 +1793,10 @@
                 {% else %}<p class="helper">Nenhum servico cadastrado.</p>{% endfor %}
               </div>
             </article>{% endif %}
+          </section>
 
-            <article class="card">
+          <section class="subview" id="config-margens" data-subview hidden>
+            <article class="card config-card">
               <h3>Margem por categoria</h3>
               <div class="stage-admin-list">
                 {% for category in categories %}
@@ -1800,16 +1818,6 @@
                 </div>
                 {% endfor %}
               </div>
-            </article>
-
-            <article class="card card-guide">
-              <h3>Escopo desta area</h3>
-              <ul class="module-list">
-                <li>Provedores Pix, cartao e canais digitais</li>
-                <li>Parametros da empresa e operacao</li>
-                <li>Credenciais e integracoes externas</li>
-                <li>Margens minimas e sugeridas por categoria</li>
-              </ul>
             </article>
           </section>
         </section>
@@ -2084,6 +2092,28 @@
         } catch {}
       }
 
+      const nanostoreShell = document.getElementById("nanostore-shell");
+      const sidebarToggle = document.getElementById("sidebar-toggle");
+
+      function setSidebarCollapsed(collapsed) {
+        if (!(nanostoreShell && sidebarToggle)) return;
+        nanostoreShell.classList.toggle("sidebar-collapsed", collapsed);
+        sidebarToggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
+        sidebarToggle.setAttribute("aria-label", collapsed ? "Expandir menu lateral" : "Recolher menu lateral");
+        sidebarToggle.title = collapsed ? "Expandir menu" : "Recolher menu";
+        sidebarToggle.innerHTML = collapsed ? "&#x203A;" : "&#x2039;";
+        try { localStorage.setItem("nanostore.sidebarCollapsed", collapsed ? "1" : "0"); } catch {}
+      }
+
+      if (sidebarToggle) {
+        let initiallyCollapsed = false;
+        try { initiallyCollapsed = localStorage.getItem("nanostore.sidebarCollapsed") === "1"; } catch {}
+        setSidebarCollapsed(initiallyCollapsed);
+        sidebarToggle.addEventListener("click", () => {
+          setSidebarCollapsed(!nanostoreShell.classList.contains("sidebar-collapsed"));
+        });
+      }
+
       const storeModeSelect = document.getElementById("store-mode-select");
       const storeModeFeedback = document.getElementById("store-mode-feedback");
       if (storeModeSelect) {
@@ -2226,12 +2256,18 @@
         document.querySelectorAll(`.menu-link[data-target="${container.id}"][data-open-subview]`).forEach((button) => {
           button.classList.toggle("active", button.dataset.openSubview === targetId);
         });
+        try { localStorage.setItem(`nanostore.activeSubview.${container.id}`, targetId); } catch {}
       }
 
       document.querySelectorAll(".view").forEach((view) => {
         const firstButton = view.querySelector(".subnav-link");
         if (firstButton) {
-          activateSubview(view, firstButton.dataset.subviewTarget);
+          let initialSubview = firstButton.dataset.subviewTarget;
+          try {
+            const savedSubview = localStorage.getItem(`nanostore.activeSubview.${view.id}`);
+            if (savedSubview && view.querySelector(`#${savedSubview}[data-subview]`)) initialSubview = savedSubview;
+          } catch {}
+          activateSubview(view, initialSubview);
           view.querySelectorAll(".subnav-link").forEach((button) => {
             button.addEventListener("click", () => {
               activateSubview(view, button.dataset.subviewTarget);
@@ -2409,8 +2445,10 @@
         button.addEventListener("click", () => {
           closeProductEditModal();
           activateView("configuracao");
+          const configView = document.getElementById("configuracao");
+          if (configView) activateSubview(configView, "config-emitente");
           window.setTimeout(() => {
-            const crtField = document.querySelector('#settings-form [name="FISCAL_CRT"]');
+            const crtField = document.querySelector('.settings-form [name="FISCAL_CRT"]');
             crtField?.scrollIntoView({ behavior: "smooth", block: "center" });
             crtField?.focus();
           }, 0);
@@ -3465,14 +3503,16 @@
         });
       });
 
-      document.getElementById("settings-form").addEventListener("submit", async (event) => {
-        event.preventDefault();
-        try {
-          await postJson("/api/settings", { settings: formToObject(event.currentTarget) });
-          window.location.reload();
-        } catch (error) {
-          alert(error.message);
-        }
+      document.querySelectorAll(".settings-form").forEach((form) => {
+        form.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          try {
+            await postJson("/api/settings", { settings: formToObject(event.currentTarget) });
+            window.location.reload();
+          } catch (error) {
+            alert(error.message);
+          }
+        });
       });
 
       const stockOverviewSearch = document.getElementById("stock-overview-search");

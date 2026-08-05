@@ -33,6 +33,7 @@ body {
   display: grid;
   grid-template-columns: 290px 1fr;
   min-height: 100vh;
+  transition: grid-template-columns 180ms ease;
 }
 
 .sidebar {
@@ -44,6 +45,7 @@ body {
   border-right: 1px solid var(--line);
   background: rgba(244, 247, 241, 0.88);
   backdrop-filter: blur(18px);
+  transition: padding 180ms ease;
 }
 
 .brand {
@@ -51,6 +53,41 @@ body {
   gap: 12px;
   align-items: center;
   margin-bottom: 22px;
+}
+
+.sidebar-toggle {
+  flex: 0 0 36px;
+  width: 36px;
+  height: 36px;
+  margin-left: auto;
+  padding: 0;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  color: var(--primary-dark);
+  font-size: 1.65rem;
+  line-height: 1;
+}
+
+.shell.sidebar-collapsed {
+  grid-template-columns: 76px 1fr;
+}
+
+.shell.sidebar-collapsed .sidebar {
+  padding: 18px 10px;
+}
+
+.shell.sidebar-collapsed .brand {
+  flex-direction: column;
+  gap: 10px;
+}
+
+.shell.sidebar-collapsed .brand > div,
+.shell.sidebar-collapsed .menu-tree {
+  display: none;
+}
+
+.shell.sidebar-collapsed .sidebar-toggle {
+  margin-left: 0;
 }
 
 .brand-mark {
@@ -928,6 +965,55 @@ h3 {
   color: var(--primary-dark);
 }
 
+.config-subnav {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  padding-bottom: 6px;
+  scrollbar-width: thin;
+}
+
+.config-subnav .subnav-link {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.config-card {
+  width: 100%;
+  max-width: none;
+}
+
+.config-form-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(220px, 1fr));
+  gap: 14px;
+}
+
+.config-form-grid .field-block {
+  display: grid;
+  min-width: 0;
+  align-content: start;
+}
+
+.config-form-grid .field-block > span {
+  color: var(--muted);
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.config-field-wide,
+.config-form-actions {
+  grid-column: 1 / -1;
+}
+
+.config-form-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.config-form-actions button {
+  min-width: 180px;
+}
+
 .filter-chip {
   background: var(--paper);
   color: var(--ink);
@@ -1402,7 +1488,8 @@ th {
     grid-template-columns: 1fr;
   }
 
-  .shell {
+  .shell,
+  .shell.sidebar-collapsed {
     grid-template-columns: 1fr;
   }
 
@@ -1412,6 +1499,23 @@ th {
     border-right: 0;
     border-bottom: 1px solid var(--line);
     padding: 14px 18px;
+  }
+
+  .shell.sidebar-collapsed .sidebar {
+    padding: 14px 18px;
+  }
+
+  .shell.sidebar-collapsed .brand {
+    flex-direction: row;
+    gap: 12px;
+  }
+
+  .shell.sidebar-collapsed .sidebar-toggle {
+    margin-left: auto;
+  }
+
+  .config-form-grid {
+    grid-template-columns: repeat(2, minmax(220px, 1fr));
   }
 
   .brand {
@@ -1552,6 +1656,19 @@ th {
 
   .row {
     grid-template-columns: 1fr;
+  }
+
+  .config-form-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .config-field-wide,
+  .config-form-actions {
+    grid-column: auto;
+  }
+
+  .config-form-actions button {
+    width: 100%;
   }
 
   .row-auto-fit {

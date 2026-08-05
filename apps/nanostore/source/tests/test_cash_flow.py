@@ -205,6 +205,12 @@ class CashFlowTest(unittest.TestCase):
         self.assertIn("validacao estrutural", page.lower())
         self.assertIn("Assistir tributacao", page)
         self.assertIn("Configurar emitente", page)
+        self.assertIn('id="sidebar-toggle"', page)
+        self.assertIn('class="subnav config-subnav"', page)
+        self.assertIn('id="config-emitente" data-subview', page)
+        self.assertIn('id="config-integracoes" data-subview hidden', page)
+        self.assertIn('class="field-block config-field-wide"><span>Razao social', page)
+        self.assertEqual(2, page.count('class="settings-form config-form-grid"'))
 
         response = client.patch(f"/api/products/{product.id}", json={
             "sku": "ITEM-EDITADO", "name": "Nome novo", "barcode": "789000000003",
