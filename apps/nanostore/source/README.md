@@ -43,6 +43,10 @@ movidos pelos botoes Anterior/Avancar no celular. O formulario do pedido tambem
 abre um cadastro rapido de cliente e seleciona automaticamente o registro criado,
 sem perder os itens que ja estavam sendo lancados.
 
+Cada card possui a acao `Finalizar`. O pedido finalizado muda para o painel
+verde `Finalizados hoje`, pode ser reaberto no mesmo dia e deixa o kanban
+automaticamente no dia seguinte; pedidos ainda pendentes permanecem na fila.
+
 Os pedidos do kanban podem ser editados ou excluidos. A edicao recalcula itens,
 estoque e conta a receber, preservando pagamentos existentes; o novo total nao
 pode ficar abaixo do valor ja recebido. A exclusao realiza cancelamento

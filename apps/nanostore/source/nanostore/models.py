@@ -123,6 +123,7 @@ class PharmacySale(TimestampMixin, db.Model):
     table_reference = db.Column(db.String(40), default="", nullable=False, index=True)
     delivery_address = db.Column(db.String(300), default="", nullable=False)
     delivery_status = db.Column(db.String(30), default="new", nullable=False, index=True)
+    completed_at = db.Column(db.DateTime, nullable=True, index=True)
 
     customer = db.relationship("PharmacyCustomer", backref=db.backref("sales", lazy="dynamic"))
 

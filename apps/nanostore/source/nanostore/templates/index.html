@@ -110,7 +110,7 @@
               <div class="section-head compact-head"><div><p class="eyebrow">Operacao</p><h3>Lista de pedidos</h3></div><button type="button" class="secondary-btn" data-open-view="lancamentos" data-open-subview="lancamentos-vendas">Abrir kanban</button></div>
               <div class="order-status-summary"><span>Novo <strong>{{ summary.order_status_counts.new }}</strong></span><span>Separado <strong>{{ summary.order_status_counts.ready }}</strong></span><span>Entrega <strong>{{ summary.order_status_counts.out_for_delivery }}</strong></span><span>Delivery <strong>{{ summary.order_status_counts.delivered }}</strong></span></div>
               <div class="table-wrap dashboard-table-wrap"><table><thead><tr><th>Pedido</th><th>Cliente</th><th>Destino</th><th>Status</th><th>Total</th></tr></thead><tbody>
-                {% for sale in summary.recent_sales %}<tr><td><strong>{{ sale.code }}</strong></td><td>{{ sale.customer_name }}</td><td>{{ ('Mesa ' ~ sale.table_reference) if sale.fulfillment_type == 'table' else (sale.delivery_address or 'Balcao') }}</td><td>{{ {'new':'Novo','picking':'Novo','ready':'Separado','out_for_delivery':'Entrega','delivered':'Delivery','cancelled':'Cancelado'}.get(sale.delivery_status, sale.delivery_status) }}</td><td>R$ {{ '%.2f'|format(sale.total_amount) }}</td></tr>
+                {% for sale in summary.recent_sales %}<tr><td><strong>{{ sale.code }}</strong></td><td>{{ sale.customer_name }}</td><td>{{ ('Mesa ' ~ sale.table_reference) if sale.fulfillment_type == 'table' else (sale.delivery_address or 'Balcao') }}</td><td>{{ {'new':'Novo','picking':'Novo','ready':'Separado','out_for_delivery':'Entrega','delivered':'Delivery','completed':'Finalizado','cancelled':'Cancelado'}.get(sale.delivery_status, sale.delivery_status) }}</td><td>R$ {{ '%.2f'|format(sale.total_amount) }}</td></tr>
                 {% else %}<tr><td colspan="5">Nenhum pedido registrado.</td></tr>{% endfor %}
               </tbody></table></div>
             </article>
@@ -912,20 +912,26 @@
                   {'key': 'new', 'name': 'Novo', 'color': '#2f6fce', 'statuses': ['new', 'picking']},
                   {'key': 'ready', 'name': 'Separado', 'color': '#c48b2a', 'statuses': ['ready']},
                   {'key': 'out_for_delivery', 'name': 'Entrega', 'color': '#d26a30', 'statuses': ['out_for_delivery']},
-                  {'key': 'delivered', 'name': 'Delivery', 'color': '#2d8a4d', 'statuses': ['delivered']}
+                  {'key': 'delivered', 'name': 'Delivery', 'color': '#217f86', 'statuses': ['delivered']},
+                  {'key': 'completed', 'name': 'Finalizados hoje', 'color': '#2d8a4d', 'statuses': ['completed']}
                 ] %}
                 <section class="kanban-board order-kanban" id="order-kanban">
                   {% for column in order_columns %}
                   <article class="kanban-column order-kanban-column" data-order-status="{{ column.key }}">
-                    <header class="kanban-head"><div class="kanban-title"><span class="swatch-large" style="background: {{ column.color }}"></span><strong>{{ column.name }}</strong></div><span class="kanban-count" data-order-count>{{ fiscal_sales|selectattr('delivery_status', 'in', column.statuses)|list|length }}</span></header>
+                    <header class="kanban-head"><div class="kanban-title"><span class="swatch-large" style="background: {{ column.color }}"></span><strong>{{ column.name }}</strong></div><span class="kanban-count" data-order-count>{{ kanban_sales|selectattr('delivery_status', 'in', column.statuses)|list|length }}</span></header>
                     <div class="kanban-list" data-order-dropzone>
-                      {% for sale in fiscal_sales if sale.delivery_status in column.statuses %}
-                      <section class="ticket-card order-kanban-card" draggable="true" data-sale-id="{{ sale.id }}" data-order-status="{{ column.key }}">
+                      {% for sale in kanban_sales if sale.delivery_status in column.statuses %}
+                      <section class="ticket-card order-kanban-card{% if column.key == 'completed' %} is-completed{% endif %}" draggable="{{ 'false' if column.key == 'completed' else 'true' }}" data-sale-id="{{ sale.id }}" data-order-status="{{ column.key }}">
                         <div class="ticket-card-head"><strong>{{ sale.code }}</strong><span class="mini-badge">{{ 'Mesa' if sale.fulfillment_type == 'table' else 'Delivery' }}</span></div>
                         <p class="ticket-copy"><strong>{{ sale.customer_name }}</strong> · R$ {{ '%.2f'|format(sale.total_amount) }}</p>
                         <p class="muted-line">{{ ('Mesa ' ~ sale.table_reference) if sale.fulfillment_type == 'table' else (sale.delivery_address or 'Destino nao informado') }}</p>
                         <div class="document-actions"><a class="table-action" target="_blank" href="/api/orders/{{ sale.id }}/pdf?format=a4">PDF A4</a><a class="table-action" target="_blank" href="/api/orders/{{ sale.id }}/pdf?format=thermal58">58 mm</a><a class="table-action" target="_blank" href="/api/orders/{{ sale.id }}/pdf?format=thermal80">80 mm</a></div>
-                        <div class="order-card-actions"><button type="button" class="secondary-btn order-move-btn" data-order-move="prev" aria-label="Mover pedido para a etapa anterior" {% if column.key == 'new' %}disabled{% endif %}>Anterior</button><button type="button" class="order-move-btn" data-order-move="next" aria-label="Mover pedido para a proxima etapa" {% if column.key == 'delivered' %}disabled{% endif %}>Avancar</button><button type="button" class="secondary-btn" data-order-edit>Editar</button><button type="button" class="danger-btn" data-order-delete>Excluir</button></div>
+                        {% if column.key == 'completed' %}<p class="completed-at-line">Finalizado hoje</p>{% endif %}
+                        <div class="order-card-actions">
+                          {% if column.key != 'completed' %}<button type="button" class="secondary-btn order-move-btn" data-order-move="prev" aria-label="Mover pedido para a etapa anterior" {% if column.key == 'new' %}disabled{% endif %}>Anterior</button><button type="button" class="order-move-btn" data-order-move="next" aria-label="Mover pedido para a proxima etapa" {% if column.key == 'delivered' %}disabled{% endif %}>Avancar</button>{% endif %}
+                          <button type="button" class="secondary-btn" data-order-edit>Editar</button><button type="button" class="danger-btn" data-order-delete>Excluir</button>
+                          {% if column.key == 'completed' %}<button type="button" class="secondary-btn order-reopen-btn" data-order-reopen>Reabrir</button>{% else %}<button type="button" class="order-finalize-btn" data-order-finalize>Finalizar</button>{% endif %}
+                        </div>
                       </section>
                       {% endfor %}
                     </div>
@@ -1260,12 +1266,12 @@
           </section>
 
           <section class="report-panel" data-report-panel="orders" hidden>
-            <div class="order-status-summary report-status-summary"><span>Novo <strong>{{ summary.order_status_counts.new }}</strong></span><span>Separado <strong>{{ summary.order_status_counts.ready }}</strong></span><span>Entrega <strong>{{ summary.order_status_counts.out_for_delivery }}</strong></span><span>Delivery <strong>{{ summary.order_status_counts.delivered }}</strong></span><span>Cancelado <strong>{{ summary.order_status_counts.cancelled }}</strong></span></div>
+            <div class="order-status-summary report-status-summary"><span>Novo <strong>{{ summary.order_status_counts.new }}</strong></span><span>Separado <strong>{{ summary.order_status_counts.ready }}</strong></span><span>Entrega <strong>{{ summary.order_status_counts.out_for_delivery }}</strong></span><span>Delivery <strong>{{ summary.order_status_counts.delivered }}</strong></span><span>Finalizado <strong>{{ summary.order_status_counts.completed }}</strong></span><span>Cancelado <strong>{{ summary.order_status_counts.cancelled }}</strong></span></div>
             <article class="card report-table-card">
               <div class="section-head compact-head"><div><p class="eyebrow">Pedidos</p><h3>Status dos pedidos</h3></div><span class="report-result-count" data-report-count></span></div>
               <div class="table-wrap"><table><thead><tr><th>Data</th><th>Pedido</th><th>Cliente</th><th>Destino</th><th>Status operacional</th><th>Status financeiro</th><th>Total</th></tr></thead><tbody>
                 {% for sale in summary.report_sales %}
-                <tr data-report-row data-report-date="{{ sale.created_at[:10] }}"><td>{{ sale.created_at[:16]|replace('T', ' ') }}</td><td><strong>{{ sale.code }}</strong></td><td>{{ sale.customer_name }}</td><td>{{ ('Mesa ' ~ sale.table_reference) if sale.fulfillment_type == 'table' else (sale.delivery_address or 'Balcao') }}</td><td>{{ {'new':'Novo','picking':'Novo','ready':'Separado','out_for_delivery':'Entrega','delivered':'Delivery','cancelled':'Cancelado'}.get(sale.delivery_status, sale.delivery_status) }}</td><td>{{ {'open':'Aberto','partially_paid':'Parcial','paid':'Pago','cancelled':'Cancelado'}.get(sale.status, sale.status) }}</td><td>R$ {{ '%.2f'|format(sale.total_amount) }}</td></tr>
+                <tr data-report-row data-report-date="{{ sale.created_at[:10] }}"><td>{{ sale.created_at[:16]|replace('T', ' ') }}</td><td><strong>{{ sale.code }}</strong></td><td>{{ sale.customer_name }}</td><td>{{ ('Mesa ' ~ sale.table_reference) if sale.fulfillment_type == 'table' else (sale.delivery_address or 'Balcao') }}</td><td>{{ {'new':'Novo','picking':'Novo','ready':'Separado','out_for_delivery':'Entrega','delivered':'Delivery','completed':'Finalizado','cancelled':'Cancelado'}.get(sale.delivery_status, sale.delivery_status) }}</td><td>{{ {'open':'Aberto','partially_paid':'Parcial','paid':'Pago','cancelled':'Cancelado'}.get(sale.status, sale.status) }}</td><td>R$ {{ '%.2f'|format(sale.total_amount) }}</td></tr>
                 {% else %}<tr data-empty-row><td colspan="7">Nenhum pedido registrado.</td></tr>{% endfor %}
               </tbody></table></div>
             </article>
@@ -2416,7 +2422,7 @@
       });
 
       const orderKanban = document.getElementById("order-kanban");
-      const orderStatusOrder = ["new", "ready", "out_for_delivery", "delivered"];
+      const orderStatusOrder = ["new", "ready", "out_for_delivery", "delivered", "completed"];
       const orderKanbanFeedback = document.getElementById("order-kanban-feedback");
 
       function resetSaleEdit() {
@@ -2520,6 +2526,21 @@
         }
       }
 
+      async function setOrderCompletion(card, completed) {
+        if (!card) return;
+        if (orderKanbanFeedback) orderKanbanFeedback.textContent = completed ? "Finalizando pedido..." : "Reabrindo pedido...";
+        try {
+          await postJson(
+            `/api/sales/${card.dataset.saleId}/fulfillment`,
+            { delivery_status: completed ? "completed" : "new" },
+            "PATCH",
+          );
+          window.location.reload();
+        } catch (error) {
+          if (orderKanbanFeedback) orderKanbanFeedback.textContent = error.message;
+        }
+      }
+
       if (orderKanban) {
         orderKanban.querySelectorAll(".order-kanban-card").forEach((card) => {
           card.addEventListener("dragstart", (event) => {
@@ -2557,6 +2578,14 @@
           }
           if (event.target.closest("[data-order-edit]")) {
             await editOrder(card.dataset.saleId);
+            return;
+          }
+          if (event.target.closest("[data-order-finalize]")) {
+            await setOrderCompletion(card, true);
+            return;
+          }
+          if (event.target.closest("[data-order-reopen]")) {
+            await setOrderCompletion(card, false);
             return;
           }
           if (event.target.closest("[data-order-delete]")) {

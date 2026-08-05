@@ -190,10 +190,13 @@ def upgrade_schema():
         delivery_columns = {
             "customer_id": "INTEGER NULL", "fulfillment_type": "VARCHAR(20) NOT NULL DEFAULT 'counter'",
             "table_reference": "VARCHAR(40) NOT NULL DEFAULT ''", "delivery_address": "VARCHAR(300) NOT NULL DEFAULT ''",
-            "delivery_status": "VARCHAR(30) NOT NULL DEFAULT 'new'",
+            "delivery_status": "VARCHAR(30) NOT NULL DEFAULT 'new'", "completed_at": "DATETIME NULL",
         }
         for column, definition in delivery_columns.items():
             if column not in sale_columns:
                 db.session.execute(text(f"ALTER TABLE pharmacy_sale ADD COLUMN {column} {definition}"))
+        sale_indexes = {index["name"] for index in inspector.get_indexes("pharmacy_sale")}
+        if "ix_pharmacy_sale_completed_at" not in sale_indexes:
+            db.session.execute(text("CREATE INDEX ix_pharmacy_sale_completed_at ON pharmacy_sale (completed_at)"))
 
     db.session.commit()

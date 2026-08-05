@@ -1,4 +1,4 @@
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 import os
 from uuid import uuid4
@@ -6,7 +6,8 @@ from uuid import uuid4
 from cryptography import x509
 from cryptography.hazmat.primitives import serialization
 from flask import Blueprint, Response, abort, jsonify, render_template, request, send_file
-from sqlalchemy import case, func
+from sqlalchemy import and_, case, func, or_
+from zoneinfo import ZoneInfo
 from werkzeug.exceptions import HTTPException
 
 from .extensions import db
@@ -260,6 +261,7 @@ def _serialize_sale(sale):
         "table_id": table_id,
         "delivery_address": sale.delivery_address,
         "delivery_status": sale.delivery_status,
+        "completed_at": sale.completed_at.isoformat() + "Z" if sale.completed_at else "",
         "customer_id": sale.customer_id,
         "customer_phone": sale.customer_phone,
         "notes": sale.notes,
@@ -798,7 +800,7 @@ def _summary():
         Decimal(str(product["stock"])) * Decimal(str(product["cost_price"]))
         for product in product_rows if product["tracks_inventory"]
     )
-    order_status_counts = {status: 0 for status in ("new", "ready", "out_for_delivery", "delivered", "cancelled")}
+    order_status_counts = {status: 0 for status in ("new", "ready", "out_for_delivery", "delivered", "completed", "cancelled")}
     for status, count in db.session.query(PharmacySale.delivery_status, func.count(PharmacySale.id)).group_by(PharmacySale.delivery_status).all():
         normalized = "new" if status == "picking" else status
         if normalized in order_status_counts:
@@ -905,6 +907,17 @@ def index():
     summary = _summary()
     mode_key, store_mode = resolve_store_mode(_setting_map().get("STORE_MODE"))
     fiscal_history = FiscalSimulation.query.order_by(FiscalSimulation.created_at.desc(), FiscalSimulation.id.desc()).limit(50).all()
+    local_tz = ZoneInfo(os.environ.get("TZ", "America/Sao_Paulo"))
+    local_today = datetime.now(local_tz).date()
+    day_start = datetime.combine(local_today, time.min, local_tz).astimezone(timezone.utc).replace(tzinfo=None)
+    day_end = datetime.combine(local_today + timedelta(days=1), time.min, local_tz).astimezone(timezone.utc).replace(tzinfo=None)
+    kanban_sales = PharmacySale.query.filter(
+        PharmacySale.status != "cancelled",
+        or_(
+            PharmacySale.delivery_status != "completed",
+            and_(PharmacySale.completed_at >= day_start, PharmacySale.completed_at < day_end),
+        ),
+    ).order_by(PharmacySale.created_at.desc(), PharmacySale.id.desc()).limit(200).all()
     menu_sections = [
         {"id": "inicio", "title": "Inicio", "description": "Visao geral e indicadores"},
         {"id": "workflow", "title": "Workflow", "description": "Kanban, WhatsApp e chat interno"},
@@ -930,6 +943,7 @@ def index():
         fiscal_sales=PharmacySale.query.filter(
             PharmacySale.status != "cancelled"
         ).order_by(PharmacySale.created_at.desc(), PharmacySale.id.desc()).limit(200).all(),
+        kanban_sales=kanban_sales,
         fiscal_simulations=[_serialize_fiscal_simulation(item) for item in fiscal_history],
         menu_sections=menu_sections,
         mode_key=mode_key,
@@ -1506,10 +1520,11 @@ def api_sale_fulfillment(sale_id):
         abort(400, "Pedido cancelado nao pode mudar de etapa.")
     payload = request.get_json(force=True)
     status = (payload.get("delivery_status") or "").strip().lower()
-    allowed = {"new", "picking", "ready", "out_for_delivery", "delivered", "cancelled"}
+    allowed = {"new", "picking", "ready", "out_for_delivery", "delivered", "completed", "cancelled"}
     if status not in allowed:
         abort(400, "Status de separacao ou entrega invalido.")
     sale.delivery_status = status
+    sale.completed_at = datetime.now(timezone.utc).replace(tzinfo=None) if status == "completed" else None
     db.session.commit()
     return jsonify({"ok": True, "sale": _serialize_sale(sale)})
 

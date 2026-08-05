@@ -328,6 +328,25 @@ body[data-store-mode="distributor"] .order-control-panel,
   transform: scale(0.98);
 }
 
+.order-kanban-card.is-completed {
+  cursor: default;
+  border-color: #78a985;
+  background: #edf7ef;
+  box-shadow: inset 4px 0 0 #2d8a4d;
+}
+
+.order-kanban-card.is-completed .mini-badge {
+  background: #cce7d2;
+  color: #185f37;
+}
+
+.completed-at-line {
+  margin: 9px 0 0;
+  color: #24633c;
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
 .order-card-actions {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -337,6 +356,12 @@ body[data-store-mode="distributor"] .order-control-panel,
 
 .order-card-actions button {
   width: 100%;
+}
+
+.order-finalize-btn {
+  grid-column: 1 / -1;
+  background: #2d8a4d;
+  border-color: #2d8a4d;
 }
 
 .danger-btn {
@@ -571,7 +596,7 @@ h3 {
 }
 
 .report-status-summary {
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   margin-bottom: 12px;
 }
 

@@ -1,5 +1,5 @@
 import unittest
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 import sys
@@ -339,6 +339,47 @@ class CashFlowTest(unittest.TestCase):
             self.assertEqual(response.status_code, 200, response.get_json())
             db.session.refresh(sale)
             self.assertEqual(sale.delivery_status, status)
+
+    def test_finalized_order_stays_today_and_leaves_kanban_next_day(self):
+        db.session.add(IntegrationSetting(key="STORE_MODE", value="distributor"))
+        today_sale = PharmacySale(
+            code="FINAL-HOJE", customer_name="Cliente hoje", total_amount=Decimal("10"),
+            delivery_status="completed", completed_at=datetime.now(timezone.utc).replace(tzinfo=None),
+        )
+        old_sale = PharmacySale(
+            code="FINAL-ONTEM", customer_name="Cliente ontem", total_amount=Decimal("10"),
+            delivery_status="completed", completed_at=datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=1),
+        )
+        pending_sale = PharmacySale(
+            code="PENDENTE-HOJE", customer_name="Cliente pendente", total_amount=Decimal("10"),
+            delivery_status="ready",
+        )
+        db.session.add_all([today_sale, old_sale, pending_sale])
+        db.session.commit()
+        client = self.app.test_client()
+
+        page = client.get("/").get_data(as_text=True)
+        self.assertIn(f'data-sale-id="{today_sale.id}" data-order-status="completed"', page)
+        self.assertNotIn(f'data-sale-id="{old_sale.id}" data-order-status="completed"', page)
+        self.assertIn(f'data-sale-id="{pending_sale.id}" data-order-status="ready"', page)
+        self.assertIn("Finalizados hoje", page)
+        self.assertIn("data-order-finalize", page)
+
+        reopened = client.patch(
+            f"/api/sales/{today_sale.id}/fulfillment", json={"delivery_status": "new"},
+        )
+        self.assertEqual(200, reopened.status_code, reopened.get_json())
+        db.session.refresh(today_sale)
+        self.assertEqual("new", today_sale.delivery_status)
+        self.assertIsNone(today_sale.completed_at)
+
+        finalized = client.patch(
+            f"/api/sales/{today_sale.id}/fulfillment", json={"delivery_status": "completed"},
+        )
+        self.assertEqual(200, finalized.status_code, finalized.get_json())
+        db.session.refresh(today_sale)
+        self.assertEqual("completed", today_sale.delivery_status)
+        self.assertIsNotNone(today_sale.completed_at)
 
     def test_table_order_requires_table_reference(self):
         response = self.app.test_client().post("/api/sales", json={
