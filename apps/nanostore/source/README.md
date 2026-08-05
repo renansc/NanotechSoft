@@ -57,6 +57,11 @@ posicao consolidada e itens/lotes do estoque, entradas e saidas de caixa em
 listas separadas e cadastro de clientes. As consultas aceitam busca e periodo,
 alem de exportacao CSV e impressao do resultado visivel.
 
+A aba `Estoque` apresenta a posicao atual por produto, valores de custo e venda,
+filtros de disponibilidade, lotes ativos e movimentacoes recentes. A aba
+`Documentacao` concentra os procedimentos de venda, cancelamento, correcoes
+auditaveis, caixa, estoque, cadastros, entrega, faturamento e relatorios.
+
 O cadastro de produtos e o lancamento de pedidos aceitam codigo de barras por
 leitor USB (bipe seguido de Enter) ou pela webcam em navegador com HTTPS. No
 cadastro, o codigo capturado preenche o novo produto; no pedido, um produto ja

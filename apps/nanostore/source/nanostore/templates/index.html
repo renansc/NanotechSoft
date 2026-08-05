@@ -24,7 +24,10 @@
             <button type="button" class="menu-link active" data-target="inicio">Dashboard</button>
             <button type="button" class="menu-link" data-target="lancamentos" data-open-subview="lancamentos-caixa">Caixa</button>
             <button type="button" class="menu-link" data-target="lancamentos" data-open-subview="lancamentos-vendas">Pedidos</button>
+            <button type="button" class="menu-link" data-target="estoque">Estoque</button>
             <button type="button" class="menu-link" data-target="cadastros" data-open-subview="cadastros-produtos">Cadastros</button>
+            <button type="button" class="menu-link" data-target="relatorios">Relatorios</button>
+            <button type="button" class="menu-link" data-target="documentacao">Documentacao</button>
           </section>
           {% else %}
           <section class="menu-group">
@@ -41,6 +44,7 @@
           <section class="menu-group">
             <h3>Lancamentos</h3>
             <button type="button" class="menu-link" data-target="lancamentos">{{ store_mode.sales }}</button>
+            {% if mode_key != 'services' %}<button type="button" class="menu-link" data-target="estoque">Estoque</button>{% endif %}
             {% if store_mode.show_fiscal %}<button type="button" class="menu-link" data-target="faturamento">Faturamento</button>{% endif %}
           </section>
 
@@ -52,6 +56,7 @@
           <section class="menu-group">
             <h3>Configuracao</h3>
             <button type="button" class="menu-link" data-target="configuracao">Parametros e integracoes</button>
+            <button type="button" class="menu-link" data-target="documentacao">Documentacao</button>
           </section>
           {% endif %}
         </nav>
@@ -158,6 +163,69 @@
             <article class="card stat"><strong>{{ summary.cash_status }}</strong><span>caixa</span></article>
           </section>
           {% endif %}
+        </section>
+
+        <section class="view" id="estoque" data-view hidden>
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Estoque</p>
+              <h2>Visao atual do estoque</h2>
+            </div>
+            <p class="section-copy">Saldos, valores, necessidade de reposicao, lotes e ultimas movimentacoes.</p>
+          </div>
+
+          <nav class="action-rail" aria-label="Acoes de estoque">
+            <button type="button" data-open-view="cadastros" data-open-subview="cadastros-produtos">Novo produto</button>
+            <button type="button" data-open-view="lancamentos" data-open-subview="lancamentos-estoque">Ajustar estoque</button>
+            {% if store_mode.show_lots %}<button type="button" data-open-view="lancamentos" data-open-subview="lancamentos-lotes">Registrar entrada</button>{% endif %}
+            <button type="button" data-open-view="relatorios">Abrir relatorios</button>
+          </nav>
+
+          <section class="stats-grid stock-overview-stats">
+            <article class="card stat"><strong>{{ summary.products_count }}</strong><span>produtos cadastrados</span></article>
+            <article class="card stat"><strong>{{ '%.3f'|format(summary.stock_quantity) }}</strong><span>unidades disponiveis</span></article>
+            <article class="card stat"><strong>R$ {{ '%.2f'|format(summary.stock_cost_value) }}</strong><span>valor pelo custo</span></article>
+            <article class="card stat"><strong>R$ {{ '%.2f'|format(summary.stock_sale_value) }}</strong><span>valor potencial de venda</span></article>
+            <article class="card stat urgent-stat"><strong>{{ summary.low_stock_count }}</strong><span>produtos para repor</span></article>
+            <article class="card stat urgent-stat"><strong>{{ summary.no_stock_count }}</strong><span>produtos sem saldo</span></article>
+          </section>
+
+          <section class="stock-toolbar">
+            <label><span>Buscar no estoque</span><input type="search" id="stock-overview-search" placeholder="SKU, produto, categoria ou codigo de barras"></label>
+            <div class="stock-filter-buttons" aria-label="Situacao do estoque">
+              <button type="button" class="filter-chip active" data-stock-filter="all">Todos</button>
+              <button type="button" class="filter-chip" data-stock-filter="available">Disponiveis</button>
+              <button type="button" class="filter-chip" data-stock-filter="low">Reposicao</button>
+              <button type="button" class="filter-chip" data-stock-filter="out">Sem saldo</button>
+            </div>
+          </section>
+
+          <article class="card stock-overview-table">
+            <div class="section-head compact-head"><div><p class="eyebrow">Posicao</p><h3>Saldo por produto</h3></div><span class="report-result-count" id="stock-overview-count"></span></div>
+            <div class="table-wrap"><table><thead><tr><th>SKU</th><th>Produto</th><th>Codigo de barras</th><th>Categoria</th><th>Saldo</th><th>Minimo</th><th>Custo</th><th>Venda</th><th>Valor em estoque</th><th>Situacao</th></tr></thead><tbody>
+              {% for product in summary.products %}
+              {% set stock_status = 'out' if product.stock <= 0 else ('low' if product.stock <= product.minimum_stock else 'available') %}
+              <tr data-stock-overview-row data-stock-status="{{ stock_status }}"><td>{{ product.sku }}</td><td><strong>{{ product.name }}</strong></td><td>{{ product.barcode or '-' }}</td><td>{{ product.category_name or '-' }}</td><td>{{ '%.3f'|format(product.stock) }}</td><td>{{ '%.3f'|format(product.minimum_stock) }}</td><td>R$ {{ '%.2f'|format(product.cost_price) }}</td><td>R$ {{ '%.2f'|format(product.sale_price) }}</td><td>R$ {{ '%.2f'|format(product.stock * product.cost_price) }}</td><td><span class="stock-state {{ 'is-low' if stock_status != 'available' else 'is-ok' }}">{{ {'out':'Sem saldo','low':'Repor','available':'Disponivel'}[stock_status] }}</span></td></tr>
+              {% else %}<tr><td colspan="10">Nenhum produto cadastrado.</td></tr>{% endfor %}
+            </tbody></table></div>
+          </article>
+
+          <section class="grid stock-detail-grid">
+            <article class="card">
+              <div class="section-head compact-head"><div><p class="eyebrow">Lotes ativos</p><h3>Itens disponiveis</h3></div><strong>{{ summary.active_lots|length }}</strong></div>
+              <div class="table-wrap stock-detail-table"><table><thead><tr><th>Produto</th><th>Lote</th><th>Validade</th><th>Saldo</th><th>Local</th></tr></thead><tbody>
+                {% for lot in summary.active_lots %}<tr><td>{{ lot.product_name }}</td><td>{{ lot.lot_code }}</td><td>{{ lot.expiration_date }}</td><td>{{ '%.3f'|format(lot.quantity_available) }}</td><td>{{ lot.location or '-' }}</td></tr>
+                {% else %}<tr><td colspan="5">Nenhum lote com saldo.</td></tr>{% endfor %}
+              </tbody></table></div>
+            </article>
+            <article class="card">
+              <div class="section-head compact-head"><div><p class="eyebrow">Historico</p><h3>Ultimas movimentacoes</h3></div></div>
+              <div class="table-wrap stock-detail-table"><table><thead><tr><th>Data</th><th>Produto</th><th>Tipo</th><th>Qtd</th><th>Saldo</th><th>Referencia</th></tr></thead><tbody>
+                {% for movement in summary.recent_stock_movements %}<tr><td>{{ movement.created_at[:16]|replace('T', ' ') }}</td><td>{{ movement.product_name }}</td><td>{{ movement.movement_type }}</td><td class="{{ 'movement-in' if movement.quantity >= 0 else 'movement-out' }}">{{ '%.3f'|format(movement.quantity) }}</td><td>{{ '%.3f'|format(movement.balance_after) }}</td><td>{{ movement.reference_code or '-' }}</td></tr>
+                {% else %}<tr><td colspan="6">Nenhuma movimentacao registrada.</td></tr>{% endfor %}
+              </tbody></table></div>
+            </article>
+          </section>
         </section>
 
         <section class="view" id="workflow" data-view hidden>
@@ -1422,6 +1490,137 @@
                 </table>
               </div>
             </article>
+          </section>
+        </section>
+
+        <section class="view" id="documentacao" data-view hidden>
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Documentacao</p>
+              <h2>Manual de operacao</h2>
+            </div>
+            <p class="section-copy">Procedimentos para executar e corrigir os movimentos mais usados do NanoStore.</p>
+          </div>
+
+          <section class="documentation-toolbar">
+            <label><span>Localizar procedimento</span><input type="search" id="documentation-search" placeholder="Venda, caixa, estoque, cadastro ou nota"></label>
+            <button type="button" class="secondary-btn" id="documentation-expand-all">Expandir todos</button>
+            <button type="button" class="secondary-btn" id="documentation-collapse-all">Recolher todos</button>
+          </section>
+          <p class="report-no-results" id="documentation-no-results" hidden>Nenhum procedimento encontrado.</p>
+
+          <section class="documentation-list">
+            <details class="documentation-topic" data-documentation-topic open>
+              <summary><span>01</span><strong>Vender ou criar um pedido</strong></summary>
+              <div class="documentation-content">
+                <ol>
+                  <li>Abra <strong>Pedidos</strong> e selecione o destino: balcao, mesa ou entrega.</li>
+                  <li>Informe o cliente. Para entrega, escolha um cliente cadastrado com telefone e endereco.</li>
+                  <li>Adicione os produtos pelo seletor, leitor de codigo de barras ou webcam e confira quantidade, preco e desconto.</li>
+                  <li>Escolha a forma de pagamento. Pagamentos imediatos exigem um caixa aberto.</li>
+                  <li>Salve o pedido e acompanhe sua etapa no kanban.</li>
+                </ol>
+                <button type="button" data-open-view="lancamentos" data-open-subview="lancamentos-vendas">Abrir pedidos</button>
+              </div>
+            </details>
+
+            <details class="documentation-topic" data-documentation-topic>
+              <summary><span>02</span><strong>Editar, cancelar ou excluir uma venda</strong></summary>
+              <div class="documentation-content">
+                <ol>
+                  <li>No kanban de pedidos, localize a venda e use <strong>Editar</strong> para corrigir cliente, destino ou itens.</li>
+                  <li>Ao salvar, o sistema recalcula estoque e conta a receber. O total nao pode ficar abaixo do valor ja recebido.</li>
+                  <li>Para excluir, use <strong>Excluir</strong> no card e confirme a operacao.</li>
+                  <li>A exclusao cancela o pedido, devolve os itens ao estoque, cancela o recebivel e estorna pagamentos.</li>
+                  <li>Se o recebimento pertence a um caixa anterior, abra o caixa atual antes de excluir para registrar a saida de estorno.</li>
+                </ol>
+                <div class="documentation-warning"><strong>Atencao:</strong> a venda permanece no historico como cancelada para preservar a auditoria.</div>
+                <button type="button" data-open-view="lancamentos" data-open-subview="lancamentos-vendas">Abrir kanban</button>
+              </div>
+            </details>
+
+            <details class="documentation-topic" data-documentation-topic>
+              <summary><span>03</span><strong>Abrir, movimentar e fechar o caixa</strong></summary>
+              <div class="documentation-content">
+                <ol>
+                  <li>Em <strong>Caixa</strong>, informe o saldo inicial e abra a sessao.</li>
+                  <li>Use <strong>Entrada</strong> para reforcos e outros recebimentos manuais.</li>
+                  <li>Use <strong>Saida</strong> para sangrias, despesas e retiradas, sempre informando categoria e descricao.</li>
+                  <li>Confira o saldo esperado e informe o valor contado ao fechar. A diferenca fica registrada.</li>
+                </ol>
+                <div class="documentation-warning"><strong>Correcao de lancamentos:</strong> movimentos de caixa nao sao apagados. Registre um movimento inverso com referencia ao lancamento incorreto para manter o historico auditavel.</div>
+                <button type="button" data-open-view="lancamentos" data-open-subview="lancamentos-caixa">Abrir caixa</button>
+              </div>
+            </details>
+
+            <details class="documentation-topic" data-documentation-topic>
+              <summary><span>04</span><strong>Consultar e corrigir o estoque</strong></summary>
+              <div class="documentation-content">
+                <ol>
+                  <li>Abra <strong>Estoque</strong> para consultar saldo, estoque minimo, custo, valor de venda e situacao de cada produto.</li>
+                  <li>Filtre por disponiveis, reposicao ou sem saldo e use a busca para localizar o item.</li>
+                  <li>Para uma entrada por lote, informe recebimento, validade, quantidade, custo e localizacao.</li>
+                  <li>Para corrigir divergencias, use ajuste de estoque ou registre uma contagem fisica.</li>
+                  <li>Movimentos de estoque nao sao excluidos; uma correcao gera novo ajuste e preserva o saldo anterior no historico.</li>
+                </ol>
+                <button type="button" data-open-view="estoque">Consultar estoque</button>
+                <button type="button" class="secondary-btn" data-open-view="lancamentos" data-open-subview="lancamentos-estoque">Ajustar estoque</button>
+              </div>
+            </details>
+
+            <details class="documentation-topic" data-documentation-topic>
+              <summary><span>05</span><strong>Criar um novo cadastro</strong></summary>
+              <div class="documentation-content">
+                <ol>
+                  <li>Abra <strong>Cadastros</strong> e escolha produtos, clientes, fornecedores, categorias ou mesas, conforme o modo da loja.</li>
+                  <li>No produto, informe SKU, nome, unidade, precos, estoque minimo e codigo de barras.</li>
+                  <li>Quando houver emissao fiscal, complete NCM, CFOP, origem, CST/CSOSN, PIS, COFINS e demais campos aplicaveis.</li>
+                  <li>No cliente de entrega, telefone e endereco sao obrigatorios.</li>
+                  <li>O cadastro rapido dentro do pedido salva o cliente e o seleciona automaticamente.</li>
+                </ol>
+                <button type="button" data-open-view="cadastros" data-open-subview="cadastros-produtos">Novo produto</button>
+                {% if mode_key == 'distributor' %}<button type="button" class="secondary-btn" data-open-view="cadastros" data-open-subview="cadastros-clientes">Novo cliente</button>{% endif %}
+              </div>
+            </details>
+
+            <details class="documentation-topic" data-documentation-topic>
+              <summary><span>06</span><strong>Separar e entregar pedidos</strong></summary>
+              <div class="documentation-content">
+                <ol>
+                  <li>O pedido novo entra na primeira coluna do kanban.</li>
+                  <li>Use <strong>Avancar</strong> para passar por Novo, Separado, Entrega e Delivery.</li>
+                  <li>Use <strong>Anterior</strong> quando precisar devolver o pedido para a etapa anterior.</li>
+                  <li>Pedidos de mesa mostram a referencia cadastrada; entregas mostram endereco e telefone do cliente.</li>
+                </ol>
+                <button type="button" data-open-view="lancamentos" data-open-subview="lancamentos-vendas">Acompanhar pedidos</button>
+              </div>
+            </details>
+
+            <details class="documentation-topic" data-documentation-topic>
+              <summary><span>07</span><strong>Emitir notas e comprovantes</strong></summary>
+              <div class="documentation-content">
+                <ol>
+                  <li>Abra <strong>Faturamento</strong>, escolha o modelo do documento e selecione uma ou mais vendas.</li>
+                  <li>Confira cliente, itens, total e tributacao antes de emitir.</li>
+                  <li>No simulador, o documento nao e transmitido para a SEFAZ.</li>
+                  <li>Depois da geracao, baixe o XML, a nota A4 ou o ticket termico de 58/80 mm.</li>
+                </ol>
+                {% if store_mode.show_fiscal %}<button type="button" data-open-view="faturamento">Abrir faturamento</button>{% endif %}
+              </div>
+            </details>
+
+            <details class="documentation-topic" data-documentation-topic>
+              <summary><span>08</span><strong>Conferir e exportar relatorios</strong></summary>
+              <div class="documentation-content">
+                <ol>
+                  <li>Abra <strong>Relatorios</strong> e escolha a consulta desejada.</li>
+                  <li>Use busca e periodo para reduzir os registros exibidos.</li>
+                  <li>Entradas e saidas de caixa aparecem separadas e tambem na linha do tempo completa.</li>
+                  <li>Use <strong>Exportar CSV</strong> para abrir a lista em planilha ou <strong>Imprimir</strong> para gerar a via impressa.</li>
+                </ol>
+                <button type="button" data-open-view="relatorios">Abrir relatorios</button>
+              </div>
+            </details>
           </section>
         </section>
 
@@ -2947,6 +3146,59 @@
         } catch (error) {
           alert(error.message);
         }
+      });
+
+      const stockOverviewSearch = document.getElementById("stock-overview-search");
+      const stockOverviewCount = document.getElementById("stock-overview-count");
+      let stockOverviewFilter = "all";
+
+      function applyStockOverviewFilters() {
+        const search = (stockOverviewSearch?.value || "").trim().toLocaleLowerCase("pt-BR");
+        const rows = Array.from(document.querySelectorAll("[data-stock-overview-row]"));
+        let visible = 0;
+        rows.forEach((row) => {
+          const matchesSearch = !search || row.textContent.toLocaleLowerCase("pt-BR").includes(search);
+          const matchesStatus = stockOverviewFilter === "all" || row.dataset.stockStatus === stockOverviewFilter;
+          row.hidden = !(matchesSearch && matchesStatus);
+          if (!row.hidden) visible += 1;
+        });
+        if (stockOverviewCount) stockOverviewCount.textContent = `${visible} produto(s)`;
+      }
+
+      stockOverviewSearch?.addEventListener("input", applyStockOverviewFilters);
+      document.querySelectorAll("[data-stock-filter]").forEach((button) => {
+        button.addEventListener("click", () => {
+          stockOverviewFilter = button.dataset.stockFilter || "all";
+          document.querySelectorAll("[data-stock-filter]").forEach((item) => item.classList.remove("active"));
+          button.classList.add("active");
+          applyStockOverviewFilters();
+        });
+      });
+      applyStockOverviewFilters();
+
+      const documentationSearch = document.getElementById("documentation-search");
+      const documentationNoResults = document.getElementById("documentation-no-results");
+
+      function applyDocumentationSearch() {
+        const search = (documentationSearch?.value || "").trim().toLocaleLowerCase("pt-BR");
+        let visible = 0;
+        document.querySelectorAll("[data-documentation-topic]").forEach((topic) => {
+          const matches = !search || topic.textContent.toLocaleLowerCase("pt-BR").includes(search);
+          topic.hidden = !matches;
+          if (matches) {
+            visible += 1;
+            if (search) topic.open = true;
+          }
+        });
+        if (documentationNoResults) documentationNoResults.hidden = visible > 0;
+      }
+
+      documentationSearch?.addEventListener("input", applyDocumentationSearch);
+      document.getElementById("documentation-expand-all")?.addEventListener("click", () => {
+        document.querySelectorAll("[data-documentation-topic]:not([hidden])").forEach((topic) => { topic.open = true; });
+      });
+      document.getElementById("documentation-collapse-all")?.addEventListener("click", () => {
+        document.querySelectorAll("[data-documentation-topic]:not([hidden])").forEach((topic) => { topic.open = false; });
       });
 
       const reportSearch = document.getElementById("report-search");

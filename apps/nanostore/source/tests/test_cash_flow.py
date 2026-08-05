@@ -172,6 +172,13 @@ class CashFlowTest(unittest.TestCase):
         self.assertIn("R$ 115.00", page)
         self.assertIn('id="report-export-csv"', page)
         self.assertIn('id="report-print"', page)
+        self.assertIn('id="estoque" data-view', page)
+        self.assertIn("Visao atual do estoque", page)
+        self.assertIn("R$ 32.00", page)
+        self.assertIn('id="documentacao" data-view', page)
+        self.assertIn("Manual de operacao", page)
+        self.assertIn("Editar, cancelar ou excluir uma venda", page)
+        self.assertIn("Correcao de lancamentos", page)
 
     def test_every_store_mode_renders_its_interface(self):
         expected = {
@@ -195,7 +202,8 @@ class CashFlowTest(unittest.TestCase):
                     "Dashboard operacional", 'data-dashboard-report="cash"', 'data-dashboard-report="orders"',
                     'data-dashboard-report="stock"', "Entrada ou saida", "Kanban de pedidos",
                     "Notas dos pedidos", "Novo cliente do pedido", "Codigo / bipe", "Ler pela webcam",
-                    "data-order-edit", "data-order-delete",
+                    "data-order-edit", "data-order-delete", 'data-target="estoque"',
+                    'data-target="relatorios"', 'data-target="documentacao"',
                 ):
                     self.assertIn(marker, html)
 

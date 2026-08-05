@@ -783,6 +783,10 @@ def _summary():
         Decimal(str(product["stock"])) * Decimal(str(product["sale_price"]))
         for product in product_rows if product["tracks_inventory"]
     )
+    stock_cost_value = sum(
+        Decimal(str(product["stock"])) * Decimal(str(product["cost_price"]))
+        for product in product_rows if product["tracks_inventory"]
+    )
     order_status_counts = {status: 0 for status in ("new", "ready", "out_for_delivery", "delivered", "cancelled")}
     for status, count in db.session.query(PharmacySale.delivery_status, func.count(PharmacySale.id)).group_by(PharmacySale.delivery_status).all():
         normalized = "new" if status == "picking" else status
@@ -817,8 +821,10 @@ def _summary():
         "products": product_rows,
         "stock_quantity": float(stock_quantity),
         "stock_sale_value": float(stock_sale_value),
+        "stock_cost_value": float(stock_cost_value),
         "order_status_counts": order_status_counts,
         "all_lots": [_serialize_lot(lot) for lot in lots],
+        "active_lots": [_serialize_lot(lot) for lot in lots if Decimal(lot.quantity_available or 0) > 0],
         "expiring_lots": [_serialize_lot(lot) for lot in expiring_lots],
         "low_stock_products": [_serialize_product(product) for product in low_stock],
         "no_stock_products": [_serialize_product(product) for product in no_stock],
@@ -893,8 +899,10 @@ def index():
         {"id": "workflow", "title": "Workflow", "description": "Kanban, WhatsApp e chat interno"},
         {"id": "cadastros", "title": "Cadastros", "description": "Produtos, categorias e fornecedores"},
         {"id": "lancamentos", "title": "Lancamentos", "description": "Lotes, vendas, compras e financeiro"},
+        {"id": "estoque", "title": "Estoque", "description": "Posicao atual, lotes e movimentacoes"},
         {"id": "faturamento", "title": "Faturamento", "description": "Notas individuais e em massa das vendas"},
         {"id": "relatorios", "title": "Relatorios", "description": "Estoque, vencimentos, caixa e performance"},
+        {"id": "documentacao", "title": "Documentacao", "description": "Procedimentos de operacao do NanoStore"},
         {"id": "configuracao", "title": "Configuracao", "description": "Provedores e canais de integracao"},
     ]
     return render_template(
