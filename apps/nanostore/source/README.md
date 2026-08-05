@@ -87,6 +87,12 @@ homologacao da Receita. A propria tela oferece acesso ao Classif da Receita
 Federal para NCM e as consultas de GTIN e tabelas fiscais da SVRS; o
 enquadramento final deve considerar regime tributario, UF e tipo da operacao.
 
+O botao `Buscar item similar`, disponivel na inclusao e na edicao, compara nome,
+codigo de barras, NCM e categoria com o catalogo ja cadastrado. Ao escolher uma
+correspondencia, copia dados comerciais e fiscais reutilizaveis, sem duplicar
+SKU, nome ou codigo de barras. Os valores copiados continuam sujeitos a
+conferencia, especialmente tributacao, beneficio fiscal e precos.
+
 ## Rodar localmente
 
 ```bash

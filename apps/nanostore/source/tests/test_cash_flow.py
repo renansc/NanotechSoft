@@ -278,6 +278,7 @@ class CashFlowTest(unittest.TestCase):
                     "Venda direta no caixa", 'id="cash-sale-barcode-input"', 'id="cash-sale-items-json"',
                     "Bipar com camera", "Leitura na venda direta", "BARCODE_INPUT_MODE",
                     "vendor/zxing-browser.min.js", 'data-barcode-input-mode="auto"',
+                    "Buscar item similar", 'id="similar-product-modal"', "/api/products/similar",
                     "data-order-edit", "data-order-delete", 'data-target="estoque"',
                     'data-target="relatorios"', 'data-target="documentacao"',
                     'class="menu-link" data-target="configuracao">Configuracao',
@@ -472,6 +473,33 @@ class CashFlowTest(unittest.TestCase):
         })
         self.assertEqual(duplicate.status_code, 400)
         self.assertIn("ja cadastrado", duplicate.get_json()["error"])
+
+    def test_similar_product_search_ranks_catalog_and_can_exclude_current_item(self):
+        category = PharmacyCategory(name="Bebidas")
+        db.session.add(category)
+        db.session.flush()
+        beer = PharmacyProduct(
+            sku="SIM-CERV-1", name="Cerveja Pilsen Lata 350ml", barcode="7891111111111",
+            category_id=category.id, ncm="22030000", icms_cst="102", pis_cst="04", cofins_cst="04",
+        )
+        soda = PharmacyProduct(
+            sku="SIM-REFRI-1", name="Refrigerante Cola 350ml", barcode="7892222222222",
+            category_id=category.id, ncm="22021000",
+        )
+        db.session.add_all([beer, soda])
+        db.session.commit()
+        client = self.app.test_client()
+
+        response = client.get("/api/products/similar?name=cerveja+pilsen&ncm=22030000")
+        self.assertEqual(200, response.status_code, response.get_json())
+        items = response.get_json()["items"]
+        self.assertEqual(beer.id, items[0]["product"]["id"])
+        self.assertIn("mesmo NCM", items[0]["reasons"])
+        self.assertEqual("04", items[0]["product"]["pis_cst"])
+
+        excluded = client.get(f"/api/products/similar?name=cerveja&exclude_id={beer.id}")
+        self.assertNotIn(beer.id, [item["product"]["id"] for item in excluded.get_json()["items"]])
+        self.assertEqual(400, client.get("/api/products/similar").status_code)
 
     def make_stocked_order(self, payment_method="pending", quantity="1", price="10"):
         product = PharmacyProduct(sku="EDIT-1", name="Produto editavel", sale_price=Decimal(price))

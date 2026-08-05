@@ -1,7 +1,9 @@
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal, InvalidOperation
+from difflib import SequenceMatcher
 import os
 from types import SimpleNamespace
+import unicodedata
 from urllib.parse import urlparse
 from uuid import uuid4
 
@@ -216,6 +218,13 @@ def _serialize_product(product):
         "ibs_uf_rate": float(product.ibs_uf_rate or 0), "ibs_mun_rate": float(product.ibs_mun_rate or 0),
         "cbs_rate": float(product.cbs_rate or 0),
     }
+
+
+def _similarity_text(value):
+    normalized = unicodedata.normalize("NFKD", str(value or ""))
+    return " ".join(
+        "".join(char for char in normalized if not unicodedata.combining(char)).lower().split()
+    )
 
 
 def _serialize_lot(lot):
@@ -1149,6 +1158,50 @@ def api_products():
     db.session.add(product)
     db.session.commit()
     return jsonify({"ok": True, "product": _serialize_product(product)})
+
+
+@bp.route("/api/products/similar")
+def api_similar_products():
+    name = _similarity_text(request.args.get("name"))
+    barcode = str(request.args.get("barcode") or "").strip().lower()
+    ncm = "".join(char for char in str(request.args.get("ncm") or "") if char.isdigit())
+    category_id = request.args.get("category_id", type=int)
+    exclude_id = request.args.get("exclude_id", type=int)
+    if not any((name, barcode, ncm)):
+        abort(400, "Informe nome, codigo de barras ou NCM para procurar similares.")
+
+    name_tokens = set(name.split())
+    matches = []
+    for product in PharmacyProduct.query.filter_by(is_active=True).all():
+        if exclude_id and product.id == exclude_id:
+            continue
+        product_name = _similarity_text(product.name)
+        product_tokens = set(product_name.split())
+        reasons = []
+        score = SequenceMatcher(None, name, product_name).ratio() * 55 if name else 0
+        if name_tokens and product_tokens:
+            score += (len(name_tokens & product_tokens) / len(name_tokens | product_tokens)) * 35
+        if barcode and barcode == str(product.barcode or "").strip().lower():
+            score += 120
+            reasons.append("mesmo codigo de barras")
+        if ncm and ncm == "".join(char for char in str(product.ncm or "") if char.isdigit()):
+            score += 55
+            reasons.append("mesmo NCM")
+        if category_id and category_id == product.category_id:
+            score += 15
+            reasons.append("mesma categoria")
+        if name and (name in product_name or product_name in name):
+            score += 25
+            reasons.append("nome semelhante")
+        if score < 20:
+            continue
+        matches.append({
+            "score": round(score, 1),
+            "reasons": reasons or ["cadastro semelhante"],
+            "product": _serialize_product(product),
+        })
+    matches.sort(key=lambda item: (-item["score"], item["product"]["name"].lower()))
+    return jsonify({"ok": True, "items": matches[:8]})
 
 
 def _apply_product_tax(product, payload):

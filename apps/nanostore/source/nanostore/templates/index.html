@@ -467,6 +467,7 @@
                   <div class="fiscal-assistant-bar">
                     <span>CRT do emitente: <strong>{{ settings_map.get('FISCAL_CRT', 'nao configurado') or 'nao configurado' }}</strong></span>
                     <button type="button" class="secondary-btn open-fiscal-config-btn">Configurar emitente</button>
+                    <button type="button" class="secondary-btn product-similar-search-btn" data-form-id="product-form">Buscar item similar</button>
                     <button type="button" class="secondary-btn product-tax-assist-btn" data-form-id="product-form" data-feedback-id="product-create-fiscal-feedback">Assistir tributacao</button>
                   </div>
                   <div class="official-links"><a href="https://www.gov.br/receitafederal/pt-br/assuntos/aduana-e-comercio-exterior/classificacao-fiscal-de-mercadorias/classif" target="_blank" rel="noopener">Pesquisar NCM no Classif</a><a href="https://dfe-portal.svrs.rs.gov.br/Nfe/Documentos" target="_blank" rel="noopener">Abrir tabelas da NF-e</a></div>
@@ -1872,6 +1873,7 @@
           <div class="fiscal-assistant-bar">
             <span>CRT do emitente: <strong>{{ settings_map.get('FISCAL_CRT', 'nao configurado') or 'nao configurado' }}</strong></span>
             <button type="button" class="secondary-btn open-fiscal-config-btn">Configurar emitente</button>
+            <button type="button" class="secondary-btn product-similar-search-btn" data-form-id="product-edit-form">Buscar item similar</button>
             <button type="button" class="secondary-btn product-tax-assist-btn" data-form-id="product-edit-form" data-feedback-id="product-fiscal-feedback">Assistir tributacao</button>
           </div>
           <div class="official-links"><a href="https://www.gov.br/receitafederal/pt-br/assuntos/aduana-e-comercio-exterior/classificacao-fiscal-de-mercadorias/classif" target="_blank" rel="noopener">Pesquisar NCM no Classif</a><a href="https://dfe-portal.svrs.rs.gov.br/Nfe/Documentos" target="_blank" rel="noopener">Abrir tabelas da NF-e</a></div>
@@ -1902,6 +1904,19 @@
           <button type="button" id="scanner-manual-submit-btn">Buscar</button>
         </div>
         <div id="scanner-status" class="helper"></div>
+      </div>
+    </div>
+
+    <div id="similar-product-modal" class="modal-shell" hidden>
+      <div class="modal-card product-similar-card">
+        <div class="modal-head"><strong>Buscar item similar</strong><button type="button" class="secondary-btn" id="close-similar-product-btn">Fechar</button></div>
+        <div class="field-with-action">
+          <label class="field-inline"><span>Nome, codigo de barras ou NCM</span><input id="similar-product-query" type="search"></label>
+          <button type="button" id="run-similar-product-search-btn">Pesquisar</button>
+        </div>
+        <label><input type="checkbox" id="similar-product-overwrite"> Substituir valores ja preenchidos</label>
+        <p class="helper fiscal-feedback" id="similar-product-feedback" aria-live="polite"></p>
+        <div class="similar-product-results" id="similar-product-results"></div>
       </div>
     </div>
 
@@ -2403,7 +2418,15 @@
       const icmsTaxCodeOptions = document.getElementById("icms-tax-code-options");
       const registeredProductsSearch = document.getElementById("registered-products-search");
       const registeredProductsCount = document.getElementById("registered-products-count");
+      const similarProductModal = document.getElementById("similar-product-modal");
+      const closeSimilarProductBtn = document.getElementById("close-similar-product-btn");
+      const similarProductQuery = document.getElementById("similar-product-query");
+      const runSimilarProductSearchBtn = document.getElementById("run-similar-product-search-btn");
+      const similarProductOverwrite = document.getElementById("similar-product-overwrite");
+      const similarProductFeedback = document.getElementById("similar-product-feedback");
+      const similarProductResults = document.getElementById("similar-product-results");
       const scanTriggers = document.querySelectorAll(".scan-trigger");
+      let similarProductTargetForm = null;
       let scannerStream = null;
       let scannerTimer = null;
       let scannerControls = null;
@@ -2473,6 +2496,141 @@
       if (closeProductEditBtn) closeProductEditBtn.addEventListener("click", closeProductEditModal);
       if (productEditModal) productEditModal.addEventListener("click", (event) => {
         if (event.target === productEditModal) closeProductEditModal();
+      });
+
+      function closeSimilarProductModal() {
+        if (similarProductModal) similarProductModal.hidden = true;
+      }
+
+      function similarProductSearchParams(form, manualQuery = "") {
+        const params = new URLSearchParams();
+        const query = String(manualQuery || "").trim();
+        const name = query || String(form?.elements.namedItem("name")?.value || "").trim();
+        const barcode = query || String(form?.elements.namedItem("barcode")?.value || "").trim();
+        const ncm = query || String(form?.elements.namedItem("ncm")?.value || "").trim();
+        const categoryId = String(form?.elements.namedItem("category_id")?.value || "").trim();
+        if (name) params.set("name", name);
+        if (barcode) params.set("barcode", barcode);
+        if (ncm) params.set("ncm", ncm);
+        if (categoryId) params.set("category_id", categoryId);
+        const editMatch = String(form?.dataset.api || "").match(/\/api\/products\/(\d+)/);
+        if (editMatch) params.set("exclude_id", editMatch[1]);
+        return params;
+      }
+
+      function applySimilarProduct(product) {
+        const form = similarProductTargetForm;
+        if (!form) return;
+        const fields = [
+          "brand", "active_ingredient", "unit", "cost_price", "sale_price", "minimum_stock",
+          "category_id", "supplier_id", "tracks_inventory", "requires_prescription", "is_controlled",
+          "ncm", "cest", "cfop", "fiscal_origin", "icms_cst", "pis_cst", "cofins_cst",
+          "tax_unit", "gtin_taxable", "benefit_code", "has_tax_benefit", "anvisa_code",
+          "max_consumer_price", "ibs_cbs_cst", "tax_classification", "ibs_uf_rate", "ibs_mun_rate", "cbs_rate",
+        ];
+        const overwrite = !!similarProductOverwrite?.checked;
+        const isNewProduct = form.id === "product-form";
+        const copied = [];
+        fields.forEach((name) => {
+          const field = form.elements.namedItem(name);
+          if (!field || !(name in product)) return;
+          if (field.type === "checkbox") {
+            if (!isNewProduct && !overwrite) return;
+            field.checked = Boolean(product[name]);
+          } else {
+            const current = String(field.value || "").trim();
+            if (!isNewProduct && !overwrite && current) return;
+            field.value = product[name] ?? "";
+          }
+          copied.push(name);
+        });
+        const feedback = document.getElementById(form.id === "product-form" ? "product-create-fiscal-feedback" : "product-fiscal-feedback");
+        if (feedback) {
+          feedback.classList.remove("is-error");
+          feedback.textContent = `${copied.length} campos preenchidos a partir de ${product.name}. Confira tributacao e precos antes de salvar.`;
+        }
+        closeSimilarProductModal();
+        form.elements.namedItem("ncm")?.focus();
+      }
+
+      function renderSimilarProducts(items) {
+        if (!similarProductResults) return;
+        similarProductResults.replaceChildren();
+        if (!items.length) {
+          if (similarProductFeedback) similarProductFeedback.textContent = "Nenhum item semelhante foi encontrado no cadastro atual.";
+          return;
+        }
+        if (similarProductFeedback) similarProductFeedback.textContent = `${items.length} correspondencia(s) encontrada(s).`;
+        items.forEach((match) => {
+          const product = match.product;
+          const row = document.createElement("div");
+          const details = document.createElement("div");
+          const title = document.createElement("strong");
+          const identity = document.createElement("span");
+          const fiscal = document.createElement("span");
+          const reason = document.createElement("small");
+          const useButton = document.createElement("button");
+          row.className = "similar-product-result";
+          title.textContent = product.name;
+          identity.textContent = `${product.sku} | ${product.barcode || "sem codigo"}`;
+          fiscal.textContent = `NCM ${product.ncm || "-"} | ICMS ${product.icms_cst || "-"} | PIS ${product.pis_cst || "-"} | COFINS ${product.cofins_cst || "-"}`;
+          reason.textContent = match.reasons.join("; ");
+          useButton.type = "button";
+          useButton.textContent = "Usar dados";
+          useButton.addEventListener("click", () => applySimilarProduct(product));
+          details.append(title, identity, fiscal, reason);
+          row.append(details, useButton);
+          similarProductResults.appendChild(row);
+        });
+      }
+
+      async function runSimilarProductSearch(manualQuery = "") {
+        if (!similarProductTargetForm) return;
+        const params = similarProductSearchParams(similarProductTargetForm, manualQuery);
+        if (similarProductFeedback) {
+          similarProductFeedback.classList.remove("is-error");
+          similarProductFeedback.textContent = "Procurando itens semelhantes...";
+        }
+        if (similarProductResults) similarProductResults.replaceChildren();
+        try {
+          const response = await fetch(`/api/products/similar?${params.toString()}`);
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok || data.ok === false) throw new Error(data.error || "Nao foi possivel procurar itens semelhantes.");
+          renderSimilarProducts(Array.isArray(data.items) ? data.items : []);
+        } catch (error) {
+          if (similarProductFeedback) {
+            similarProductFeedback.classList.add("is-error");
+            similarProductFeedback.textContent = error.message;
+          }
+        }
+      }
+
+      document.querySelectorAll(".product-similar-search-btn").forEach((button) => {
+        button.addEventListener("click", () => {
+          similarProductTargetForm = document.getElementById(button.dataset.formId || "");
+          if (!similarProductTargetForm || !similarProductModal) return;
+          const suggestedQuery = similarProductTargetForm.elements.namedItem("barcode")?.value
+            || similarProductTargetForm.elements.namedItem("name")?.value
+            || similarProductTargetForm.elements.namedItem("ncm")?.value
+            || "";
+          if (similarProductQuery) similarProductQuery.value = suggestedQuery;
+          if (similarProductOverwrite) similarProductOverwrite.checked = false;
+          if (similarProductFeedback) similarProductFeedback.classList.remove("is-error");
+          similarProductModal.hidden = false;
+          runSimilarProductSearch();
+        });
+      });
+      if (closeSimilarProductBtn) closeSimilarProductBtn.addEventListener("click", closeSimilarProductModal);
+      if (similarProductModal) similarProductModal.addEventListener("click", (event) => {
+        if (event.target === similarProductModal) closeSimilarProductModal();
+      });
+      if (runSimilarProductSearchBtn) runSimilarProductSearchBtn.addEventListener("click", () => {
+        runSimilarProductSearch(similarProductQuery?.value || "");
+      });
+      if (similarProductQuery) similarProductQuery.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter") return;
+        event.preventDefault();
+        runSimilarProductSearch(similarProductQuery.value);
       });
 
       document.querySelectorAll(".open-fiscal-config-btn").forEach((button) => {
