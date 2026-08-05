@@ -966,6 +966,7 @@
                       <section class="ticket-card order-kanban-card{% if column.key == 'completed' %} is-completed{% endif %}" draggable="{{ 'false' if column.key == 'completed' else 'true' }}" data-sale-id="{{ sale.id }}" data-order-status="{{ column.key }}">
                         <div class="ticket-card-head"><strong>{{ sale.code }}</strong><span class="mini-badge">{{ 'Mesa' if sale.fulfillment_type == 'table' else 'Delivery' }}</span></div>
                         <p class="ticket-copy"><strong>{{ sale.customer_name }}</strong> · R$ {{ '%.2f'|format(sale.total_amount) }}</p>
+                        <p class="order-created-at"><span>Compra</span><time datetime="{{ sale.created_at.isoformat() }}Z">{{ format_local_datetime(sale.created_at) }}</time></p>
                         <p class="muted-line">{{ ('Mesa ' ~ sale.table_reference) if sale.fulfillment_type == 'table' else (sale.delivery_address or 'Destino nao informado') }}</p>
                         <div class="document-actions"><a class="table-action" target="_blank" href="/api/orders/{{ sale.id }}/pdf?format=a4">PDF A4</a><a class="table-action" target="_blank" href="/api/orders/{{ sale.id }}/pdf?format=thermal58">58 mm</a><a class="table-action" target="_blank" href="/api/orders/{{ sale.id }}/pdf?format=thermal80">80 mm</a></div>
                         {% if column.key == 'completed' %}<p class="completed-at-line">Finalizado hoje</p>{% endif %}

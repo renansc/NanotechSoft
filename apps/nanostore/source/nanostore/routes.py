@@ -238,6 +238,14 @@ def _similarity_text(value):
     )
 
 
+def _format_local_datetime(value):
+    if not value:
+        return "-"
+    source = value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    local_tz = ZoneInfo(os.environ.get("TZ", "America/Sao_Paulo"))
+    return source.astimezone(local_tz).strftime("%d/%m/%Y %H:%M")
+
+
 def _similarity_tokens(value):
     tokens = set(_similarity_text(value).split())
     tokens.update(token[:-1] for token in list(tokens) if len(token) > 4 and token.endswith("s"))
@@ -1122,6 +1130,7 @@ def index():
         ).order_by(PharmacySale.created_at.desc(), PharmacySale.id.desc()).limit(200).all(),
         kanban_sales=kanban_sales,
         fiscal_simulations=[_serialize_fiscal_simulation(item) for item in fiscal_history],
+        format_local_datetime=_format_local_datetime,
         menu_sections=menu_sections,
         mode_key=mode_key,
         store_mode=store_mode,

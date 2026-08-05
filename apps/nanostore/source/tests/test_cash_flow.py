@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from nanostore.extensions import db
 from nanostore.models import CashMovement, CashSession, DistributionTable, FinancialEntry, IntegrationSetting, PharmacyCategory, PharmacyCustomer, PharmacyLot, PharmacyPayment, PharmacyProduct, PharmacySale, PharmacySupplier, StockMovement
-from nanostore.routes import bp
+from nanostore.routes import bp, _format_local_datetime
 
 
 class CashFlowTest(unittest.TestCase):
@@ -302,6 +302,10 @@ class CashFlowTest(unittest.TestCase):
         self.assertEqual(400, rejected.status_code)
         self.assertEqual("camera", IntegrationSetting.query.filter_by(key="BARCODE_INPUT_MODE").one().value)
 
+    def test_order_purchase_time_is_formatted_in_local_timezone(self):
+        purchase_time = datetime(2026, 8, 5, 18, 32)
+        self.assertEqual("05/08/2026 15:32", _format_local_datetime(purchase_time))
+
     def test_distributor_dashboard_summarizes_cash_orders_and_stock(self):
         setting = IntegrationSetting(key="STORE_MODE", value="distributor")
         cash = CashSession(status="open", opening_amount=Decimal("50"), expected_amount=Decimal("50"))
@@ -401,7 +405,7 @@ class CashFlowTest(unittest.TestCase):
         )
         pending_sale = PharmacySale(
             code="PENDENTE-HOJE", customer_name="Cliente pendente", total_amount=Decimal("10"),
-            delivery_status="ready",
+            delivery_status="ready", created_at=datetime(2026, 8, 5, 18, 32),
         )
         db.session.add_all([today_sale, old_sale, pending_sale])
         db.session.commit()
@@ -411,6 +415,8 @@ class CashFlowTest(unittest.TestCase):
         self.assertIn(f'data-sale-id="{today_sale.id}" data-order-status="completed"', page)
         self.assertNotIn(f'data-sale-id="{old_sale.id}" data-order-status="completed"', page)
         self.assertIn(f'data-sale-id="{pending_sale.id}" data-order-status="ready"', page)
+        self.assertIn('class="order-created-at"', page)
+        self.assertIn("05/08/2026 15:32", page)
         self.assertIn("Finalizados hoje", page)
         self.assertIn("data-order-finalize", page)
 
