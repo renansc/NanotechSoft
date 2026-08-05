@@ -2,6 +2,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from difflib import SequenceMatcher
 from concurrent.futures import ThreadPoolExecutor
+from io import BytesIO
 import json
 import os
 from pathlib import Path
@@ -14,7 +15,8 @@ from uuid import uuid4
 
 from cryptography import x509
 from cryptography.hazmat.primitives import serialization
-from flask import Blueprint, Response, abort, jsonify, render_template, request, send_file
+from flask import Blueprint, Response, abort, jsonify, render_template, request, send_file, url_for
+from PIL import Image, UnidentifiedImageError
 from sqlalchemy import and_, case, func, or_
 from zoneinfo import ZoneInfo
 from werkzeug.exceptions import HTTPException
@@ -56,10 +58,58 @@ OPEN_FOOD_FACTS_URL = "https://br.openfoodfacts.org"
 OPEN_FOOD_FACTS_SEARCH_URL = "https://search.openfoodfacts.org/search"
 EXTERNAL_CATALOG_USER_AGENT = "NanoStore/1.0 (renanrocks2009@gmail.com)"
 _ncm_catalog_cache = {"loaded_at": None, "items": [], "updated_at": ""}
+COMPANY_LOGO_MAX_BYTES = 2 * 1024 * 1024
+COMPANY_LOGO_FORMATS = {
+    "PNG": ("png", "image/png"),
+    "JPEG": ("jpg", "image/jpeg"),
+    "WEBP": ("webp", "image/webp"),
+}
 
 
 def _certs_dir():
     return os.environ.get("APP_CERT_DIR", "/app/certs")
+
+
+def _company_assets_dir():
+    configured_path = os.environ.get("NANOSTORE_COMPANY_ASSET_DIR")
+    if configured_path:
+        return Path(configured_path)
+    return Path(__file__).resolve().parent.parent / "instance" / "company"
+
+
+def _company_logo_path(settings=None):
+    filename = (settings or _setting_map()).get("COMPANY_LOGO_FILE", "")
+    if filename not in {"logo.png", "logo.jpg", "logo.webp"}:
+        return None
+    path = _company_assets_dir() / filename
+    return path if path.is_file() else None
+
+
+def _prepare_company_logo(raw_data):
+    if not raw_data:
+        raise ValueError("Selecione uma imagem para enviar.")
+    if len(raw_data) > COMPANY_LOGO_MAX_BYTES:
+        raise ValueError("A logomarca deve ter no maximo 2 MB.")
+    try:
+        with Image.open(BytesIO(raw_data)) as image:
+            image_format = str(image.format or "").upper()
+            if image_format not in COMPANY_LOGO_FORMATS:
+                raise ValueError("Use uma imagem PNG, JPEG ou WebP.")
+            if image.width * image.height > 16_000_000:
+                raise ValueError("A imagem excede o limite de dimensoes.")
+            image.seek(0)
+            image.thumbnail((1600, 1600))
+            if image_format == "JPEG":
+                prepared = image.convert("RGB")
+            else:
+                prepared = image.convert("RGBA") if "A" in image.getbands() else image.convert("RGB")
+            output = BytesIO()
+            save_options = {"quality": 90} if image_format in {"JPEG", "WEBP"} else {"optimize": True}
+            prepared.save(output, format=image_format, **save_options)
+    except (UnidentifiedImageError, OSError) as exc:
+        raise ValueError("O arquivo enviado nao e uma imagem valida.") from exc
+    extension, mimetype = COMPANY_LOGO_FORMATS[image_format]
+    return output.getvalue(), f"logo.{extension}", mimetype
 
 
 def _split_csv_env(value):
@@ -1090,7 +1140,9 @@ def _select_lots(product_id, requested_quantity):
 @bp.route("/")
 def index():
     summary = _summary()
-    mode_key, store_mode = resolve_store_mode(_setting_map().get("STORE_MODE"))
+    settings_map = _setting_map()
+    mode_key, store_mode = resolve_store_mode(settings_map.get("STORE_MODE"))
+    company_logo_path = _company_logo_path(settings_map)
     fiscal_history = FiscalSimulation.query.order_by(FiscalSimulation.created_at.desc(), FiscalSimulation.id.desc()).limit(50).all()
     local_tz = ZoneInfo(os.environ.get("TZ", "America/Sao_Paulo"))
     local_today = datetime.now(local_tz).date()
@@ -1122,7 +1174,9 @@ def index():
         suppliers=PharmacySupplier.query.order_by(PharmacySupplier.name.asc()).all(),
         customers=PharmacyCustomer.query.order_by(PharmacyCustomer.name.asc()).all(),
         distribution_tables=DistributionTable.query.filter_by(is_active=True).order_by(DistributionTable.number.asc()).all(),
-        settings_map=_setting_map(),
+        settings_map=settings_map,
+        company_logo_url=url_for("main.api_company_logo") if company_logo_path else "",
+        company_logo_version=int(company_logo_path.stat().st_mtime) if company_logo_path else 0,
         https_runtime=_https_runtime_config(),
         fiscal_status=fiscal_certificate_status(),
         fiscal_sales=PharmacySale.query.filter(
@@ -1979,6 +2033,42 @@ def api_settings():
         _set_setting(key, value)
     db.session.commit()
     return jsonify({"ok": True, "saved": len(settings)})
+
+
+@bp.route("/api/company/logo", methods=["GET", "POST", "DELETE"])
+def api_company_logo():
+    if request.method == "GET":
+        path = _company_logo_path()
+        if not path:
+            abort(404, "Logomarca nao configurada.")
+        mimetype = {".png": "image/png", ".jpg": "image/jpeg", ".webp": "image/webp"}[path.suffix]
+        return send_file(path, mimetype=mimetype, conditional=True, max_age=3600)
+
+    assets_dir = _company_assets_dir()
+    if request.method == "DELETE":
+        for filename in ("logo.png", "logo.jpg", "logo.webp"):
+            (assets_dir / filename).unlink(missing_ok=True)
+        _set_setting("COMPANY_LOGO_FILE", "")
+        db.session.commit()
+        return jsonify({"ok": True})
+
+    uploaded = request.files.get("logo")
+    if not uploaded:
+        abort(400, "Selecione uma imagem para enviar.")
+    try:
+        prepared, filename, _ = _prepare_company_logo(uploaded.stream.read(COMPANY_LOGO_MAX_BYTES + 1))
+        assets_dir.mkdir(parents=True, exist_ok=True)
+        temporary_path = assets_dir / f".{filename}.{os.getpid()}.tmp"
+        temporary_path.write_bytes(prepared)
+        temporary_path.replace(assets_dir / filename)
+        for old_filename in ("logo.png", "logo.jpg", "logo.webp"):
+            if old_filename != filename:
+                (assets_dir / old_filename).unlink(missing_ok=True)
+        _set_setting("COMPANY_LOGO_FILE", filename)
+        db.session.commit()
+    except ValueError as exc:
+        abort(400, str(exc))
+    return jsonify({"ok": True, "url": url_for("main.api_company_logo")})
 
 
 @bp.route("/api/purchases", methods=["POST"])

@@ -2,10 +2,13 @@ import unittest
 from unittest.mock import patch
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
+from io import BytesIO
 from pathlib import Path
 import sys
+from tempfile import TemporaryDirectory
 
 from flask import Flask
+from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -301,6 +304,42 @@ class CashFlowTest(unittest.TestCase):
         rejected = client.post("/api/settings", json={"settings": {"BARCODE_INPUT_MODE": "invalido"}})
         self.assertEqual(400, rejected.status_code)
         self.assertEqual("camera", IntegrationSetting.query.filter_by(key="BARCODE_INPUT_MODE").one().value)
+
+    def test_company_logo_can_be_uploaded_served_and_removed(self):
+        image_data = BytesIO()
+        Image.new("RGBA", (120, 80), (218, 165, 32, 255)).save(image_data, format="PNG")
+        client = self.app.test_client()
+        with TemporaryDirectory() as assets_dir, patch.dict(
+            "os.environ", {"NANOSTORE_COMPANY_ASSET_DIR": assets_dir}
+        ):
+            uploaded = client.post(
+                "/api/company/logo",
+                data={"logo": (BytesIO(image_data.getvalue()), "marca.png")},
+                content_type="multipart/form-data",
+            )
+            self.assertEqual(200, uploaded.status_code, uploaded.get_json())
+            self.assertEqual("logo.png", IntegrationSetting.query.filter_by(key="COMPANY_LOGO_FILE").one().value)
+            served = client.get("/api/company/logo")
+            self.assertEqual(200, served.status_code)
+            self.assertEqual("image/png", served.mimetype)
+            served.close()
+            page = client.get("/").get_data(as_text=True)
+            self.assertIn('class="brand-logo"', page)
+            removed = client.delete("/api/company/logo")
+            self.assertEqual(200, removed.status_code, removed.get_json())
+            self.assertEqual(404, client.get("/api/company/logo").status_code)
+
+    def test_company_logo_rejects_non_image_file(self):
+        client = self.app.test_client()
+        with TemporaryDirectory() as assets_dir, patch.dict(
+            "os.environ", {"NANOSTORE_COMPANY_ASSET_DIR": assets_dir}
+        ):
+            response = client.post(
+                "/api/company/logo",
+                data={"logo": (BytesIO(b"nao e imagem"), "marca.png")},
+                content_type="multipart/form-data",
+            )
+        self.assertEqual(400, response.status_code)
 
     def test_order_purchase_time_is_formatted_in_local_timezone(self):
         purchase_time = datetime(2026, 8, 5, 18, 32)

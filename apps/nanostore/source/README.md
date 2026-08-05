@@ -43,6 +43,11 @@ diferentes. Somente a funcao ativa permanece visivel, e o navegador guarda a
 ultima escolha de cada area. Em telas estreitas, os submenus usam rolagem
 horizontal; atalhos como `Novo produto` abrem diretamente o formulario correto.
 
+Em `Configuracao > Logomarca`, a empresa pode enviar ou remover sua identidade
+visual. O NanoStore aceita PNG, JPEG e WebP de ate 2 MB, valida e redimensiona a
+imagem para no maximo 1600 x 1600 pixels e a exibe no menu lateral. O arquivo e
+mantido em `instance/company`, fora do versionamento do Git.
+
 O Caixa tambem oferece venda direta de balcao por leitor USB ou webcam. Cada
 bip adiciona uma unidade, leituras repetidas somam quantidade e a conclusao
 baixa o estoque, registra a venda e credita o pagamento no caixa aberto.

@@ -10,7 +10,8 @@
     <div class="shell" id="nanostore-shell">
       <aside class="sidebar">
         <div class="brand">
-          <span class="brand-mark">N</span>
+          {% if company_logo_url %}<img class="brand-logo" src="{{ company_logo_url }}?v={{ company_logo_version }}" alt="Logomarca da empresa">
+          {% else %}<span class="brand-mark">N</span>{% endif %}
           <div>
             <strong>NanoStore</strong>
             <p>{{ store_mode.name }}</p>
@@ -1769,6 +1770,7 @@
 
           <nav class="subnav config-subnav" aria-label="Grupos de configuracao">
             <button type="button" class="subnav-link active" data-subview-target="config-emitente">Emitente fiscal</button>
+            <button type="button" class="subnav-link" data-subview-target="config-logomarca">Logomarca</button>
             {% if store_mode.show_fiscal %}<button type="button" class="subnav-link" data-subview-target="config-tributacao">Tributacao dos produtos</button>{% else %}<button type="button" class="subnav-link" data-subview-target="config-tributacao">Catalogo de servicos</button>{% endif %}
             <button type="button" class="subnav-link" data-subview-target="config-margens">Margens</button>
             <button type="button" class="subnav-link" data-subview-target="config-conexao">HTTPS e camera</button>
@@ -1789,6 +1791,27 @@
                 <label class="field-block"><span>Serie NFC-e</span><input name="FISCAL_SERIES_65" value="{{ settings_map.get('FISCAL_SERIES_65', '1') }}"></label>
                 <div class="config-form-actions"><button type="submit">Salvar emitente</button></div>
               </form>
+            </article>
+          </section>
+
+          <section class="subview" id="config-logomarca" data-subview hidden>
+            <article class="card config-card company-logo-card">
+              <div class="section-head compact-head"><div><p class="eyebrow">Identidade visual</p><h3>Logomarca da empresa</h3></div></div>
+              <div class="company-logo-layout">
+                <div class="company-logo-preview" id="company-logo-preview">
+                  {% if company_logo_url %}<img src="{{ company_logo_url }}?v={{ company_logo_version }}" alt="Logomarca atual">
+                  {% else %}<span>N</span>{% endif %}
+                </div>
+                <form id="company-logo-form" data-endpoint="{{ url_for('main.api_company_logo') }}" enctype="multipart/form-data">
+                  <label class="field-block"><span>Arquivo da logomarca</span><input id="company-logo-input" name="logo" type="file" accept="image/png,image/jpeg,image/webp" required></label>
+                  <p class="helper">PNG, JPEG ou WebP, com no maximo 2 MB.</p>
+                  <div class="company-logo-actions">
+                    <button type="submit">Enviar logomarca</button>
+                    {% if company_logo_url %}<button type="button" class="danger-btn" id="remove-company-logo-btn">Remover</button>{% endif %}
+                  </div>
+                  <p class="helper" id="company-logo-feedback" aria-live="polite"></p>
+                </form>
+              </div>
             </article>
           </section>
 
@@ -3871,6 +3894,58 @@
             alert(error.message);
           }
         });
+      });
+
+      const companyLogoForm = document.getElementById("company-logo-form");
+      const companyLogoInput = document.getElementById("company-logo-input");
+      const companyLogoPreview = document.getElementById("company-logo-preview");
+      const companyLogoFeedback = document.getElementById("company-logo-feedback");
+      const removeCompanyLogoBtn = document.getElementById("remove-company-logo-btn");
+      let companyLogoPreviewUrl = "";
+
+      companyLogoInput?.addEventListener("change", () => {
+        const file = companyLogoInput.files?.[0];
+        if (!file || !companyLogoPreview) return;
+        if (companyLogoPreviewUrl) URL.revokeObjectURL(companyLogoPreviewUrl);
+        companyLogoPreviewUrl = URL.createObjectURL(file);
+        const image = document.createElement("img");
+        image.src = companyLogoPreviewUrl;
+        image.alt = "Pre-visualizacao da logomarca";
+        companyLogoPreview.replaceChildren(image);
+      });
+
+      companyLogoForm?.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const submitButton = companyLogoForm.querySelector('button[type="submit"]');
+        if (submitButton) submitButton.disabled = true;
+        if (companyLogoFeedback) companyLogoFeedback.textContent = "Enviando logomarca...";
+        try {
+          const response = await fetch(companyLogoForm.dataset.endpoint, {
+            method: "POST",
+            body: new FormData(companyLogoForm),
+          });
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok || data.ok === false) throw new Error(data.error || "Nao foi possivel enviar a logomarca.");
+          window.location.reload();
+        } catch (error) {
+          if (companyLogoFeedback) companyLogoFeedback.textContent = error.message;
+          if (submitButton) submitButton.disabled = false;
+        }
+      });
+
+      removeCompanyLogoBtn?.addEventListener("click", async () => {
+        if (!window.confirm("Remover a logomarca atual?")) return;
+        removeCompanyLogoBtn.disabled = true;
+        if (companyLogoFeedback) companyLogoFeedback.textContent = "Removendo logomarca...";
+        try {
+          const response = await fetch(companyLogoForm.dataset.endpoint, { method: "DELETE" });
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok || data.ok === false) throw new Error(data.error || "Nao foi possivel remover a logomarca.");
+          window.location.reload();
+        } catch (error) {
+          if (companyLogoFeedback) companyLogoFeedback.textContent = error.message;
+          removeCompanyLogoBtn.disabled = false;
+        }
       });
 
       document.querySelectorAll(".settings-form").forEach((form) => {

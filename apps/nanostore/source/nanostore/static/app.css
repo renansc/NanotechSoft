@@ -101,6 +101,16 @@ body {
   font-weight: 800;
 }
 
+.brand-logo {
+  width: 48px;
+  height: 48px;
+  flex: 0 0 48px;
+  object-fit: contain;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
 .brand p,
 .lead,
 .section-copy,
@@ -1115,6 +1125,43 @@ h3 {
   max-width: none;
 }
 
+.company-logo-layout {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr);
+  gap: 22px;
+  align-items: start;
+}
+
+.company-logo-preview {
+  width: 180px;
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.company-logo-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.company-logo-preview span {
+  color: var(--primary-dark);
+  font-size: 3rem;
+  font-weight: 800;
+}
+
+.company-logo-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+}
+
 .config-form-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(220px, 1fr));
@@ -1842,6 +1889,14 @@ th {
 
   .config-form-grid {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .company-logo-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .company-logo-preview {
+    width: min(180px, 100%);
   }
 
   .config-field-wide,
