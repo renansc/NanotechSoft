@@ -204,6 +204,7 @@ class CashFlowTest(unittest.TestCase):
         self.assertIn("Consultar NCM na Receita", page)
         self.assertIn("validacao estrutural", page.lower())
         self.assertIn("Assistir tributacao", page)
+        self.assertIn("Configurar emitente", page)
 
         response = client.patch(f"/api/products/{product.id}", json={
             "sku": "ITEM-EDITADO", "name": "Nome novo", "barcode": "789000000003",
@@ -271,6 +272,7 @@ class CashFlowTest(unittest.TestCase):
                     "Venda direta no caixa", 'id="cash-sale-barcode-input"', 'id="cash-sale-items-json"',
                     "data-order-edit", "data-order-delete", 'data-target="estoque"',
                     'data-target="relatorios"', 'data-target="documentacao"',
+                    'class="menu-link" data-target="configuracao">Configuracao',
                 ):
                     self.assertIn(marker, html)
 

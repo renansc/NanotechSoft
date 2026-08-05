@@ -28,6 +28,7 @@
             <button type="button" class="menu-link" data-target="cadastros" data-open-subview="cadastros-produtos">Cadastros</button>
             <button type="button" class="menu-link" data-target="relatorios">Relatorios</button>
             <button type="button" class="menu-link" data-target="documentacao">Documentacao</button>
+            <button type="button" class="menu-link" data-target="configuracao">Configuracao</button>
           </section>
           {% else %}
           <section class="menu-group">
@@ -464,6 +465,7 @@
                   <h4>Tributacao</h4>
                   <div class="fiscal-assistant-bar">
                     <span>CRT do emitente: <strong>{{ settings_map.get('FISCAL_CRT', 'nao configurado') or 'nao configurado' }}</strong></span>
+                    <button type="button" class="secondary-btn open-fiscal-config-btn">Configurar emitente</button>
                     <button type="button" class="secondary-btn product-tax-assist-btn" data-form-id="product-form" data-feedback-id="product-create-fiscal-feedback">Assistir tributacao</button>
                   </div>
                   <div class="official-links"><a href="https://www.gov.br/receitafederal/pt-br/assuntos/aduana-e-comercio-exterior/classificacao-fiscal-de-mercadorias/classif" target="_blank" rel="noopener">Pesquisar NCM no Classif</a><a href="https://dfe-portal.svrs.rs.gov.br/Nfe/Documentos" target="_blank" rel="noopener">Abrir tabelas da NF-e</a></div>
@@ -1850,6 +1852,7 @@
           <h4>Tributacao</h4>
           <div class="fiscal-assistant-bar">
             <span>CRT do emitente: <strong>{{ settings_map.get('FISCAL_CRT', 'nao configurado') or 'nao configurado' }}</strong></span>
+            <button type="button" class="secondary-btn open-fiscal-config-btn">Configurar emitente</button>
             <button type="button" class="secondary-btn product-tax-assist-btn" data-form-id="product-edit-form" data-feedback-id="product-fiscal-feedback">Assistir tributacao</button>
           </div>
           <div class="official-links"><a href="https://www.gov.br/receitafederal/pt-br/assuntos/aduana-e-comercio-exterior/classificacao-fiscal-de-mercadorias/classif" target="_blank" rel="noopener">Pesquisar NCM no Classif</a><a href="https://dfe-portal.svrs.rs.gov.br/Nfe/Documentos" target="_blank" rel="noopener">Abrir tabelas da NF-e</a></div>
@@ -2400,6 +2403,18 @@
       if (closeProductEditBtn) closeProductEditBtn.addEventListener("click", closeProductEditModal);
       if (productEditModal) productEditModal.addEventListener("click", (event) => {
         if (event.target === productEditModal) closeProductEditModal();
+      });
+
+      document.querySelectorAll(".open-fiscal-config-btn").forEach((button) => {
+        button.addEventListener("click", () => {
+          closeProductEditModal();
+          activateView("configuracao");
+          window.setTimeout(() => {
+            const crtField = document.querySelector('#settings-form [name="FISCAL_CRT"]');
+            crtField?.scrollIntoView({ behavior: "smooth", block: "center" });
+            crtField?.focus();
+          }, 0);
+        });
       });
 
       document.querySelectorAll(".product-tax-assist-btn").forEach((button) => {

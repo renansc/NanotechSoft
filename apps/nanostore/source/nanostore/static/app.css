@@ -878,7 +878,7 @@ h3 {
   background: var(--surface-soft, #f5f8f5);
 }
 
-.fiscal-assistant-bar .secondary-btn {
+.fiscal-assistant-bar .secondary-btn:first-of-type {
   margin-left: auto;
 }
 
