@@ -36,6 +36,10 @@ cadastrado com telefone e endereco.
 O Caixa tambem oferece venda direta de balcao por leitor USB ou webcam. Cada
 bip adiciona uma unidade, leituras repetidas somam quantidade e a conclusao
 baixa o estoque, registra a venda e credita o pagamento no caixa aberto.
+Em `Configuracao > HTTPS e camera`, o modo de leitura pode ser automatico,
+leitor USB ou webcam. No automatico, dispositivos moveis mostram a acao de
+camera e computadores mantem o foco preparado para o leitor USB. Navegadores
+sem `BarcodeDetector` nativo usam o ZXing embarcado, sem depender de internet.
 
 Na tela de Pedidos, o acompanhamento usa um kanban com as etapas `Novo`,
 `Separado`, `Entrega` e `Delivery`. Os cards podem ser arrastados no desktop ou

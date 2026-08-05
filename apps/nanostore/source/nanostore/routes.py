@@ -1725,6 +1725,9 @@ def api_settings():
     settings = payload.get("settings") or {}
     if not isinstance(settings, dict):
         abort(400, "Formato invalido.")
+    barcode_mode = settings.get("BARCODE_INPUT_MODE")
+    if barcode_mode is not None and str(barcode_mode).strip() not in {"auto", "usb", "camera"}:
+        abort(400, "Modo de leitura de codigo de barras invalido.")
     for key, value in settings.items():
         _set_setting(key, value)
     db.session.commit()

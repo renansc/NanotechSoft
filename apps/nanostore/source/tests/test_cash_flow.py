@@ -276,11 +276,24 @@ class CashFlowTest(unittest.TestCase):
                     'data-dashboard-report="stock"', "Entrada ou saida", "Kanban de pedidos",
                     "Notas dos pedidos", "Novo cliente do pedido", "Codigo / bipe", "Ler pela webcam",
                     "Venda direta no caixa", 'id="cash-sale-barcode-input"', 'id="cash-sale-items-json"',
+                    "Bipar com camera", "Leitura na venda direta", "BARCODE_INPUT_MODE",
+                    "vendor/zxing-browser.min.js", 'data-barcode-input-mode="auto"',
                     "data-order-edit", "data-order-delete", 'data-target="estoque"',
                     'data-target="relatorios"', 'data-target="documentacao"',
                     'class="menu-link" data-target="configuracao">Configuracao',
                 ):
                     self.assertIn(marker, html)
+
+    def test_saved_barcode_input_mode_is_rendered(self):
+        client = self.app.test_client()
+        saved = client.post("/api/settings", json={"settings": {"BARCODE_INPUT_MODE": "camera"}})
+        self.assertEqual(200, saved.status_code, saved.get_json())
+        html = client.get("/").get_data(as_text=True)
+        self.assertIn('data-barcode-input-mode="camera"', html)
+        self.assertIn('<option value="camera" selected>', html)
+        rejected = client.post("/api/settings", json={"settings": {"BARCODE_INPUT_MODE": "invalido"}})
+        self.assertEqual(400, rejected.status_code)
+        self.assertEqual("camera", IntegrationSetting.query.filter_by(key="BARCODE_INPUT_MODE").one().value)
 
     def test_distributor_dashboard_summarizes_cash_orders_and_stock(self):
         setting = IntegrationSetting(key="STORE_MODE", value="distributor")

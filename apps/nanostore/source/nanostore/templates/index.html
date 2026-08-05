@@ -6,7 +6,7 @@
     <title>{{ title }}</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
   </head>
-  <body data-store-mode="{{ mode_key }}" data-mode-accent="{{ store_mode.accent }}">
+  <body data-store-mode="{{ mode_key }}" data-mode-accent="{{ store_mode.accent }}" data-barcode-input-mode="{{ settings_map.get('BARCODE_INPUT_MODE', 'auto') }}">
     <div class="shell" id="nanostore-shell">
       <aside class="sidebar">
         <div class="brand">
@@ -1051,9 +1051,10 @@
                   <input type="hidden" name="fulfillment_type" value="counter">
                   <div class="barcode-capture">
                     <label class="field-inline"><span>Codigo / bipe</span><input id="cash-sale-barcode-input" placeholder="Clique aqui e faca o bipe" autocomplete="off" {% if summary.cash_status != 'open' %}disabled{% endif %}></label>
-                    <button type="button" class="secondary-btn scan-trigger" id="scan-cash-sale-btn" {% if summary.cash_status != 'open' %}disabled{% endif %}>Ler pela webcam</button>
+                    <button type="button" class="secondary-btn scan-trigger" id="scan-cash-sale-btn" {% if summary.cash_status != 'open' %}disabled{% endif %}>Bipar com camera</button>
                   </div>
                   <p class="helper barcode-feedback" id="cash-sale-barcode-feedback" aria-live="polite">Cada leitura adiciona uma unidade.</p>
+                  <p class="helper scanner-support-note cash-sale-scanner-note" hidden>A camera precisa de HTTPS confiavel e permissao do navegador. O codigo tambem pode ser digitado.</p>
                   <div class="sale-items-panel">
                     <div class="item-stack empty-list" id="cash-sale-items-list"></div>
                   </div>
@@ -1721,6 +1722,16 @@
           <section class="subview" id="config-conexao" data-subview hidden>
             <article class="card card-https-tools config-card" data-cert-hosts='{{ https_runtime.cert_hosts|tojson }}' data-http-port="{{ https_runtime.http_port }}" data-https-port="{{ https_runtime.https_port }}" data-public-base-url="{{ https_runtime.public_base_url }}" data-https-enabled="{{ '1' if https_runtime.enabled else '0' }}">
               <h3>HTTPS e camera</h3>
+              <form class="settings-form barcode-mode-form">
+                <label class="field-block"><span>Leitura na venda direta</span>
+                  <select name="BARCODE_INPUT_MODE">
+                    {% for value, label in [('auto', 'Automatico: camera no celular e leitor USB no computador'), ('usb', 'Leitor USB ou digitacao'), ('camera', 'Webcam neste dispositivo')] %}
+                    <option value="{{ value }}" {% if settings_map.get('BARCODE_INPUT_MODE', 'auto') == value %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                  </select>
+                </label>
+                <button type="submit">Salvar modo de leitura</button>
+              </form>
               <div class="status-stack">
                 <div class="status-line"><strong>HTTP atual:</strong> <span id="http-current-url">http://127.0.0.1:8080</span></div>
                 <div class="status-line"><strong>HTTPS atual:</strong> <span id="https-current-url">https://127.0.0.1:8443</span></div>
@@ -1910,6 +1921,7 @@
       </div>
     </div>
 
+    <script src="{{ url_for('static', filename='vendor/zxing-browser.min.js') }}"></script>
     <script>
       function formToObject(form) {
         const payload = {};
@@ -1921,6 +1933,25 @@
           if (!(field.name in payload)) payload[field.name] = field.checked;
         });
         return payload;
+      }
+
+      const configuredBarcodeInputMode = ["auto", "usb", "camera"].includes(document.body.dataset.barcodeInputMode)
+        ? document.body.dataset.barcodeInputMode
+        : "auto";
+
+      function isMobileBarcodeDevice() {
+        return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || "")
+          || !!(window.matchMedia && window.matchMedia("(pointer: coarse)").matches);
+      }
+
+      function cashSaleUsesCamera() {
+        return configuredBarcodeInputMode === "camera"
+          || (configuredBarcodeInputMode === "auto" && isMobileBarcodeDevice());
+      }
+
+      function focusCashSaleCapture() {
+        const target = document.getElementById(cashSaleUsesCamera() ? "scan-cash-sale-btn" : "cash-sale-barcode-input");
+        target?.focus();
       }
 
       function currentNetworkUrls() {
@@ -1993,6 +2024,7 @@
         const mobileUA = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || "");
         const cameraApi = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
         const barcodeApi = "BarcodeDetector" in window;
+        const compatibleBarcodeApi = !!(window.ZXingBrowser && window.ZXingBrowser.BrowserMultiFormatReader);
 
         if (httpCurrentUrl) httpCurrentUrl.textContent = urls.httpBase;
         if (httpsCurrentUrl) httpsCurrentUrl.textContent = urls.httpsBase;
@@ -2004,8 +2036,8 @@
         }
         if (httpsDeviceStatus) {
           httpsDeviceStatus.textContent = mobileUA
-            ? `${cameraApi ? "Camera disponivel" : "Camera nao disponivel"}${barcodeApi ? " • leitura nativa disponivel" : " • leitura nativa limitada"}`
-            : `${cameraApi ? "Camera disponivel" : "Camera nao disponivel"}${barcodeApi ? " • leitura nativa disponivel" : " • leitura nativa limitada"}`;
+            ? `${cameraApi ? "Camera disponivel" : "Camera nao disponivel"}${barcodeApi ? " • leitura nativa disponivel" : compatibleBarcodeApi ? " • leitor compativel disponivel" : " • leitor indisponivel"}`
+            : `${cameraApi ? "Camera disponivel" : "Camera nao disponivel"}${barcodeApi ? " • leitura nativa disponivel" : compatibleBarcodeApi ? " • leitor compativel disponivel" : " • leitor indisponivel"}`;
         }
         if (httpsWarningBox) {
           let warning = "";
@@ -2015,8 +2047,8 @@
             warning = "Esta tela ainda nao esta em contexto seguro. Para camera no celular, abra a URL HTTPS depois de instalar a CA.";
           } else if (!cameraApi) {
             warning = "Este navegador nao expôs a API de camera. Verifique permissao da camera e teste no Chrome ou Safari atualizados.";
-          } else if (!barcodeApi) {
-            warning = "A camera pode funcionar, mas a leitura automatica depende do suporte nativo do navegador. Se necessario, use consulta manual do item.";
+          } else if (!barcodeApi && !compatibleBarcodeApi) {
+            warning = "A camera pode funcionar, mas o leitor automatico nao foi carregado. Use a digitacao manual do codigo.";
           }
           httpsWarningBox.hidden = !warning;
           httpsWarningBox.textContent = warning;
@@ -2140,7 +2172,7 @@
             window.setTimeout(() => document.getElementById("sale-barcode-input")?.focus(), 0);
           }
           if (button.dataset.openSubview === "lancamentos-caixa") {
-            window.setTimeout(() => document.getElementById("cash-sale-barcode-input")?.focus(), 0);
+            window.setTimeout(focusCashSaleCapture, 0);
           }
         });
       });
@@ -2239,7 +2271,7 @@
             window.setTimeout(() => document.getElementById("sale-barcode-input")?.focus(), 0);
           }
           if (button.dataset.openSubview === "lancamentos-caixa") {
-            window.setTimeout(() => document.getElementById("cash-sale-barcode-input")?.focus(), 0);
+            window.setTimeout(focusCashSaleCapture, 0);
           }
         });
       });
@@ -2272,7 +2304,7 @@
             button.addEventListener("click", () => {
               activateSubview(view, button.dataset.subviewTarget);
               if (button.dataset.subviewTarget === "lancamentos-caixa") {
-                window.setTimeout(() => document.getElementById("cash-sale-barcode-input")?.focus(), 0);
+                window.setTimeout(focusCashSaleCapture, 0);
               }
             });
           });
@@ -2374,6 +2406,8 @@
       const scanTriggers = document.querySelectorAll(".scan-trigger");
       let scannerStream = null;
       let scannerTimer = null;
+      let scannerControls = null;
+      let scannerReading = false;
 
       function refreshDistributorDestination() {
         if (!saleFulfillmentType) return;
@@ -2724,15 +2758,33 @@
       function updateScannerAvailability() {
         scannerSupported = !!(window.isSecureContext && navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
         scanTriggers.forEach(function (button) {
-          button.hidden = !scannerSupported;
+          if (button === scanCashSaleBtn) {
+            button.hidden = !cashSaleUsesCamera();
+          } else {
+            button.hidden = !scannerSupported;
+          }
         });
         document.querySelectorAll(".scanner-support-note").forEach(function (note) {
-          note.hidden = scannerSupported;
+          if (note.classList.contains("cash-sale-scanner-note")) {
+            note.hidden = !cashSaleUsesCamera() || scannerSupported;
+          } else {
+            note.hidden = scannerSupported;
+          }
         });
+        if (cashSaleBarcodeInput) {
+          cashSaleBarcodeInput.placeholder = cashSaleUsesCamera()
+            ? "Digite o codigo ou use a camera"
+            : "Clique aqui e faca o bipe";
+        }
+        if (cashSaleBarcodeFeedback) {
+          cashSaleBarcodeFeedback.textContent = cashSaleUsesCamera()
+            ? "Toque em Bipar com camera. Cada leitura adiciona uma unidade."
+            : "Leitor USB pronto. Cada bipe adiciona uma unidade.";
+        }
         const httpsDeviceStatus = document.getElementById("https-device-status");
         if (httpsDeviceStatus) {
           httpsDeviceStatus.textContent = scannerSupported
-            ? (("BarcodeDetector" in window) ? "Camera e leitura nativa prontas" : "Camera pronta, leitura nativa limitada")
+            ? (("BarcodeDetector" in window) ? "Camera e leitura nativa prontas" : "Camera e leitor compativel prontos")
             : (window.isSecureContext ? "Sem suporte suficiente de camera neste navegador" : "HTTPS necessario para camera");
         }
       }
@@ -2889,7 +2941,7 @@
             const quantity = cashSaleItems.reduce((sum, item) => sum + Number(item.quantity), 0);
             cashSaleBarcodeFeedback.textContent = `${product.name} adicionado. ${quantity} item(ns) na venda.`;
           }
-          cashSaleBarcodeInput?.focus();
+          focusCashSaleCapture();
         } else if (target === "count") {
           if (countProductSelect) {
             countProductSelect.value = String(product.id);
@@ -2904,7 +2956,9 @@
       }
 
       async function startScanner(target) {
+        stopScanner();
         currentScanTarget = target;
+        scannerReading = false;
         if (scannerModalTitle) {
           scannerModalTitle.textContent =
             target === "sale" ? "Bip de item para venda" :
@@ -2925,33 +2979,60 @@
           return;
         }
         try {
-          scannerStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
-          scannerVideo.srcObject = scannerStream;
-          scannerStatus.textContent = "Webcam ativa. Aponte para o codigo.";
+          const applyScannedValue = async function (value) {
+            if (scannerReading || !value) return;
+            scannerReading = true;
+            stopScanner();
+            try {
+              await applyLookupResult(currentScanTarget, value);
+            } catch (error) {
+              alert(error.message || "Nao foi possivel ler o codigo.");
+            }
+          };
           if ("BarcodeDetector" in window) {
+            scannerStream = await navigator.mediaDevices.getUserMedia({
+              video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } },
+            });
+            scannerVideo.srcObject = scannerStream;
+            await scannerVideo.play();
+            scannerStatus.textContent = "Camera ativa. Aponte para o codigo.";
             const detector = new BarcodeDetector({ formats: ["ean_13", "ean_8", "code_128", "qr_code", "upc_a", "upc_e"] });
             scannerTimer = setInterval(async () => {
               try {
                 const barcodes = await detector.detect(scannerVideo);
                 if (barcodes.length) {
-                  const value = barcodes[0].rawValue;
-                  stopScanner();
-                  await applyLookupResult(currentScanTarget, value);
+                  await applyScannedValue(barcodes[0].rawValue);
                 }
               } catch (error) {
-                stopScanner();
-                alert(error.message || "Nao foi possivel ler o codigo.");
+                if (error && error.name !== "NotFoundError") {
+                  stopScanner();
+                  alert(error.message || "Nao foi possivel ler o codigo.");
+                }
               }
             }, 600);
+          } else if (window.ZXingBrowser && window.ZXingBrowser.BrowserMultiFormatReader) {
+            scannerStatus.textContent = "Iniciando leitor compativel...";
+            const reader = new window.ZXingBrowser.BrowserMultiFormatReader();
+            scannerControls = await reader.decodeFromVideoDevice(undefined, scannerVideo, function (result) {
+              if (result) applyScannedValue(result.getText());
+            });
+            scannerStatus.textContent = "Camera ativa. Aponte para o codigo.";
           } else {
-            scannerStatus.textContent = "Digite o codigo manualmente. Seu navegador nao suporta leitura automatica nativa.";
+            scannerStatus.textContent = "Digite o codigo manualmente. O leitor de camera nao carregou.";
           }
         } catch (error) {
-          scannerStatus.textContent = "Nao foi possivel acessar a webcam.";
+          const reason = error && error.name === "NotAllowedError"
+            ? "Permissao da camera negada. Libere a camera nas configuracoes do navegador."
+            : "Nao foi possivel acessar a camera. Confirme o HTTPS e a permissao do navegador.";
+          scannerStatus.textContent = reason;
         }
       }
 
       function stopScanner() {
+        if (scannerControls) {
+          scannerControls.stop();
+          scannerControls = null;
+        }
         if (scannerTimer) {
           clearInterval(scannerTimer);
           scannerTimer = null;
@@ -3188,7 +3269,7 @@
             button.addEventListener("click", () => {
               cashSaleItems.splice(Number(button.dataset.removeCashSaleItem), 1);
               refreshCashSaleItems();
-              cashSaleBarcodeInput?.focus();
+              focusCashSaleCapture();
             });
           });
         }
@@ -3480,7 +3561,7 @@
           }
           if (form.id === "cash-sale-form" && cashSaleItems.length === 0) {
             alert("Bipe ao menos um produto para concluir a venda.");
-            cashSaleBarcodeInput?.focus();
+            focusCashSaleCapture();
             return;
           }
           if (form.id === "purchase-form" && purchaseItems.length === 0) {

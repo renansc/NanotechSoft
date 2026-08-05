@@ -329,6 +329,18 @@ body[data-store-mode="distributor"] .order-control-panel,
   font-weight: 700;
 }
 
+.barcode-mode-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+  margin-bottom: 16px;
+}
+
+.barcode-mode-form button {
+  min-height: 44px;
+}
+
 .order-kanban-panel {
   overflow: hidden;
 }
@@ -1484,6 +1496,10 @@ th {
 }
 
 @media (max-width: 980px) {
+  .barcode-mode-form {
+    grid-template-columns: 1fr;
+  }
+
   .operation-notice {
     grid-template-columns: 1fr;
   }
