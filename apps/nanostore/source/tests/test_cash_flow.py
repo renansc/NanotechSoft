@@ -180,6 +180,12 @@ class CashFlowTest(unittest.TestCase):
         self.assertIn("Editar, cancelar ou excluir uma venda", page)
         self.assertIn("Correcao de lancamentos", page)
 
+    def test_template_has_only_the_real_body_closing_tag(self):
+        template_path = Path(__file__).resolve().parents[1] / "nanostore" / "templates" / "index.html"
+        template = template_path.read_text(encoding="utf-8")
+
+        self.assertEqual(1, template.count("</body>"))
+
     def test_every_store_mode_renders_its_interface(self):
         expected = {
             "pharmacy": "Operacao da farmacia", "store": "Painel da loja",
