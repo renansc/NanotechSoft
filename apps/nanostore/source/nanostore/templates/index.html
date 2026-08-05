@@ -1802,7 +1802,7 @@
                   {% if company_logo_url %}<img src="{{ company_logo_url }}?v={{ company_logo_version }}" alt="Logomarca atual">
                   {% else %}<span>N</span>{% endif %}
                 </div>
-                <form id="company-logo-form" data-endpoint="{{ url_for('main.api_company_logo') }}" enctype="multipart/form-data">
+                <form id="company-logo-form" data-endpoint="api/company/logo" enctype="multipart/form-data">
                   <label class="field-block"><span>Arquivo da logomarca</span><input id="company-logo-input" name="logo" type="file" accept="image/png,image/jpeg,image/webp" required></label>
                   <p class="helper">PNG, JPEG ou WebP, com no maximo 2 MB.</p>
                   <div class="company-logo-actions">

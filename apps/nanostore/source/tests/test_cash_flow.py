@@ -325,6 +325,7 @@ class CashFlowTest(unittest.TestCase):
             served.close()
             page = client.get("/").get_data(as_text=True)
             self.assertIn('class="brand-logo"', page)
+            self.assertIn('data-endpoint="api/company/logo"', page)
             removed = client.delete("/api/company/logo")
             self.assertEqual(200, removed.status_code, removed.get_json())
             self.assertEqual(404, client.get("/api/company/logo").status_code)

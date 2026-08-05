@@ -15,7 +15,7 @@ from uuid import uuid4
 
 from cryptography import x509
 from cryptography.hazmat.primitives import serialization
-from flask import Blueprint, Response, abort, jsonify, render_template, request, send_file, url_for
+from flask import Blueprint, Response, abort, jsonify, render_template, request, send_file
 from PIL import Image, UnidentifiedImageError
 from sqlalchemy import and_, case, func, or_
 from zoneinfo import ZoneInfo
@@ -1175,7 +1175,7 @@ def index():
         customers=PharmacyCustomer.query.order_by(PharmacyCustomer.name.asc()).all(),
         distribution_tables=DistributionTable.query.filter_by(is_active=True).order_by(DistributionTable.number.asc()).all(),
         settings_map=settings_map,
-        company_logo_url=url_for("main.api_company_logo") if company_logo_path else "",
+        company_logo_url="api/company/logo" if company_logo_path else "",
         company_logo_version=int(company_logo_path.stat().st_mtime) if company_logo_path else 0,
         https_runtime=_https_runtime_config(),
         fiscal_status=fiscal_certificate_status(),
@@ -2068,7 +2068,7 @@ def api_company_logo():
         db.session.commit()
     except ValueError as exc:
         abort(400, str(exc))
-    return jsonify({"ok": True, "url": url_for("main.api_company_logo")})
+    return jsonify({"ok": True, "url": "api/company/logo"})
 
 
 @bp.route("/api/purchases", methods=["POST"])
