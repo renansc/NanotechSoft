@@ -234,6 +234,7 @@ class CashFlowTest(unittest.TestCase):
         self.assertIn("Medicamentos e produtos cadastrados", page)
         self.assertIn("Nome antigo", page)
         self.assertIn('class="secondary-btn product-edit-btn"', page)
+        self.assertIn('class="secondary-btn product-status-btn"', page)
         self.assertIn("Consultar NCM na Receita", page)
         self.assertIn("validacao estrutural", page.lower())
         self.assertIn("Assistir tributacao", page)
@@ -265,6 +266,37 @@ class CashFlowTest(unittest.TestCase):
         duplicate = client.patch(f"/api/products/{product.id}", json={"sku": other.sku})
         self.assertEqual(400, duplicate.status_code)
         self.assertIn("SKU ja cadastrado", duplicate.get_json()["error"])
+
+    def test_disabled_product_is_hidden_from_sales_and_can_be_enabled_again(self):
+        active = PharmacyProduct(
+            sku="ATIVO-1", name="Produto ativo", sale_price=Decimal("10"),
+            tracks_inventory=False, is_active=True,
+        )
+        disabled = PharmacyProduct(
+            sku="INATIVO-1", name="Produto desabilitado", barcode="7891234567895",
+            sale_price=Decimal("12"), tracks_inventory=False, is_active=False,
+        )
+        db.session.add_all([active, disabled])
+        db.session.commit()
+        client = self.app.test_client()
+
+        filtered = client.get("/api/products?active=true").get_json()["items"]
+        self.assertEqual(["ATIVO-1"], [item["sku"] for item in filtered])
+        lookup = client.get("/api/products/lookup?code=7891234567895")
+        self.assertEqual(409, lookup.status_code)
+
+        sale = client.post("/api/sales", json={
+            "customer_name": "Cliente", "payment_method": "pending",
+            "items": [{"product_id": disabled.id, "quantity": "1", "unit_price": "12"}],
+        })
+        self.assertEqual(400, sale.status_code)
+        self.assertIn("desabilitado", sale.get_json()["error"].lower())
+        self.assertEqual(0, PharmacySale.query.count())
+
+        enabled = client.patch(f"/api/products/{disabled.id}", json={"is_active": True})
+        self.assertEqual(200, enabled.status_code, enabled.get_json())
+        self.assertTrue(enabled.get_json()["product"]["is_active"])
+        self.assertEqual(200, client.get("/api/products/lookup?code=7891234567895").status_code)
 
     def test_fiscal_assistance_requires_crt_and_returns_compatible_codes(self):
         client = self.app.test_client()

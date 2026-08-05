@@ -539,12 +539,13 @@
                 </div>
                 {% endif %}
                 <div class="table-wrap product-register-table"><table>
-                  <thead><tr><th>SKU</th><th>Item</th><th>Codigo</th><th>Estoque</th><th>Venda</th>{% if store_mode.show_fiscal %}<th>Fiscal</th>{% endif %}<th></th></tr></thead>
-                  <tbody>{% for product in summary.products %}<tr data-registered-product-row>
+                  <thead><tr><th>SKU</th><th>Item</th><th>Codigo</th><th>Estoque</th><th>Venda</th><th>Status</th>{% if store_mode.show_fiscal %}<th>Fiscal</th>{% endif %}<th></th></tr></thead>
+                  <tbody>{% for product in summary.products %}<tr data-registered-product-row data-product-active="{{ '1' if product.is_active else '0' }}">
                     <td>{{ product.sku }}</td><td><strong>{{ product.name }}</strong><small>{{ product.category_name or 'Sem categoria' }}</small></td><td>{{ product.barcode or '-' }}</td><td>{{ '%.3f'|format(product.stock) if product.tracks_inventory else 'Nao controla' }}</td><td>R$ {{ '%.2f'|format(product.sale_price) }}</td>
+                    <td><span class="stock-state {{ 'is-ok' if product.is_active else 'is-disabled' }}">{{ 'Ativo' if product.is_active else 'Desabilitado' }}</span></td>
                     {% if store_mode.show_fiscal %}<td><span class="stock-state {{ 'is-ok' if product.fiscal_ready else 'is-low' }}" title="{{ product.fiscal_errors|join(' | ') }}">{{ 'Estrutura OK' if product.fiscal_ready else product.fiscal_errors|length ~ ' pendencia(s)' }}</span></td>{% endif %}
-                    <td><button type="button" class="secondary-btn product-edit-btn" data-product="{{ product|tojson|forceescape }}">Editar</button></td>
-                  </tr>{% else %}<tr><td colspan="7">Nenhum item cadastrado.</td></tr>{% endfor %}</tbody>
+                    <td><div class="product-row-actions"><button type="button" class="secondary-btn product-edit-btn" data-product="{{ product|tojson|forceescape }}">Editar</button><button type="button" class="secondary-btn product-status-btn" data-product-id="{{ product.id }}" data-product-active="{{ '1' if product.is_active else '0' }}">{{ 'Desabilitar' if product.is_active else 'Habilitar' }}</button></div></td>
+                  </tr>{% else %}<tr><td colspan="{{ 8 if store_mode.show_fiscal else 7 }}">Nenhum item cadastrado.</td></tr>{% endfor %}</tbody>
                 </table></div>
               </article>
             </section>
@@ -636,7 +637,7 @@
                     <span>Produto</span>
                     <select name="product_id" required>
                       <option value="">Produto</option>
-                      {% for product in summary.products %}
+                      {% for product in summary.products if product.is_active %}
                       <option value="{{ product.id }}">{{ product.name }} ({{ product.sku }})</option>
                       {% endfor %}
                     </select>
@@ -790,7 +791,7 @@
                       </label>
                       <label class="field-inline">
                         <span>Produto</span>
-                        <select id="purchase-product-select" data-source="/api/products">
+                        <select id="purchase-product-select" data-source="/api/products?active=true">
                           <option value="">Produto do estoque</option>
                         </select>
                       </label>
@@ -883,9 +884,9 @@
                     <div class="row">
                       <label class="field-inline">
                         <span>{{ store_mode.entity|capitalize }}</span>
-                        <select id="sale-product-select" data-source="/api/products">
+                        <select id="sale-product-select" data-source="/api/products?active=true">
                           <option value="">{{ store_mode.entity|capitalize }}</option>
-                          {% for product in summary.products %}
+                          {% for product in summary.products if product.is_active %}
                           <option
                             value="{{ product.id }}"
                             data-sku="{{ product.sku }}"
@@ -930,7 +931,7 @@
                           </tr>
                         </thead>
                         <tbody id="sale-products-catalog">
-                          {% for product in summary.products %}
+                          {% for product in summary.products if product.is_active %}
                           <tr>
                             <td>{{ product.sku }}</td>
                             <td>{{ product.name }}</td>
@@ -2628,6 +2629,28 @@
           }
           productEditModal.hidden = false;
           productEditForm.elements.namedItem("name")?.focus();
+        });
+      });
+      document.querySelectorAll(".product-status-btn").forEach((button) => {
+        button.addEventListener("click", async () => {
+          const isActive = button.dataset.productActive === "1";
+          if (isActive && !window.confirm("Desabilitar este produto? Ele deixara de aparecer em novas vendas.")) return;
+          button.disabled = true;
+          try {
+            const response = await fetch(`/api/products/${button.dataset.productId}`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ is_active: !isActive }),
+            });
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok || data.ok === false) {
+              throw new Error(data.error || "Nao foi possivel alterar o status do produto.");
+            }
+            window.location.reload();
+          } catch (error) {
+            button.disabled = false;
+            window.alert(error.message);
+          }
         });
       });
       if (closeProductEditBtn) closeProductEditBtn.addEventListener("click", closeProductEditModal);

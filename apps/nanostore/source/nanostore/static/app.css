@@ -643,6 +643,18 @@ body[data-store-mode="distributor"] select:focus,
   color: #953d2f;
 }
 
+.stock-state.is-disabled {
+  background: #eceff1;
+  color: #4f5962;
+}
+
+.product-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 190px;
+}
+
 h2,
 h3 {
   margin-top: 0;

@@ -889,6 +889,8 @@ def _add_sale_items(sale, items, movement_type="sale"):
             ).first()
         if not product:
             raise ValueError("Produto nao encontrado em um dos itens.")
+        if not product.is_active:
+            raise ValueError(f"{product.name} esta desabilitado e nao pode ser vendido.")
         quantity = _to_decimal(raw_item.get("quantity"), f"quantidade de {product.name}")
         unit_price = _to_decimal(raw_item.get("unit_price"), f"preco de {product.name}", default=str(product.sale_price or "0"))
         line_discount = _to_decimal(raw_item.get("discount_amount"), f"desconto de {product.name}")
@@ -1354,7 +1356,13 @@ def api_tables():
 @bp.route("/api/products", methods=["GET", "POST"])
 def api_products():
     if request.method == "GET":
-        products = PharmacyProduct.query.order_by(PharmacyProduct.name.asc()).all()
+        query = PharmacyProduct.query
+        active_filter = str(request.args.get("active") or "").strip().lower()
+        if active_filter in {"1", "true", "yes", "sim", "on"}:
+            query = query.filter(PharmacyProduct.is_active.is_(True))
+        elif active_filter in {"0", "false", "no", "nao", "off"}:
+            query = query.filter(PharmacyProduct.is_active.is_(False))
+        products = query.order_by(PharmacyProduct.name.asc()).all()
         return jsonify({"ok": True, "items": [_serialize_product(product) for product in products]})
     payload = request.get_json(force=True)
     name = (payload.get("name") or "").strip()
@@ -1617,6 +1625,8 @@ def api_products_lookup():
             product = PharmacyProduct.query.filter(func.lower(PharmacyProduct.name).like(f"%{normalized}%")).order_by(PharmacyProduct.name.asc()).first()
     if not product:
         abort(404, "Item nao encontrado.")
+    if not product.is_active:
+        abort(409, "Item desabilitado. Habilite o cadastro antes de usa-lo em uma venda.")
     lots = PharmacyLot.query.filter(
         PharmacyLot.product_id == product.id,
         PharmacyLot.quantity_available > 0,
