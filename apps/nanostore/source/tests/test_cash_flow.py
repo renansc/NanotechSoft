@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -280,6 +281,7 @@ class CashFlowTest(unittest.TestCase):
                     "Bipar com camera", "Leitura na venda direta", "BARCODE_INPUT_MODE",
                     "vendor/zxing-browser.min.js", 'data-barcode-input-mode="auto"',
                     "Buscar item similar", 'id="similar-product-modal"', "/api/products/similar",
+                    "decodeFromVideoElement", "scannerVideo.srcObject = scannerStream",
                     "data-order-edit", "data-order-delete", 'data-target="estoque"',
                     'data-target="relatorios"', 'data-target="documentacao"',
                     'class="menu-link" data-target="configuracao">Configuracao',
@@ -501,6 +503,32 @@ class CashFlowTest(unittest.TestCase):
         excluded = client.get(f"/api/products/similar?name=cerveja&exclude_id={beer.id}")
         self.assertNotIn(beer.id, [item["product"]["id"] for item in excluded.get_json()["items"]])
         self.assertEqual(400, client.get("/api/products/similar").status_code)
+
+    @patch("nanostore.routes._search_open_food_facts")
+    @patch("nanostore.routes._search_official_ncm")
+    def test_similar_product_search_combines_external_catalog_and_official_ncm(self, search_ncm, search_catalog):
+        search_ncm.return_value = [{
+            "score": 90, "reasons": ["descricao da tabela NCM oficial"],
+            "source": "receita_ncm", "source_label": "Receita Federal - NCM oficial",
+            "product": {"name": "Cervejas de malte", "ncm": "22030000", "unit": "UN", "tax_unit": "UN"},
+        }]
+        search_catalog.return_value = [{
+            "score": 110, "reasons": ["produto encontrado por codigo"],
+            "source": "open_food_facts", "source_label": "Open Food Facts",
+            "external_quantity": "350 ml",
+            "product": {"sku": "GTIN-7891234567890", "name": "Cerveja Pilsen", "barcode": "7891234567890", "brand": "Marca Teste"},
+        }]
+        response = self.app.test_client().get(
+            "/api/products/similar?name=cerveja&barcode=7891234567890&external=1"
+        )
+        self.assertEqual(200, response.status_code, response.get_json())
+        data = response.get_json()
+        sources = {item["source"] for item in data["items"]}
+        self.assertIn("receita_ncm", sources)
+        self.assertIn("open_food_facts", sources)
+        catalog = next(item for item in data["items"] if item["source"] == "open_food_facts")
+        self.assertNotIn("ncm", catalog["product"])
+        self.assertEqual("Open Food Facts", catalog["source_label"])
 
     def make_stocked_order(self, payment_method="pending", quantity="1", price="10"):
         product = PharmacyProduct(sku="EDIT-1", name="Produto editavel", sale_price=Decimal(price))

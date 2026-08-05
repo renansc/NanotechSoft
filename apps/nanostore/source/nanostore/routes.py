@@ -1,10 +1,15 @@
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from difflib import SequenceMatcher
+from concurrent.futures import ThreadPoolExecutor
+import json
 import os
+from pathlib import Path
+import re
 from types import SimpleNamespace
 import unicodedata
-from urllib.parse import urlparse
+from urllib.parse import urlencode, urlparse
+from urllib.request import Request, urlopen
 from uuid import uuid4
 
 from cryptography import x509
@@ -45,6 +50,12 @@ from .models import (
 )
 
 bp = Blueprint("main", __name__)
+
+NCM_PUBLIC_URL = "https://portalunico.siscomex.gov.br/classif/api/publico/nomenclatura/download/json?perfil=PUBLICO"
+OPEN_FOOD_FACTS_URL = "https://br.openfoodfacts.org"
+OPEN_FOOD_FACTS_SEARCH_URL = "https://search.openfoodfacts.org/search"
+EXTERNAL_CATALOG_USER_AGENT = "NanoStore/1.0 (renanrocks2009@gmail.com)"
+_ncm_catalog_cache = {"loaded_at": None, "items": [], "updated_at": ""}
 
 
 def _certs_dir():
@@ -225,6 +236,153 @@ def _similarity_text(value):
     return " ".join(
         "".join(char for char in normalized if not unicodedata.combining(char)).lower().split()
     )
+
+
+def _similarity_tokens(value):
+    tokens = set(_similarity_text(value).split())
+    tokens.update(token[:-1] for token in list(tokens) if len(token) > 4 and token.endswith("s"))
+    return tokens
+
+
+def _external_json(url, timeout=8):
+    request_data = Request(url, headers={"User-Agent": EXTERNAL_CATALOG_USER_AGENT, "Accept": "application/json"})
+    with urlopen(request_data, timeout=timeout) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def _ncm_cache_path():
+    configured_path = os.environ.get("NANOSTORE_NCM_CACHE_PATH")
+    if configured_path:
+        return Path(configured_path)
+    return Path(__file__).resolve().parent.parent / "instance" / "ncm-catalog.json"
+
+
+def _load_ncm_payload(payload, loaded_at):
+    items = payload.get("Nomenclaturas") if isinstance(payload, dict) else []
+    if not isinstance(items, list) or not items:
+        return False
+    _ncm_catalog_cache.update({
+        "loaded_at": loaded_at,
+        "items": items,
+        "updated_at": str(payload.get("Data_Ultima_Atualizacao_NCM") or ""),
+    })
+    return True
+
+
+def _official_ncm_catalog():
+    loaded_at = _ncm_catalog_cache["loaded_at"]
+    now = datetime.now(timezone.utc)
+    if loaded_at and now - loaded_at < timedelta(hours=24):
+        return _ncm_catalog_cache
+
+    cache_path = _ncm_cache_path()
+    cached_payload = None
+    if cache_path.is_file():
+        try:
+            cached_payload = json.loads(cache_path.read_text(encoding="utf-8"))
+            cache_time = datetime.fromtimestamp(cache_path.stat().st_mtime, timezone.utc)
+            if _load_ncm_payload(cached_payload, cache_time) and now - cache_time < timedelta(hours=24):
+                return _ncm_catalog_cache
+        except (OSError, ValueError):
+            cached_payload = None
+
+    try:
+        payload = _external_json(NCM_PUBLIC_URL, timeout=12)
+        if not _load_ncm_payload(payload, now):
+            raise ValueError("A tabela NCM oficial retornou sem itens.")
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary_path = cache_path.with_suffix(f".{os.getpid()}.tmp")
+        temporary_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        temporary_path.replace(cache_path)
+    except Exception:
+        if cached_payload and _load_ncm_payload(cached_payload, now - timedelta(hours=23)):
+            return _ncm_catalog_cache
+        raise
+    return _ncm_catalog_cache
+
+
+def _search_official_ncm(query, limit=6):
+    normalized_query = _similarity_text(query)
+    digits = "".join(char for char in str(query or "") if char.isdigit())
+    query_tokens = _similarity_tokens(normalized_query)
+    matches = []
+    for item in _official_ncm_catalog()["items"]:
+        code = "".join(char for char in str(item.get("Codigo") or "") if char.isdigit())
+        if len(code) != 8:
+            continue
+        description = re.sub(r"<[^>]+>", "", str(item.get("Descricao") or "")).strip(" -")
+        normalized_description = _similarity_text(description)
+        description_tokens = _similarity_tokens(normalized_description)
+        score = 0
+        if digits and code == digits:
+            score += 200
+        if normalized_query:
+            score += SequenceMatcher(None, normalized_query, normalized_description).ratio() * 55
+        if query_tokens and description_tokens:
+            overlap = len(query_tokens & description_tokens)
+            score += (overlap / len(query_tokens | description_tokens)) * 70
+            if not overlap and not digits:
+                continue
+        if normalized_query and (normalized_query in normalized_description or normalized_description in normalized_query):
+            score += 35
+        if score < 22:
+            continue
+        matches.append({
+            "score": round(score, 1),
+            "reasons": ["descricao da tabela NCM oficial"],
+            "source": "receita_ncm",
+            "source_label": "Receita Federal - NCM oficial",
+            "product": {"name": description, "ncm": code, "unit": "UN", "tax_unit": "UN"},
+        })
+    matches.sort(key=lambda item: (-item["score"], item["product"]["name"]))
+    return matches[:limit]
+
+
+def _search_open_food_facts(query, barcode="", limit=6):
+    fields = "code,product_name,product_name_pt,brands,quantity,categories,countries_tags"
+    digits = "".join(char for char in str(barcode or query or "") if char.isdigit())
+    products = []
+    if len(digits) in {8, 12, 13, 14}:
+        payload = _external_json(f"{OPEN_FOOD_FACTS_URL}/api/v2/product/{digits}?{urlencode({'fields': fields})}", timeout=6)
+        if payload.get("status") == 1 and isinstance(payload.get("product"), dict):
+            products = [payload["product"]]
+    else:
+        params = {"q": query, "page": "1", "page_size": str(max(limit * 5, 30))}
+        payload = _external_json(f"{OPEN_FOOD_FACTS_SEARCH_URL}?{urlencode(params)}", timeout=8)
+        hits = payload.get("hits") if isinstance(payload, dict) else []
+        products = [
+            product for product in hits or []
+            if "en:brazil" in (product.get("countries_tags") or [])
+        ]
+
+    matches = []
+    seen = set()
+    for product in products or []:
+        code = str(product.get("code") or "").strip()
+        name = str(product.get("product_name_pt") or product.get("product_name") or "").strip()
+        if not name or code in seen:
+            continue
+        seen.add(code)
+        brands = product.get("brands") or ""
+        brand = ", ".join(brands) if isinstance(brands, list) else str(brands).strip()
+        quantity = str(product.get("quantity") or "").strip()
+        matches.append({
+            "score": 110 if digits and code == digits else 70,
+            "reasons": ["produto encontrado por codigo" if digits else "produto encontrado por nome"],
+            "source": "open_food_facts",
+            "source_label": "Open Food Facts",
+            "external_quantity": quantity,
+            "product": {
+                "sku": f"GTIN-{code}" if code else "",
+                "name": name,
+                "barcode": code,
+                "brand": brand,
+                "unit": "UN",
+                "tax_unit": "UN",
+                "gtin_taxable": code or "SEM GTIN",
+            },
+        })
+    return matches[:limit]
 
 
 def _serialize_lot(lot):
@@ -1162,11 +1320,13 @@ def api_products():
 
 @bp.route("/api/products/similar")
 def api_similar_products():
-    name = _similarity_text(request.args.get("name"))
+    raw_name = str(request.args.get("name") or "").strip()
+    name = _similarity_text(raw_name)
     barcode = str(request.args.get("barcode") or "").strip().lower()
     ncm = "".join(char for char in str(request.args.get("ncm") or "") if char.isdigit())
     category_id = request.args.get("category_id", type=int)
     exclude_id = request.args.get("exclude_id", type=int)
+    include_external = _to_bool(request.args.get("external"))
     if not any((name, barcode, ncm)):
         abort(400, "Informe nome, codigo de barras ou NCM para procurar similares.")
 
@@ -1198,10 +1358,35 @@ def api_similar_products():
         matches.append({
             "score": round(score, 1),
             "reasons": reasons or ["cadastro semelhante"],
+            "source": "nanostore",
+            "source_label": "Cadastro do NanoStore",
             "product": _serialize_product(product),
         })
+
+    source_errors = []
+    if include_external:
+        search_query = raw_name or barcode or ncm
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            ncm_future = executor.submit(_search_official_ncm, search_query)
+            catalog_future = executor.submit(_search_open_food_facts, search_query, barcode)
+            try:
+                official_matches = ncm_future.result()
+                matches.extend(official_matches)
+            except Exception:
+                official_matches = []
+                source_errors.append("A tabela NCM oficial nao respondeu.")
+            try:
+                catalog_matches = catalog_future.result()
+                matches.extend(catalog_matches)
+            except Exception:
+                source_errors.append("O catalogo externo de produtos nao respondeu.")
     matches.sort(key=lambda item: (-item["score"], item["product"]["name"].lower()))
-    return jsonify({"ok": True, "items": matches[:8]})
+    return jsonify({
+        "ok": True,
+        "items": matches[:16],
+        "source_errors": source_errors,
+        "ncm_updated_at": _ncm_catalog_cache.get("updated_at", ""),
+    })
 
 
 def _apply_product_tax(product, payload):

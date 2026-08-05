@@ -1909,12 +1909,13 @@
 
     <div id="similar-product-modal" class="modal-shell" hidden>
       <div class="modal-card product-similar-card">
-        <div class="modal-head"><strong>Buscar item similar</strong><button type="button" class="secondary-btn" id="close-similar-product-btn">Fechar</button></div>
+        <div class="modal-head"><strong>Pesquisar produto e NCM</strong><button type="button" class="secondary-btn" id="close-similar-product-btn">Fechar</button></div>
         <div class="field-with-action">
           <label class="field-inline"><span>Nome, codigo de barras ou NCM</span><input id="similar-product-query" type="search"></label>
           <button type="button" id="run-similar-product-search-btn">Pesquisar</button>
         </div>
         <label><input type="checkbox" id="similar-product-overwrite"> Substituir valores ja preenchidos</label>
+        <div class="official-links"><a href="https://portalunico.siscomex.gov.br/classif/" target="_blank" rel="noopener">NCM oficial</a><a href="https://world.openfoodfacts.org/" target="_blank" rel="noopener">Open Food Facts</a></div>
         <p class="helper fiscal-feedback" id="similar-product-feedback" aria-live="polite"></p>
         <div class="similar-product-results" id="similar-product-results"></div>
       </div>
@@ -2518,7 +2519,7 @@
         return params;
       }
 
-      function applySimilarProduct(product) {
+      function applySimilarProduct(product, match) {
         const form = similarProductTargetForm;
         if (!form) return;
         const fields = [
@@ -2530,6 +2531,7 @@
         ];
         const overwrite = !!similarProductOverwrite?.checked;
         const isNewProduct = form.id === "product-form";
+        if (match?.source === "open_food_facts") fields.unshift("sku", "name", "barcode");
         const copied = [];
         fields.forEach((name) => {
           const field = form.elements.namedItem(name);
@@ -2547,7 +2549,7 @@
         const feedback = document.getElementById(form.id === "product-form" ? "product-create-fiscal-feedback" : "product-fiscal-feedback");
         if (feedback) {
           feedback.classList.remove("is-error");
-          feedback.textContent = `${copied.length} campos preenchidos a partir de ${product.name}. Confira tributacao e precos antes de salvar.`;
+          feedback.textContent = `${copied.length} campos preenchidos a partir de ${match?.source_label || product.name}. Confira tributacao, NCM e precos antes de salvar.`;
         }
         closeSimilarProductModal();
         form.elements.namedItem("ncm")?.focus();
@@ -2569,16 +2571,18 @@
           const identity = document.createElement("span");
           const fiscal = document.createElement("span");
           const reason = document.createElement("small");
+          const source = document.createElement("small");
           const useButton = document.createElement("button");
           row.className = "similar-product-result";
           title.textContent = product.name;
-          identity.textContent = `${product.sku} | ${product.barcode || "sem codigo"}`;
+          identity.textContent = `${product.sku || "sem SKU"} | ${product.barcode || "sem codigo"}`;
           fiscal.textContent = `NCM ${product.ncm || "-"} | ICMS ${product.icms_cst || "-"} | PIS ${product.pis_cst || "-"} | COFINS ${product.cofins_cst || "-"}`;
           reason.textContent = match.reasons.join("; ");
+          source.textContent = `${match.source_label || "Catalogo"}${match.external_quantity ? ` | embalagem ${match.external_quantity}` : ""}`;
           useButton.type = "button";
           useButton.textContent = "Usar dados";
-          useButton.addEventListener("click", () => applySimilarProduct(product));
-          details.append(title, identity, fiscal, reason);
+          useButton.addEventListener("click", () => applySimilarProduct(product, match));
+          details.append(title, identity, fiscal, reason, source);
           row.append(details, useButton);
           similarProductResults.appendChild(row);
         });
@@ -2587,6 +2591,7 @@
       async function runSimilarProductSearch(manualQuery = "") {
         if (!similarProductTargetForm) return;
         const params = similarProductSearchParams(similarProductTargetForm, manualQuery);
+        params.set("external", "1");
         if (similarProductFeedback) {
           similarProductFeedback.classList.remove("is-error");
           similarProductFeedback.textContent = "Procurando itens semelhantes...";
@@ -2597,6 +2602,10 @@
           const data = await response.json().catch(() => ({}));
           if (!response.ok || data.ok === false) throw new Error(data.error || "Nao foi possivel procurar itens semelhantes.");
           renderSimilarProducts(Array.isArray(data.items) ? data.items : []);
+          const sourceErrors = Array.isArray(data.source_errors) ? data.source_errors : [];
+          if (sourceErrors.length && similarProductFeedback) {
+            similarProductFeedback.textContent += ` ${sourceErrors.join(" ")}`;
+          }
         } catch (error) {
           if (similarProductFeedback) {
             similarProductFeedback.classList.add("is-error");
@@ -3147,13 +3156,23 @@
               alert(error.message || "Nao foi possivel ler o codigo.");
             }
           };
-          if ("BarcodeDetector" in window) {
-            scannerStream = await navigator.mediaDevices.getUserMedia({
-              video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } },
+          scannerStream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } },
+            audio: false,
+          });
+          scannerVideo.srcObject = scannerStream;
+          if (scannerVideo.readyState < 1) {
+            await new Promise((resolve) => {
+              const timeout = window.setTimeout(resolve, 2500);
+              scannerVideo.addEventListener("loadedmetadata", () => {
+                window.clearTimeout(timeout);
+                resolve();
+              }, { once: true });
             });
-            scannerVideo.srcObject = scannerStream;
-            await scannerVideo.play();
-            scannerStatus.textContent = "Camera ativa. Aponte para o codigo.";
+          }
+          await scannerVideo.play();
+          scannerStatus.textContent = "Camera ativa. Aponte para o codigo.";
+          if ("BarcodeDetector" in window) {
             const detector = new BarcodeDetector({ formats: ["ean_13", "ean_8", "code_128", "qr_code", "upc_a", "upc_e"] });
             scannerTimer = setInterval(async () => {
               try {
@@ -3169,12 +3188,10 @@
               }
             }, 600);
           } else if (window.ZXingBrowser && window.ZXingBrowser.BrowserMultiFormatReader) {
-            scannerStatus.textContent = "Iniciando leitor compativel...";
             const reader = new window.ZXingBrowser.BrowserMultiFormatReader();
-            scannerControls = await reader.decodeFromVideoDevice(undefined, scannerVideo, function (result) {
+            scannerControls = await reader.decodeFromVideoElement(scannerVideo, function (result) {
               if (result) applyScannedValue(result.getText());
             });
-            scannerStatus.textContent = "Camera ativa. Aponte para o codigo.";
           } else {
             scannerStatus.textContent = "Digite o codigo manualmente. O leitor de camera nao carregou.";
           }

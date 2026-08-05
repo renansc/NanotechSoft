@@ -92,10 +92,13 @@ Federal para NCM e as consultas de GTIN e tabelas fiscais da SVRS; o
 enquadramento final deve considerar regime tributario, UF e tipo da operacao.
 
 O botao `Buscar item similar`, disponivel na inclusao e na edicao, compara nome,
-codigo de barras, NCM e categoria com o catalogo ja cadastrado. Ao escolher uma
-correspondencia, copia dados comerciais e fiscais reutilizaveis, sem duplicar
-SKU, nome ou codigo de barras. Os valores copiados continuam sujeitos a
-conferencia, especialmente tributacao, beneficio fiscal e precos.
+codigo de barras, NCM e categoria com o catalogo ja cadastrado e tambem consulta
+o Open Food Facts e a tabela NCM publica do Portal Unico Siscomex. Cada resultado
+identifica sua origem. O catalogo externo pode preencher nome, marca, GTIN,
+embalagem e unidade; a opcao fiscal escolhida separadamente preenche o NCM
+oficial. Resultados internos reaproveitam os demais campos comerciais e fiscais,
+sem duplicar a identidade do item. Os valores copiados continuam sujeitos a
+conferencia, especialmente NCM, tributacao, beneficio fiscal e precos.
 
 ## Rodar localmente
 
@@ -256,4 +259,5 @@ Observacoes desta entrega:
 - o compose agora usa `nginx` + bootstrap de certificados, no mesmo estilo do projeto `RioBranco`
 - a CA interna e o certificado HTTPS ficam no diretorio `./certs`
 - para webcam no celular, o navegador precisa confiar na CA interna instalada no aparelho
+- o fluxo de webcam conecta e exibe primeiro o video, antes de iniciar o leitor nativo ou ZXing
 - quando a webcam nao estiver disponivel, o sistema esconde os botoes de scanner e mostra aviso com fallback manual
