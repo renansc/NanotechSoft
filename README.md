@@ -235,6 +235,9 @@ Usuarios comuns dependem da tabela `usuario_app_permissoes`:
 - `permitido`: `1` libera o recurso
 
 O menu principal e as abas internas do financeiro ocultam recursos sem permissao.
+As rotas `/apps/<app_key>` tambem validam essa permissao no servidor, inclusive
+quando o endereco e digitado diretamente. Webhooks, uploads e compartilhamentos
+marcados como publicos pelas integracoes permanecem acessiveis sem sessao.
 
 ## Financeiro
 

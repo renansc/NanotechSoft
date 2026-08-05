@@ -1253,6 +1253,35 @@ def app_visible_to_user(app_item, usuario):
     return bool(permissions)
 
 
+PUBLIC_APP_PATH_PREFIXES = (
+    "/apps/zap/webhooks/whatsapp",
+    "/apps/zap/public/uploads/",
+    "/apps/pacs/static/",
+    "/apps/pacs/share/",
+    "/apps/pacs/api/share/",
+)
+
+
+@app.before_request
+def enforce_app_permission():
+    path = request.path
+    if not path.startswith("/apps/"):
+        return None
+    if any(path == prefix.rstrip("/") or path.startswith(prefix) for prefix in PUBLIC_APP_PATH_PREFIXES):
+        return None
+
+    app_key = path.removeprefix("/apps/").split("/", 1)[0].strip()
+    if not app_key:
+        return None
+
+    usuario = current_user_or_logout()
+    if not usuario:
+        return redirect(url_for("login_page"))
+    if not app_visible_to_user({"app_key": app_key}, usuario):
+        return jsonify({"erro": "app nao liberado para este usuario"}), 403
+    return None
+
+
 def visible_apps_for_user(usuario):
     apps = list_apps()
     if user_is_admin(usuario):
