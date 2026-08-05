@@ -1296,6 +1296,56 @@ th {
   gap: 12px;
 }
 
+.compact-head {
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.product-register-card,
+.product-edit-card form {
+  display: grid;
+  gap: 14px;
+}
+
+.product-register-table small {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+}
+
+.product-register-table td:last-child {
+  text-align: right;
+}
+
+.official-checks {
+  padding: 12px 14px;
+  border: 1px solid #b9d4c0;
+  border-left: 4px solid var(--primary);
+  border-radius: 8px;
+  background: #f4faf5;
+}
+
+.official-checks p {
+  margin: 5px 0 10px;
+  color: var(--muted);
+}
+
+.official-links,
+.product-edit-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+}
+
+.official-links a {
+  color: var(--primary-dark);
+  font-weight: 700;
+}
+
+.product-edit-card {
+  width: min(980px, 100%);
+}
+
 .scanner-video {
   width: 100%;
   min-height: 220px;

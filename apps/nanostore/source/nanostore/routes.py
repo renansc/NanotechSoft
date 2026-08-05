@@ -177,14 +177,21 @@ def _serialize_product(product):
         "sku": product.sku,
         "name": product.name,
         "barcode": product.barcode or "",
+        "brand": product.brand or "",
+        "active_ingredient": product.active_ingredient or "",
+        "unit": product.unit or "un",
         "category_name": product.category.name if product.category else "",
         "category_id": product.category_id,
         "supplier_name": product.supplier.name if product.supplier else "",
+        "supplier_id": product.supplier_id,
         "stock": float(_product_stock(product.id)),
         "minimum_stock": float(product.minimum_stock or 0),
         "sale_price": float(product.sale_price or 0),
         "cost_price": float(product.cost_price or 0),
         "tracks_inventory": product.tracks_inventory,
+        "requires_prescription": product.requires_prescription,
+        "is_controlled": product.is_controlled,
+        "is_active": product.is_active,
         "minimum_profit_margin": float(category.minimum_profit_margin or 0) if category else 0.0,
         "suggested_profit_margin": float(category.suggested_profit_margin or 0) if category else 0.0,
         "ncm": product.ncm, "cest": product.cest, "cfop": product.cfop,
@@ -778,6 +785,10 @@ def _summary():
             })
     cash_activity.sort(key=lambda item: item["occurred_at"], reverse=True)
     product_rows = [_serialize_product(product) for product in products]
+    fiscal_crt = _setting_map().get("FISCAL_CRT", "")
+    for product, row in zip(products, product_rows):
+        row["fiscal_errors"] = validate_product(product, fiscal_crt, "65")
+        row["fiscal_ready"] = not row["fiscal_errors"]
     stock_quantity = sum(Decimal(str(product["stock"])) for product in product_rows if product["tracks_inventory"])
     stock_sale_value = sum(
         Decimal(str(product["stock"])) * Decimal(str(product["sale_price"]))
@@ -1146,6 +1157,56 @@ def api_store_mode():
 def api_product_update(product_id):
     product = db.session.get(PharmacyProduct, product_id) or abort(404, "Produto nao encontrado.")
     payload = request.get_json(force=True)
+    if "name" in payload:
+        name = str(payload.get("name") or "").strip()
+        if not name:
+            abort(400, "Nome e obrigatorio.")
+        product.name = name
+    if "sku" in payload:
+        sku = str(payload.get("sku") or "").strip()
+        if not sku:
+            abort(400, "SKU e obrigatorio.")
+        duplicate = PharmacyProduct.query.filter(
+            PharmacyProduct.id != product.id,
+            func.lower(PharmacyProduct.sku) == sku.lower(),
+        ).first()
+        if duplicate:
+            abort(400, "SKU ja cadastrado em outro produto.")
+        product.sku = sku
+    if "barcode" in payload:
+        barcode = str(payload.get("barcode") or "").strip()
+        duplicate = barcode and PharmacyProduct.query.filter(
+            PharmacyProduct.id != product.id,
+            func.lower(PharmacyProduct.barcode) == barcode.lower(),
+        ).first()
+        if duplicate:
+            abort(400, "Codigo de barras ja cadastrado em outro produto.")
+        product.barcode = barcode or None
+    for field in ("brand", "active_ingredient"):
+        if field in payload:
+            setattr(product, field, str(payload.get(field) or "").strip())
+    if "unit" in payload:
+        product.unit = str(payload.get("unit") or "un").strip() or "un"
+    for field, label in (
+        ("cost_price", "preco de custo"),
+        ("sale_price", "preco de venda"),
+        ("minimum_stock", "estoque minimo"),
+    ):
+        if field in payload:
+            setattr(product, field, _to_decimal(payload.get(field), label))
+    for field in ("requires_prescription", "is_controlled", "is_active"):
+        if field in payload:
+            setattr(product, field, _to_bool(payload.get(field)))
+    if "category_id" in payload:
+        category_id = payload.get("category_id") or None
+        if category_id and not db.session.get(PharmacyCategory, category_id):
+            abort(400, "Categoria nao encontrada.")
+        product.category_id = category_id
+    if "supplier_id" in payload:
+        supplier_id = payload.get("supplier_id") or None
+        if supplier_id and not db.session.get(PharmacySupplier, supplier_id):
+            abort(400, "Fornecedor nao encontrado.")
+        product.supplier_id = supplier_id
     _apply_product_tax(product, payload)
     db.session.commit()
     settings = _setting_map()

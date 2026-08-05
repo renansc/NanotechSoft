@@ -68,6 +68,13 @@ cadastro, o codigo capturado preenche o novo produto; no pedido, um produto ja
 cadastrado e localizado e adicionado imediatamente, somando a quantidade quando
 o mesmo codigo e lido novamente. Codigos de barras duplicados sao rejeitados.
 
+Em `Cadastros > Produtos`, os itens existentes ficam disponiveis para busca e
+edicao dos dados comerciais, estoque e tributacao. O indicador fiscal dessa
+lista e uma validacao estrutural dos campos exigidos pelo NanoStore, nao uma
+homologacao da Receita. A propria tela oferece acesso ao Classif da Receita
+Federal para NCM e as consultas de GTIN e tabelas fiscais da SVRS; o
+enquadramento final deve considerar regime tributario, UF e tipo da operacao.
+
 ## Rodar localmente
 
 ```bash

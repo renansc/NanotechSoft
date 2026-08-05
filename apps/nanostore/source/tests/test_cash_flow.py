@@ -9,7 +9,7 @@ from flask import Flask
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from nanostore.extensions import db
-from nanostore.models import CashMovement, CashSession, DistributionTable, FinancialEntry, IntegrationSetting, PharmacyCustomer, PharmacyLot, PharmacyPayment, PharmacyProduct, PharmacySale, StockMovement
+from nanostore.models import CashMovement, CashSession, DistributionTable, FinancialEntry, IntegrationSetting, PharmacyCategory, PharmacyCustomer, PharmacyLot, PharmacyPayment, PharmacyProduct, PharmacySale, PharmacySupplier, StockMovement
 from nanostore.routes import bp
 
 
@@ -185,6 +185,43 @@ class CashFlowTest(unittest.TestCase):
         template = template_path.read_text(encoding="utf-8")
 
         self.assertEqual(1, template.count("</body>"))
+
+    def test_registered_products_can_be_listed_and_fully_edited(self):
+        category = PharmacyCategory(name="Bebidas")
+        supplier = PharmacySupplier(name="Fornecedor teste")
+        product = PharmacyProduct(sku="ITEM-1", name="Nome antigo", barcode="789000000001")
+        other = PharmacyProduct(sku="ITEM-2", name="Outro item", barcode="789000000002")
+        db.session.add_all([category, supplier, product, other])
+        db.session.commit()
+        client = self.app.test_client()
+
+        page = client.get("/").get_data(as_text=True)
+        self.assertIn("Medicamentos e produtos cadastrados", page)
+        self.assertIn("Nome antigo", page)
+        self.assertIn('class="secondary-btn product-edit-btn"', page)
+        self.assertIn("Consultar NCM na Receita", page)
+        self.assertIn("validacao estrutural", page.lower())
+
+        response = client.patch(f"/api/products/{product.id}", json={
+            "sku": "ITEM-EDITADO", "name": "Nome novo", "barcode": "789000000003",
+            "brand": "Marca", "active_ingredient": "Composto", "unit": "CX",
+            "cost_price": "4.50", "sale_price": "8.90", "minimum_stock": "3",
+            "category_id": category.id, "supplier_id": supplier.id,
+            "tracks_inventory": False, "is_active": True,
+            "ncm": "22021000", "cfop": "5102", "fiscal_origin": "0",
+        })
+        self.assertEqual(200, response.status_code, response.get_json())
+        db.session.refresh(product)
+        self.assertEqual("ITEM-EDITADO", product.sku)
+        self.assertEqual("Nome novo", product.name)
+        self.assertEqual(category.id, product.category_id)
+        self.assertEqual(supplier.id, product.supplier_id)
+        self.assertFalse(product.tracks_inventory)
+        self.assertEqual(Decimal("8.90"), Decimal(product.sale_price))
+
+        duplicate = client.patch(f"/api/products/{product.id}", json={"sku": other.sku})
+        self.assertEqual(400, duplicate.status_code)
+        self.assertIn("SKU ja cadastrado", duplicate.get_json()["error"])
 
     def test_every_store_mode_renders_its_interface(self):
         expected = {

@@ -494,6 +494,29 @@
                   <button type="submit">Salvar produto</button>
                 </form>
               </article>
+
+              <article class="card product-register-card">
+                <div class="section-head compact-head">
+                  <div><p class="eyebrow">Consulta e manutencao</p><h3>{{ store_mode.catalog }} cadastrados</h3></div>
+                  <span class="mini-badge" id="registered-products-count">{{ summary.products|length }} itens</span>
+                </div>
+                <label class="field-inline field-block"><span>Buscar por nome, SKU ou codigo de barras</span><input id="registered-products-search" type="search" placeholder="Digite para filtrar"></label>
+                {% if store_mode.show_fiscal %}
+                <div class="official-checks">
+                  <strong>Conferencia fiscal</strong>
+                  <p>A verificacao do NanoStore confere formato e campos obrigatorios. A tributacao correta depende do regime, UF e tipo da operacao.</p>
+                  <div class="official-links"><a href="https://www.gov.br/receitafederal/pt-br/assuntos/aduana-e-comercio-exterior/classificacao-fiscal-de-mercadorias/classif" target="_blank" rel="noopener">Consultar NCM na Receita</a><a href="https://dfe-portal.svrs.rs.gov.br/NFE/Gtin" target="_blank" rel="noopener">Consultar GTIN na SVRS</a><a href="https://dfe-portal.svrs.rs.gov.br/Nfe/Documentos" target="_blank" rel="noopener">Tabelas fiscais da SVRS</a><a href="https://www.gov.br/pt-br/servicos/formalizar-consulta-sobre-classificacao-fiscal-de-mercadorias" target="_blank" rel="noopener">Consulta formal a Receita</a></div>
+                </div>
+                {% endif %}
+                <div class="table-wrap product-register-table"><table>
+                  <thead><tr><th>SKU</th><th>Item</th><th>Codigo</th><th>Estoque</th><th>Venda</th>{% if store_mode.show_fiscal %}<th>Fiscal</th>{% endif %}<th></th></tr></thead>
+                  <tbody>{% for product in summary.products %}<tr data-registered-product-row>
+                    <td>{{ product.sku }}</td><td><strong>{{ product.name }}</strong><small>{{ product.category_name or 'Sem categoria' }}</small></td><td>{{ product.barcode or '-' }}</td><td>{{ '%.3f'|format(product.stock) if product.tracks_inventory else 'Nao controla' }}</td><td>R$ {{ '%.2f'|format(product.sale_price) }}</td>
+                    {% if store_mode.show_fiscal %}<td><span class="stock-state {{ 'is-ok' if product.fiscal_ready else 'is-low' }}" title="{{ product.fiscal_errors|join(' | ') }}">{{ 'Estrutura OK' if product.fiscal_ready else product.fiscal_errors|length ~ ' pendencia(s)' }}</span></td>{% endif %}
+                    <td><button type="button" class="secondary-btn product-edit-btn" data-product="{{ product|tojson|forceescape }}">Editar</button></td>
+                  </tr>{% else %}<tr><td colspan="7">Nenhum item cadastrado.</td></tr>{% endfor %}</tbody>
+                </table></div>
+              </article>
             </section>
           </section>
 
@@ -1776,6 +1799,33 @@
     </div>
     {% endif %}
 
+    <div id="product-edit-modal" class="modal-shell" hidden>
+      <div class="modal-card product-edit-card">
+        <div class="modal-head"><strong>Editar item cadastrado</strong><button type="button" class="secondary-btn" id="close-product-edit-btn">Fechar</button></div>
+        <form id="product-edit-form" data-api="" data-method="PATCH">
+          <div class="row"><label class="field-inline"><span>SKU</span><input name="sku" required></label><label class="field-inline"><span>Nome</span><input name="name" required></label></div>
+          <div class="row"><label class="field-inline"><span>Codigo de barras</span><input name="barcode"></label><label class="field-inline"><span>Unidade</span><input name="unit"></label></div>
+          {% if mode_key == 'pharmacy' %}<div class="row"><label class="field-inline"><span>Marca</span><input name="brand"></label><label class="field-inline"><span>Principio ativo</span><input name="active_ingredient"></label></div>{% endif %}
+          <div class="row"><label class="field-inline"><span>Preco custo</span><input name="cost_price" type="number" min="0" step="0.01"></label><label class="field-inline"><span>Preco venda</span><input name="sale_price" type="number" min="0" step="0.01"></label><label class="field-inline"><span>Estoque minimo</span><input name="minimum_stock" type="number" min="0" step="0.001"></label></div>
+          <div class="row">
+            <label class="field-inline"><span>Categoria</span><select name="category_id"><option value="">Sem categoria</option>{% for category in categories %}<option value="{{ category.id }}">{{ category.name }}</option>{% endfor %}</select></label>
+            <label class="field-inline"><span>Fornecedor</span><select name="supplier_id"><option value="">Sem fornecedor</option>{% for supplier in suppliers %}<option value="{{ supplier.id }}">{{ supplier.name }}</option>{% endfor %}</select></label>
+          </div>
+          <div class="product-edit-options"><label><input type="checkbox" name="tracks_inventory"> Controla estoque</label><label><input type="checkbox" name="is_active"> Item ativo</label>{% if mode_key == 'pharmacy' %}<label><input type="checkbox" name="requires_prescription"> Exige receita</label><label><input type="checkbox" name="is_controlled"> Controlado</label>{% endif %}</div>
+          {% if store_mode.show_fiscal %}
+          <h4>Tributacao</h4>
+          <div class="row"><label class="field-inline"><span>NCM</span><input name="ncm" maxlength="8"></label><label class="field-inline"><span>CEST</span><input name="cest" maxlength="7"></label><label class="field-inline"><span>CFOP</span><input name="cfop" maxlength="4"></label><label class="field-inline"><span>Origem</span><input name="fiscal_origin" maxlength="1"></label></div>
+          <div class="row"><label class="field-inline"><span>CST / CSOSN</span><input name="icms_cst" maxlength="3"></label><label class="field-inline"><span>CST PIS</span><input name="pis_cst" maxlength="2"></label><label class="field-inline"><span>CST COFINS</span><input name="cofins_cst" maxlength="2"></label><label class="field-inline"><span>Un. tributavel</span><input name="tax_unit" maxlength="6"></label></div>
+          <div class="row"><label class="field-inline"><span>GTIN tributavel</span><input name="gtin_taxable" maxlength="14"></label><label class="field-inline"><span>cBenef</span><input name="benefit_code" maxlength="10"></label><label><input type="checkbox" name="has_tax_benefit"> Possui beneficio fiscal</label></div>
+          <div class="row"><label class="field-inline"><span>Codigo ANVISA</span><input name="anvisa_code" maxlength="13"></label><label class="field-inline"><span>PMC</span><input name="max_consumer_price" type="number" min="0" step="0.01"></label><label class="field-inline"><span>CST IBS/CBS</span><input name="ibs_cbs_cst" maxlength="3"></label><label class="field-inline"><span>cClassTrib</span><input name="tax_classification" maxlength="6"></label></div>
+          <div class="row"><label class="field-inline"><span>IBS UF %</span><input name="ibs_uf_rate" type="number" min="0" step="0.0001"></label><label class="field-inline"><span>IBS municipio %</span><input name="ibs_mun_rate" type="number" min="0" step="0.0001"></label><label class="field-inline"><span>CBS %</span><input name="cbs_rate" type="number" min="0" step="0.0001"></label></div>
+          <div id="product-fiscal-feedback" class="fiscal-feedback" aria-live="polite"></div>
+          {% endif %}
+          <button type="submit">Salvar alteracoes</button>
+        </form>
+      </div>
+    </div>
+
     <div id="scanner-modal" class="modal-shell" hidden>
       <div class="modal-card">
         <div class="modal-head">
@@ -2214,6 +2264,12 @@
       const consultItemBtn = document.getElementById("consult-item-btn");
       const consultScanBtn = document.getElementById("consult-scan-btn");
       const consultResult = document.getElementById("consult-result");
+      const productEditModal = document.getElementById("product-edit-modal");
+      const productEditForm = document.getElementById("product-edit-form");
+      const closeProductEditBtn = document.getElementById("close-product-edit-btn");
+      const productFiscalFeedback = document.getElementById("product-fiscal-feedback");
+      const registeredProductsSearch = document.getElementById("registered-products-search");
+      const registeredProductsCount = document.getElementById("registered-products-count");
       const scanTriggers = document.querySelectorAll(".scan-trigger");
       let scannerStream = null;
       let scannerTimer = null;
@@ -2251,6 +2307,48 @@
       if (closeQuickCustomerBtn) closeQuickCustomerBtn.addEventListener("click", closeQuickCustomerModal);
       if (quickCustomerModal) quickCustomerModal.addEventListener("click", (event) => {
         if (event.target === quickCustomerModal) closeQuickCustomerModal();
+      });
+
+      function closeProductEditModal() {
+        if (productEditModal) productEditModal.hidden = true;
+      }
+
+      document.querySelectorAll(".product-edit-btn").forEach((button) => {
+        button.addEventListener("click", () => {
+          if (!(productEditModal && productEditForm)) return;
+          const product = JSON.parse(button.dataset.product);
+          productEditForm.dataset.api = `/api/products/${product.id}`;
+          Object.entries(product).forEach(([name, value]) => {
+            const field = productEditForm.elements.namedItem(name);
+            if (!field) return;
+            if (field.type === "checkbox") field.checked = Boolean(value);
+            else field.value = value ?? "";
+          });
+          if (productFiscalFeedback) {
+            const errors = Array.isArray(product.fiscal_errors) ? product.fiscal_errors : [];
+            productFiscalFeedback.classList.toggle("is-error", errors.length > 0);
+            productFiscalFeedback.textContent = errors.length
+              ? `Pendencias da validacao estrutural: ${errors.join(" | ")}`
+              : "Validacao estrutural sem pendencias. Confirme o enquadramento tributario com a contabilidade.";
+          }
+          productEditModal.hidden = false;
+          productEditForm.elements.namedItem("name")?.focus();
+        });
+      });
+      if (closeProductEditBtn) closeProductEditBtn.addEventListener("click", closeProductEditModal);
+      if (productEditModal) productEditModal.addEventListener("click", (event) => {
+        if (event.target === productEditModal) closeProductEditModal();
+      });
+      if (registeredProductsSearch) registeredProductsSearch.addEventListener("input", () => {
+        const query = registeredProductsSearch.value.trim().toLocaleLowerCase("pt-BR");
+        const rows = Array.from(document.querySelectorAll("[data-registered-product-row]"));
+        let visible = 0;
+        rows.forEach((row) => {
+          const matches = !query || row.textContent.toLocaleLowerCase("pt-BR").includes(query);
+          row.hidden = !matches;
+          if (matches) visible += 1;
+        });
+        if (registeredProductsCount) registeredProductsCount.textContent = `${visible} ${visible === 1 ? "item" : "itens"}`;
       });
       if (quickCustomerForm) quickCustomerForm.addEventListener("submit", async (event) => {
         event.preventDefault();
