@@ -1,6 +1,7 @@
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 import os
+from types import SimpleNamespace
 from urllib.parse import urlparse
 from uuid import uuid4
 
@@ -14,7 +15,7 @@ from werkzeug.exceptions import HTTPException
 from .extensions import db
 from .documents import build_fiscal_pdf, build_order_pdf
 from .fiscal import build_signed_simulation, fiscal_certificate_status, load_fiscal_identity
-from .tax import validate_issuer, validate_product
+from .tax import icms_code_profile, valid_gtin, validate_issuer, validate_product
 from .store_modes import STORE_MODES, resolve_store_mode
 from .models import (
     CashMovement,
@@ -1166,6 +1167,51 @@ def _apply_product_tax(product, payload):
     for field in ("max_consumer_price", "ibs_uf_rate", "ibs_mun_rate", "cbs_rate"):
         if field in payload:
             setattr(product, field, _to_decimal(payload.get(field), field))
+
+
+@bp.route("/api/fiscal/product-assistance", methods=["POST"])
+def api_product_fiscal_assistance():
+    payload = request.get_json(force=True) or {}
+    settings = _setting_map()
+    profile = icms_code_profile(settings.get("FISCAL_CRT", ""))
+    barcode = str(payload.get("barcode") or "").strip()
+    unit = str(payload.get("unit") or "UN").strip().upper()[:6] or "UN"
+    suggestions = {
+        "cfop": str(payload.get("cfop") or "5102").strip(),
+        "fiscal_origin": str(payload.get("fiscal_origin") or "0").strip(),
+        "tax_unit": str(payload.get("tax_unit") or unit).strip().upper(),
+        "gtin_taxable": str(payload.get("gtin_taxable") or (barcode if valid_gtin(barcode) else "SEM GTIN")).strip().upper(),
+    }
+    candidate_values = {
+        "sku": str(payload.get("sku") or "ITEM").strip(),
+        "name": str(payload.get("name") or "Produto").strip(),
+        "ncm": str(payload.get("ncm") or "").strip(),
+        "cest": str(payload.get("cest") or "").strip(),
+        "icms_cst": str(payload.get("icms_cst") or "").strip(),
+        "pis_cst": str(payload.get("pis_cst") or "").strip(),
+        "cofins_cst": str(payload.get("cofins_cst") or "").strip(),
+        "benefit_code": str(payload.get("benefit_code") or "").strip(),
+        "has_tax_benefit": _to_bool(payload.get("has_tax_benefit")),
+        "anvisa_code": str(payload.get("anvisa_code") or "").strip(),
+        "max_consumer_price": _to_decimal(payload.get("max_consumer_price"), "PMC"),
+        "ibs_cbs_cst": str(payload.get("ibs_cbs_cst") or "").strip(),
+        "tax_classification": str(payload.get("tax_classification") or "").strip(),
+        "ibs_uf_rate": _to_decimal(payload.get("ibs_uf_rate"), "IBS UF"),
+        "ibs_mun_rate": _to_decimal(payload.get("ibs_mun_rate"), "IBS municipal"),
+        "cbs_rate": _to_decimal(payload.get("cbs_rate"), "CBS"),
+        **suggestions,
+    }
+    candidate = SimpleNamespace(**candidate_values)
+    return jsonify({
+        "ok": True,
+        "crt": str(settings.get("FISCAL_CRT", "")).strip(),
+        "regime_configured": profile["configured"],
+        "field_label": profile["field"],
+        "expected_digits": profile["digits"],
+        "options": [{"code": code, "label": label} for code, label in profile["options"]],
+        "suggestions": suggestions,
+        "fiscal_errors": validate_product(candidate, settings.get("FISCAL_CRT", ""), payload.get("document_model", "65")),
+    })
 
 
 @bp.route("/api/settings/store-mode", methods=["POST"])

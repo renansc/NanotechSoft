@@ -4,6 +4,42 @@ from decimal import Decimal
 
 MEDICINE_NCM_PREFIXES = ("3001", "3002", "3003", "3004", "3005", "3006")
 
+ICMS_CST_OPTIONS = (
+    ("00", "Tributada integralmente"),
+    ("10", "Tributada com cobranca do ICMS por substituicao tributaria"),
+    ("20", "Com reducao de base de calculo"),
+    ("30", "Isenta ou nao tributada com cobranca do ICMS-ST"),
+    ("40", "Isenta"),
+    ("41", "Nao tributada"),
+    ("50", "Suspensao"),
+    ("51", "Diferimento"),
+    ("60", "ICMS cobrado anteriormente por substituicao tributaria"),
+    ("70", "Reducao de base com cobranca do ICMS-ST"),
+    ("90", "Outras"),
+)
+
+CSOSN_OPTIONS = (
+    ("101", "Tributada pelo Simples com permissao de credito"),
+    ("102", "Tributada pelo Simples sem permissao de credito"),
+    ("103", "Isencao do Simples por faixa de receita bruta"),
+    ("201", "Simples com credito e cobranca do ICMS-ST"),
+    ("202", "Simples sem credito e com cobranca do ICMS-ST"),
+    ("203", "Isencao do Simples e cobranca do ICMS-ST"),
+    ("300", "Imune"),
+    ("400", "Nao tributada pelo Simples"),
+    ("500", "ICMS cobrado anteriormente por substituicao ou antecipacao"),
+    ("900", "Outros"),
+)
+
+
+def icms_code_profile(crt):
+    value = str(crt or "").strip()
+    if value in {"1", "4"}:
+        return {"configured": True, "field": "CSOSN", "digits": 3, "options": CSOSN_OPTIONS}
+    if value in {"2", "3"}:
+        return {"configured": True, "field": "CST ICMS", "digits": 2, "options": ICMS_CST_OPTIONS}
+    return {"configured": False, "field": "CST ICMS / CSOSN", "digits": 0, "options": ()}
+
 
 def digits(value):
     return re.sub(r"\D", "", str(value or ""))
@@ -72,10 +108,13 @@ def validate_product(product, crt, document_model="65"):
         errors.append(f"{label}: CFOP de saida deve ter 4 digitos e iniciar por 5, 6 ou 7.")
     if (product.fiscal_origin or "") not in set("012345678"):
         errors.append(f"{label}: origem do ICMS e invalida.")
-    expected_icms = 3 if str(crt) in {"1", "4"} else 2
-    if not re.fullmatch(rf"\d{{{expected_icms}}}", product.icms_cst or ""):
-        name = "CSOSN" if expected_icms == 3 else "CST ICMS"
-        errors.append(f"{label}: {name} deve ter {expected_icms} digitos.")
+    icms_profile = icms_code_profile(crt)
+    if not icms_profile["configured"]:
+        errors.append(f"{label}: configure o CRT do emitente antes de validar CST ICMS ou CSOSN.")
+    elif not re.fullmatch(rf"\d{{{icms_profile['digits']}}}", product.icms_cst or ""):
+        errors.append(f"{label}: {icms_profile['field']} deve ter {icms_profile['digits']} digitos.")
+    elif (product.icms_cst or "") not in {code for code, _ in icms_profile["options"]}:
+        errors.append(f"{label}: {icms_profile['field']} nao consta na tabela estrutural aceita.")
     if not re.fullmatch(r"\d{2}", product.pis_cst or ""):
         errors.append(f"{label}: CST PIS deve ter 2 digitos.")
     if not re.fullmatch(r"\d{2}", product.cofins_cst or ""):

@@ -203,6 +203,7 @@ class CashFlowTest(unittest.TestCase):
         self.assertIn('class="secondary-btn product-edit-btn"', page)
         self.assertIn("Consultar NCM na Receita", page)
         self.assertIn("validacao estrutural", page.lower())
+        self.assertIn("Assistir tributacao", page)
 
         response = client.patch(f"/api/products/{product.id}", json={
             "sku": "ITEM-EDITADO", "name": "Nome novo", "barcode": "789000000003",
@@ -224,6 +225,26 @@ class CashFlowTest(unittest.TestCase):
         duplicate = client.patch(f"/api/products/{product.id}", json={"sku": other.sku})
         self.assertEqual(400, duplicate.status_code)
         self.assertIn("SKU ja cadastrado", duplicate.get_json()["error"])
+
+    def test_fiscal_assistance_requires_crt_and_returns_compatible_codes(self):
+        client = self.app.test_client()
+        payload = {
+            "sku": "CARVAO", "name": "Carvao vegetal", "ncm": "44020000",
+            "icms_cst": "102", "pis_cst": "49", "cofins_cst": "49",
+        }
+        missing = client.post("/api/fiscal/product-assistance", json=payload)
+        self.assertEqual(200, missing.status_code, missing.get_json())
+        self.assertFalse(missing.get_json()["regime_configured"])
+        self.assertIn("configure o CRT", " ".join(missing.get_json()["fiscal_errors"]))
+
+        db.session.add(IntegrationSetting(key="FISCAL_CRT", value="1"))
+        db.session.commit()
+        assisted = client.post("/api/fiscal/product-assistance", json=payload)
+        data = assisted.get_json()
+        self.assertTrue(data["regime_configured"])
+        self.assertEqual("CSOSN", data["field_label"])
+        self.assertIn("102", [option["code"] for option in data["options"]])
+        self.assertEqual("5102", data["suggestions"]["cfop"])
 
     def test_every_store_mode_renders_its_interface(self):
         expected = {

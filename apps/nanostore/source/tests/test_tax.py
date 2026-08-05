@@ -22,6 +22,21 @@ def product(**overrides):
     return SimpleNamespace(**values)
 
 
+class TaxRegimeValidationTest(unittest.TestCase):
+    def test_missing_crt_is_not_treated_as_normal_regime(self):
+        errors = TAX.validate_product(product(icms_cst="102"), "")
+        self.assertTrue(any("configure o CRT" in error for error in errors))
+        self.assertFalse(any("CST ICMS deve ter 2" in error for error in errors))
+
+    def test_code_options_follow_crt(self):
+        simple = TAX.icms_code_profile("1")
+        normal = TAX.icms_code_profile("3")
+        self.assertEqual("CSOSN", simple["field"])
+        self.assertIn(("102", "Tributada pelo Simples sem permissao de credito"), simple["options"])
+        self.assertEqual("CST ICMS", normal["field"])
+        self.assertIn(("00", "Tributada integralmente"), normal["options"])
+
+
 class TaxRulesTest(unittest.TestCase):
     def test_valid_cnpj_and_gtin(self):
         self.assertTrue(TAX.valid_cnpj("23.029.197/0001-97"))

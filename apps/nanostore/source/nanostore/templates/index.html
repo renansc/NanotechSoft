@@ -462,6 +462,12 @@
                   <label><input type="checkbox" name="is_controlled"> Controlado</label>{% endif %}
                   {% if store_mode.show_fiscal %}
                   <h4>Tributacao</h4>
+                  <div class="fiscal-assistant-bar">
+                    <span>CRT do emitente: <strong>{{ settings_map.get('FISCAL_CRT', 'nao configurado') or 'nao configurado' }}</strong></span>
+                    <button type="button" class="secondary-btn product-tax-assist-btn" data-form-id="product-form" data-feedback-id="product-create-fiscal-feedback">Assistir tributacao</button>
+                  </div>
+                  <div class="official-links"><a href="https://www.gov.br/receitafederal/pt-br/assuntos/aduana-e-comercio-exterior/classificacao-fiscal-de-mercadorias/classif" target="_blank" rel="noopener">Pesquisar NCM no Classif</a><a href="https://dfe-portal.svrs.rs.gov.br/Nfe/Documentos" target="_blank" rel="noopener">Abrir tabelas da NF-e</a></div>
+                  <p class="helper fiscal-feedback" id="product-create-fiscal-feedback" aria-live="polite">O assistente completa a estrutura e apresenta os codigos compativeis com o CRT. Confirme o enquadramento com a contabilidade.</p>
                   <div class="row">
                     <label class="field-inline"><span>NCM</span><input name="ncm" inputmode="numeric" maxlength="8" placeholder="8 digitos"></label>
                     <label class="field-inline"><span>CEST</span><input name="cest" inputmode="numeric" maxlength="7" placeholder="Quando aplicavel"></label>
@@ -469,7 +475,7 @@
                     <label class="field-inline"><span>Origem</span><input name="fiscal_origin" inputmode="numeric" maxlength="1" value="0"></label>
                   </div>
                   <div class="row">
-                    <label class="field-inline"><span>CST / CSOSN</span><input name="icms_cst" maxlength="3"></label>
+                    <label class="field-inline"><span class="icms-code-label">{% if settings_map.get('FISCAL_CRT') in ['1', '4'] %}CSOSN (3 digitos){% elif settings_map.get('FISCAL_CRT') in ['2', '3'] %}CST ICMS (2 digitos){% else %}CST ICMS / CSOSN{% endif %}</span><input name="icms_cst" list="icms-tax-code-options" inputmode="numeric" maxlength="3" placeholder="Escolha apos configurar o CRT"></label>
                     <label class="field-inline"><span>CST PIS</span><input name="pis_cst" maxlength="2"></label>
                     <label class="field-inline"><span>CST COFINS</span><input name="cofins_cst" maxlength="2"></label>
                     <label class="field-inline"><span>Un. tributavel</span><input name="tax_unit" maxlength="6" value="UN"></label>
@@ -1842,8 +1848,13 @@
           <div class="product-edit-options"><label><input type="checkbox" name="tracks_inventory"> Controla estoque</label><label><input type="checkbox" name="is_active"> Item ativo</label>{% if mode_key == 'pharmacy' %}<label><input type="checkbox" name="requires_prescription"> Exige receita</label><label><input type="checkbox" name="is_controlled"> Controlado</label>{% endif %}</div>
           {% if store_mode.show_fiscal %}
           <h4>Tributacao</h4>
+          <div class="fiscal-assistant-bar">
+            <span>CRT do emitente: <strong>{{ settings_map.get('FISCAL_CRT', 'nao configurado') or 'nao configurado' }}</strong></span>
+            <button type="button" class="secondary-btn product-tax-assist-btn" data-form-id="product-edit-form" data-feedback-id="product-fiscal-feedback">Assistir tributacao</button>
+          </div>
+          <div class="official-links"><a href="https://www.gov.br/receitafederal/pt-br/assuntos/aduana-e-comercio-exterior/classificacao-fiscal-de-mercadorias/classif" target="_blank" rel="noopener">Pesquisar NCM no Classif</a><a href="https://dfe-portal.svrs.rs.gov.br/Nfe/Documentos" target="_blank" rel="noopener">Abrir tabelas da NF-e</a></div>
           <div class="row"><label class="field-inline"><span>NCM</span><input name="ncm" maxlength="8"></label><label class="field-inline"><span>CEST</span><input name="cest" maxlength="7"></label><label class="field-inline"><span>CFOP</span><input name="cfop" maxlength="4"></label><label class="field-inline"><span>Origem</span><input name="fiscal_origin" maxlength="1"></label></div>
-          <div class="row"><label class="field-inline"><span>CST / CSOSN</span><input name="icms_cst" maxlength="3"></label><label class="field-inline"><span>CST PIS</span><input name="pis_cst" maxlength="2"></label><label class="field-inline"><span>CST COFINS</span><input name="cofins_cst" maxlength="2"></label><label class="field-inline"><span>Un. tributavel</span><input name="tax_unit" maxlength="6"></label></div>
+          <div class="row"><label class="field-inline"><span class="icms-code-label">{% if settings_map.get('FISCAL_CRT') in ['1', '4'] %}CSOSN (3 digitos){% elif settings_map.get('FISCAL_CRT') in ['2', '3'] %}CST ICMS (2 digitos){% else %}CST ICMS / CSOSN{% endif %}</span><input name="icms_cst" list="icms-tax-code-options" inputmode="numeric" maxlength="3" placeholder="Escolha apos configurar o CRT"></label><label class="field-inline"><span>CST PIS</span><input name="pis_cst" maxlength="2"></label><label class="field-inline"><span>CST COFINS</span><input name="cofins_cst" maxlength="2"></label><label class="field-inline"><span>Un. tributavel</span><input name="tax_unit" maxlength="6"></label></div>
           <div class="row"><label class="field-inline"><span>GTIN tributavel</span><input name="gtin_taxable" maxlength="14"></label><label class="field-inline"><span>cBenef</span><input name="benefit_code" maxlength="10"></label><label><input type="checkbox" name="has_tax_benefit"> Possui beneficio fiscal</label></div>
           <div class="row"><label class="field-inline"><span>Codigo ANVISA</span><input name="anvisa_code" maxlength="13"></label><label class="field-inline"><span>PMC</span><input name="max_consumer_price" type="number" min="0" step="0.01"></label><label class="field-inline"><span>CST IBS/CBS</span><input name="ibs_cbs_cst" maxlength="3"></label><label class="field-inline"><span>cClassTrib</span><input name="tax_classification" maxlength="6"></label></div>
           <div class="row"><label class="field-inline"><span>IBS UF %</span><input name="ibs_uf_rate" type="number" min="0" step="0.0001"></label><label class="field-inline"><span>IBS municipio %</span><input name="ibs_mun_rate" type="number" min="0" step="0.0001"></label><label class="field-inline"><span>CBS %</span><input name="cbs_rate" type="number" min="0" step="0.0001"></label></div>
@@ -1853,6 +1864,8 @@
         </form>
       </div>
     </div>
+
+    <datalist id="icms-tax-code-options"></datalist>
 
     <div id="scanner-modal" class="modal-shell" hidden>
       <div class="modal-card">
@@ -2316,6 +2329,7 @@
       const productEditForm = document.getElementById("product-edit-form");
       const closeProductEditBtn = document.getElementById("close-product-edit-btn");
       const productFiscalFeedback = document.getElementById("product-fiscal-feedback");
+      const icmsTaxCodeOptions = document.getElementById("icms-tax-code-options");
       const registeredProductsSearch = document.getElementById("registered-products-search");
       const registeredProductsCount = document.getElementById("registered-products-count");
       const scanTriggers = document.querySelectorAll(".scan-trigger");
@@ -2386,6 +2400,52 @@
       if (closeProductEditBtn) closeProductEditBtn.addEventListener("click", closeProductEditModal);
       if (productEditModal) productEditModal.addEventListener("click", (event) => {
         if (event.target === productEditModal) closeProductEditModal();
+      });
+
+      document.querySelectorAll(".product-tax-assist-btn").forEach((button) => {
+        button.addEventListener("click", async () => {
+          const form = document.getElementById(button.dataset.formId || "");
+          const feedback = document.getElementById(button.dataset.feedbackId || "");
+          if (!form) return;
+          button.disabled = true;
+          if (feedback) feedback.textContent = "Consultando regime e estrutura fiscal...";
+          try {
+            const result = await postJson("/api/fiscal/product-assistance", formToObject(form));
+            Object.entries(result.suggestions || {}).forEach(([name, value]) => {
+              const field = form.elements.namedItem(name);
+              if (field && !String(field.value || "").trim()) field.value = value;
+            });
+            if (icmsTaxCodeOptions) {
+              icmsTaxCodeOptions.replaceChildren(...(result.options || []).map((option) => {
+                const element = document.createElement("option");
+                element.value = option.code;
+                element.label = option.label;
+                return element;
+              }));
+            }
+            const codeField = form.elements.namedItem("icms_cst");
+            const label = codeField?.closest("label")?.querySelector(".icms-code-label");
+            if (label) label.textContent = result.expected_digits
+              ? `${result.field_label} (${result.expected_digits} digitos)`
+              : result.field_label;
+            if (codeField && result.expected_digits) codeField.maxLength = result.expected_digits;
+            if (feedback) {
+              const errors = Array.isArray(result.fiscal_errors) ? result.fiscal_errors : [];
+              feedback.classList.toggle("is-error", errors.length > 0);
+              feedback.textContent = result.regime_configured
+                ? `Opcoes de ${result.field_label} carregadas. Nenhum codigo tributario foi escolhido automaticamente. ${errors.length ? `Pendencias: ${errors.join(" | ")}` : "Estrutura sem pendencias."}`
+                : "Configure primeiro o CRT em Configuracao > Emitente fiscal. Sem o regime, o sistema nao pode decidir entre CST ICMS e CSOSN.";
+            }
+            codeField?.focus();
+          } catch (error) {
+            if (feedback) {
+              feedback.classList.add("is-error");
+              feedback.textContent = error.message;
+            }
+          } finally {
+            button.disabled = false;
+          }
+        });
       });
       if (registeredProductsSearch) registeredProductsSearch.addEventListener("input", () => {
         const query = registeredProductsSearch.value.trim().toLocaleLowerCase("pt-BR");

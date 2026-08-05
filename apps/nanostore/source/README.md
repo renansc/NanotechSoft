@@ -144,6 +144,16 @@ Endpoints de certificado disponiveis:
 - `GET /api/app/cert.pem`
 - `GET /api/app/cert.crt`
 
+## Assistente de tributacao de produtos
+
+No cadastro e na edicao do produto, o botao **Assistir tributacao** consulta o
+CRT salvo em **Configuracao > Emitente fiscal**, apresenta CST ICMS ou CSOSN
+compativeis com esse regime e completa somente campos estruturais seguros, como
+CFOP padrao de venda interna, origem, unidade tributavel e `SEM GTIN` quando nao
+ha codigo valido. O assistente nao escolhe automaticamente o enquadramento
+tributario: CST/CSOSN, NCM, CEST e beneficios devem ser confirmados conforme a
+operacao, a UF e a orientacao contabil.
+
 Banco padrao do compose:
 
 - host: `db`

@@ -866,6 +866,22 @@ h3 {
   color: #a33b2c;
 }
 
+.fiscal-assistant-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-soft, #f5f8f5);
+}
+
+.fiscal-assistant-bar .secondary-btn {
+  margin-left: auto;
+}
+
 .billing-table .selection-cell {
   width: 44px;
   text-align: center;
