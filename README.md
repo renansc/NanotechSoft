@@ -20,7 +20,10 @@ cp .env.example .env
 python app.py
 ```
 
-Abra `http://127.0.0.1:5600`.
+Abra `http://127.0.0.1:5600`. Na rede local, o portal tambem fica disponivel
+em `https://192.168.200.254` pela porta `443`; instale primeiro a CA interna
+oferecida em **NanoStore > Configuracao > HTTPS e camera** para liberar a camera
+do celular em um contexto seguro.
 
 ## Bancos com Docker
 

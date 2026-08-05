@@ -1,6 +1,7 @@
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 import os
+from urllib.parse import urlparse
 from uuid import uuid4
 
 from cryptography import x509
@@ -58,7 +59,8 @@ def _https_runtime_config():
     cert_hosts = _split_csv_env(os.environ.get("CERT_APP_HOSTS"))
     public_base_url = (os.environ.get("PUBLIC_BASE_URL") or "").strip()
     if public_base_url:
-        cert_hosts.append(public_base_url)
+        parsed_public_url = urlparse(public_base_url)
+        cert_hosts.append(parsed_public_url.hostname or public_base_url)
     if server_name and server_name != "_":
         cert_hosts.append(server_name)
     cert_hosts.extend(["127.0.0.1", "localhost"])
@@ -88,6 +90,13 @@ def _normalize_host(host_value):
 
 
 def _cert_path(name):
+    configured_paths = {
+        "nanostore-ca.crt": os.environ.get("APP_CA_CERT_PATH"),
+        "nanostore-app.crt": os.environ.get("APP_HTTPS_CERT_PATH"),
+    }
+    configured = (configured_paths.get(name) or "").strip()
+    if configured:
+        return configured
     return os.path.join(_certs_dir(), name)
 
 
@@ -963,8 +972,11 @@ def mobile_setup():
     host = _normalize_host(request.host)
     forwarded_host = _normalize_host(request.headers.get("X-Forwarded-Host", ""))
     current_host = forwarded_host or host or "127.0.0.1"
-    http_base = f"http://{current_host}:{https_runtime['http_port']}"
-    https_base = f"https://{current_host}:{https_runtime['https_port']}"
+    forwarded_prefix = (request.headers.get("X-Forwarded-Prefix") or "").rstrip("/")
+    http_base = f"http://{current_host}:{https_runtime['http_port']}{forwarded_prefix}"
+    https_base = https_runtime["public_base_url"].rstrip("/") or (
+        f"https://{current_host}:{https_runtime['https_port']}{forwarded_prefix}"
+    )
     cert_hosts = https_runtime["cert_hosts"]
     host_covered = current_host in cert_hosts or current_host in {"127.0.0.1", "localhost"}
     return render_template(

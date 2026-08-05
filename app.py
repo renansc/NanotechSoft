@@ -3670,6 +3670,12 @@ def ensure_nanostore_app():
             "FLASK_DEBUG": "false",
             "APP_CERT_DIR": str(NANOSTORE_DIR / "certs"),
             "PUBLIC_BASE_URL": env.get("NANOSTORE_PUBLIC_BASE_URL", ""),
+            "ENABLE_HTTPS": env.get("NANOSTORE_ENABLE_HTTPS", "1"),
+            "HTTP_PORT": env.get("NANOSTORE_HTTP_PORT", "5600"),
+            "HTTPS_PORT": env.get("NANOSTORE_HTTPS_PORT", "443"),
+            "CERT_APP_HOSTS": env.get("NANOSTORE_CERT_APP_HOSTS", ""),
+            "APP_CA_CERT_PATH": env.get("NANOSTORE_CA_CERT_PATH", ""),
+            "APP_HTTPS_CERT_PATH": env.get("NANOSTORE_HTTPS_CERT_PATH", ""),
         })
         try:
             log_file = (BASE_DIR / "nanostore.log").open("ab")
@@ -3819,6 +3825,9 @@ def nanostore_proxy_response(subpath="", integrated=True):
         upstream_url += "?" + query
 
     headers = {key: value for key, value in request.headers.items() if key.lower() not in {"host", "content-length", "connection"}}
+    headers["X-Forwarded-Host"] = request.host
+    headers["X-Forwarded-Proto"] = request.headers.get("X-Forwarded-Proto", request.scheme)
+    headers["X-Forwarded-Prefix"] = "/apps/nanostore" if integrated else "/apps/nanostore/original"
     data = request.get_data() if request.method in {"POST", "PUT", "PATCH", "DELETE"} else None
     req = urllib.request.Request(upstream_url, data=data, headers=headers, method=request.method)
 

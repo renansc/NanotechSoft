@@ -1685,7 +1685,7 @@
           </div>
 
           <section class="grid">
-            <article class="card card-https-tools" data-cert-hosts='{{ https_runtime.cert_hosts|tojson }}' data-http-port="{{ https_runtime.http_port }}" data-https-port="{{ https_runtime.https_port }}" data-https-enabled="{{ '1' if https_runtime.enabled else '0' }}">
+            <article class="card card-https-tools" data-cert-hosts='{{ https_runtime.cert_hosts|tojson }}' data-http-port="{{ https_runtime.http_port }}" data-https-port="{{ https_runtime.https_port }}" data-public-base-url="{{ https_runtime.public_base_url }}" data-https-enabled="{{ '1' if https_runtime.enabled else '0' }}">
               <h3>HTTPS e camera</h3>
               <div class="status-stack">
                 <div class="status-line"><strong>HTTP atual:</strong> <span id="http-current-url">http://127.0.0.1:8080</span></div>
@@ -1906,8 +1906,10 @@
         const isHttps = protocol === "https:";
         const httpPort = httpsCard ? (httpsCard.dataset.httpPort || "8080") : "8080";
         const httpsPort = httpsCard ? (httpsCard.dataset.httpsPort || "8443") : "8443";
-        const httpBase = `http://${hostname}:${httpPort}`;
-        const httpsBase = `https://${hostname}:${httpsPort}`;
+        const portalPrefix = window.location.pathname.startsWith("/apps/nanostore") ? "/apps/nanostore" : "";
+        const publicBaseUrl = httpsCard ? (httpsCard.dataset.publicBaseUrl || "").replace(/\/$/, "") : "";
+        const httpBase = `http://${hostname}:${httpPort}${portalPrefix}`;
+        const httpsBase = publicBaseUrl || `https://${hostname}:${httpsPort}${portalPrefix}`;
         return {
           protocol,
           hostname,

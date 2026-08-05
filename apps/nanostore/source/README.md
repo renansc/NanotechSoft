@@ -127,6 +127,11 @@ Fluxo recomendado para liberar a camera no celular:
 3. instale/confie o certificado CA no aparelho
 4. depois toque em `Abrir NanoStore em HTTPS`
 
+Quando o NanoStore estiver integrado ao portal NanoTechSoft, use o endereco do
+portal (`https://192.168.200.254/apps/nanostore`). O HTTP na porta `5600`
+permanece disponivel para baixar a CA antes do primeiro acesso HTTPS, e o proxy
+TLS do portal atende na porta `443`.
+
 Rotas leves para teste no celular:
 
 - `GET /mobile-setup`
