@@ -364,6 +364,12 @@ def ensure_database():
     for statement in [s.strip() for s in schema.split(";") if s.strip()]:
         cur.execute(statement)
 
+    cur.execute("SHOW COLUMNS FROM usuarios LIKE 'nanostore_perfil'")
+    if not cur.fetchone():
+        cur.execute(
+            "ALTER TABLE usuarios ADD COLUMN nanostore_perfil VARCHAR(40) NOT NULL DEFAULT '' AFTER perfil"
+        )
+
     admin_hash = generate_password_hash("admin")
     cur.execute("SELECT id FROM usuarios WHERE login=%s LIMIT 1", ("admin",))
     if not cur.fetchone():
@@ -555,6 +561,7 @@ def public_user(row):
         "nome": row.get("nome") or "",
         "login": row.get("login") or "",
         "perfil": row.get("perfil") or "admin",
+        "nanostore_perfil": row.get("nanostore_perfil") or "",
     }
 
 
@@ -566,7 +573,7 @@ def get_user_by_login(login):
     conn = get_conn()
     cur = conn.cursor(dictionary=True)
     cur.execute(
-        "SELECT id, nome, login, senha, perfil, ativo FROM usuarios WHERE login=%s LIMIT 1",
+        "SELECT id, nome, login, senha, perfil, nanostore_perfil, ativo FROM usuarios WHERE login=%s LIMIT 1",
         (login,),
     )
     row = cur.fetchone()
@@ -579,7 +586,7 @@ def get_user_by_id(user_id):
     conn = get_conn()
     cur = conn.cursor(dictionary=True)
     cur.execute(
-        "SELECT id, nome, login, perfil, ativo FROM usuarios WHERE id=%s LIMIT 1",
+        "SELECT id, nome, login, perfil, nanostore_perfil, ativo FROM usuarios WHERE id=%s LIMIT 1",
         (user_id,),
     )
     row = cur.fetchone()
@@ -1565,6 +1572,117 @@ def current_admin_or_json_error():
     if not user_is_admin(usuario):
         return None, (jsonify({"erro": "somente administradores podem usar esta area"}), 403)
     return usuario, None
+
+
+NANOSTORE_USER_PROFILES = {
+    "pharmacy": "Farmacia",
+    "store": "Loja",
+    "distributor": "Distribuidora",
+    "commerce": "Comercio",
+    "food": "Alimentos",
+    "services": "Prestador de servicos",
+}
+
+
+def portal_users_payload():
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    cur.execute(
+        """
+        SELECT id, nome, login, perfil, nanostore_perfil, ativo
+        FROM usuarios
+        ORDER BY nome, login
+        """
+    )
+    users = []
+    for row in cur.fetchall():
+        item = public_user(row)
+        item["ativo"] = bool(row.get("ativo"))
+        users.append(item)
+    cur.close()
+    conn.close()
+    return {
+        "ok": True,
+        "usuarios": users,
+        "nanostore_perfis": [
+            {"key": key, "name": name}
+            for key, name in NANOSTORE_USER_PROFILES.items()
+        ],
+    }
+
+
+@app.route("/api/usuarios")
+@login_required
+def api_users():
+    _, error = current_admin_or_json_error()
+    if error:
+        return error
+    return jsonify(portal_users_payload())
+
+
+@app.route("/api/usuarios/<int:user_id>", methods=["PUT"])
+@login_required
+def api_update_user(user_id):
+    admin, error = current_admin_or_json_error()
+    if error:
+        return error
+
+    payload = request.get_json(silent=True) or {}
+    nome = str(payload.get("nome") or "").strip()
+    login = str(payload.get("login") or "").strip().lower()
+    perfil = str(payload.get("perfil") or "usuario").strip().lower()
+    nanostore_perfil = str(payload.get("nanostore_perfil") or "").strip().lower()
+    senha = str(payload.get("senha") or "")
+    ativo = as_bool(payload.get("ativo"), True)
+
+    if not nome:
+        return jsonify({"erro": "informe o nome do usuario"}), 400
+    if not re.fullmatch(r"[a-z0-9._-]{3,80}", login):
+        return jsonify({"erro": "login deve ter de 3 a 80 letras, numeros, ponto, hifen ou sublinhado"}), 400
+    if perfil not in {"admin", "usuario"}:
+        return jsonify({"erro": "perfil de acesso invalido"}), 400
+    if nanostore_perfil and nanostore_perfil not in NANOSTORE_USER_PROFILES:
+        return jsonify({"erro": "perfil do NanoStore invalido"}), 400
+    if senha and len(senha) < 4:
+        return jsonify({"erro": "a nova senha deve ter ao menos 4 caracteres"}), 400
+    if int(admin["id"]) == user_id and (perfil != "admin" or not ativo):
+        return jsonify({"erro": "o administrador conectado nao pode remover o proprio acesso"}), 400
+
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute("SELECT id FROM usuarios WHERE id=%s LIMIT 1", (user_id,))
+        if not cur.fetchone():
+            return jsonify({"erro": "usuario nao encontrado"}), 404
+        cur.execute("SELECT id FROM usuarios WHERE login=%s AND id<>%s LIMIT 1", (login, user_id))
+        if cur.fetchone():
+            return jsonify({"erro": "este login ja esta em uso"}), 409
+
+        fields = ["nome=%s", "login=%s", "perfil=%s", "nanostore_perfil=%s", "ativo=%s"]
+        values = [nome, login, perfil, nanostore_perfil, int(ativo)]
+        if senha:
+            fields.append("senha=%s")
+            values.append(generate_password_hash(senha))
+        values.append(user_id)
+        cur.execute(f"UPDATE usuarios SET {', '.join(fields)} WHERE id=%s", tuple(values))
+
+        cur.execute("DELETE FROM usuario_app_permissoes WHERE usuario_id=%s", (user_id,))
+        if perfil != "admin" and nanostore_perfil:
+            cur.execute(
+                """
+                INSERT INTO usuario_app_permissoes (usuario_id, app_key, recurso, permitido)
+                VALUES (%s, 'nanostore', '*', 1)
+                """,
+                (user_id,),
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        conn.close()
+    return jsonify(portal_users_payload())
 
 
 @app.route("/api/backup/export")
@@ -3824,10 +3942,15 @@ def nanostore_proxy_response(subpath="", integrated=True):
     if query:
         upstream_url += "?" + query
 
+    usuario = current_user_or_logout()
     headers = {key: value for key, value in request.headers.items() if key.lower() not in {"host", "content-length", "connection"}}
     headers["X-Forwarded-Host"] = request.host
     headers["X-Forwarded-Proto"] = request.headers.get("X-Forwarded-Proto", request.scheme)
     headers["X-Forwarded-Prefix"] = "/apps/nanostore" if integrated else "/apps/nanostore/original"
+    headers["X-Portal-Usuario-Id"] = str((usuario or {}).get("id") or "")
+    headers["X-Portal-Usuario-Login"] = str((usuario or {}).get("login") or "")
+    headers["X-Portal-Usuario-Perfil"] = str((usuario or {}).get("perfil") or "usuario")
+    headers["X-NanoStore-Perfil"] = str((usuario or {}).get("nanostore_perfil") or "")
     data = request.get_data() if request.method in {"POST", "PUT", "PATCH", "DELETE"} else None
     req = urllib.request.Request(upstream_url, data=data, headers=headers, method=request.method)
 

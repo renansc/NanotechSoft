@@ -66,6 +66,18 @@ COMPANY_LOGO_FORMATS = {
 }
 
 
+def _portal_store_mode():
+    if (request.headers.get("X-Portal-Usuario-Perfil") or "").strip().lower() == "admin":
+        return ""
+    mode = (request.headers.get("X-NanoStore-Perfil") or "").strip().lower()
+    return mode if mode in STORE_MODES else ""
+
+
+def _can_change_store_mode():
+    portal_profile = (request.headers.get("X-Portal-Usuario-Perfil") or "").strip().lower()
+    return not portal_profile or portal_profile == "admin"
+
+
 def _certs_dir():
     return os.environ.get("APP_CERT_DIR", "/app/certs")
 
@@ -1141,7 +1153,7 @@ def _select_lots(product_id, requested_quantity):
 def index():
     summary = _summary()
     settings_map = _setting_map()
-    mode_key, store_mode = resolve_store_mode(settings_map.get("STORE_MODE"))
+    mode_key, store_mode = resolve_store_mode(_portal_store_mode() or settings_map.get("STORE_MODE"))
     company_logo_path = _company_logo_path(settings_map)
     fiscal_history = FiscalSimulation.query.order_by(FiscalSimulation.created_at.desc(), FiscalSimulation.id.desc()).limit(50).all()
     local_tz = ZoneInfo(os.environ.get("TZ", "America/Sao_Paulo"))
@@ -1189,6 +1201,7 @@ def index():
         mode_key=mode_key,
         store_mode=store_mode,
         store_modes=STORE_MODES,
+        can_change_store_mode=_can_change_store_mode(),
     )
 
 
@@ -1517,6 +1530,8 @@ def api_product_fiscal_assistance():
 
 @bp.route("/api/settings/store-mode", methods=["POST"])
 def api_store_mode():
+    if not _can_change_store_mode():
+        abort(403, "Somente administradores podem alterar o perfil da operacao.")
     payload = request.get_json(force=True)
     mode_key = str(payload.get("mode") or "").strip().lower()
     if mode_key not in STORE_MODES:

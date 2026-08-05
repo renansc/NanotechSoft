@@ -331,6 +331,15 @@ body.theme-pacsred {
   max-width: 980px;
 }
 
+.user-admin-panel {
+  max-width: 980px;
+}
+
+.user-active-check {
+  align-self: end;
+  min-height: 42px;
+}
+
 .client-admin-head,
 .client-admin-actions {
   display: flex;

@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from nanostore.extensions import db
 from nanostore.models import CashMovement, CashSession, DistributionTable, FinancialEntry, IntegrationSetting, PharmacyCategory, PharmacyCustomer, PharmacyLot, PharmacyPayment, PharmacyProduct, PharmacySale, PharmacySupplier, StockMovement
-from nanostore.routes import bp, _format_local_datetime
+from nanostore.routes import bp, _format_local_datetime, _portal_store_mode
 
 
 class CashFlowTest(unittest.TestCase):
@@ -43,6 +43,35 @@ class CashFlowTest(unittest.TestCase):
         ))
         db.session.commit()
         return sale
+
+    def test_portal_user_is_limited_to_assigned_store_profile(self):
+        with self.app.test_request_context(
+            "/",
+            headers={
+                "X-Portal-Usuario-Perfil": "usuario",
+                "X-NanoStore-Perfil": "distributor",
+            },
+        ):
+            self.assertEqual("distributor", _portal_store_mode())
+
+        response = self.app.test_client().post(
+            "/api/settings/store-mode",
+            json={"mode": "pharmacy"},
+            headers={
+                "X-Portal-Usuario-Perfil": "usuario",
+                "X-NanoStore-Perfil": "distributor",
+            },
+        )
+        self.assertEqual(403, response.status_code)
+
+    def test_portal_admin_can_change_store_profile(self):
+        response = self.app.test_client().post(
+            "/api/settings/store-mode",
+            json={"mode": "distributor"},
+            headers={"X-Portal-Usuario-Perfil": "admin"},
+        )
+        self.assertEqual(200, response.status_code)
+        self.assertEqual("distributor", IntegrationSetting.query.filter_by(key="STORE_MODE").one().value)
 
     def test_payment_requires_open_cash(self):
         sale = self.make_sale()

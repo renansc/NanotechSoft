@@ -340,6 +340,88 @@ function slugify(value) {
     .replace(/^-+|-+$/g, "");
 }
 
+function bindUserAdmin() {
+  const root = qs("[data-user-admin]");
+  if (!root) return;
+
+  const form = root.querySelector("[data-user-form]");
+  const userSelect = root.querySelector("[data-user-select]");
+  const profileSelect = root.querySelector("[data-user-store-profile]");
+  let state = { usuarios: [], nanostore_perfis: [] };
+
+  function selectedUser() {
+    return state.usuarios.find((item) => String(item.id) === userSelect.value) || state.usuarios[0] || null;
+  }
+
+  function fillForm() {
+    const user = selectedUser();
+    if (!user || !form) return;
+    form.elements.nome.value = user.nome || "";
+    form.elements.login.value = user.login || "";
+    form.elements.perfil.value = user.perfil || "usuario";
+    form.elements.nanostore_perfil.value = user.nanostore_perfil || "";
+    form.elements.senha.value = "";
+    form.elements.ativo.checked = Boolean(user.ativo);
+  }
+
+  function render() {
+    const selectedId = userSelect.value;
+    userSelect.replaceChildren(...state.usuarios.map((user) => new Option(
+      `${user.nome} (${user.login})`, String(user.id), false, String(user.id) === selectedId
+    )));
+    profileSelect.replaceChildren(
+      new Option("Sem acesso", ""),
+      ...state.nanostore_perfis.map((profile) => new Option(profile.name, profile.key))
+    );
+    if (!userSelect.value && state.usuarios[0]) userSelect.value = String(state.usuarios[0].id);
+    fillForm();
+  }
+
+  async function load() {
+    const resp = await fetch("/api/usuarios", { cache: "no-store", headers: { Accept: "application/json" } });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data.erro || "Falha ao carregar usuarios");
+    state = data;
+    render();
+  }
+
+  userSelect?.addEventListener("change", () => {
+    setMessage("#userAdminMsg", "", "");
+    fillForm();
+  });
+
+  form?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const user = selectedUser();
+    if (!user) return;
+    const payload = {
+      nome: form.elements.nome.value.trim(),
+      login: form.elements.login.value.trim(),
+      perfil: form.elements.perfil.value,
+      nanostore_perfil: form.elements.nanostore_perfil.value,
+      senha: form.elements.senha.value,
+      ativo: form.elements.ativo.checked,
+    };
+    setMessage("#userAdminMsg", "Salvando...", "");
+    try {
+      const resp = await fetch(`/api/usuarios/${user.id}`, {
+        method: "PUT",
+        headers: { Accept: "application/json", "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(data.erro || "Falha ao salvar usuario");
+      state = data;
+      render();
+      setMessage("#userAdminMsg", "Usuario atualizado.", "ok");
+    } catch (err) {
+      setMessage("#userAdminMsg", err.message, "error");
+    }
+  });
+
+  load().catch((err) => setMessage("#userAdminMsg", err.message, "error"));
+}
+
 function bindClientAdmin() {
   const root = qs("[data-client-admin]");
   if (!root) return;
@@ -711,6 +793,7 @@ bindLogout();
 bindMenu();
 bindTheme();
 bindPortalBackup();
+bindUserAdmin();
 bindClientAdmin();
 bindKanban();
 syncMenuSection();

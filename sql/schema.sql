@@ -4,6 +4,7 @@ CREATE TABLE IF NOT EXISTS usuarios (
     login VARCHAR(80) NOT NULL UNIQUE,
     senha VARCHAR(255) NOT NULL,
     perfil VARCHAR(40) NOT NULL DEFAULT 'admin',
+    nanostore_perfil VARCHAR(40) NOT NULL DEFAULT '',
     ativo TINYINT(1) NOT NULL DEFAULT 1,
     data_cadastro DATETIME DEFAULT CURRENT_TIMESTAMP,
     INDEX (login),

@@ -111,6 +111,9 @@
     <div class="submenu">
       <span class="submenu-label">Portal</span>
       <a class="submenu-item submenu-child" href="{{ url_for('config_page') }}">Temas</a>
+      {% if usuario and usuario.perfil == 'admin' %}
+        <a class="submenu-item submenu-child" href="{{ url_for('config_page') }}#usuarios">Usuarios e acessos</a>
+      {% endif %}
       {% if menu.config %}
         {% for group, items in menu.config|groupby("app") %}
           <span class="submenu-label">{{ group }}</span>

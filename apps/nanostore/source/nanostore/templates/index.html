@@ -69,6 +69,7 @@
       <main class="page">
         <header class="workspace-bar">
           <div><strong>NanoStore</strong><span>{{ store_mode.name }}</span></div>
+          {% if can_change_store_mode %}
           <section class="mode-switcher">
             <label for="store-mode-select">Modo da operacao</label>
             <select id="store-mode-select">
@@ -76,6 +77,7 @@
             </select>
             <span id="store-mode-feedback" aria-live="polite"></span>
           </section>
+          {% endif %}
         </header>
         <section class="view is-active" id="inicio" data-view{% if mode_key == 'distributor' %} data-function-scope{% endif %}>
           {% if mode_key == 'distributor' %}
