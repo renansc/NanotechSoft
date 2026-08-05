@@ -17,8 +17,16 @@ def normalize_database_url(value):
     return raw
 
 
+def env_flag(name, default=False):
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 class Config:
     SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key")
     SQLALCHEMY_DATABASE_URI = normalize_database_url(os.getenv("DATABASE_URL", "sqlite:///nanostore.db"))
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     SQLALCHEMY_ENGINE_OPTIONS = {"pool_pre_ping": True}
+    SEED_DEMO_DATA = env_flag("NANOSTORE_SEED_DEMO_DATA", True)

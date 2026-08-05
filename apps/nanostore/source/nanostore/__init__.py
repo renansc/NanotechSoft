@@ -30,14 +30,46 @@ def create_app():
 
 
 def seed_defaults():
+    from .models import IntegrationSetting, WorkflowStage
+
+    if Config.SEED_DEMO_DATA:
+        seed_demo_data()
+
+    default_settings = {
+        "PHARMACY_CARD_PROVIDER": "",
+        "PHARMACY_PIX_PROVIDER": "",
+        "PHARMACY_WHATSAPP_NUMBER": "",
+        "PHARMACY_WOOCOMMERCE_URL": "",
+        "PHARMACY_WOOCOMMERCE_KEY": "",
+        "PHARMACY_MERCADO_LIVRE_APP_ID": "",
+        "PHARMACY_MERCADO_LIVRE_SELLER_ID": "",
+        "COMPANY_NAME": "NanoStore Farmacia",
+        "STORE_MODE": "pharmacy",
+    }
+    for key, value in default_settings.items():
+        if not IntegrationSetting.query.filter_by(key=key).first():
+            db.session.add(IntegrationSetting(key=key, value=value))
+
+    if not WorkflowStage.query.first():
+        db.session.add_all(
+            [
+                WorkflowStage(name="Novo", color="#2d8a4d", order_index=1, is_default=True),
+                WorkflowStage(name="Em atendimento", color="#c48b2a", order_index=2),
+                WorkflowStage(name="Separacao", color="#2f6fce", order_index=3),
+                WorkflowStage(name="Concluido", color="#4c8f5a", order_index=4, is_closed=True),
+            ]
+        )
+
+    db.session.commit()
+
+
+def seed_demo_data():
     from .models import (
         DistributionTable,
-        IntegrationSetting,
         PharmacyCategory,
         PharmacyLot,
         PharmacyProduct,
         PharmacySupplier,
-        WorkflowStage,
     )
 
     if not PharmacyCategory.query.first():
@@ -101,32 +133,6 @@ def seed_defaults():
                 purchase_price=Decimal(cost_price), location="Estoque de testes",
             ))
 
-    default_settings = {
-        "PHARMACY_CARD_PROVIDER": "",
-        "PHARMACY_PIX_PROVIDER": "",
-        "PHARMACY_WHATSAPP_NUMBER": "",
-        "PHARMACY_WOOCOMMERCE_URL": "",
-        "PHARMACY_WOOCOMMERCE_KEY": "",
-        "PHARMACY_MERCADO_LIVRE_APP_ID": "",
-        "PHARMACY_MERCADO_LIVRE_SELLER_ID": "",
-        "COMPANY_NAME": "NanoStore Farmacia",
-        "STORE_MODE": "pharmacy",
-    }
-    for key, value in default_settings.items():
-        if not IntegrationSetting.query.filter_by(key=key).first():
-            db.session.add(IntegrationSetting(key=key, value=value))
-
-    if not WorkflowStage.query.first():
-        db.session.add_all(
-            [
-                WorkflowStage(name="Novo", color="#2d8a4d", order_index=1, is_default=True),
-                WorkflowStage(name="Em atendimento", color="#c48b2a", order_index=2),
-                WorkflowStage(name="Separacao", color="#2f6fce", order_index=3),
-                WorkflowStage(name="Concluido", color="#4c8f5a", order_index=4, is_closed=True),
-            ]
-        )
-
-    db.session.commit()
 
 
 def upgrade_schema():
