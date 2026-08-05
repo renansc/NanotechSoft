@@ -23,10 +23,10 @@
           <section class="menu-group">
             <h3>Distribuidora</h3>
             <button type="button" class="menu-link active" data-target="inicio">Dashboard</button>
-            <button type="button" class="menu-link" data-target="lancamentos" data-open-subview="lancamentos-caixa">Caixa</button>
-            <button type="button" class="menu-link" data-target="lancamentos" data-open-subview="lancamentos-vendas">Pedidos</button>
+            <button type="button" class="menu-link" data-target="lancamentos" data-open-subview="lancamentos-caixa" data-open-function="caixa-venda">Caixa</button>
+            <button type="button" class="menu-link" data-target="lancamentos" data-open-subview="lancamentos-vendas" data-open-function="pedidos-kanban">Pedidos</button>
             <button type="button" class="menu-link" data-target="estoque">Estoque</button>
-            <button type="button" class="menu-link" data-target="cadastros" data-open-subview="cadastros-produtos">Cadastros</button>
+            <button type="button" class="menu-link" data-target="cadastros" data-open-subview="cadastros-produtos" data-open-function="produto-consulta">Cadastros</button>
             <button type="button" class="menu-link" data-target="relatorios">Relatorios</button>
             <button type="button" class="menu-link" data-target="documentacao">Documentacao</button>
             <button type="button" class="menu-link" data-target="configuracao">Configuracao</button>
@@ -76,21 +76,28 @@
             <span id="store-mode-feedback" aria-live="polite"></span>
           </section>
         </header>
-        <section class="view is-active" id="inicio" data-view>
+        <section class="view is-active" id="inicio" data-view{% if mode_key == 'distributor' %} data-function-scope{% endif %}>
           {% if mode_key == 'distributor' %}
           <div class="section-head dashboard-heading">
             <div><p class="eyebrow">Distribuicao</p><h1>Dashboard operacional</h1></div>
             <p class="section-copy">Caixa, pedidos e estoque atual em uma unica leitura.</p>
           </div>
 
-          <nav class="action-rail" aria-label="Acoes rapidas">
-            <button type="button" data-open-view="lancamentos" data-open-subview="lancamentos-vendas">Novo pedido</button>
-            <button type="button" data-open-view="lancamentos" data-open-subview="lancamentos-caixa">Movimentar caixa</button>
+          <nav class="function-nav" data-function-nav="dashboard-distribuidora" aria-label="Visoes do dashboard">
+            <button type="button" class="subnav-link active" data-function-target="dashboard-resumo">Resumo</button>
+            <button type="button" class="subnav-link" data-function-target="dashboard-caixa">Caixa</button>
+            <button type="button" class="subnav-link" data-function-target="dashboard-pedidos">Pedidos</button>
+            <button type="button" class="subnav-link" data-function-target="dashboard-estoque">Estoque</button>
+          </nav>
+
+          <nav class="action-rail" aria-label="Acoes rapidas" data-function-panel="dashboard-resumo">
+            <button type="button" data-open-view="lancamentos" data-open-subview="lancamentos-vendas" data-open-function="pedidos-novo">Novo pedido</button>
+            <button type="button" data-open-view="lancamentos" data-open-subview="lancamentos-caixa" data-open-function="caixa-movimentos">Movimentar caixa</button>
             <button type="button" data-open-view="cadastros" data-open-subview="cadastros-produtos">Consultar estoque</button>
             <button type="button" data-open-view="cadastros" data-open-subview="cadastros-clientes">Novo cliente</button>
           </nav>
 
-          <section class="stats-grid distributor-dashboard-stats">
+          <section class="stats-grid distributor-dashboard-stats" data-function-panel="dashboard-resumo">
             <article class="card stat"><strong>R$ {{ '%.2f'|format(summary.cash_expected_amount) }}</strong><span>saldo esperado no caixa</span></article>
             <article class="card stat"><strong>{{ summary.sales_today_count }}</strong><span>pedidos hoje</span></article>
             <article class="card stat"><strong>{{ summary.order_status_counts.new + summary.order_status_counts.ready + summary.order_status_counts.out_for_delivery }}</strong><span>pedidos em andamento</span></article>
@@ -99,8 +106,8 @@
           </section>
 
           <section class="dashboard-report-grid">
-            <article class="card dashboard-report" data-dashboard-report="cash">
-              <div class="section-head compact-head"><div><p class="eyebrow">Caixa atual</p><h3>Movimentacao de caixa</h3></div><button type="button" class="secondary-btn" data-open-view="lancamentos" data-open-subview="lancamentos-caixa">Abrir caixa</button></div>
+            <article class="card dashboard-report" data-dashboard-report="cash" data-function-panel="dashboard-caixa" hidden>
+              <div class="section-head compact-head"><div><p class="eyebrow">Caixa atual</p><h3>Movimentacao de caixa</h3></div><button type="button" class="secondary-btn" data-open-view="lancamentos" data-open-subview="lancamentos-caixa" data-open-function="caixa-sessao">Abrir caixa</button></div>
               <div class="dashboard-summary-line"><span>{{ 'Aberto' if summary.cash_status == 'open' else 'Fechado' }}</span><strong>R$ {{ '%.2f'|format(summary.cash_expected_amount) }}</strong></div>
               <div class="table-wrap dashboard-table-wrap"><table><thead><tr><th>Data</th><th>Tipo</th><th>Descricao</th><th>Valor</th></tr></thead><tbody>
                 {% for activity in summary.cash_activity[:10] %}<tr><td>{{ activity.occurred_at[:16]|replace('T', ' ') }}</td><td>{{ activity.kind }}</td><td>{{ activity.description }}</td><td class="{{ 'movement-out' if activity.direction == 'out' else 'movement-in' }}">{{ '-' if activity.direction == 'out' else '+' }} R$ {{ '%.2f'|format(activity.amount) }}</td></tr>
@@ -108,8 +115,8 @@
               </tbody></table></div>
             </article>
 
-            <article class="card dashboard-report" data-dashboard-report="orders">
-              <div class="section-head compact-head"><div><p class="eyebrow">Operacao</p><h3>Lista de pedidos</h3></div><button type="button" class="secondary-btn" data-open-view="lancamentos" data-open-subview="lancamentos-vendas">Abrir kanban</button></div>
+            <article class="card dashboard-report" data-dashboard-report="orders" data-function-panel="dashboard-pedidos" hidden>
+              <div class="section-head compact-head"><div><p class="eyebrow">Operacao</p><h3>Lista de pedidos</h3></div><button type="button" class="secondary-btn" data-open-view="lancamentos" data-open-subview="lancamentos-vendas" data-open-function="pedidos-kanban">Abrir kanban</button></div>
               <div class="order-status-summary"><span>Novo <strong>{{ summary.order_status_counts.new }}</strong></span><span>Separado <strong>{{ summary.order_status_counts.ready }}</strong></span><span>Entrega <strong>{{ summary.order_status_counts.out_for_delivery }}</strong></span><span>Delivery <strong>{{ summary.order_status_counts.delivered }}</strong></span></div>
               <div class="table-wrap dashboard-table-wrap"><table><thead><tr><th>Pedido</th><th>Cliente</th><th>Destino</th><th>Status</th><th>Total</th></tr></thead><tbody>
                 {% for sale in summary.recent_sales %}<tr><td><strong>{{ sale.code }}</strong></td><td>{{ sale.customer_name }}</td><td>{{ ('Mesa ' ~ sale.table_reference) if sale.fulfillment_type == 'table' else (sale.delivery_address or 'Balcao') }}</td><td>{{ {'new':'Novo','picking':'Novo','ready':'Separado','out_for_delivery':'Entrega','delivered':'Delivery','completed':'Finalizado','cancelled':'Cancelado'}.get(sale.delivery_status, sale.delivery_status) }}</td><td>R$ {{ '%.2f'|format(sale.total_amount) }}</td></tr>
@@ -117,7 +124,7 @@
               </tbody></table></div>
             </article>
 
-            <article class="card dashboard-report dashboard-stock-report" data-dashboard-report="stock">
+            <article class="card dashboard-report dashboard-stock-report" data-dashboard-report="stock" data-function-panel="dashboard-estoque" hidden>
               <div class="section-head compact-head"><div><p class="eyebrow">Armazem</p><h3>Estoque atual</h3></div><div class="dashboard-value"><span>Valor de venda</span><strong>R$ {{ '%.2f'|format(summary.stock_sale_value) }}</strong></div></div>
               <div class="table-wrap dashboard-table-wrap"><table><thead><tr><th>SKU</th><th>Produto</th><th>Saldo</th><th>Minimo</th><th>Valor unitario</th><th>Situacao</th></tr></thead><tbody>
                 {% for product in summary.products %}<tr><td>{{ product.sku }}</td><td><strong>{{ product.name }}</strong></td><td>{{ '%.3f'|format(product.stock) }}</td><td>{{ '%.3f'|format(product.minimum_stock) }}</td><td>R$ {{ '%.2f'|format(product.sale_price) }}</td><td><span class="stock-state {{ 'is-low' if product.stock <= product.minimum_stock else 'is-ok' }}">{{ 'Repor' if product.stock <= product.minimum_stock else 'Disponivel' }}</span></td></tr>
@@ -136,14 +143,14 @@
 
           <nav class="action-rail" aria-label="Acoes rapidas">
             {% if mode_key == 'distributor' %}
-            <button type="button" data-open-view="lancamentos" data-open-subview="lancamentos-vendas">Novo pedido</button>
-            <button type="button" data-open-view="lancamentos" data-open-subview="lancamentos-caixa">Movimentar caixa</button>
-            <button type="button" data-open-view="cadastros" data-open-subview="cadastros-produtos">Novo produto</button>
+            <button type="button" data-open-view="lancamentos" data-open-subview="lancamentos-vendas" data-open-function="pedidos-novo">Novo pedido</button>
+            <button type="button" data-open-view="lancamentos" data-open-subview="lancamentos-caixa" data-open-function="caixa-movimentos">Movimentar caixa</button>
+            <button type="button" data-open-view="cadastros" data-open-subview="cadastros-produtos" data-open-function="produto-novo">Novo produto</button>
             <button type="button" data-open-view="cadastros" data-open-subview="cadastros-clientes">Novo cliente</button>
             {% else %}
             <button type="button" data-open-view="lancamentos" data-open-subview="lancamentos-vendas">{{ store_mode.primary_action }}</button>
             {% if store_mode.show_lots %}<button type="button" data-open-view="lancamentos" data-open-subview="lancamentos-lotes">Registrar entrada</button>{% endif %}
-            <button type="button" data-open-view="cadastros" data-open-subview="cadastros-produtos">Novo {{ store_mode.entity }}</button>
+            <button type="button" data-open-view="cadastros" data-open-subview="cadastros-produtos" data-open-function="produto-novo">Novo {{ store_mode.entity }}</button>
             <button type="button" data-open-view="workflow" data-open-subview="workflow-kanban">{{ store_mode.workflow }}</button>
             <button type="button" data-open-view="lancamentos" data-open-subview="lancamentos-caixa">Caixa</button>
             {% endif %}
@@ -167,7 +174,7 @@
           {% endif %}
         </section>
 
-        <section class="view" id="estoque" data-view hidden>
+        <section class="view" id="estoque" data-view data-function-scope hidden>
           <div class="section-head">
             <div>
               <p class="eyebrow">Estoque</p>
@@ -177,13 +184,19 @@
           </div>
 
           <nav class="action-rail" aria-label="Acoes de estoque">
-            <button type="button" data-open-view="cadastros" data-open-subview="cadastros-produtos">Novo produto</button>
+            <button type="button" data-open-view="cadastros" data-open-subview="cadastros-produtos" data-open-function="produto-novo">Novo produto</button>
             <button type="button" data-open-view="lancamentos" data-open-subview="lancamentos-estoque">Ajustar estoque</button>
             {% if store_mode.show_lots %}<button type="button" data-open-view="lancamentos" data-open-subview="lancamentos-lotes">Registrar entrada</button>{% endif %}
             <button type="button" data-open-view="relatorios">Abrir relatorios</button>
           </nav>
 
-          <section class="stats-grid stock-overview-stats">
+          <nav class="function-nav" data-function-nav="estoque-visao" aria-label="Visoes de estoque">
+            <button type="button" class="subnav-link active" data-function-target="estoque-posicao">Posicao atual</button>
+            <button type="button" class="subnav-link" data-function-target="estoque-lotes">Lotes ativos</button>
+            <button type="button" class="subnav-link" data-function-target="estoque-historico">Movimentacoes</button>
+          </nav>
+
+          <section class="stats-grid stock-overview-stats" data-function-panel="estoque-posicao">
             <article class="card stat"><strong>{{ summary.products_count }}</strong><span>produtos cadastrados</span></article>
             <article class="card stat"><strong>{{ '%.3f'|format(summary.stock_quantity) }}</strong><span>unidades disponiveis</span></article>
             <article class="card stat"><strong>R$ {{ '%.2f'|format(summary.stock_cost_value) }}</strong><span>valor pelo custo</span></article>
@@ -192,7 +205,7 @@
             <article class="card stat urgent-stat"><strong>{{ summary.no_stock_count }}</strong><span>produtos sem saldo</span></article>
           </section>
 
-          <section class="stock-toolbar">
+          <section class="stock-toolbar" data-function-panel="estoque-posicao">
             <label><span>Buscar no estoque</span><input type="search" id="stock-overview-search" placeholder="SKU, produto, categoria ou codigo de barras"></label>
             <div class="stock-filter-buttons" aria-label="Situacao do estoque">
               <button type="button" class="filter-chip active" data-stock-filter="all">Todos</button>
@@ -202,7 +215,7 @@
             </div>
           </section>
 
-          <article class="card stock-overview-table">
+          <article class="card stock-overview-table" data-function-panel="estoque-posicao">
             <div class="section-head compact-head"><div><p class="eyebrow">Posicao</p><h3>Saldo por produto</h3></div><span class="report-result-count" id="stock-overview-count"></span></div>
             <div class="table-wrap"><table><thead><tr><th>SKU</th><th>Produto</th><th>Codigo de barras</th><th>Categoria</th><th>Saldo</th><th>Minimo</th><th>Custo</th><th>Venda</th><th>Valor em estoque</th><th>Situacao</th></tr></thead><tbody>
               {% for product in summary.products %}
@@ -213,14 +226,14 @@
           </article>
 
           <section class="grid stock-detail-grid">
-            <article class="card">
+            <article class="card" data-function-panel="estoque-lotes" hidden>
               <div class="section-head compact-head"><div><p class="eyebrow">Lotes ativos</p><h3>Itens disponiveis</h3></div><strong>{{ summary.active_lots|length }}</strong></div>
               <div class="table-wrap stock-detail-table"><table><thead><tr><th>Produto</th><th>Lote</th><th>Validade</th><th>Saldo</th><th>Local</th></tr></thead><tbody>
                 {% for lot in summary.active_lots %}<tr><td>{{ lot.product_name }}</td><td>{{ lot.lot_code }}</td><td>{{ lot.expiration_date }}</td><td>{{ '%.3f'|format(lot.quantity_available) }}</td><td>{{ lot.location or '-' }}</td></tr>
                 {% else %}<tr><td colspan="5">Nenhum lote com saldo.</td></tr>{% endfor %}
               </tbody></table></div>
             </article>
-            <article class="card">
+            <article class="card" data-function-panel="estoque-historico" hidden>
               <div class="section-head compact-head"><div><p class="eyebrow">Historico</p><h3>Ultimas movimentacoes</h3></div></div>
               <div class="table-wrap stock-detail-table"><table><thead><tr><th>Data</th><th>Produto</th><th>Tipo</th><th>Qtd</th><th>Saldo</th><th>Referencia</th></tr></thead><tbody>
                 {% for movement in summary.recent_stock_movements %}<tr><td>{{ movement.created_at[:16]|replace('T', ' ') }}</td><td>{{ movement.product_name }}</td><td>{{ movement.movement_type }}</td><td class="{{ 'movement-in' if movement.quantity >= 0 else 'movement-out' }}">{{ '%.3f'|format(movement.quantity) }}</td><td>{{ '%.3f'|format(movement.balance_after) }}</td><td>{{ movement.reference_code or '-' }}</td></tr>
@@ -417,9 +430,13 @@
             </section>
           </section>
 
-          <section class="subview{% if mode_key == 'distributor' %} is-active{% endif %}" id="cadastros-produtos" data-subview {% if mode_key != 'distributor' %}hidden{% endif %}>
+          <section class="subview{% if mode_key == 'distributor' %} is-active{% endif %}" id="cadastros-produtos" data-subview data-function-scope {% if mode_key != 'distributor' %}hidden{% endif %}>
+            <nav class="function-nav" data-function-nav="cadastros-produtos" aria-label="Funcoes de produtos">
+              <button type="button" class="subnav-link active" data-function-target="produto-consulta">Produtos cadastrados</button>
+              <button type="button" class="subnav-link" data-function-target="produto-novo">Novo produto</button>
+            </nav>
             <section class="grid single-grid">
-              <article class="card">
+              <article class="card" data-function-panel="produto-novo" hidden>
                 <h3>Novo {{ store_mode.entity }}</h3>
                 <form data-api="/api/products" id="product-form">
                   <label class="field-inline"><span>SKU</span><input name="sku" placeholder="SKU" required></label>
@@ -505,7 +522,7 @@
                 </form>
               </article>
 
-              <article class="card product-register-card">
+              <article class="card product-register-card" data-function-panel="produto-consulta">
                 <div class="section-head compact-head">
                   <div><p class="eyebrow">Consulta e manutencao</p><h3>{{ store_mode.catalog }} cadastrados</h3></div>
                   <span class="mini-badge" id="registered-products-count">{{ summary.products|length }} itens</span>
@@ -530,9 +547,13 @@
             </section>
           </section>
 
-          <section class="subview" id="cadastros-kanban" data-subview hidden>
+          <section class="subview" id="cadastros-kanban" data-subview data-function-scope hidden>
+            <nav class="function-nav" data-function-nav="cadastros-kanban" aria-label="Funcoes das colunas">
+              <button type="button" class="subnav-link active" data-function-target="kanban-colunas">Colunas existentes</button>
+              <button type="button" class="subnav-link" data-function-target="kanban-nova-coluna">Nova coluna</button>
+            </nav>
             <section class="grid">
-              <article class="card">
+              <article class="card" data-function-panel="kanban-nova-coluna" hidden>
                 <h3>Nova coluna</h3>
                 <form data-api="/api/workflow/stages">
                   <label class="field-inline"><span>Nome</span><input name="name" placeholder="Nome da coluna" required></label>
@@ -546,7 +567,7 @@
                 </form>
               </article>
 
-              <article class="card">
+              <article class="card" data-function-panel="kanban-colunas">
                 <h3>Editar colunas existentes</h3>
                 <div class="stage-admin-list">
                   {% for stage in summary.workflow_stages %}
@@ -636,9 +657,14 @@
             </section>
           </section>
 
-          <section class="subview" id="lancamentos-estoque" data-subview hidden>
+          <section class="subview" id="lancamentos-estoque" data-subview data-function-scope hidden>
+            <nav class="function-nav" data-function-nav="lancamentos-estoque" aria-label="Funcoes de estoque">
+              <button type="button" class="subnav-link active" data-function-target="estoque-ajuste">Ajuste</button>
+              <button type="button" class="subnav-link" data-function-target="estoque-contagem">Contagem</button>
+              <button type="button" class="subnav-link" data-function-target="estoque-ajuda">Orientacoes</button>
+            </nav>
             <section class="grid">
-              <article class="card">
+              <article class="card" data-function-panel="estoque-ajuste">
                 <h3>Ajuste de estoque</h3>
                 <form data-api="/api/stock/adjustments">
                   <label class="field-inline">
@@ -665,7 +691,7 @@
                 </form>
               </article>
 
-              <article class="card">
+              <article class="card" data-function-panel="estoque-contagem" hidden>
                 <h3>Contagem de estoque</h3>
                 <form data-api="/api/stock/counts" id="count-form">
                   <label class="field-inline"><span>Data da contagem</span><input type="date" name="count_date" required></label>
@@ -701,7 +727,7 @@
                 </form>
               </article>
 
-              <article class="card card-guide">
+              <article class="card card-guide" data-function-panel="estoque-ajuda" hidden>
                 <h3>Funcoes de estoque</h3>
                 <ul class="module-list">
                   <li>Saldo por lote</li>
@@ -805,9 +831,15 @@
             </section>
           </section>
 
-          <section class="subview" id="lancamentos-vendas" data-subview hidden>
+          <section class="subview" id="lancamentos-vendas" data-subview data-function-scope hidden>
+            {% if mode_key == 'distributor' %}
+            <nav class="function-nav" data-function-nav="lancamentos-vendas" aria-label="Funcoes de pedidos">
+              <button type="button" class="subnav-link active" data-function-target="pedidos-kanban">Acompanhar pedidos</button>
+              <button type="button" class="subnav-link" data-function-target="pedidos-novo">Novo pedido</button>
+            </nav>
+            {% endif %}
             <section class="grid single-grid">
-              <article class="card">
+              <article class="card" {% if mode_key == 'distributor' %}data-function-panel="pedidos-novo" hidden{% endif %}>
                 <h3>{{ store_mode.sale }}</h3>
                 <div id="sale-edit-notice" class="operation-notice" hidden>
                   <strong id="sale-edit-title">Editando pedido</strong>
@@ -916,7 +948,7 @@
                 </form>
               </article>
               {% if mode_key == 'distributor' %}
-              <article class="card order-control-panel order-kanban-panel">
+              <article class="card order-control-panel order-kanban-panel" data-function-panel="pedidos-kanban">
                 <div class="section-head compact-head"><div><p class="eyebrow">Operacao</p><h3>Kanban de pedidos</h3></div><p class="muted-line" id="order-kanban-feedback" aria-live="polite"></p></div>
                 {% set order_columns = [
                   {'key': 'new', 'name': 'Novo', 'color': '#2f6fce', 'statuses': ['new', 'picking']},
@@ -1021,9 +1053,16 @@
             </section>
           </section>
 
-          <section class="subview{% if mode_key == 'distributor' %} is-active{% endif %}" id="lancamentos-caixa" data-subview {% if mode_key != 'distributor' %}hidden{% endif %}>
+          <section class="subview{% if mode_key == 'distributor' %} is-active{% endif %}" id="lancamentos-caixa" data-subview data-function-scope {% if mode_key != 'distributor' %}hidden{% endif %}>
+            <nav class="function-nav" data-function-nav="lancamentos-caixa" aria-label="Funcoes do caixa">
+              <button type="button" class="subnav-link active" data-function-target="caixa-venda">Venda direta</button>
+              <button type="button" class="subnav-link" data-function-target="caixa-sessao">Abrir e fechar</button>
+              <button type="button" class="subnav-link" data-function-target="caixa-recebimentos">Recebimentos</button>
+              {% if mode_key == 'distributor' %}<button type="button" class="subnav-link" data-function-target="caixa-movimentos">Entradas e saidas</button>
+              <button type="button" class="subnav-link" data-function-target="caixa-notas">Notas</button>{% endif %}
+            </nav>
             <section class="grid">
-              <article class="card">
+              <article class="card" data-function-panel="caixa-sessao" hidden>
                 <h3>Caixa</h3>
                 <div class="status-stack">
                   <div class="status-line"><strong>Status:</strong> {{ summary.cash_status }}</div>
@@ -1041,7 +1080,7 @@
                   <button type="submit" {% if summary.cash_status != 'open' %}disabled{% endif %}>Fechar caixa</button>
                 </form>
               </article>
-              <article class="card cash-quick-sale-card">
+              <article class="card cash-quick-sale-card" data-function-panel="caixa-venda">
                 <div class="section-head compact-head">
                   <div><p class="eyebrow">Balcao</p><h3>Venda direta no caixa</h3></div>
                   <strong id="cash-sale-total">R$ 0.00</strong>
@@ -1064,7 +1103,7 @@
                   <button type="submit" id="cash-sale-submit-btn" {% if summary.cash_status != 'open' %}disabled{% endif %}>Concluir venda</button>
                 </form>
               </article>
-              <article class="card">
+              <article class="card" data-function-panel="caixa-recebimentos" hidden>
                 <h3>Recebimentos pendentes</h3>
                 <div class="stage-admin-list">
                   {% for sale in summary.pending_sales %}
@@ -1079,7 +1118,7 @@
                 </div>
               </article>
               {% if mode_key == 'distributor' %}
-              <article class="card">
+              <article class="card" data-function-panel="caixa-movimentos" hidden>
                 <h3>Entrada ou saida</h3>
                 <form data-api="/api/cash/movements">
                   <label class="field-inline"><span>Movimento</span><select name="direction"><option value="in">Entrada</option><option value="out">Saida / retirada</option></select></label>
@@ -1092,7 +1131,7 @@
                   {% for movement in summary.cash_movements %}<div class="cash-ledger-row"><span>{{ movement.description }}</span><strong class="{{ 'movement-out' if movement.direction == 'out' else 'movement-in' }}">{{ '-' if movement.direction == 'out' else '+' }} R$ {{ '%.2f'|format(movement.amount) }}</strong></div>{% else %}<p class="helper">Nenhum movimento manual.</p>{% endfor %}
                 </div>
               </article>
-              <article class="card">
+              <article class="card" data-function-panel="caixa-notas" hidden>
                 <h3>Notas dos pedidos</h3>
                 <div class="fiscal-feedback" data-fiscal-feedback aria-live="polite"></div>
                 <div class="stage-admin-list">
@@ -1106,7 +1145,7 @@
           </section>
         </section>
 
-        <section class="view" id="faturamento" data-view {% if not store_mode.show_fiscal %}data-mode-disabled="true"{% endif %} hidden>
+        <section class="view" id="faturamento" data-view data-function-scope {% if not store_mode.show_fiscal %}data-mode-disabled="true"{% endif %} hidden>
           <div class="section-head">
             <div>
               <p class="eyebrow">Faturamento</p>
@@ -1115,12 +1154,18 @@
             <p class="section-copy">Ambiente local de simulacao, isolado da SEFAZ.</p>
           </div>
 
-          <div class="fiscal-mode-banner" role="status">
+          <nav class="function-nav" data-function-nav="faturamento" aria-label="Funcoes de faturamento">
+            <button type="button" class="subnav-link active" data-function-target="faturamento-emissao">Emitir notas</button>
+            <button type="button" class="subnav-link" data-function-target="faturamento-historico">Historico</button>
+            <button type="button" class="subnav-link" data-function-target="faturamento-certificado">Certificado</button>
+          </nav>
+
+          <div class="fiscal-mode-banner" role="status" data-function-panel="faturamento-certificado" hidden>
             <strong>Simulacao sem valor fiscal</strong>
             <span>Nenhum documento desta tela e transmitido ou autorizado pela SEFAZ.</span>
           </div>
 
-          <section class="stats-grid fiscal-status-grid">
+          <section class="stats-grid fiscal-status-grid" data-function-panel="faturamento-certificado" hidden>
             <article class="card stat">
               <strong>{{ 'Configurado' if fiscal_status.configured else 'Pendente' }}</strong>
               <span>certificado A1</span>
@@ -1140,7 +1185,7 @@
           </section>
 
           {% if fiscal_status.configured %}
-          <section class="certificate-strip {{ 'is-expired' if fiscal_status.expired else 'is-valid' }}">
+          <section class="certificate-strip {{ 'is-expired' if fiscal_status.expired else 'is-valid' }}" data-function-panel="faturamento-certificado" hidden>
             <div>
               <strong>{{ fiscal_status.holder }}</strong>
               <span>{{ fiscal_status.file_name }} · valido ate {{ fiscal_status.not_after[:10] }}</span>
@@ -1148,13 +1193,13 @@
             <span class="fiscal-state">{{ 'Uso permitido apenas no simulador' if fiscal_status.expired else 'Assinatura local disponivel' }}</span>
           </section>
           {% else %}
-          <section class="certificate-strip is-error">
+          <section class="certificate-strip is-error" data-function-panel="faturamento-certificado" hidden>
             <strong>Certificado indisponivel</strong>
             <span>{{ fiscal_status.error }}</span>
           </section>
           {% endif %}
 
-          <section class="card billing-panel">
+          <section class="card billing-panel" data-function-panel="faturamento-emissao">
             <div class="billing-toolbar">
               <label>
                 <span>Modelo</span>
@@ -1202,7 +1247,7 @@
             </div>
           </section>
 
-          <section class="card billing-history">
+          <section class="card billing-history" data-function-panel="faturamento-historico" hidden>
             <div class="section-head compact-head">
               <div>
                 <p class="eyebrow">Historico</p>
@@ -1248,6 +1293,7 @@
             <button type="button" class="subnav-link" data-report-view="stock-items">Itens de estoque</button>
             <button type="button" class="subnav-link" data-report-view="cash-directions">Entradas e saidas</button>
             <button type="button" class="subnav-link" data-report-view="customers">Clientes</button>
+            <button type="button" class="subnav-link" data-report-view="complementary">Outros controles</button>
           </nav>
 
           <section class="report-actions" aria-label="Filtros do relatorio">
@@ -1345,21 +1391,34 @@
             </article>
           </section>
 
+          <section class="report-panel" data-report-panel="complementary" data-function-scope hidden>
           <div class="section-head report-complementary-head">
             <div><p class="eyebrow">Complementares</p><h3>Financeiro e controles</h3></div>
           </div>
-          <section class="report-toolbar">
+          <nav class="function-nav" data-function-nav="relatorios-complementares" aria-label="Controles complementares">
+            <button type="button" class="subnav-link active" data-function-target="relatorio-estoque-critico">Estoque critico</button>
+            <button type="button" class="subnav-link" data-function-target="relatorio-movimentos">Movimentacoes</button>
+            <button type="button" class="subnav-link" data-function-target="relatorio-contagens">Contagens</button>
+            <button type="button" class="subnav-link" data-function-target="relatorio-pagamentos">Pagamentos</button>
+            <button type="button" class="subnav-link" data-function-target="relatorio-financeiro">Financeiro</button>
+            <button type="button" class="subnav-link" data-function-target="relatorio-produtos">Produtos</button>
+            <button type="button" class="subnav-link" data-function-target="relatorio-lotes">Lotes vencendo</button>
+            <button type="button" class="subnav-link" data-function-target="relatorio-compras">Compras</button>
+          </nav>
+          <section class="report-toolbar" data-function-panel="relatorio-pagamentos" hidden>
             <button type="button" class="filter-chip active" data-report-filter="all" data-filter-group="payments">Pagamentos: todos</button>
             <button type="button" class="filter-chip" data-report-filter="pix" data-filter-group="payments">Pix</button>
             <button type="button" class="filter-chip" data-report-filter="cash" data-filter-group="payments">Dinheiro</button>
             <button type="button" class="filter-chip" data-report-filter="card" data-filter-group="payments">Cartao</button>
+          </section>
+          <section class="report-toolbar" data-function-panel="relatorio-financeiro" hidden>
             <button type="button" class="filter-chip active" data-report-filter="all" data-filter-group="financial">Financeiro: todos</button>
             <button type="button" class="filter-chip" data-report-filter="paid" data-filter-group="financial">Pagos</button>
             <button type="button" class="filter-chip" data-report-filter="open" data-filter-group="financial">Nao pagos</button>
           </section>
 
           <section class="grid grid-wide">
-            <article class="card">
+            <article class="card" data-function-panel="relatorio-estoque-critico">
               <h3>Estoque critico</h3>
               <div class="table-wrap">
                 <table>
@@ -1380,7 +1439,7 @@
               </div>
             </article>
 
-            <article class="card">
+            <article class="card" data-function-panel="relatorio-movimentos" hidden>
               <h3>Movimentacoes de estoque</h3>
               <div class="table-wrap">
                 <table>
@@ -1403,7 +1462,7 @@
               </div>
             </article>
 
-            <article class="card">
+            <article class="card" data-function-panel="relatorio-contagens" hidden>
               <h3>Contagens</h3>
               <div class="table-wrap">
                 <table>
@@ -1424,7 +1483,7 @@
               </div>
             </article>
 
-            <article class="card">
+            <article class="card" data-function-panel="relatorio-pagamentos" hidden>
               <h3>Resumo por forma de pagamento</h3>
               <div class="payment-summary-grid">
                 {% for method, total in summary.payment_method_totals.items() %}
@@ -1441,7 +1500,7 @@
               </div>
             </article>
 
-            <article class="card">
+            <article class="card" data-function-panel="relatorio-pagamentos" hidden>
               <h3>Pagamentos</h3>
               <div class="table-wrap">
                 <table>
@@ -1463,7 +1522,7 @@
               </div>
             </article>
 
-            <article class="card">
+            <article class="card" data-function-panel="relatorio-financeiro" hidden>
               <h3>Financeiro</h3>
               <div class="table-wrap">
                 <table>
@@ -1486,7 +1545,7 @@
               </div>
             </article>
 
-            <article class="card">
+            <article class="card" data-function-panel="relatorio-produtos" hidden>
               <h3>Produtos</h3>
               <div class="table-wrap">
                 <table>
@@ -1509,7 +1568,7 @@
               </div>
             </article>
 
-            <article class="card">
+            <article class="card" data-function-panel="relatorio-lotes" hidden>
               <h3>Lotes vencendo</h3>
               <div class="table-wrap">
                 <table>
@@ -1531,7 +1590,7 @@
               </div>
             </article>
 
-            <article class="card">
+            <article class="card" data-function-panel="relatorio-compras" hidden>
               <h3>Compras recentes</h3>
               <div class="table-wrap">
                 <table>
@@ -1553,9 +1612,10 @@
               </div>
             </article>
           </section>
+          </section>
         </section>
 
-        <section class="view" id="documentacao" data-view hidden>
+        <section class="view" id="documentacao" data-view data-function-scope hidden>
           <div class="section-head">
             <div>
               <p class="eyebrow">Documentacao</p>
@@ -1571,8 +1631,19 @@
           </section>
           <p class="report-no-results" id="documentation-no-results" hidden>Nenhum procedimento encontrado.</p>
 
+          <nav class="function-nav" data-function-nav="documentacao" aria-label="Procedimentos">
+            <button type="button" class="subnav-link active" data-function-target="doc-vender">Vender</button>
+            <button type="button" class="subnav-link" data-function-target="doc-corrigir-venda">Corrigir venda</button>
+            <button type="button" class="subnav-link" data-function-target="doc-caixa">Caixa</button>
+            <button type="button" class="subnav-link" data-function-target="doc-estoque">Estoque</button>
+            <button type="button" class="subnav-link" data-function-target="doc-cadastro">Cadastros</button>
+            <button type="button" class="subnav-link" data-function-target="doc-entrega">Entregas</button>
+            <button type="button" class="subnav-link" data-function-target="doc-fiscal">Notas</button>
+            <button type="button" class="subnav-link" data-function-target="doc-relatorios">Relatorios</button>
+          </nav>
+
           <section class="documentation-list">
-            <details class="documentation-topic" data-documentation-topic open>
+            <details class="documentation-topic" data-documentation-topic data-function-panel="doc-vender" open>
               <summary><span>01</span><strong>Vender ou criar um pedido</strong></summary>
               <div class="documentation-content">
                 <ol>
@@ -1586,7 +1657,7 @@
               </div>
             </details>
 
-            <details class="documentation-topic" data-documentation-topic>
+            <details class="documentation-topic" data-documentation-topic data-function-panel="doc-corrigir-venda" hidden>
               <summary><span>02</span><strong>Editar, cancelar ou excluir uma venda</strong></summary>
               <div class="documentation-content">
                 <ol>
@@ -1601,7 +1672,7 @@
               </div>
             </details>
 
-            <details class="documentation-topic" data-documentation-topic>
+            <details class="documentation-topic" data-documentation-topic data-function-panel="doc-caixa" hidden>
               <summary><span>03</span><strong>Abrir, movimentar e fechar o caixa</strong></summary>
               <div class="documentation-content">
                 <ol>
@@ -1611,11 +1682,11 @@
                   <li>Confira o saldo esperado e informe o valor contado ao fechar. A diferenca fica registrada.</li>
                 </ol>
                 <div class="documentation-warning"><strong>Correcao de lancamentos:</strong> movimentos de caixa nao sao apagados. Registre um movimento inverso com referencia ao lancamento incorreto para manter o historico auditavel.</div>
-                <button type="button" data-open-view="lancamentos" data-open-subview="lancamentos-caixa">Abrir caixa</button>
+                <button type="button" data-open-view="lancamentos" data-open-subview="lancamentos-caixa" data-open-function="caixa-sessao">Abrir caixa</button>
               </div>
             </details>
 
-            <details class="documentation-topic" data-documentation-topic>
+            <details class="documentation-topic" data-documentation-topic data-function-panel="doc-estoque" hidden>
               <summary><span>04</span><strong>Consultar e corrigir o estoque</strong></summary>
               <div class="documentation-content">
                 <ol>
@@ -1630,7 +1701,7 @@
               </div>
             </details>
 
-            <details class="documentation-topic" data-documentation-topic>
+            <details class="documentation-topic" data-documentation-topic data-function-panel="doc-cadastro" hidden>
               <summary><span>05</span><strong>Criar um novo cadastro</strong></summary>
               <div class="documentation-content">
                 <ol>
@@ -1640,12 +1711,12 @@
                   <li>No cliente de entrega, telefone e endereco sao obrigatorios.</li>
                   <li>O cadastro rapido dentro do pedido salva o cliente e o seleciona automaticamente.</li>
                 </ol>
-                <button type="button" data-open-view="cadastros" data-open-subview="cadastros-produtos">Novo produto</button>
+                <button type="button" data-open-view="cadastros" data-open-subview="cadastros-produtos" data-open-function="produto-novo">Novo produto</button>
                 {% if mode_key == 'distributor' %}<button type="button" class="secondary-btn" data-open-view="cadastros" data-open-subview="cadastros-clientes">Novo cliente</button>{% endif %}
               </div>
             </details>
 
-            <details class="documentation-topic" data-documentation-topic>
+            <details class="documentation-topic" data-documentation-topic data-function-panel="doc-entrega" hidden>
               <summary><span>06</span><strong>Separar e entregar pedidos</strong></summary>
               <div class="documentation-content">
                 <ol>
@@ -1658,7 +1729,7 @@
               </div>
             </details>
 
-            <details class="documentation-topic" data-documentation-topic>
+            <details class="documentation-topic" data-documentation-topic data-function-panel="doc-fiscal" hidden>
               <summary><span>07</span><strong>Emitir notas e comprovantes</strong></summary>
               <div class="documentation-content">
                 <ol>
@@ -1671,7 +1742,7 @@
               </div>
             </details>
 
-            <details class="documentation-topic" data-documentation-topic>
+            <details class="documentation-topic" data-documentation-topic data-function-panel="doc-relatorios" hidden>
               <summary><span>08</span><strong>Conferir e exportar relatorios</strong></summary>
               <div class="documentation-content">
                 <ol>
@@ -2131,7 +2202,7 @@
           section.classList.toggle("is-active", active);
         });
         document.querySelectorAll(".menu-link").forEach((button) => {
-          const activeSubview = requestedView?.querySelector(".subnav-link.active")?.dataset.subviewTarget;
+          const activeSubview = requestedView?.querySelector(".subnav-link[data-subview-target].active")?.dataset.subviewTarget;
           const matchesSubview = !button.dataset.openSubview || button.dataset.openSubview === activeSubview;
           button.classList.toggle("active", button.dataset.target === targetId && matchesSubview);
         });
@@ -2184,6 +2255,11 @@
           const targetView = document.getElementById(button.dataset.openView);
           activateView(button.dataset.openView);
           if (targetView && button.dataset.openSubview) activateSubview(targetView, button.dataset.openSubview);
+          if (targetView && button.dataset.openFunction) {
+            const functionButton = targetView.querySelector(`[data-function-target="${button.dataset.openFunction}"]`);
+            const functionNav = functionButton?.closest("[data-function-nav]");
+            if (functionNav) activateFunctionPanel(functionNav, button.dataset.openFunction);
+          }
           if (button.dataset.openSubview === "lancamentos-vendas") {
             window.setTimeout(() => document.getElementById("sale-barcode-input")?.focus(), 0);
           }
@@ -2281,6 +2357,11 @@
           activateView(button.dataset.target);
           const view = document.getElementById(button.dataset.target);
           if (view && button.dataset.openSubview) activateSubview(view, button.dataset.openSubview);
+          if (view && button.dataset.openFunction) {
+            const functionButton = view.querySelector(`[data-function-target="${button.dataset.openFunction}"]`);
+            const functionNav = functionButton?.closest("[data-function-nav]");
+            if (functionNav) activateFunctionPanel(functionNav, button.dataset.openFunction);
+          }
           document.querySelectorAll(".menu-link").forEach((item) => item.classList.remove("active"));
           button.classList.add("active");
           if (button.dataset.openSubview === "lancamentos-vendas") {
@@ -2298,7 +2379,7 @@
           section.hidden = !active;
           section.classList.toggle("is-active", active);
         });
-        container.querySelectorAll(".subnav-link").forEach((button) => {
+        container.querySelectorAll(".subnav-link[data-subview-target]").forEach((button) => {
           button.classList.toggle("active", button.dataset.subviewTarget === targetId);
         });
         document.querySelectorAll(`.menu-link[data-target="${container.id}"][data-open-subview]`).forEach((button) => {
@@ -2307,8 +2388,37 @@
         try { localStorage.setItem(`nanostore.activeSubview.${container.id}`, targetId); } catch {}
       }
 
+      function activateFunctionPanel(nav, targetId) {
+        const scope = nav.closest("[data-function-scope]") || nav.parentElement;
+        if (!scope) return;
+        scope.querySelectorAll("[data-function-panel]").forEach((panel) => {
+          panel.hidden = panel.dataset.functionPanel !== targetId;
+        });
+        nav.querySelectorAll("[data-function-target]").forEach((button) => {
+          button.classList.toggle("active", button.dataset.functionTarget === targetId);
+        });
+        const storageKey = nav.dataset.functionNav;
+        if (storageKey) {
+          try { localStorage.setItem(`nanostore.function.${storageKey}`, targetId); } catch {}
+        }
+      }
+
+      document.querySelectorAll("[data-function-nav]").forEach((nav) => {
+        const firstButton = nav.querySelector("[data-function-target]");
+        if (!firstButton) return;
+        let initialTarget = firstButton.dataset.functionTarget;
+        try {
+          const savedTarget = localStorage.getItem(`nanostore.function.${nav.dataset.functionNav}`);
+          if (savedTarget && nav.querySelector(`[data-function-target="${savedTarget}"]`)) initialTarget = savedTarget;
+        } catch {}
+        activateFunctionPanel(nav, initialTarget);
+        nav.querySelectorAll("[data-function-target]").forEach((button) => {
+          button.addEventListener("click", () => activateFunctionPanel(nav, button.dataset.functionTarget));
+        });
+      });
+
       document.querySelectorAll(".view").forEach((view) => {
-        const firstButton = view.querySelector(".subnav-link");
+        const firstButton = view.querySelector(".subnav-link[data-subview-target]");
         if (firstButton) {
           let initialSubview = firstButton.dataset.subviewTarget;
           try {
@@ -2316,7 +2426,7 @@
             if (savedSubview && view.querySelector(`#${savedSubview}[data-subview]`)) initialSubview = savedSubview;
           } catch {}
           activateSubview(view, initialSubview);
-          view.querySelectorAll(".subnav-link").forEach((button) => {
+          view.querySelectorAll(".subnav-link[data-subview-target]").forEach((button) => {
             button.addEventListener("click", () => {
               activateSubview(view, button.dataset.subviewTarget);
               if (button.dataset.subviewTarget === "lancamentos-caixa") {
@@ -2801,6 +2911,9 @@
           const salesView = document.getElementById("lancamentos");
           activateView("lancamentos");
           if (salesView) activateSubview(salesView, "lancamentos-vendas");
+          const salesFunctionButton = salesView?.querySelector('[data-function-target="pedidos-novo"]');
+          const salesFunctionNav = salesFunctionButton?.closest("[data-function-nav]");
+          if (salesFunctionNav) activateFunctionPanel(salesFunctionNav, "pedidos-novo");
           saleForm.scrollIntoView({ behavior: "smooth", block: "start" });
           if (orderKanbanFeedback) orderKanbanFeedback.textContent = "";
         } catch (error) {
@@ -3804,6 +3917,13 @@
 
       function applyDocumentationSearch() {
         const search = (documentationSearch?.value || "").trim().toLocaleLowerCase("pt-BR");
+        const documentationNav = document.querySelector('[data-function-nav="documentacao"]');
+        if (!search && documentationNav) {
+          const activeTarget = documentationNav.querySelector("[data-function-target].active")?.dataset.functionTarget;
+          if (activeTarget) activateFunctionPanel(documentationNav, activeTarget);
+          if (documentationNoResults) documentationNoResults.hidden = true;
+          return;
+        }
         let visible = 0;
         document.querySelectorAll("[data-documentation-topic]").forEach((topic) => {
           const matches = !search || topic.textContent.toLocaleLowerCase("pt-BR").includes(search);

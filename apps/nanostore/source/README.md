@@ -37,6 +37,12 @@ A interface da distribuidora possui identidade propria em dourado, preto e
 branco: navegacao preta, selecao e acoes prioritarias douradas e paineis brancos
 para manter leitura rapida no uso diario.
 
+A navegacao segue um padrao de tres niveis: menu lateral para a area, submenu
+horizontal para o modulo e um submenu de funcoes quando a tela possui operacoes
+diferentes. Somente a funcao ativa permanece visivel, e o navegador guarda a
+ultima escolha de cada area. Em telas estreitas, os submenus usam rolagem
+horizontal; atalhos como `Novo produto` abrem diretamente o formulario correto.
+
 O Caixa tambem oferece venda direta de balcao por leitor USB ou webcam. Cada
 bip adiciona uma unidade, leituras repetidas somam quantidade e a conclusao
 baixa o estoque, registra a venda e credita o pagamento no caixa aberto.

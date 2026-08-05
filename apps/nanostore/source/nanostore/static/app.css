@@ -1065,6 +1065,24 @@ h3 {
   color: var(--primary-dark);
 }
 
+.function-nav {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  margin-bottom: 14px;
+  padding-bottom: 5px;
+  scrollbar-width: thin;
+}
+
+.function-nav .subnav-link {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+[data-function-panel][hidden] {
+  display: none;
+}
+
 .config-subnav {
   flex-wrap: nowrap;
   overflow-x: auto;
