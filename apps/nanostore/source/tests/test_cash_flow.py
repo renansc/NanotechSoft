@@ -99,6 +99,8 @@ class CashFlowTest(unittest.TestCase):
         self.assertEqual(receivable.status, "paid")
         self.assertEqual(Decimal(cash.expected_amount), Decimal("59"))
         self.assertEqual(Decimal(lot.quantity_available), Decimal("1"))
+        movement = StockMovement.query.filter_by(product_id=item.id, movement_type="sale").one()
+        self.assertEqual(Decimal(movement.quantity), Decimal("-1"))
 
     def test_service_sale_does_not_require_stock_or_lot(self):
         service = PharmacyProduct(
@@ -245,6 +247,7 @@ class CashFlowTest(unittest.TestCase):
                     "Dashboard operacional", 'data-dashboard-report="cash"', 'data-dashboard-report="orders"',
                     'data-dashboard-report="stock"', "Entrada ou saida", "Kanban de pedidos",
                     "Notas dos pedidos", "Novo cliente do pedido", "Codigo / bipe", "Ler pela webcam",
+                    "Venda direta no caixa", 'id="cash-sale-barcode-input"', 'id="cash-sale-items-json"',
                     "data-order-edit", "data-order-delete", 'data-target="estoque"',
                     'data-target="relatorios"', 'data-target="documentacao"',
                 ):

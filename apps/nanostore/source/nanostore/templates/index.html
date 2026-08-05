@@ -1025,6 +1025,28 @@
                   <button type="submit" {% if summary.cash_status != 'open' %}disabled{% endif %}>Fechar caixa</button>
                 </form>
               </article>
+              <article class="card cash-quick-sale-card">
+                <div class="section-head compact-head">
+                  <div><p class="eyebrow">Balcao</p><h3>Venda direta no caixa</h3></div>
+                  <strong id="cash-sale-total">R$ 0.00</strong>
+                </div>
+                <form data-api="/api/sales" id="cash-sale-form">
+                  <input type="hidden" name="customer_name" value="Consumidor final">
+                  <input type="hidden" name="source_channel" value="balcao">
+                  <input type="hidden" name="fulfillment_type" value="counter">
+                  <div class="barcode-capture">
+                    <label class="field-inline"><span>Codigo / bipe</span><input id="cash-sale-barcode-input" placeholder="Clique aqui e faca o bipe" autocomplete="off" {% if summary.cash_status != 'open' %}disabled{% endif %}></label>
+                    <button type="button" class="secondary-btn scan-trigger" id="scan-cash-sale-btn" {% if summary.cash_status != 'open' %}disabled{% endif %}>Ler pela webcam</button>
+                  </div>
+                  <p class="helper barcode-feedback" id="cash-sale-barcode-feedback" aria-live="polite">Cada leitura adiciona uma unidade.</p>
+                  <div class="sale-items-panel">
+                    <div class="item-stack empty-list" id="cash-sale-items-list"></div>
+                  </div>
+                  <label class="field-inline"><span>Recebimento</span><select name="payment_method" {% if summary.cash_status != 'open' %}disabled{% endif %}><option value="cash">Dinheiro</option><option value="pix">Pix</option><option value="debit_card">Cartao de debito</option><option value="credit_card">Cartao de credito</option><option value="card_machine">Maquina de cartao</option></select></label>
+                  <input type="hidden" name="items_json" id="cash-sale-items-json" required>
+                  <button type="submit" id="cash-sale-submit-btn" {% if summary.cash_status != 'open' %}disabled{% endif %}>Concluir venda</button>
+                </form>
+              </article>
               <article class="card">
                 <h3>Recebimentos pendentes</h3>
                 <div class="stage-admin-list">
@@ -2063,6 +2085,9 @@
           if (button.dataset.openSubview === "lancamentos-vendas") {
             window.setTimeout(() => document.getElementById("sale-barcode-input")?.focus(), 0);
           }
+          if (button.dataset.openSubview === "lancamentos-caixa") {
+            window.setTimeout(() => document.getElementById("cash-sale-barcode-input")?.focus(), 0);
+          }
         });
       });
 
@@ -2159,6 +2184,9 @@
           if (button.dataset.openSubview === "lancamentos-vendas") {
             window.setTimeout(() => document.getElementById("sale-barcode-input")?.focus(), 0);
           }
+          if (button.dataset.openSubview === "lancamentos-caixa") {
+            window.setTimeout(() => document.getElementById("cash-sale-barcode-input")?.focus(), 0);
+          }
         });
       });
 
@@ -2181,7 +2209,12 @@
         if (firstButton) {
           activateSubview(view, firstButton.dataset.subviewTarget);
           view.querySelectorAll(".subnav-link").forEach((button) => {
-            button.addEventListener("click", () => activateSubview(view, button.dataset.subviewTarget));
+            button.addEventListener("click", () => {
+              activateSubview(view, button.dataset.subviewTarget);
+              if (button.dataset.subviewTarget === "lancamentos-caixa") {
+                window.setTimeout(() => document.getElementById("cash-sale-barcode-input")?.focus(), 0);
+              }
+            });
           });
         }
       });
@@ -2193,6 +2226,7 @@
         }
 
       const saleItems = [];
+      const cashSaleItems = [];
       const saleForm = document.getElementById("sale-form");
       const saleEditNotice = document.getElementById("sale-edit-notice");
       const saleEditTitle = document.getElementById("sale-edit-title");
@@ -2249,6 +2283,12 @@
       const scanSaleProductBtn = document.getElementById("scan-sale-product-btn");
       const saleBarcodeInput = document.getElementById("sale-barcode-input");
       const saleBarcodeFeedback = document.getElementById("sale-barcode-feedback");
+      const cashSaleBarcodeInput = document.getElementById("cash-sale-barcode-input");
+      const cashSaleBarcodeFeedback = document.getElementById("cash-sale-barcode-feedback");
+      const cashSaleItemsList = document.getElementById("cash-sale-items-list");
+      const cashSaleItemsJson = document.getElementById("cash-sale-items-json");
+      const cashSaleTotal = document.getElementById("cash-sale-total");
+      const scanCashSaleBtn = document.getElementById("scan-cash-sale-btn");
       const scanCountProductBtn = document.getElementById("scan-count-product-btn");
       const scannerModal = document.getElementById("scanner-modal");
       const closeScannerModalBtn = document.getElementById("close-scanner-modal-btn");
@@ -2696,6 +2736,16 @@
             saleBarcodeFeedback.textContent = `${product.name} adicionado ao pedido.`;
           }
           saleBarcodeInput?.focus();
+        } else if (target === "cash-sale") {
+          addCashSaleProduct(product);
+          if (cashSaleBarcodeInput) cashSaleBarcodeInput.value = "";
+          if (cashSaleBarcodeFeedback) {
+            cashSaleBarcodeFeedback.classList.remove("is-error");
+            cashSaleBarcodeFeedback.classList.add("is-success");
+            const quantity = cashSaleItems.reduce((sum, item) => sum + Number(item.quantity), 0);
+            cashSaleBarcodeFeedback.textContent = `${product.name} adicionado. ${quantity} item(ns) na venda.`;
+          }
+          cashSaleBarcodeInput?.focus();
         } else if (target === "count") {
           if (countProductSelect) {
             countProductSelect.value = String(product.id);
@@ -2714,6 +2764,7 @@
         if (scannerModalTitle) {
           scannerModalTitle.textContent =
             target === "sale" ? "Bip de item para venda" :
+            target === "cash-sale" ? "Bip de venda direta no caixa" :
             target === "count" ? "Bip de item para contagem" :
             target === "register" ? "Codigo de barras do novo produto" :
             "Consulta rapida de item";
@@ -2964,6 +3015,62 @@
         });
       }
 
+      function refreshCashSaleItems() {
+        if (!(cashSaleItemsList && cashSaleItemsJson)) return;
+        cashSaleItemsJson.value = JSON.stringify(cashSaleItems);
+        cashSaleItemsList.innerHTML = "";
+        cashSaleItemsList.classList.toggle("empty-list", cashSaleItems.length === 0);
+        if (!cashSaleItems.length) {
+          cashSaleItemsList.innerHTML = '<div class="item-row"><strong>Nenhum item bipado.</strong><span>Venda ainda sem produtos.</span></div>';
+        } else {
+          cashSaleItems.forEach((item, index) => {
+            const row = document.createElement("div");
+            const details = document.createElement("div");
+            const name = document.createElement("strong");
+            const values = document.createElement("span");
+            const remove = document.createElement("button");
+            row.className = "item-row";
+            name.textContent = item.name;
+            values.textContent = `${item.quantity} x R$ ${Number(item.unit_price).toFixed(2)}`;
+            remove.type = "button";
+            remove.className = "secondary-btn";
+            remove.dataset.removeCashSaleItem = String(index);
+            remove.textContent = "Remover";
+            details.append(name, values);
+            row.append(details, remove);
+            cashSaleItemsList.appendChild(row);
+          });
+          cashSaleItemsList.querySelectorAll("[data-remove-cash-sale-item]").forEach((button) => {
+            button.addEventListener("click", () => {
+              cashSaleItems.splice(Number(button.dataset.removeCashSaleItem), 1);
+              refreshCashSaleItems();
+              cashSaleBarcodeInput?.focus();
+            });
+          });
+        }
+        const total = cashSaleItems.reduce(
+          (sum, item) => sum + (Number(item.quantity) * Number(item.unit_price)),
+          0,
+        );
+        if (cashSaleTotal) cashSaleTotal.textContent = `R$ ${total.toFixed(2)}`;
+      }
+
+      function addCashSaleProduct(product) {
+        const existing = cashSaleItems.find((item) => item.product_id === Number(product.id));
+        if (existing) {
+          existing.quantity = String(Number(existing.quantity) + 1);
+        } else {
+          cashSaleItems.push({
+            product_id: Number(product.id),
+            name: product.name,
+            quantity: "1",
+            unit_price: String(Number(product.sale_price || 0)),
+            discount_amount: "0",
+          });
+        }
+        refreshCashSaleItems();
+      }
+
       if (saleProductSelect) {
         saleProductSelect.addEventListener("change", function () {
           const option = saleProductSelect.selectedOptions[0];
@@ -2988,6 +3095,7 @@
       }
 
       refreshSaleItems();
+      refreshCashSaleItems();
       hydrateSaleProducts().catch((error) => console.error(error));
 
       if (purchaseType) {
@@ -3144,11 +3252,21 @@
           submitBarcodeCapture("sale", saleBarcodeInput, saleBarcodeFeedback);
         });
       }
+      if (cashSaleBarcodeInput) {
+        cashSaleBarcodeInput.addEventListener("keydown", (event) => {
+          if (event.key !== "Enter") return;
+          event.preventDefault();
+          submitBarcodeCapture("cash-sale", cashSaleBarcodeInput, cashSaleBarcodeFeedback);
+        });
+      }
       if (scanProductBarcodeBtn) {
         scanProductBarcodeBtn.addEventListener("click", function () { startScanner("register"); });
       }
       if (scanSaleProductBtn) {
         scanSaleProductBtn.addEventListener("click", function () { startScanner("sale"); });
+      }
+      if (scanCashSaleBtn) {
+        scanCashSaleBtn.addEventListener("click", function () { startScanner("cash-sale"); });
       }
       if (scanCountProductBtn) {
         scanCountProductBtn.addEventListener("click", function () { startScanner("count"); });
@@ -3215,6 +3333,11 @@
           event.preventDefault();
           if (form.id === "sale-form" && saleItems.length === 0) {
             addCurrentSaleDraft();
+          }
+          if (form.id === "cash-sale-form" && cashSaleItems.length === 0) {
+            alert("Bipe ao menos um produto para concluir a venda.");
+            cashSaleBarcodeInput?.focus();
+            return;
           }
           if (form.id === "purchase-form" && purchaseItems.length === 0) {
             addCurrentPurchaseDraft();

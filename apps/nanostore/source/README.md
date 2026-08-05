@@ -33,6 +33,10 @@ emissao fiscal dos pedidos. Pedidos usam uma fila de separacao e entrega; o
 destino deve ser uma mesa identificada ou uma entrega vinculada a cliente
 cadastrado com telefone e endereco.
 
+O Caixa tambem oferece venda direta de balcao por leitor USB ou webcam. Cada
+bip adiciona uma unidade, leituras repetidas somam quantidade e a conclusao
+baixa o estoque, registra a venda e credita o pagamento no caixa aberto.
+
 Na tela de Pedidos, o acompanhamento usa um kanban com as etapas `Novo`,
 `Separado`, `Entrega` e `Delivery`. Os cards podem ser arrastados no desktop ou
 movidos pelos botoes Anterior/Avancar no celular. O formulario do pedido tambem
