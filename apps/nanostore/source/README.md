@@ -52,6 +52,11 @@ uso diario: saldo e atividade do caixa aberto, lista e totais de pedidos por
 etapa, quantidade e valor de venda estimado do estoque, saldo por produto e
 alertas de reposicao. Cada painel possui atalho para a operacao correspondente.
 
+A area `Relatorios` oferece consultas de movimento de caixa, status de pedidos,
+posicao consolidada e itens/lotes do estoque, entradas e saidas de caixa em
+listas separadas e cadastro de clientes. As consultas aceitam busca e periodo,
+alem de exportacao CSV e impressao do resultado visivel.
+
 O cadastro de produtos e o lancamento de pedidos aceitam codigo de barras por
 leitor USB (bipe seguido de Enter) ou pela webcam em navegador com HTTPS. No
 cadastro, o codigo capturado preenche o novo produto; no pedido, um produto ja

@@ -1111,6 +1111,113 @@
             <p class="section-copy">Tudo de relatorio fica centralizado aqui, com filtros basicos para operacao e financeiro.</p>
           </div>
 
+          <nav class="report-nav" aria-label="Tipos de relatorio">
+            <button type="button" class="subnav-link active" data-report-view="cash-movement">Movimento de caixa</button>
+            <button type="button" class="subnav-link" data-report-view="orders">Status de pedidos</button>
+            <button type="button" class="subnav-link" data-report-view="stock-position">Posicao de estoque</button>
+            <button type="button" class="subnav-link" data-report-view="stock-items">Itens de estoque</button>
+            <button type="button" class="subnav-link" data-report-view="cash-directions">Entradas e saidas</button>
+            <button type="button" class="subnav-link" data-report-view="customers">Clientes</button>
+          </nav>
+
+          <section class="report-actions" aria-label="Filtros do relatorio">
+            <label><span>Buscar</span><input type="search" id="report-search" placeholder="Codigo, nome ou descricao"></label>
+            <label data-report-date-filter><span>De</span><input type="date" id="report-date-start"></label>
+            <label data-report-date-filter><span>Ate</span><input type="date" id="report-date-end"></label>
+            <button type="button" class="secondary-btn" id="report-clear-filters">Limpar</button>
+            <button type="button" class="secondary-btn" id="report-export-csv">Exportar CSV</button>
+            <button type="button" id="report-print">Imprimir</button>
+          </section>
+          <p class="report-no-results" id="report-no-results" hidden>Nenhum registro encontrado para os filtros informados.</p>
+
+          <section class="report-panel is-active" data-report-panel="cash-movement">
+            <div class="stats-grid report-stats">
+              <article class="card stat"><strong>R$ {{ '%.2f'|format(summary.cash_report.entries_total) }}</strong><span>total de entradas</span></article>
+              <article class="card stat"><strong>R$ {{ '%.2f'|format(summary.cash_report.exits_total) }}</strong><span>total de saidas</span></article>
+              <article class="card stat"><strong>R$ {{ '%.2f'|format(summary.cash_report.balance) }}</strong><span>saldo movimentado</span></article>
+            </div>
+            <article class="card report-table-card">
+              <div class="section-head compact-head"><div><p class="eyebrow">Caixa</p><h3>Movimento de caixa</h3></div><span class="report-result-count" data-report-count></span></div>
+              <div class="table-wrap"><table><thead><tr><th>Data</th><th>Caixa</th><th>Origem</th><th>Categoria</th><th>Descricao</th><th>Movimento</th><th>Valor</th></tr></thead><tbody>
+                {% for movement in summary.cash_report.rows %}
+                <tr data-report-row data-report-date="{{ movement.occurred_at[:10] }}"><td>{{ movement.occurred_at[:16]|replace('T', ' ') }}</td><td>#{{ movement.cash_session_id }}</td><td>{{ movement.origin }}</td><td>{{ movement.category }}</td><td>{{ movement.description }}</td><td>{{ 'Entrada' if movement.direction == 'in' else 'Saida' }}</td><td class="{{ 'movement-in' if movement.direction == 'in' else 'movement-out' }}">{{ '+' if movement.direction == 'in' else '-' }} R$ {{ '%.2f'|format(movement.amount) }}</td></tr>
+                {% else %}<tr data-empty-row><td colspan="7">Nenhum movimento de caixa registrado.</td></tr>{% endfor %}
+              </tbody></table></div>
+            </article>
+          </section>
+
+          <section class="report-panel" data-report-panel="orders" hidden>
+            <div class="order-status-summary report-status-summary"><span>Novo <strong>{{ summary.order_status_counts.new }}</strong></span><span>Separado <strong>{{ summary.order_status_counts.ready }}</strong></span><span>Entrega <strong>{{ summary.order_status_counts.out_for_delivery }}</strong></span><span>Delivery <strong>{{ summary.order_status_counts.delivered }}</strong></span><span>Cancelado <strong>{{ summary.order_status_counts.cancelled }}</strong></span></div>
+            <article class="card report-table-card">
+              <div class="section-head compact-head"><div><p class="eyebrow">Pedidos</p><h3>Status dos pedidos</h3></div><span class="report-result-count" data-report-count></span></div>
+              <div class="table-wrap"><table><thead><tr><th>Data</th><th>Pedido</th><th>Cliente</th><th>Destino</th><th>Status operacional</th><th>Status financeiro</th><th>Total</th></tr></thead><tbody>
+                {% for sale in summary.report_sales %}
+                <tr data-report-row data-report-date="{{ sale.created_at[:10] }}"><td>{{ sale.created_at[:16]|replace('T', ' ') }}</td><td><strong>{{ sale.code }}</strong></td><td>{{ sale.customer_name }}</td><td>{{ ('Mesa ' ~ sale.table_reference) if sale.fulfillment_type == 'table' else (sale.delivery_address or 'Balcao') }}</td><td>{{ {'new':'Novo','picking':'Novo','ready':'Separado','out_for_delivery':'Entrega','delivered':'Delivery','cancelled':'Cancelado'}.get(sale.delivery_status, sale.delivery_status) }}</td><td>{{ {'open':'Aberto','partially_paid':'Parcial','paid':'Pago','cancelled':'Cancelado'}.get(sale.status, sale.status) }}</td><td>R$ {{ '%.2f'|format(sale.total_amount) }}</td></tr>
+                {% else %}<tr data-empty-row><td colspan="7">Nenhum pedido registrado.</td></tr>{% endfor %}
+              </tbody></table></div>
+            </article>
+          </section>
+
+          <section class="report-panel" data-report-panel="stock-position" hidden>
+            <div class="stats-grid report-stats">
+              <article class="card stat"><strong>{{ '%.3f'|format(summary.stock_quantity) }}</strong><span>unidades em estoque</span></article>
+              <article class="card stat"><strong>R$ {{ '%.2f'|format(summary.stock_sale_value) }}</strong><span>valor potencial de venda</span></article>
+              <article class="card stat"><strong>{{ summary.low_stock_count }}</strong><span>produtos para repor</span></article>
+            </div>
+            <article class="card report-table-card">
+              <div class="section-head compact-head"><div><p class="eyebrow">Estoque</p><h3>Posicao de estoque</h3></div><span class="report-result-count" data-report-count></span></div>
+              <div class="table-wrap"><table><thead><tr><th>SKU</th><th>Produto</th><th>Categoria</th><th>Saldo</th><th>Minimo</th><th>Custo</th><th>Venda</th><th>Valor em venda</th><th>Situacao</th></tr></thead><tbody>
+                {% for product in summary.products %}
+                <tr data-report-row><td>{{ product.sku }}</td><td><strong>{{ product.name }}</strong></td><td>{{ product.category_name or '-' }}</td><td>{{ '%.3f'|format(product.stock) }}</td><td>{{ '%.3f'|format(product.minimum_stock) }}</td><td>R$ {{ '%.2f'|format(product.cost_price) }}</td><td>R$ {{ '%.2f'|format(product.sale_price) }}</td><td>R$ {{ '%.2f'|format(product.stock * product.sale_price) }}</td><td><span class="stock-state {{ 'is-low' if product.stock <= product.minimum_stock else 'is-ok' }}">{{ 'Repor' if product.stock <= product.minimum_stock else 'Disponivel' }}</span></td></tr>
+                {% else %}<tr data-empty-row><td colspan="9">Nenhum produto cadastrado.</td></tr>{% endfor %}
+              </tbody></table></div>
+            </article>
+          </section>
+
+          <section class="report-panel" data-report-panel="stock-items" hidden>
+            <article class="card report-table-card">
+              <div class="section-head compact-head"><div><p class="eyebrow">Estoque fisico</p><h3>Itens e lotes em estoque</h3></div><span class="report-result-count" data-report-count></span></div>
+              <div class="table-wrap"><table><thead><tr><th>SKU</th><th>Produto</th><th>Codigo de barras</th><th>Lote</th><th>Validade</th><th>Recebido</th><th>Disponivel</th><th>Custo unitario</th><th>Custo em estoque</th><th>Local</th></tr></thead><tbody>
+                {% for lot in summary.all_lots %}
+                <tr data-report-row><td>{{ lot.product_sku }}</td><td><strong>{{ lot.product_name }}</strong></td><td>{{ lot.barcode or '-' }}</td><td>{{ lot.lot_code }}</td><td>{{ lot.expiration_date }}</td><td>{{ '%.3f'|format(lot.quantity_received) }}</td><td>{{ '%.3f'|format(lot.quantity_available) }}</td><td>R$ {{ '%.2f'|format(lot.purchase_price) }}</td><td>R$ {{ '%.2f'|format(lot.stock_cost) }}</td><td>{{ lot.location or '-' }}</td></tr>
+                {% else %}<tr data-empty-row><td colspan="10">Nenhum item de estoque registrado.</td></tr>{% endfor %}
+              </tbody></table></div>
+            </article>
+          </section>
+
+          <section class="report-panel" data-report-panel="cash-directions" hidden>
+            <div class="cash-direction-grid">
+              <article class="card report-table-card">
+                <div class="section-head compact-head"><div><p class="eyebrow">Entradas</p><h3>Caixa recebido</h3></div><strong class="movement-in">R$ {{ '%.2f'|format(summary.cash_report.entries_total) }}</strong></div>
+                <div class="table-wrap"><table><thead><tr><th>Data</th><th>Caixa</th><th>Categoria</th><th>Descricao</th><th>Valor</th></tr></thead><tbody>
+                  {% for movement in summary.cash_report.entries %}<tr data-report-row data-report-date="{{ movement.occurred_at[:10] }}"><td>{{ movement.occurred_at[:16]|replace('T', ' ') }}</td><td>#{{ movement.cash_session_id }}</td><td>{{ movement.category }}</td><td>{{ movement.description }}</td><td class="movement-in">R$ {{ '%.2f'|format(movement.amount) }}</td></tr>
+                  {% else %}<tr data-empty-row><td colspan="5">Nenhuma entrada registrada.</td></tr>{% endfor %}
+                </tbody></table></div>
+              </article>
+              <article class="card report-table-card">
+                <div class="section-head compact-head"><div><p class="eyebrow">Saidas</p><h3>Caixa retirado</h3></div><strong class="movement-out">R$ {{ '%.2f'|format(summary.cash_report.exits_total) }}</strong></div>
+                <div class="table-wrap"><table><thead><tr><th>Data</th><th>Caixa</th><th>Categoria</th><th>Descricao</th><th>Valor</th></tr></thead><tbody>
+                  {% for movement in summary.cash_report.exits %}<tr data-report-row data-report-date="{{ movement.occurred_at[:10] }}"><td>{{ movement.occurred_at[:16]|replace('T', ' ') }}</td><td>#{{ movement.cash_session_id }}</td><td>{{ movement.category }}</td><td>{{ movement.description }}</td><td class="movement-out">R$ {{ '%.2f'|format(movement.amount) }}</td></tr>
+                  {% else %}<tr data-empty-row><td colspan="5">Nenhuma saida registrada.</td></tr>{% endfor %}
+                </tbody></table></div>
+              </article>
+            </div>
+          </section>
+
+          <section class="report-panel" data-report-panel="customers" hidden>
+            <article class="card report-table-card">
+              <div class="section-head compact-head"><div><p class="eyebrow">Cadastros</p><h3>Cadastro de clientes</h3></div><div class="report-head-actions"><span class="report-result-count" data-report-count></span><button type="button" class="secondary-btn" data-open-view="cadastros" data-open-subview="cadastros-clientes">Novo cliente</button></div></div>
+              <div class="table-wrap"><table><thead><tr><th>Cadastro</th><th>Nome</th><th>Documento</th><th>Telefone</th><th>Endereco</th><th>Observacoes</th></tr></thead><tbody>
+                {% for customer in summary.customers %}
+                <tr data-report-row data-report-date="{{ customer.created_at[:10] }}"><td>{{ customer.created_at[:10] }}</td><td><strong>{{ customer.name }}</strong></td><td>{{ customer.document or '-' }}</td><td>{{ customer.phone or '-' }}</td><td>{{ customer.full_address or '-' }}</td><td>{{ customer.notes or '-' }}</td></tr>
+                {% else %}<tr data-empty-row><td colspan="6">Nenhum cliente cadastrado.</td></tr>{% endfor %}
+              </tbody></table></div>
+            </article>
+          </section>
+
+          <div class="section-head report-complementary-head">
+            <div><p class="eyebrow">Complementares</p><h3>Financeiro e controles</h3></div>
+          </div>
           <section class="report-toolbar">
             <button type="button" class="filter-chip active" data-report-filter="all" data-filter-group="payments">Pagamentos: todos</button>
             <button type="button" class="filter-chip" data-report-filter="pix" data-filter-group="payments">Pix</button>
@@ -2841,6 +2948,122 @@
           alert(error.message);
         }
       });
+
+      const reportSearch = document.getElementById("report-search");
+      const reportDateStart = document.getElementById("report-date-start");
+      const reportDateEnd = document.getElementById("report-date-end");
+      const reportNoResults = document.getElementById("report-no-results");
+
+      function activeReportPanel() {
+        return document.querySelector("[data-report-panel].is-active");
+      }
+
+      function applyReportFilters() {
+        const panel = activeReportPanel();
+        if (!panel) return;
+        const search = (reportSearch?.value || "").trim().toLocaleLowerCase("pt-BR");
+        const dateStart = reportDateStart?.value || "";
+        const dateEnd = reportDateEnd?.value || "";
+        const rows = Array.from(panel.querySelectorAll("[data-report-row]"));
+        let visible = 0;
+        rows.forEach((row) => {
+          const rowDate = row.dataset.reportDate || "";
+          const matchesSearch = !search || row.textContent.toLocaleLowerCase("pt-BR").includes(search);
+          const matchesStart = !rowDate || !dateStart || rowDate >= dateStart;
+          const matchesEnd = !rowDate || !dateEnd || rowDate <= dateEnd;
+          row.hidden = !(matchesSearch && matchesStart && matchesEnd);
+          if (!row.hidden) visible += 1;
+        });
+        panel.querySelectorAll("[data-report-count]").forEach((element) => {
+          element.textContent = `${visible} registro(s)`;
+        });
+        if (reportNoResults) reportNoResults.hidden = rows.length === 0 || visible > 0;
+      }
+
+      function updateReportDateFilters(reportKey) {
+        const acceptsDate = !["stock-position", "stock-items"].includes(reportKey);
+        document.querySelectorAll("[data-report-date-filter]").forEach((label) => {
+          label.hidden = !acceptsDate;
+        });
+        if (!acceptsDate) {
+          if (reportDateStart) reportDateStart.value = "";
+          if (reportDateEnd) reportDateEnd.value = "";
+        }
+      }
+
+      document.querySelectorAll("[data-report-view]").forEach((button) => {
+        button.addEventListener("click", () => {
+          document.querySelectorAll("[data-report-view]").forEach((item) => item.classList.remove("active"));
+          document.querySelectorAll("[data-report-panel]").forEach((panel) => {
+            const selected = panel.dataset.reportPanel === button.dataset.reportView;
+            panel.classList.toggle("is-active", selected);
+            panel.hidden = !selected;
+          });
+          button.classList.add("active");
+          updateReportDateFilters(button.dataset.reportView);
+          applyReportFilters();
+        });
+      });
+
+      [reportSearch, reportDateStart, reportDateEnd].forEach((field) => {
+        field?.addEventListener("input", applyReportFilters);
+      });
+
+      document.getElementById("report-clear-filters")?.addEventListener("click", () => {
+        if (reportSearch) reportSearch.value = "";
+        if (reportDateStart) reportDateStart.value = "";
+        if (reportDateEnd) reportDateEnd.value = "";
+        applyReportFilters();
+      });
+
+      function reportTableRows(panel) {
+        const tables = Array.from(panel?.querySelectorAll("table") || []);
+        const rows = [];
+        tables.forEach((table, tableIndex) => {
+          if (tableIndex === 0) {
+            const headers = Array.from(table.querySelectorAll("thead th")).map((cell) => cell.textContent.trim());
+            if (headers.length) rows.push(headers);
+          }
+          table.querySelectorAll("tbody [data-report-row]:not([hidden])").forEach((row) => {
+            rows.push(Array.from(row.cells).map((cell) => cell.textContent.trim().replace(/\s+/g, " ")));
+          });
+        });
+        return rows;
+      }
+
+      document.getElementById("report-export-csv")?.addEventListener("click", () => {
+        const panel = activeReportPanel();
+        const rows = reportTableRows(panel);
+        if (rows.length < 2) {
+          alert("Nenhum registro visivel para exportar.");
+          return;
+        }
+        const csv = rows.map((row) => row.map((value) => `"${String(value).replace(/"/g, '""')}"`).join(";")).join("\n");
+        const blob = new Blob(["\ufeff", csv], { type: "text/csv;charset=utf-8" });
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.download = `nanostore-${panel.dataset.reportPanel}-${new Date().toISOString().slice(0, 10)}.csv`;
+        link.click();
+        URL.revokeObjectURL(link.href);
+      });
+
+      document.getElementById("report-print")?.addEventListener("click", () => {
+        const panel = activeReportPanel();
+        if (!panel) return;
+        const title = panel.querySelector("h3")?.textContent || "Relatorio NanoStore";
+        const printWindow = window.open("", "_blank", "width=1100,height=760");
+        if (!printWindow) {
+          alert("O navegador bloqueou a janela de impressao.");
+          return;
+        }
+        printWindow.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${title}</title><style>body{font:12px Arial,sans-serif;color:#17212b;margin:24px}h1{font-size:20px;margin:0 0 16px}table{width:100%;border-collapse:collapse;margin-bottom:20px}th,td{border:1px solid #cbd3da;padding:6px;text-align:left}th{background:#eef2f5}article{break-inside:avoid}.stats-grid,.order-status-summary{display:flex;gap:18px;margin-bottom:16px}[hidden]{display:none!important}button,.eyebrow,.report-result-count{display:none}</style></head><body><h1>${title}</h1>${panel.innerHTML}</body></html>`);
+        printWindow.document.close();
+        printWindow.focus();
+        printWindow.print();
+      });
+
+      updateReportDateFilters("cash-movement");
+      applyReportFilters();
 
       document.querySelectorAll("[data-report-filter]").forEach((button) => {
         button.addEventListener("click", () => {

@@ -116,6 +116,63 @@ class CashFlowTest(unittest.TestCase):
         self.assertIsNone(sale_item.lot_id)
         self.assertEqual(Decimal(sale.total_amount), Decimal("120"))
 
+    def test_reports_show_cash_orders_stock_and_customers(self):
+        cash = CashSession(status="open", opening_amount=Decimal("100"), expected_amount=Decimal("115"))
+        customer = PharmacyCustomer(
+            name="Cliente Relatorio", phone="44999999999", address="Rua Teste",
+            address_number="10", neighborhood="Centro", city="Astorga", state="PR",
+        )
+        product = PharmacyProduct(
+            sku="REL-1", name="Produto Relatorio", barcode="789000000001",
+            sale_price=Decimal("10"), cost_price=Decimal("4"), minimum_stock=Decimal("2"),
+        )
+        db.session.add_all([cash, customer, product])
+        db.session.flush()
+        lot = PharmacyLot(
+            product_id=product.id, lot_code="LOTE-REL", expiration_date=date(2027, 1, 1),
+            received_at=date.today(), quantity_received=Decimal("10"),
+            quantity_available=Decimal("8"), purchase_price=Decimal("4"), location="A1",
+        )
+        sale = PharmacySale(
+            code="PED-REL", customer_name=customer.name, customer_id=customer.id,
+            total_amount=Decimal("30"), status="paid", delivery_status="ready",
+        )
+        db.session.add_all([lot, sale])
+        db.session.flush()
+        db.session.add_all([
+            CashMovement(
+                cash_session_id=cash.id, direction="in", category="Reforco",
+                description="Entrada teste", amount=Decimal("5"),
+            ),
+            CashMovement(
+                cash_session_id=cash.id, direction="out", category="Despesa",
+                description="Saida teste", amount=Decimal("20"),
+            ),
+            PharmacyPayment(
+                sale_id=sale.id, cash_session_id=cash.id, method="cash",
+                amount=Decimal("30"), status="paid", transaction_reference="REL-PAG",
+            ),
+        ])
+        db.session.commit()
+
+        response = self.app.test_client().get("/")
+        page = response.get_data(as_text=True)
+
+        self.assertEqual(200, response.status_code)
+        for report_name in (
+            "Movimento de caixa", "Status de pedidos", "Posicao de estoque",
+            "Itens de estoque", "Entradas e saidas", "Cadastro de clientes",
+        ):
+            self.assertIn(report_name, page)
+        self.assertIn("PED-REL", page)
+        self.assertIn("LOTE-REL", page)
+        self.assertIn("Cliente Relatorio", page)
+        self.assertIn("R$ 135.00", page)
+        self.assertIn("R$ 20.00", page)
+        self.assertIn("R$ 115.00", page)
+        self.assertIn('id="report-export-csv"', page)
+        self.assertIn('id="report-print"', page)
+
     def test_every_store_mode_renders_its_interface(self):
         expected = {
             "pharmacy": "Operacao da farmacia", "store": "Painel da loja",

@@ -204,10 +204,15 @@ def _serialize_lot(lot):
     return {
         "id": lot.id,
         "product_id": lot.product_id,
+        "product_sku": lot.product.sku if lot.product else "",
         "product_name": lot.product.name if lot.product else "",
+        "barcode": lot.product.barcode if lot.product else "",
         "lot_code": lot.lot_code,
         "expiration_date": lot.expiration_date.isoformat(),
+        "quantity_received": float(lot.quantity_received or 0),
         "quantity_available": float(lot.quantity_available or 0),
+        "purchase_price": float(lot.purchase_price or 0),
+        "stock_cost": float(Decimal(lot.quantity_available or 0) * Decimal(lot.purchase_price or 0)),
         "location": lot.location,
     }
 
@@ -252,6 +257,7 @@ def _serialize_sale(sale):
         "customer_phone": sale.customer_phone,
         "notes": sale.notes,
         "external_order_id": sale.external_order_id,
+        "created_at": sale.created_at.isoformat() + "Z",
         "subtotal_amount": float(sale.subtotal_amount or 0),
         "discount_amount": float(sale.discount_amount or 0),
         "items": [
@@ -267,6 +273,21 @@ def _serialize_sale(sale):
             }
             for item in sale.items.order_by(PharmacySaleItem.id.asc()).all()
         ],
+    }
+
+
+def _serialize_sale_report(sale):
+    return {
+        "id": sale.id,
+        "code": sale.code,
+        "customer_name": sale.customer_name,
+        "status": sale.status,
+        "total_amount": float(sale.total_amount or 0),
+        "fulfillment_type": sale.fulfillment_type,
+        "table_reference": sale.table_reference,
+        "delivery_address": sale.delivery_address,
+        "delivery_status": sale.delivery_status,
+        "created_at": sale.created_at.isoformat() + "Z",
     }
 
 
@@ -375,6 +396,7 @@ def _serialize_customer(customer):
         "phone": customer.phone, "address": customer.address, "address_number": customer.address_number,
         "neighborhood": customer.neighborhood, "city": customer.city, "state": customer.state,
         "postal_code": customer.postal_code, "full_address": address, "notes": customer.notes,
+        "created_at": customer.created_at.isoformat() + "Z",
     }
 
 
@@ -383,6 +405,61 @@ def _serialize_cash_movement(movement):
         "id": movement.id, "cash_session_id": movement.cash_session_id, "direction": movement.direction,
         "category": movement.category, "description": movement.description, "amount": float(movement.amount or 0),
         "created_at": movement.created_at.isoformat() + "Z",
+    }
+
+
+def _cash_report():
+    rows = []
+    sessions = CashSession.query.order_by(CashSession.opened_at.desc(), CashSession.id.desc()).all()
+    for session in sessions:
+        opening_amount = Decimal(session.opening_amount or 0)
+        if opening_amount > 0:
+            rows.append({
+                "cash_session_id": session.id,
+                "origin": "Abertura",
+                "direction": "in",
+                "category": "Saldo inicial",
+                "description": f"Abertura do caixa #{session.id}",
+                "amount": float(opening_amount),
+                "occurred_at": session.opened_at.isoformat() + "Z",
+            })
+
+    for movement in CashMovement.query.order_by(CashMovement.created_at.desc(), CashMovement.id.desc()).all():
+        rows.append({
+            "cash_session_id": movement.cash_session_id,
+            "origin": "Movimento manual",
+            "direction": movement.direction,
+            "category": movement.category or "Sem categoria",
+            "description": movement.description,
+            "amount": float(movement.amount or 0),
+            "occurred_at": movement.created_at.isoformat() + "Z",
+        })
+
+    payments = PharmacyPayment.query.filter(
+        PharmacyPayment.status.in_(["paid", "authorized"]),
+        PharmacyPayment.cash_session_id.isnot(None),
+    ).order_by(PharmacyPayment.created_at.desc(), PharmacyPayment.id.desc()).all()
+    for payment in payments:
+        rows.append({
+            "cash_session_id": payment.cash_session_id,
+            "origin": "Recebimento",
+            "direction": "in",
+            "category": payment.method or "Pagamento",
+            "description": payment.sale.code if payment.sale else payment.transaction_reference,
+            "amount": float(payment.amount or 0),
+            "occurred_at": (payment.paid_at or payment.created_at).isoformat() + "Z",
+        })
+
+    rows.sort(key=lambda item: item["occurred_at"], reverse=True)
+    entries = sum(Decimal(str(item["amount"])) for item in rows if item["direction"] == "in")
+    exits = sum(Decimal(str(item["amount"])) for item in rows if item["direction"] == "out")
+    return {
+        "rows": rows,
+        "entries": [item for item in rows if item["direction"] == "in"],
+        "exits": [item for item in rows if item["direction"] == "out"],
+        "entries_total": float(entries),
+        "exits_total": float(exits),
+        "balance": float(entries - exits),
     }
 
 
@@ -706,7 +783,7 @@ def _summary():
         Decimal(str(product["stock"])) * Decimal(str(product["sale_price"]))
         for product in product_rows if product["tracks_inventory"]
     )
-    order_status_counts = {status: 0 for status in ("new", "ready", "out_for_delivery", "delivered")}
+    order_status_counts = {status: 0 for status in ("new", "ready", "out_for_delivery", "delivered", "cancelled")}
     for status, count in db.session.query(PharmacySale.delivery_status, func.count(PharmacySale.id)).group_by(PharmacySale.delivery_status).all():
         normalized = "new" if status == "picking" else status
         if normalized in order_status_counts:
@@ -719,6 +796,8 @@ def _summary():
     unpaid_entries = FinancialEntry.query.filter(FinancialEntry.status.in_(["open", "partial"])).order_by(FinancialEntry.due_date.asc(), FinancialEntry.id.desc()).limit(20).all()
     stages = WorkflowStage.query.order_by(WorkflowStage.order_index.asc(), WorkflowStage.id.asc()).all()
     tickets = WorkflowTicket.query.order_by(WorkflowTicket.updated_at.desc(), WorkflowTicket.id.desc()).all()
+    report_sales = PharmacySale.query.order_by(PharmacySale.created_at.desc(), PharmacySale.id.desc()).all()
+    cash_report = _cash_report()
     return {
         "products_count": len(products),
         "active_lots_count": len([lot for lot in lots if Decimal(lot.quantity_available or 0) > 0]),
@@ -750,6 +829,8 @@ def _summary():
             if _sale_paid_amount(sale.id) < Decimal(sale.total_amount or 0)
         ],
         "customers": [_serialize_customer(customer) for customer in PharmacyCustomer.query.order_by(PharmacyCustomer.name.asc()).all()],
+        "report_sales": [_serialize_sale_report(sale) for sale in report_sales],
+        "cash_report": cash_report,
         "cash_movements": [_serialize_cash_movement(movement) for movement in CashMovement.query.order_by(CashMovement.created_at.desc(), CashMovement.id.desc()).limit(50).all()],
         "cash_activity": cash_activity[:20],
         "recent_purchases": [_serialize_purchase(purchase) for purchase in purchases],
