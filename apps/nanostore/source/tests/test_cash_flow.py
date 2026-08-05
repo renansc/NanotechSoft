@@ -271,6 +271,7 @@ class CashFlowTest(unittest.TestCase):
             html = response.get_data(as_text=True)
             self.assertIn(headline, html, key)
             if key == "distributor":
+                self.assertIn('data-mode-accent="gold"', html)
                 for marker in (
                     "Dashboard operacional", 'data-dashboard-report="cash"', 'data-dashboard-report="orders"',
                     'data-dashboard-report="stock"', "Entrada ou saida", "Kanban de pedidos",

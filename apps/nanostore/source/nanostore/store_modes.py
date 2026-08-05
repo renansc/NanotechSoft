@@ -20,7 +20,7 @@ STORE_MODES = {
         "catalog": "Catalogo e embalagens", "sales": "Pedidos de venda", "sale": "Novo pedido",
         "inventory": "Armazem", "purchases": "Recebimentos", "workflow": "Separacao e entrega",
         "dashboard_title": "Central de distribuicao", "dashboard_copy": "Pedidos, recebimentos, separacao, estoque e financeiro por prioridade.",
-        "primary_action": "Novo pedido", "accent": "navy", "tracks_inventory": True,
+        "primary_action": "Novo pedido", "accent": "gold", "tracks_inventory": True,
         "show_lots": True, "show_fiscal": True, "show_workflow": True,
     },
     "commerce": {

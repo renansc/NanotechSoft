@@ -33,6 +33,10 @@ emissao fiscal dos pedidos. Pedidos usam uma fila de separacao e entrega; o
 destino deve ser uma mesa identificada ou uma entrega vinculada a cliente
 cadastrado com telefone e endereco.
 
+A interface da distribuidora possui identidade propria em dourado, preto e
+branco: navegacao preta, selecao e acoes prioritarias douradas e paineis brancos
+para manter leitura rapida no uso diario.
+
 O Caixa tambem oferece venda direta de balcao por leitor USB ou webcam. Cada
 bip adiciona uma unidade, leituras repetidas somam quantidade e a conclusao
 baixa o estoque, registra a venda e credita o pagamento no caixa aberto.

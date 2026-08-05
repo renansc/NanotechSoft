@@ -26,6 +26,9 @@ class StoreModesTest(unittest.TestCase):
         self.assertFalse(profile["tracks_inventory"])
         self.assertFalse(profile["show_fiscal"])
 
+    def test_distributor_uses_gold_identity(self):
+        self.assertEqual("gold", MODES.STORE_MODES["distributor"]["accent"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -24,7 +24,7 @@ body {
 }
 
 [data-mode-accent="blue"] { --bg: #f3f5f8; --paper-soft: #f6f8fb; --ink: #17202b; --muted: #5c6673; --line: #d8dee7; --primary: #235ea7; --primary-dark: #17467f; --accent: #d9e7f7; }
-[data-mode-accent="navy"] { --bg: #f2f4f6; --paper-soft: #f7f8f9; --ink: #172033; --muted: #626977; --line: #d5dce1; --primary: #33476d; --primary-dark: #253552; --accent: #dce8ed; }
+[data-mode-accent="gold"] { --bg: #f3f3f1; --paper-soft: #faf9f5; --ink: #151515; --muted: #65635d; --line: #dedbd2; --primary: #8a650b; --primary-dark: #111111; --accent: #f0d889; --gold: #d4a72c; }
 [data-mode-accent="teal"] { --bg: #f2f5f4; --paper-soft: #f6faf8; --ink: #172725; --muted: #5b6c69; --line: #d4dfdc; --primary: #08756a; --primary-dark: #07584f; --accent: #f4d6cf; }
 [data-mode-accent="red"] { --bg: #f7f4f2; --paper-soft: #fbf8f5; --ink: #2b211f; --muted: #74635f; --line: #e3d8d4; --primary: #a93636; --primary-dark: #7f2929; --accent: #dce8c8; }
 [data-mode-accent="violet"] { --bg: #f5f6f7; --paper-soft: #fafafb; --ink: #24202b; --muted: #68616f; --line: #d9dee2; --primary: #6a4c93; --primary-dark: #50376f; --accent: #d6e7df; }
@@ -187,6 +187,54 @@ body {
   border-color: transparent;
 }
 
+body[data-store-mode="distributor"] .sidebar,
+.notech-integrated-nanostore[data-store-mode="distributor"] .sidebar {
+  border-right-color: #2d2d2d;
+  background: #0d0d0e;
+  color: #ffffff;
+  backdrop-filter: none;
+}
+
+body[data-store-mode="distributor"] .brand-mark,
+.notech-integrated-nanostore[data-store-mode="distributor"] .brand-mark {
+  background: var(--gold);
+  color: #111111;
+}
+
+body[data-store-mode="distributor"] .brand p,
+body[data-store-mode="distributor"] .menu-group h3,
+.notech-integrated-nanostore[data-store-mode="distributor"] .brand p,
+.notech-integrated-nanostore[data-store-mode="distributor"] .menu-group h3 {
+  color: #bdb9ae;
+}
+
+body[data-store-mode="distributor"] .sidebar-toggle,
+.notech-integrated-nanostore[data-store-mode="distributor"] .sidebar-toggle {
+  border-color: #454545;
+  background: #171719;
+  color: var(--gold);
+}
+
+body[data-store-mode="distributor"] .menu-link,
+.notech-integrated-nanostore[data-store-mode="distributor"] .menu-link {
+  border-color: #343436;
+  background: #171719;
+  color: #ffffff;
+}
+
+body[data-store-mode="distributor"] .menu-link:hover,
+.notech-integrated-nanostore[data-store-mode="distributor"] .menu-link:hover {
+  border-color: var(--gold);
+  background: #232324;
+}
+
+body[data-store-mode="distributor"] .menu-link.active,
+.notech-integrated-nanostore[data-store-mode="distributor"] .menu-link.active {
+  border-color: var(--gold);
+  background: var(--gold);
+  color: #111111;
+}
+
 .sidebar-card ul,
 .module-list {
   margin: 0;
@@ -289,6 +337,46 @@ h1 {
 body[data-store-mode="distributor"] .order-control-panel,
 .notech-integrated-nanostore[data-store-mode="distributor"] .order-control-panel {
   border-top: 4px solid var(--primary);
+}
+
+body[data-store-mode="distributor"] .workspace-bar,
+.notech-integrated-nanostore[data-store-mode="distributor"] .workspace-bar {
+  border-bottom-color: var(--gold);
+}
+
+body[data-store-mode="distributor"] .action-rail button:first-child,
+.notech-integrated-nanostore[data-store-mode="distributor"] .action-rail button:first-child {
+  border-color: var(--gold);
+  background: var(--gold);
+  color: #111111;
+}
+
+body[data-store-mode="distributor"] .distributor-dashboard-stats .stat,
+.notech-integrated-nanostore[data-store-mode="distributor"] .distributor-dashboard-stats .stat {
+  border-top: 3px solid var(--gold);
+}
+
+body[data-store-mode="distributor"] .dashboard-report,
+.notech-integrated-nanostore[data-store-mode="distributor"] .dashboard-report {
+  border-top: 2px solid #1b1b1c;
+}
+
+body[data-store-mode="distributor"] .secondary-btn,
+.notech-integrated-nanostore[data-store-mode="distributor"] .secondary-btn {
+  border-color: #c9ab59;
+  background: #ffffff;
+  color: #171717;
+}
+
+body[data-store-mode="distributor"] input:focus,
+body[data-store-mode="distributor"] textarea:focus,
+body[data-store-mode="distributor"] select:focus,
+.notech-integrated-nanostore[data-store-mode="distributor"] input:focus,
+.notech-integrated-nanostore[data-store-mode="distributor"] textarea:focus,
+.notech-integrated-nanostore[data-store-mode="distributor"] select:focus {
+  border-color: var(--gold);
+  outline: 2px solid #f0d889;
+  outline-offset: 1px;
 }
 
 .field-with-action {
