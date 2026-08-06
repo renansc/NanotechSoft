@@ -231,6 +231,7 @@ services:
       app:
         condition: service_healthy
     ports:
+      - "0.0.0.0:${NOTECHSOFT_HTTP_PORT:-80}:80"
       - "0.0.0.0:${NOTECHSOFT_HTTPS_PORT:-443}:443"
     volumes:
       - ./deploy/portal-proxy/https.conf:/etc/nginx/conf.d/default.conf:ro
