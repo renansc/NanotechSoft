@@ -57,7 +57,22 @@
         <div class="submenu-item" data-workflow-view="comissao" onclick="openWorkflowView(event,'comissao')">Comissões</div>
       </div>
     </div>
-    <div class="menu-item" onclick="showTab('estoque',this); carregarEstoque().catch(()=>{});">Estoque</div>
+    <div class="menu-item has-submenu" data-tab="compras" onclick="toggleComprasSubmenu(event)">
+      Compras <span class="submenu-caret">&#9662;</span>
+      <div class="submenu" id="submenuCompras">
+        <div class="submenu-item active" onclick="openComprasView(event,'importar_xml')">Importar XML</div>
+      </div>
+    </div>
+    <div class="menu-item has-submenu" data-tab="estoque" onclick="toggleEstoqueSubmenu(event)">
+      Estoque <span class="submenu-caret">&#9662;</span>
+      <div class="submenu" id="submenuEstoque">
+        <div class="submenu-item active" data-estoque-view="posicao" onclick="openEstoqueView(event,'posicao')">Posicao atual</div>
+        <div class="submenu-item" data-estoque-view="movimentar" onclick="openEstoqueView(event,'movimentar')">Movimentar estoque</div>
+        <div class="submenu-item" data-estoque-view="cadastrar" onclick="openEstoqueView(event,'cadastrar')">Cadastrar produtos</div>
+        <div class="submenu-item" data-estoque-view="rastreio" onclick="openEstoqueView(event,'rastreio')">Rastreio de lotes</div>
+        <div class="submenu-item" id="estoqueMenuAcerto" data-estoque-view="acerto" onclick="openEstoqueView(event,'acerto')">Acerto de estoque</div>
+      </div>
+    </div>
     <div class="menu-item has-submenu" data-tab="cadastros" onclick="toggleCadastrosSubmenu(event)">
       Cadastros <span class="submenu-caret">&#9662;</span>
       <div class="submenu" id="submenuCadastros">
@@ -69,7 +84,7 @@
     <div class="menu-item" onclick="showTab('devolucoes',this)">Devoluções</div>
     <div class="menu-item has-submenu" data-tab="gestaofrota" onclick="toggleGestaoFrotaSubmenu(event)">Gestao Frota <span class="submenu-caret">&#9662;</span><div class="submenu" id="submenuGestaoFrota"><div class="submenu-item active" onclick="openGestaoFrotaView(event,'registrar')">Registrar</div><div class="submenu-item" onclick="openGestaoFrotaView(event,'lista')">Lista</div><div class="submenu-item" onclick="openGestaoFrotaView(event,'relatorios')">Relatorios</div><div class="submenu-item" onclick="openGestaoFrotaCargas(event)">Cadastro Cargas</div><div class="submenu-item" onclick="openGestaoFrotaEscala(event)">Escala</div></div></div>
     <div class="menu-item has-submenu" data-tab="vendas" onclick="toggleVendasSubmenu(event)">Vendas <span class="submenu-caret">&#9662;</span><div class="submenu" id="submenuVendas"><div class="submenu-item active" data-vendas-view="relatorio" onclick="openVendasView(event,'relatorio')">Relatorio</div><div class="submenu-item" data-vendas-view="diario" onclick="openVendasView(event,'diario')">Vendas diario</div><div class="submenu-item" data-vendas-view="pontosvenda" onclick="openVendasView(event,'pontosvenda')">Pontos de Venda</div></div></div>
-    <div class="menu-item has-submenu" data-tab="monitor" onclick="toggleMonitorSubmenu(event)">Monitor <span class="submenu-caret">&#9662;</span><div class="submenu" id="submenuMonitor"><div class="submenu-item active" data-monitor-view="esxi" onclick="openMonitorView(event,'esxi')">ESXi</div><div class="submenu-item" data-monitor-view="cameras" onclick="openMonitorView(event,'cameras')">Cameras</div><div class="submenu-item" data-monitor-view="automacao" onclick="openMonitorView(event,'automacao')">Automacao</div><div class="submenu-item" data-monitor-view="importar_xml" onclick="openMonitorView(event,'importar_xml')">Importar XML</div><div class="submenu-item" data-monitor-view="gestor_emails" onclick="openMonitorView(event,'gestor_emails')">Gestor de E-mails</div><div class="submenu-item" data-monitor-view="comunicacao" onclick="openMonitorComunicacao(event)">Comunicacao</div></div></div>
+    <div class="menu-item has-submenu" data-tab="monitor" onclick="toggleMonitorSubmenu(event)">Monitor <span class="submenu-caret">&#9662;</span><div class="submenu" id="submenuMonitor"><div class="submenu-item active" data-monitor-view="esxi" onclick="openMonitorView(event,'esxi')">ESXi</div><div class="submenu-item" data-monitor-view="cameras" onclick="openMonitorView(event,'cameras')">Cameras</div><div class="submenu-item" data-monitor-view="automacao" onclick="openMonitorView(event,'automacao')">Automacao</div><div class="submenu-item" data-monitor-view="gestor_emails" onclick="openMonitorView(event,'gestor_emails')">Gestor de E-mails</div><div class="submenu-item" data-monitor-view="comunicacao" onclick="openMonitorComunicacao(event)">Comunicacao</div></div></div>
     <div class="menu-item" onclick="showTab('agentia',this); iniciarAgentIa()">Agent IA</div>
     <div class="menu-item has-submenu" data-tab="config" onclick="toggleConfigSubmenu(event)">Config <span class="submenu-caret">&#9662;</span><div class="submenu" id="submenuConfig"><div class="submenu-item active" onclick="openConfigView(event,'status')">Status</div><div class="submenu-item" onclick="openConfigView(event,'logs')">Logs</div><div class="submenu-item" onclick="openConfigView(event,'cameras')">Cameras</div><div class="submenu-item" onclick="openConfigView(event,'sip')">SIP</div><div class="submenu-item" onclick="openConfigView(event,'nfe')">NF-e</div><div class="submenu-item" onclick="openConfigView(event,'vendas')">Vendas</div><div class="submenu-item" onclick="openDocsPortal(event)">Docs</div></div></div>
   </nav>
@@ -548,24 +563,17 @@
        (MENU) ESTOQUE
   ====================================================== -->
   <section id="estoque" class="section">
-    <h2>Estoque</h2>
-
-    <div class="section-subnav estoque-subnav">
-      <button type="button" id="estoqueViewBtnLancar" class="section-subnav-btn active" onclick="setEstoqueView('lancar')">Lançar Estoque</button>
-      <button type="button" id="estoqueViewBtnConferir" class="section-subnav-btn" onclick="setEstoqueView('posicao')">Posicao Atual</button>
-      <button type="button" id="estoqueViewBtnAcerto" class="section-subnav-btn hidden" onclick="setEstoqueView('acerto')">Acerto de Estoque</button>
-      <button type="button" id="estoqueViewBtnCadastrar" class="section-subnav-btn" onclick="setEstoqueView('cadastrar')">Cadastrar</button>
-      <button type="button" id="estoqueViewBtnRastreio" class="section-subnav-btn" onclick="setEstoqueView('rastreio')">Rastreio lotes</button>
-    </div>
+    <h2 id="estoqueTitulo">Estoque</h2>
 
     <div id="estoqueViewLancar">
-    <div class="boxFrota">
+    <div class="boxFrota" id="estoqueImportacoesXmlBox">
       <div class="estoque-import-header">
         <div>
           <h3>Importacoes XML aguardando confirmacao</h3>
           <div id="estoqueXmlPendentesResumo" class="hint">Carregando entradas e saidas reconhecidas pelo Importar XML...</div>
         </div>
         <div class="estoque-inline-actions">
+          <input type="search" id="estoqueXmlPendentesBusca" placeholder="Buscar nota, empresa, item, rota ou lote" oninput="renderImportacoesXmlEstoque()">
           <select id="estoqueXmlPendentesTipo" onchange="renderImportacoesXmlEstoque()">
             <option value="">Entradas e saidas</option>
             <option value="entrada">Somente entradas</option>
@@ -586,6 +594,15 @@
           <select id="estoqueXmlPendentesGrupoItem" onchange="renderImportacoesXmlEstoque()">
             <option value="">Todos os grupos de itens</option>
           </select>
+          <select id="estoqueXmlPendentesLote" onchange="renderImportacoesXmlEstoque()">
+            <option value="">Todas as importacoes</option>
+          </select>
+          <select id="estoqueXmlPendentesClassificacao" onchange="renderImportacoesXmlEstoque()">
+            <option value="">Todas as classificacoes</option>
+            <option value="sem_classificacao">Sem classificacao</option>
+            <option value="estoque">Sugeridas para estoque</option>
+            <option value="manutencao">Sugeridas para manutencao</option>
+          </select>
           <select id="estoqueXmlAprenderEscopo" title="Como reaplicar esta classificacao nas proximas NF-e">
             <option value="empresa">Aprender pela empresa</option>
             <option value="item">Aprender pelo item</option>
@@ -596,8 +613,11 @@
           </label>
           <button type="button" onclick="selecionarImportacoesXmlPorFiltro('data')">Selecionar data</button>
           <button type="button" onclick="selecionarImportacoesXmlPorFiltro('rota')">Selecionar rota/frete</button>
+          <button type="button" onclick="selecionarImportacoesXmlPorFiltro('lote')">Selecionar importacao</button>
+          <button type="button" class="btn-secondary" onclick="limparFiltrosImportacoesXmlEstoque()">Limpar filtros</button>
           <button type="button" id="estoqueXmlImportarLoteBtn" onclick="importarSelecionadasXmlEstoque()" disabled>Contabilizar no estoque (0)</button>
           <button type="button" id="estoqueXmlManutencaoLoteBtn" onclick="direcionarSelecionadasXmlManutencao()" disabled>Classificar como manutencao (0)</button>
+          <button type="button" id="estoqueXmlExcluirLoteBtn" class="btn-danger" onclick="excluirSelecionadasXmlEstoque()" disabled>Excluir da fila (0)</button>
           <button type="button" onclick="carregarImportacoesXmlEstoque()">Atualizar</button>
         </div>
       </div>
@@ -635,7 +655,7 @@
     </div>
 
     <div class="frotaGrid">
-      <div class="boxFrota">
+      <div class="boxFrota" id="estoqueMovimentoManualBox">
         <h3>Lançar Item</h3>
         <div class="estoque-filtros">
           <select id="estoqueFiltroCategoriaLancar" onchange="aplicarFiltrosEstoque()">
@@ -666,7 +686,7 @@
         <small class="hint">Selecione um produto cadastrado para preencher os campos automaticamente. A quantidade segue a embalagem do cadastro e, quando o fator nao estiver explicito, o sistema pede confirmacao antes do lancamento.</small>
       </div>
 
-      <div class="boxFrota">
+      <div class="boxFrota" id="estoqueNfeManualBox">
         <h3>NF-e automatica pela chave</h3>
         <div class="estoque-inline-actions">
           <button type="button" onclick="abrirCameraEstoque('estoqueChaveAcesso')">Bipar chave com camera/webcam</button>

@@ -239,6 +239,7 @@ MENU_SECTIONS = (
     "automacao",
     "workflow",
     "compras",
+    "estoque",
     "financeiro",
     "relatorios",
     "import_export",
@@ -851,6 +852,7 @@ def menu_display_name(item, app_name, section=""):
         "cadastros": {"cadastro", "cadastros"},
         "workflow": {"workflow", "kanban", "fluxo"},
         "compras": {"compra", "compras"},
+        "estoque": {"estoque", "estoques"},
         "financeiro": {"financeiro", "financas", "finanças"},
         "relatorios": {"relatorio", "relatorios", "relatório", "relatórios"},
         "import_export": {"import export", "importacao", "importação", "exportacao", "exportação"},
@@ -1849,6 +1851,14 @@ def riob_hash_bridge_script():
           return;
         }
         window.openVendasView(null, ["kanban", "importar"].includes(view) ? "diario" : view);
+        return;
+      }
+      if (section === "estoque" && typeof window.openEstoqueView === "function") {
+        if (view === "importar_xml" && typeof window.openComprasView === "function") {
+          window.openComprasView(null, "importar_xml");
+          return;
+        }
+        window.openEstoqueView(null, view || "posicao");
         return;
       }
       if (section && typeof window.showTab === "function") {

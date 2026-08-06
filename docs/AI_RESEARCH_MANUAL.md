@@ -108,6 +108,13 @@ exigem pedido explícito do usuário.
 - O frontend é servido sem cache pelo backend; se uma mudança não aparecer,
   confirme commit/push, branch, imagem reconstruída e o comando canônico antes
   de atribuir o problema ao navegador.
+- O padrão visual obrigatório é orientado à tarefa: a tela mostra somente a
+  função escolhida no menu/submenu. Não acumule na mesma visão cards de
+  operação, configuração, cadastro e relatório. Configurações pertencem a
+  `Config`, relatórios a `Relatórios`, cadastros a `Cadastros` e operações ao
+  domínio correspondente. `Compras` e `Estoque` são domínios separados;
+  importação de documentos de compra fica em Compras, enquanto posição,
+  movimentação, produtos e rastreio ficam em Estoque.
 
 ## Publicação e diagnóstico
 

@@ -58,6 +58,26 @@ class PortalAppPermissionsTests(unittest.TestCase):
             with self.subTest(path=path), portal.app.test_request_context(path):
                 self.assertIsNone(portal.enforce_app_permission())
 
+    def test_menu_principal_separa_estoque_de_compras(self):
+        usuario = {"id": 1, "perfil": "admin", "ativo": 1}
+        apps = [
+            {
+                "app_key": "riob",
+                "nome": "RioB",
+                "menu_groups": {
+                    "compras": [{"nome": "Importar XML RioB", "url": "/apps/riob#estoque:importar_xml"}],
+                    "estoque": [{"nome": "Posicao atual RioB", "url": "/apps/riob#estoque:posicao"}],
+                },
+                "config_groups": {},
+            }
+        ]
+
+        secoes = portal.menu_sections(apps, usuario)
+
+        self.assertEqual("Importar XML", secoes["compras"][0]["nome"])
+        self.assertEqual("Posicao atual", secoes["estoque"][0]["nome"])
+        self.assertIn("estoque", portal.MENU_SECTIONS)
+
 
 if __name__ == "__main__":
     unittest.main()

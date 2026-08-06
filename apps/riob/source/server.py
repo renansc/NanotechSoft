@@ -1153,6 +1153,21 @@ def ensure_schema():
         )
         """)
         cur.execute("""
+        CREATE TABLE IF NOT EXISTS estoque_xml_descartes (
+            nota_key VARCHAR(255) NOT NULL PRIMARY KEY,
+            chave_nfe VARCHAR(64) DEFAULT '',
+            numero_nota VARCHAR(120) DEFAULT '',
+            motivo VARCHAR(500) DEFAULT '',
+            status VARCHAR(20) NOT NULL DEFAULT 'descartado',
+            usuario_registro VARCHAR(180) DEFAULT '',
+            descartado_em DATETIME DEFAULT CURRENT_TIMESTAMP,
+            restaurado_em DATETIME NULL,
+            atualizado_em DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            INDEX idx_estoque_xml_descartes_status (status),
+            INDEX idx_estoque_xml_descartes_chave (chave_nfe)
+        )
+        """)
+        cur.execute("""
         CREATE TABLE IF NOT EXISTS estoque_xml_fator_regras (
             id INT AUTO_INCREMENT PRIMARY KEY,
             regra_hash CHAR(40) NOT NULL,
@@ -14841,6 +14856,7 @@ except Exception as exc:
 
 
 _ESTOQUE_XML_LOTE_MAXIMO = 500
+_ESTOQUE_XML_LOTE_RECOMENDADO = 100
 
 
 def _estoque_xml_dados_item(valor):
@@ -16069,7 +16085,13 @@ def _estoque_xml_agrupar_notas(rows):
     return notas
 
 
-def _estoque_xml_carregar_notas(cur, nota_key="", limite_linhas=0, busca=""):
+def _estoque_xml_carregar_notas(
+    cur,
+    nota_key="",
+    limite_linhas=0,
+    busca="",
+    incluir_descartadas=False,
+):
     sql = """
         SELECT
             id, arquivo_id, arquivo_origem, tipo_movimento,
@@ -16107,6 +16129,24 @@ def _estoque_xml_carregar_notas(cur, nota_key="", limite_linhas=0, busca=""):
         sql += f" LIMIT {limite_linhas}"
     cur.execute(sql, tuple(params))
     notas = _estoque_xml_agrupar_notas(cur.fetchall() or [])
+    if notas and not incluir_descartadas:
+        cur.execute(
+            """
+            SELECT nota_key
+            FROM estoque_xml_descartes
+            WHERE status='descartado'
+            """
+        )
+        descartadas = {
+            _as_str(row.get("nota_key"))
+            for row in (cur.fetchall() or [])
+            if _as_str(row.get("nota_key"))
+        }
+        notas = {
+            chave_nota: nota
+            for chave_nota, nota in notas.items()
+            if chave_nota not in descartadas
+        }
     if nota_key and nota_key in notas:
         return {nota_key: notas[nota_key]}
     return notas
@@ -16661,6 +16701,9 @@ def _estoque_xml_nota_publica(nota, referencias_lancadas):
         )
         if len(itens_preview) >= 4:
             break
+    arquivo_origem = _as_str(base.get("arquivo_origem"))
+    lote_match = re.match(r"^(.+?\.zip)", arquivo_origem, flags=re.IGNORECASE)
+    lote_importacao = lote_match.group(1) if lote_match else arquivo_origem
     return {
         "nota_key": nota.get("nota_key"),
         "chave_nfe": _as_str(base.get("chave_nfe")),
@@ -16682,7 +16725,8 @@ def _estoque_xml_nota_publica(nota, referencias_lancadas):
         "itens_preview": itens_preview,
         "arquivos_repetidos": len(nota.get("arquivo_ids") or []),
         "valor_total_nota": _as_float(base.get("valor_total_nota"), 0.0),
-        "arquivo_origem": _as_str(base.get("arquivo_origem")),
+        "arquivo_origem": arquivo_origem,
+        "lote_importacao": lote_importacao,
     }
 
 def _sincronizar_dados_viagem_xml_frete(cur, frete_id, veiculo_id=0):
@@ -17198,15 +17242,20 @@ def listar_importacoes_xml_estoque():
     conn = get_conn()
     cur = conn.cursor(dictionary=True)
     try:
-        notas = _estoque_xml_carregar_notas(cur)
+        notas = _estoque_xml_carregar_notas(
+            cur,
+            incluir_descartadas=status_filtro == "descartado",
+        )
         referencias = _estoque_xml_referencias_lancadas(cur)
         regras_classificacao = _estoque_xml_carregar_regras_classificacao(cur)
-        auto_manutencao = _aplicar_regras_fornecedor_manutencao_xml(
-            cur,
-            notas,
-            referencias,
-            usuario="regra_fornecedor",
-        )
+        auto_manutencao = 0
+        if status_filtro != "descartado":
+            auto_manutencao = _aplicar_regras_fornecedor_manutencao_xml(
+                cur,
+                notas,
+                referencias,
+                usuario="regra_fornecedor",
+            )
         if auto_manutencao:
             conn.commit()
         destinos_manutencao = _estoque_xml_destinos_manutencao(cur)
@@ -17244,9 +17293,26 @@ def listar_importacoes_xml_estoque():
             for row in (cur.fetchall() or [])
             if _as_str(row.get("nota_key"))
         }
+        descartes = {}
+        if status_filtro == "descartado":
+            cur.execute(
+                """
+                SELECT nota_key, motivo, usuario_registro, descartado_em
+                FROM estoque_xml_descartes
+                WHERE status='descartado'
+                """
+            )
+            descartes = {
+                _as_str(item.get("nota_key")): item
+                for item in (cur.fetchall() or [])
+                if _as_str(item.get("nota_key"))
+            }
         rows = []
         for nota in notas.values():
             row = _estoque_xml_nota_publica(nota, referencias)
+            descarte = descartes.get(_as_str(row.get("nota_key")))
+            if status_filtro == "descartado" and not descarte:
+                continue
             sugestao_classificacao = _estoque_xml_sugestao_classificacao(
                 nota, regras_classificacao
             )
@@ -17283,6 +17349,11 @@ def listar_importacoes_xml_estoque():
                     destino_manutencao.get("id"),
                     0,
                 )
+            if descarte:
+                row["status"] = "descartado"
+                row["descarte_motivo"] = _as_str(descarte.get("motivo"))
+                row["descartado_por"] = _as_str(descarte.get("usuario_registro"))
+                row["descartado_em"] = descarte.get("descartado_em")
             rows.append(row)
     finally:
         cur.close()
@@ -17293,7 +17364,7 @@ def listar_importacoes_xml_estoque():
             row for row in rows
             if row.get("status") not in {"consolidado", "direcionado_manutencao"}
         ]
-    elif status_filtro in {"parcial", "consolidado", "direcionado_manutencao"}:
+    elif status_filtro in {"parcial", "consolidado", "direcionado_manutencao", "descartado"}:
         rows = [row for row in rows if row.get("status") == status_filtro]
     rows.sort(
         key=lambda row: (
@@ -17312,10 +17383,174 @@ def listar_importacoes_xml_estoque():
                 "saidas": sum(1 for row in rows if row.get("tipo_movimento") == "saida"),
                 "itens_pendentes": sum(_as_int(row.get("itens_pendentes"), 0) for row in rows),
                 "lote_maximo": _ESTOQUE_XML_LOTE_MAXIMO,
+                "lote_recomendado": _ESTOQUE_XML_LOTE_RECOMENDADO,
                 "auto_manutencao": auto_manutencao,
             },
         }
     )
+
+
+@app.route("/api/estoque/importacoes-xml/descartar", methods=["POST"])
+def descartar_importacoes_xml_estoque():
+    data = request.get_json(silent=True) or {}
+    chaves_brutas = data.get("chaves") if isinstance(data.get("chaves"), list) else []
+    chave_individual = _as_str(data.get("chave"))
+    if chave_individual:
+        chaves_brutas.append(chave_individual)
+    chaves = []
+    for valor in chaves_brutas:
+        chave = _as_str(valor)
+        if chave and chave not in chaves:
+            chaves.append(chave)
+    if not chaves:
+        return jsonify({"erro": "selecione ao menos uma importacao XML"}), 400
+    if len(chaves) > _ESTOQUE_XML_LOTE_MAXIMO:
+        return jsonify(
+            {
+                "erro": (
+                    "o lote tecnico pode conter no maximo "
+                    f"{_ESTOQUE_XML_LOTE_MAXIMO} notas"
+                ),
+                "lote_maximo": _ESTOQUE_XML_LOTE_MAXIMO,
+            }
+        ), 400
+
+    usuario = _usuario_ator_req()
+    motivo = (
+        _as_str(data.get("motivo"))
+        or "Importacao removida manualmente da fila antes da contabilizacao."
+    )[:500]
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    descartadas = []
+    erros = []
+    try:
+        notas = _estoque_xml_carregar_notas(cur, incluir_descartadas=True)
+        referencias = _estoque_xml_referencias_lancadas(cur)
+        destinos_manutencao = _estoque_xml_destinos_manutencao(cur, chaves)
+        cur.execute(
+            """
+            SELECT nota_key
+            FROM estoque_xml_descartes
+            WHERE status='descartado'
+            """
+        )
+        ja_descartadas = {
+            _as_str(row.get("nota_key"))
+            for row in (cur.fetchall() or [])
+            if _as_str(row.get("nota_key"))
+        }
+        for nota_key in chaves:
+            nota = notas.get(nota_key)
+            if not nota:
+                erros.append(
+                    {"chave": nota_key, "numero_nota": "", "erro": "importacao XML nao encontrada"}
+                )
+                continue
+            base = (nota.get("canonicos") or [{}])[0]
+            numero_nota = _as_str(base.get("numero_nota"))
+            if nota_key in ja_descartadas:
+                descartadas.append({"chave": nota_key, "numero_nota": numero_nota})
+                continue
+            if any(
+                _as_int(row.get("id"), 0) in referencias
+                for row in (nota.get("canonicos") or [])
+            ):
+                erros.append(
+                    {
+                        "chave": nota_key,
+                        "numero_nota": numero_nota,
+                        "erro": (
+                            "esta NF-e ja comecou a ser contabilizada no estoque; "
+                            "a exclusao da fila foi bloqueada"
+                        ),
+                    }
+                )
+                continue
+            if destinos_manutencao.get(nota_key):
+                erros.append(
+                    {
+                        "chave": nota_key,
+                        "numero_nota": numero_nota,
+                        "erro": "esta NF-e ja foi direcionada para manutencao",
+                    }
+                )
+                continue
+            cur.execute(
+                """
+                SELECT id
+                FROM estoque_xml_frete_vinculos
+                WHERE nota_key=%s
+                LIMIT 1
+                """,
+                (nota_key,),
+            )
+            if cur.fetchone():
+                erros.append(
+                    {
+                        "chave": nota_key,
+                        "numero_nota": numero_nota,
+                        "erro": "esta NF-e ja possui vinculo definitivo com um frete",
+                    }
+                )
+                continue
+            cur.execute(
+                """
+                INSERT INTO estoque_xml_descartes (
+                    nota_key, chave_nfe, numero_nota, motivo, status,
+                    usuario_registro, descartado_em, restaurado_em, atualizado_em
+                )
+                VALUES (%s,%s,%s,%s,'descartado',%s,NOW(),NULL,NOW())
+                ON DUPLICATE KEY UPDATE
+                    chave_nfe=VALUES(chave_nfe),
+                    numero_nota=VALUES(numero_nota),
+                    motivo=VALUES(motivo),
+                    status='descartado',
+                    usuario_registro=VALUES(usuario_registro),
+                    descartado_em=NOW(),
+                    restaurado_em=NULL,
+                    atualizado_em=NOW()
+                """,
+                (
+                    nota_key,
+                    _normalizar_chave_acesso_nfe(base.get("chave_nfe")),
+                    numero_nota[:120],
+                    motivo,
+                    _as_str(usuario)[:180],
+                ),
+            )
+            cur.execute(
+                """
+                UPDATE estoque_xml_frete_pre_vinculos
+                SET status='descartado',
+                    detalhes=%s,
+                    atualizado_em=NOW(),
+                    confirmado_em=NULL
+                WHERE nota_key=%s
+                  AND COALESCE(status, 'pendente') NOT IN ('confirmado', 'confirmado_sem_frete')
+                """,
+                (motivo, nota_key),
+            )
+            descartadas.append({"chave": nota_key, "numero_nota": numero_nota})
+        conn.commit()
+        return jsonify(
+            {
+                "ok": not erros,
+                "descartadas": descartadas,
+                "erros": erros,
+                "meta": {
+                    "selecionadas": len(chaves),
+                    "descartadas": len(descartadas),
+                    "com_erro": len(erros),
+                },
+            }
+        )
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        conn.close()
 
 
 @app.route("/api/estoque/importacoes-xml/classificacao-regras", methods=["POST"])
@@ -17503,17 +17738,40 @@ def preparar_lote_importacoes_xml_estoque():
                     }
                 )
                 continue
-            preview = _estoque_xml_preview(cur, nota, referencias)
-            if not preview.get("itens"):
+            cur.execute("SAVEPOINT estoque_xml_preparo_nota")
+            try:
+                preview = _estoque_xml_preview(cur, nota, referencias)
+                if not preview.get("itens"):
+                    erros.append(
+                        {
+                            "chave": nota_key,
+                            "numero_nota": resumo.get("numero_nota"),
+                            "erro": "nota sem itens pendentes",
+                        }
+                    )
+                    cur.execute("ROLLBACK TO SAVEPOINT estoque_xml_preparo_nota")
+                    cur.execute("RELEASE SAVEPOINT estoque_xml_preparo_nota")
+                    continue
+                previews.append(preview)
+                cur.execute("RELEASE SAVEPOINT estoque_xml_preparo_nota")
+            except Exception as exc:
+                cur.execute("ROLLBACK TO SAVEPOINT estoque_xml_preparo_nota")
+                cur.execute("RELEASE SAVEPOINT estoque_xml_preparo_nota")
+                app.logger.exception(
+                    "Falha ao preparar NF-e %s no lote de estoque",
+                    resumo.get("numero_nota") or nota_key,
+                )
                 erros.append(
                     {
                         "chave": nota_key,
                         "numero_nota": resumo.get("numero_nota"),
-                        "erro": "nota sem itens pendentes",
+                        "erro": (
+                            _as_str(exc)
+                            if isinstance(exc, ValueError)
+                            else "falha interna ao preparar esta nota; abra para revisao"
+                        ),
                     }
                 )
-                continue
-            previews.append(preview)
         conn.commit()
         return jsonify(
             {

@@ -482,6 +482,7 @@ por `estoque_area`, `estoque_subgrupo` e `exibir_dashboard`.
 - `GET /api/estoque/conferencias/<id>`
 - `GET /api/estoque/importacoes-xml`
 - `POST /api/estoque/importacoes-xml/lote/preparar`
+- `POST /api/estoque/importacoes-xml/descartar`
 - `POST /api/estoque/importacoes-xml/confirmar`
 - `POST /api/estoque/nfe/import`
 - `POST /api/estoque/conferencias/<id>/confirmar`
@@ -539,15 +540,28 @@ Exemplo de criacao manual:
 
 ### 8.2 Importacao de XML da NF-e e conferencia
 
-Na tela `Estoque > Lancar Estoque`, a selecao em massa nao possui limite total.
+Na tela `Compras > Importar XML`, a selecao em massa nao possui limite total.
 As NF-e selecionadas sao divididas automaticamente em lotes tecnicos de ate
 500 notas. A interface mostra o total processado, o lote atual, a quantidade de
 lotes e a NF-e em andamento. Exemplo: `Importando 501 / 1500 notas - lote 2 de
 3`.
 
+A fila tambem pode ser filtrada pelo arquivo/lote de upload. Isso permite
+selecionar somente as NF-e de um ZIP enviado por engano antes de usar
+`Excluir da fila`, sem misturar outros envios feitos na mesma data.
+
 `GET /api/estoque/importacoes-xml` informa `meta.lote_maximo`. Cada chamada de
 `POST /api/estoque/importacoes-xml/lote/preparar` respeita esse tamanho; a tela
 percorre todos os lotes antes de iniciar as confirmacoes.
+Para evitar timeout em arquivos grandes, `meta.lote_recomendado` orienta a tela
+a usar blocos menores (atualmente 100 NF-e), sem limitar o total selecionado.
+
+A fila permite combinar busca textual com filtros de movimento, empresa,
+destino, data, rota/frete, grupo de item, arquivo de importacao e classificacao.
+A selecao em massa considera somente os registros visiveis. Durante a
+preparacao, uma NF-e invalida nao interrompe as demais: notas validas continuam
+e as notas com erro permanecem pendentes, com o motivo apresentado para revisao
+ou envio a manutencao.
 
 Fluxo principal:
 
@@ -592,6 +606,12 @@ Regras:
 
 - a chave bipada, quando enviada, precisa bater com o XML importado
 - notas ja consolidadas retornam conflito em nova importacao
+- antes de qualquer movimento, uma ou varias notas podem ser excluidas da fila
+  por `POST /api/estoque/importacoes-xml/descartar`; o descarte e logico,
+  preserva o XML e a autoria para auditoria e bloqueia detalhe, preparo e
+  confirmacao posteriores
+- o descarte e recusado se algum item ja foi contabilizado, se a nota foi
+  direcionada para manutencao ou se possui vinculo definitivo com frete
 - a confirmacao consolida o transporte para o almoxarifado e grava as entradas correspondentes no estoque
 
 ### 8.3 Configuracao NF-e

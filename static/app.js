@@ -187,7 +187,13 @@ function syncMenuSection() {
       "cadastros:colaboradores": "cadastros",
       "cadastros:veiculos": "cadastros",
       "cadastros:comissao": "cadastros",
-      estoque: "compras",
+      estoque: "estoque",
+      "estoque:posicao": "estoque",
+      "estoque:movimentar": "estoque",
+      "estoque:cadastrar": "estoque",
+      "estoque:rastreio": "estoque",
+      "estoque:acerto": "estoque",
+      "estoque:importar_xml": "compras",
       vendas: "relatorios",
       agentia: "dashboards",
       comunicacao: "workflow",
@@ -200,7 +206,6 @@ function syncMenuSection() {
       "monitor:cameras": "workflow",
       "monitor:esxi": "dashboards",
       "monitor:automacao": "automacao",
-      "monitor:importar_xml": "import_export",
       "monitor:gestor_emails": "import_export",
     };
     section = riobSections[hash] || section;

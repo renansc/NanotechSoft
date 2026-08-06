@@ -105,12 +105,30 @@
     ],
     "compras": [
       {
-        "nome": "Estoque RioB",
-        "url": "/apps/riob#estoque"
+        "nome": "Importar XML RioB",
+        "url": "/apps/riob#estoque:importar_xml"
+      }
+    ],
+    "estoque": [
+      {
+        "nome": "Posicao atual RioB",
+        "url": "/apps/riob#estoque:posicao"
       },
       {
-        "nome": "Importar XML RioB",
-        "url": "/apps/riob#monitor:importar_xml"
+        "nome": "Movimentar estoque RioB",
+        "url": "/apps/riob#estoque:movimentar"
+      },
+      {
+        "nome": "Cadastrar produtos RioB",
+        "url": "/apps/riob#estoque:cadastrar"
+      },
+      {
+        "nome": "Rastreio de lotes RioB",
+        "url": "/apps/riob#estoque:rastreio"
+      },
+      {
+        "nome": "Acerto de estoque RioB",
+        "url": "/apps/riob#estoque:acerto"
       }
     ],
     "relatorios": [

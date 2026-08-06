@@ -34,6 +34,14 @@ Do ponto de vista tecnico, a aplicacao segue um modelo simples e direto:
 
 ### Frontend
 
+O frontend segue navegacao orientada a tarefa. O menu principal separa
+dominios e os submenus abrem uma unica funcao por vez; cards de configuracao,
+relatorio, cadastro e operacao nao devem ficar empilhados na mesma tela.
+Configuracoes ficam em `Config`, relatorios em `Relatorios`, cadastros em
+`Cadastros` e operacoes no dominio correspondente. `Compras` recebe a entrada
+e classificacao de documentos; `Estoque` recebe posicao, movimentacao, cadastro
+de produtos, acerto e rastreabilidade.
+
 - HTML unico em `RioBranco.html`
 - JavaScript unico em `script.js`
 - CSS unico em `style.css`

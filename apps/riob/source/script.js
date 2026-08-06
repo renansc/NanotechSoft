@@ -118,6 +118,7 @@ let estoqueState = {
   importacoesXmlMeta: {},
   importacoesXmlSelecionadas: [],
   importacoesXmlLoteExecutando: false,
+  importacoesXmlExclusaoExecutando: false,
   importacoesXmlLoteProgresso: null,
   fretesImportacaoXml: [],
   manualPhotoUrl: "",
@@ -2187,6 +2188,43 @@ function toggleExclusiveSubmenu(ev, onDesktopOpen){
 function toggleDashboardSubmenu(ev){
   // No desktop, hover resolve. No mobile, toca para abrir/fechar.
   toggleExclusiveSubmenu(ev, () => openDashboardView(null, "resumo"));
+}
+
+function _fecharSubmenuAposNavegacao(menu){
+  const isMobile = window.matchMedia && window.matchMedia("(max-width: 768px)").matches;
+  if (isMobile && menu) menu.classList.remove("open");
+  try { toggleMenuMobile(false); } catch {}
+}
+
+function toggleComprasSubmenu(ev){
+  toggleExclusiveSubmenu(ev, () => openComprasView(null, "importar_xml"));
+}
+
+function openComprasView(ev, view = "importar_xml"){
+  if (ev) { ev.preventDefault(); ev.stopPropagation(); }
+  const menu = document.querySelector('.menu-item.has-submenu[data-tab="compras"]');
+  showTab("estoque", menu);
+  document.querySelectorAll("#submenuCompras .submenu-item").forEach((item) => item.classList.remove("active"));
+  document.querySelector("#submenuCompras .submenu-item")?.classList.add("active");
+  setEstoqueView("importar_xml");
+  carregarEstoque().catch(() => {});
+  _fecharSubmenuAposNavegacao(menu);
+}
+
+function toggleEstoqueSubmenu(ev){
+  toggleExclusiveSubmenu(ev, () => openEstoqueView(null, window.__estoqueView === "importar_xml" ? "posicao" : (window.__estoqueView || "posicao")));
+}
+
+function openEstoqueView(ev, view = "posicao"){
+  if (ev) { ev.preventDefault(); ev.stopPropagation(); }
+  const menu = document.querySelector('.menu-item.has-submenu[data-tab="estoque"]');
+  showTab("estoque", menu);
+  document.querySelectorAll("#submenuEstoque .submenu-item").forEach((item) => {
+    item.classList.toggle("active", item.dataset.estoqueView === view);
+  });
+  setEstoqueView(view);
+  carregarEstoque().catch(() => {});
+  _fecharSubmenuAposNavegacao(menu);
 }
 
 function openDashboardView(ev, view){
@@ -5768,8 +5806,8 @@ function showTab(tabId, el) {
     setPontosVendaView(window.__pontosVendaView);
   }
   if (tabId === "estoque") {
-    if (!window.__estoqueView || !["lancar", "posicao", "cadastrar", "rastreio"].includes(window.__estoqueView)) {
-      window.__estoqueView = "lancar";
+    if (!window.__estoqueView || !["importar_xml", "movimentar", "posicao", "acerto", "cadastrar", "rastreio"].includes(window.__estoqueView)) {
+      window.__estoqueView = "posicao";
     }
     setEstoqueView(window.__estoqueView);
   }
@@ -7944,7 +7982,7 @@ function atualizarUsuarioLogadoUI() {
   atualizarEstadoSipChat();
   atualizarStatusCodbarSistema();
   const admin = String(usuarioLogado?.perfil || "").toLowerCase() === "admin";
-  document.getElementById("estoqueViewBtnAcerto")?.classList.toggle("hidden", !admin);
+  document.getElementById("estoqueMenuAcerto")?.classList.toggle("hidden", !admin);
   if (!admin && window.__estoqueView === "acerto") setEstoqueView("posicao");
 }
 
@@ -15667,6 +15705,11 @@ function renderEstoqueImportPreview(){
   const confirmarBtn = document.getElementById("estoqueImportConfirmBtn");
   if (!card || !fonte || !status || !body) return;
 
+  if (estoqueState.view !== "importar_xml") {
+    card.classList.add("hidden");
+    return;
+  }
+
   const draft = estoqueState.importDraft ? _normalizarDraftImportacaoEstoque(estoqueState.importDraft) : null;
   if (!draft) {
     card.classList.add("hidden");
@@ -15845,12 +15888,15 @@ function _destinoImportacaoXmlEstoque(row = {}){
 }
 
 function _filtrarImportacoesXmlEstoque(){
+  const busca = String(document.getElementById("estoqueXmlPendentesBusca")?.value || "").trim().toLocaleLowerCase("pt-BR");
   const tipo = String(document.getElementById("estoqueXmlPendentesTipo")?.value || "");
   const origem = String(document.getElementById("estoqueXmlPendentesOrigem")?.value || "");
   const destino = String(document.getElementById("estoqueXmlPendentesDestino")?.value || "");
   const data = String(document.getElementById("estoqueXmlPendentesData")?.value || "");
   const rota = String(document.getElementById("estoqueXmlPendentesRota")?.value || "");
   const grupoItem = String(document.getElementById("estoqueXmlPendentesGrupoItem")?.value || "");
+  const lote = String(document.getElementById("estoqueXmlPendentesLote")?.value || "");
+  const classificacao = String(document.getElementById("estoqueXmlPendentesClassificacao")?.value || "");
   return (estoqueState.importacoesXml || []).filter((row) => {
     if (tipo && row.tipo_movimento !== tipo) return false;
     if (origem && _origemImportacaoXmlEstoque(row) !== origem) return false;
@@ -15858,8 +15904,45 @@ function _filtrarImportacoesXmlEstoque(){
     if (data && _dataImportacaoXmlEstoque(row) !== data) return false;
     if (rota && _rotaImportacaoXmlEstoque(row) !== rota) return false;
     if (grupoItem && !(row.grupos_itens || []).includes(grupoItem)) return false;
+    if (lote && String(row.lote_importacao || row.arquivo_origem || "") !== lote) return false;
+    const destinoSugerido = String(row.classificacao_sugerida?.destino || "");
+    if (classificacao === "sem_classificacao" && destinoSugerido) return false;
+    if (classificacao && classificacao !== "sem_classificacao" && destinoSugerido !== classificacao) return false;
+    if (busca) {
+      const texto = [
+        row.numero_nota,
+        row.chave_nfe,
+        row.emitente_nome,
+        row.emitente_fantasia,
+        row.destinatario_nome,
+        row.rota_sugerida,
+        row.frete_sugerido_nome,
+        row.lote_importacao,
+        row.arquivo_origem,
+        ...(Array.isArray(row.itens_preview) ? row.itens_preview.map((item) => item?.nome) : []),
+      ].filter(Boolean).join(" ").toLocaleLowerCase("pt-BR");
+      if (!texto.includes(busca)) return false;
+    }
     return true;
   });
+}
+
+function limparFiltrosImportacoesXmlEstoque(){
+  [
+    "estoqueXmlPendentesBusca",
+    "estoqueXmlPendentesTipo",
+    "estoqueXmlPendentesOrigem",
+    "estoqueXmlPendentesDestino",
+    "estoqueXmlPendentesData",
+    "estoqueXmlPendentesRota",
+    "estoqueXmlPendentesGrupoItem",
+    "estoqueXmlPendentesLote",
+    "estoqueXmlPendentesClassificacao",
+  ].forEach((id) => {
+    const campo = document.getElementById(id);
+    if (campo) campo.value = "";
+  });
+  renderImportacoesXmlEstoque();
 }
 
 function _atualizarFiltrosImportacoesXmlEstoque(){
@@ -15868,6 +15951,7 @@ function _atualizarFiltrosImportacoesXmlEstoque(){
   const dataSelect = document.getElementById("estoqueXmlPendentesData");
   const rotaSelect = document.getElementById("estoqueXmlPendentesRota");
   const grupoItemSelect = document.getElementById("estoqueXmlPendentesGrupoItem");
+  const loteSelect = document.getElementById("estoqueXmlPendentesLote");
   const tipo = String(document.getElementById("estoqueXmlPendentesTipo")?.value || "");
   const rowsPorTipo = (estoqueState.importacoesXml || []).filter((row) => !tipo || row.tipo_movimento === tipo);
   if (origemSelect) {
@@ -15922,6 +16006,16 @@ function _atualizarFiltrosImportacoesXmlEstoque(){
       `<option value="${_escAttr(grupo)}">${_escHtml(grupo)}</option>`
     )).join("");
     grupoItemSelect.value = grupos.includes(atual) ? atual : "";
+  }
+  if (loteSelect) {
+    const atual = loteSelect.value;
+    const lotes = Array.from(new Set(
+      rowsBase.map((row) => String(row.lote_importacao || row.arquivo_origem || "")).filter(Boolean)
+    )).sort((a, b) => b.localeCompare(a, "pt-BR", { numeric: true, sensitivity: "base" }));
+    loteSelect.innerHTML = `<option value="">Todas as importacoes</option>` + lotes.map((lote) => (
+      `<option value="${_escAttr(lote)}">${_escHtml(lote)}</option>`
+    )).join("");
+    loteSelect.value = lotes.includes(atual) ? atual : "";
   }
 }
 
@@ -15993,7 +16087,10 @@ function renderImportacoesXmlEstoque(){
         </td>
         <td>${_escHtml(String(row.itens_pendentes || 0))}</td>
         <td>${_escHtml(String(duplicatas))}</td>
-        <td><button type="button" onclick="abrirImportacaoXmlEstoque('${_escJsString(notaKey)}')">Abrir</button></td>
+        <td>
+          <button type="button" onclick="abrirImportacaoXmlEstoque('${_escJsString(notaKey)}')">Abrir</button>
+          <button type="button" class="btn-danger" onclick="excluirImportacaoXmlEstoque('${_escJsString(notaKey)}', '${_escJsString(row.numero_nota || row.chave_nfe || notaKey)}')">Excluir da fila</button>
+        </td>
       </tr>
     `;
   }).join("") : `<tr><td colspan="11">Nenhuma importacao XML pendente para este filtro.</td></tr>`;
@@ -16013,11 +16110,12 @@ function _atualizarControlesLoteImportacoesXml(rowsVisiveis = null){
     : _filtrarImportacoesXmlEstoque();
   const selecionadas = new Set(estoqueState.importacoesXmlSelecionadas || []);
   const visiveisSelecionadas = rows.filter((row) => selecionadas.has(String(row.nota_key || ""))).length;
+  const executando = estoqueState.importacoesXmlLoteExecutando || estoqueState.importacoesXmlExclusaoExecutando;
   const selecionarTodas = document.getElementById("estoqueXmlSelecionarTodas");
   if (selecionarTodas) {
     selecionarTodas.checked = rows.length > 0 && visiveisSelecionadas === rows.length;
     selecionarTodas.indeterminate = visiveisSelecionadas > 0 && visiveisSelecionadas < rows.length;
-    selecionarTodas.disabled = !rows.length || estoqueState.importacoesXmlLoteExecutando;
+    selecionarTodas.disabled = !rows.length || executando;
   }
   const botao = document.getElementById("estoqueXmlImportarLoteBtn");
   if (botao) {
@@ -16025,14 +16123,21 @@ function _atualizarControlesLoteImportacoesXml(rowsVisiveis = null){
     botao.textContent = estoqueState.importacoesXmlLoteExecutando
       ? `Contabilizando lote ${Number(progresso.loteAtual || 1)}/${Number(progresso.totalLotes || 1)}`
       : `Contabilizar no estoque (${visiveisSelecionadas})`;
-    botao.disabled = !visiveisSelecionadas || estoqueState.importacoesXmlLoteExecutando;
+    botao.disabled = !visiveisSelecionadas || executando;
   }
   const botaoManutencao = document.getElementById("estoqueXmlManutencaoLoteBtn");
   if (botaoManutencao) {
     botaoManutencao.textContent = estoqueState.importacoesXmlLoteExecutando
       ? "Enviando para manutencao..."
       : `Classificar como manutencao (${visiveisSelecionadas})`;
-    botaoManutencao.disabled = !visiveisSelecionadas || estoqueState.importacoesXmlLoteExecutando;
+    botaoManutencao.disabled = !visiveisSelecionadas || executando;
+  }
+  const botaoExcluir = document.getElementById("estoqueXmlExcluirLoteBtn");
+  if (botaoExcluir) {
+    botaoExcluir.textContent = estoqueState.importacoesXmlExclusaoExecutando
+      ? "Excluindo da fila..."
+      : `Excluir da fila (${visiveisSelecionadas})`;
+    botaoExcluir.disabled = !visiveisSelecionadas || executando;
   }
 }
 
@@ -16109,12 +16214,17 @@ function selecionarImportacoesXmlPorFiltro(tipoFiltro){
   const filtro = String(tipoFiltro || "");
   const dataSelecionada = String(document.getElementById("estoqueXmlPendentesData")?.value || "");
   const rotaSelecionada = String(document.getElementById("estoqueXmlPendentesRota")?.value || "");
+  const loteSelecionado = String(document.getElementById("estoqueXmlPendentesLote")?.value || "");
   if (filtro === "data" && !dataSelecionada) {
     alert("Escolha uma data para selecionar as NF-e desse dia.");
     return;
   }
   if (filtro === "rota" && !rotaSelecionada) {
     alert("Escolha uma rota/frete para selecionar as NF-e desse grupo.");
+    return;
+  }
+  if (filtro === "lote" && !loteSelecionado) {
+    alert("Escolha uma importacao para selecionar as NF-e desse envio.");
     return;
   }
   const tipo = String(document.getElementById("estoqueXmlPendentesTipo")?.value || "");
@@ -16126,6 +16236,7 @@ function selecionarImportacoesXmlPorFiltro(tipoFiltro){
     if (destino && _destinoImportacaoXmlEstoque(row) !== destino) return false;
     if (filtro === "data") return _dataImportacaoXmlEstoque(row) === dataSelecionada;
     if (filtro === "rota") return _rotaImportacaoXmlEstoque(row) === rotaSelecionada;
+    if (filtro === "lote") return String(row.lote_importacao || row.arquivo_origem || "") === loteSelecionado;
     return false;
   });
   const chaves = new Set(estoqueState.importacoesXmlSelecionadas || []);
@@ -16135,6 +16246,85 @@ function selecionarImportacoesXmlPorFiltro(tipoFiltro){
   });
   estoqueState.importacoesXmlSelecionadas = Array.from(chaves);
   renderImportacoesXmlEstoque();
+}
+
+async function _excluirImportacoesXmlEstoque(chaves, mensagemConfirmacao){
+  if (estoqueState.importacoesXmlLoteExecutando || estoqueState.importacoesXmlExclusaoExecutando) return;
+  const unicas = Array.from(new Set((chaves || []).map((chave) => String(chave || "")).filter(Boolean)));
+  if (!unicas.length) return;
+  if (!confirm(
+    `${mensagemConfirmacao}\n\nAs notas nao serao contabilizadas no estoque. `
+    + "Os XMLs originais e o registro da exclusao serao preservados para auditoria."
+  )) return;
+
+  estoqueState.importacoesXmlExclusaoExecutando = true;
+  _atualizarControlesLoteImportacoesXml();
+  const tamanhoLote = Math.max(1, Number(
+    estoqueState.importacoesXmlMeta?.lote_recomendado
+    || Math.min(Number(estoqueState.importacoesXmlMeta?.lote_maximo || 500), 100)
+  ));
+  const lotes = _dividirImportacoesXmlEmLotes(unicas, tamanhoLote);
+  const descartadas = [];
+  const erros = [];
+  try {
+    for (const lote of lotes) {
+      const resp = await apiFetch("/api/estoque/importacoes-xml/descartar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chaves: lote,
+          motivo: "Importacao excluida manualmente da fila antes da contabilizacao.",
+        }),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(data?.erro || "Falha ao excluir importacoes XML da fila.");
+      descartadas.push(...(Array.isArray(data?.descartadas) ? data.descartadas : []));
+      erros.push(...(Array.isArray(data?.erros) ? data.erros : []));
+    }
+    const descartadasKeys = new Set(descartadas.map((row) => String(row?.chave || "")));
+    estoqueState.importacoesXmlSelecionadas = (estoqueState.importacoesXmlSelecionadas || []).filter(
+      (chave) => !descartadasKeys.has(String(chave))
+    );
+    const draftKey = String(estoqueState.importDraft?.importar_xml_chave || "");
+    if (draftKey && descartadasKeys.has(draftKey)) {
+      estoqueState.importDraft = null;
+      estoqueState.importDraftDirty = false;
+      renderEstoqueImportPreview();
+    }
+    await carregarImportacoesXmlEstoque();
+    const detalhesErros = erros.slice(0, 5).map((item) => (
+      `- NF ${item?.numero_nota || item?.chave || "-"}: ${item?.erro || "nao excluida"}`
+    )).join("\n");
+    alert(
+      `${descartadas.length} NF-e(s) excluida(s) da fila sem movimentar o estoque.`
+      + (erros.length ? `\n${erros.length} nao puderam ser excluidas:\n${detalhesErros}` : "")
+    );
+  } catch (err) {
+    alert(err?.message || "Falha ao excluir importacoes XML da fila.");
+    await carregarImportacoesXmlEstoque().catch(() => {});
+  } finally {
+    estoqueState.importacoesXmlExclusaoExecutando = false;
+    _atualizarControlesLoteImportacoesXml();
+  }
+}
+
+async function excluirImportacaoXmlEstoque(notaKey, notaLabel){
+  await _excluirImportacoesXmlEstoque(
+    [notaKey],
+    `Excluir a NF-e ${notaLabel || notaKey} da fila de contabilizacao?`
+  );
+}
+
+async function excluirSelecionadasXmlEstoque(){
+  const chaves = _chavesImportacoesXmlSelecionadasVisiveis();
+  if (!chaves.length) {
+    alert("Selecione ao menos uma NF-e para excluir da fila.");
+    return;
+  }
+  await _excluirImportacoesXmlEstoque(
+    chaves,
+    `Excluir ${chaves.length} NF-e(s) selecionada(s) da fila de contabilizacao?`
+  );
 }
 
 async function carregarImportacoesXmlEstoque(){
@@ -16203,28 +16393,50 @@ async function direcionarSelecionadasXmlManutencao(){
   }
 
   estoqueState.importacoesXmlLoteExecutando = true;
+  const tamanhoLote = Math.max(1, Number(
+    estoqueState.importacoesXmlMeta?.lote_recomendado
+    || Math.min(Number(estoqueState.importacoesXmlMeta?.lote_maximo || 500), 100)
+  ));
+  const lotesChaves = _dividirImportacoesXmlEmLotes(chaves, tamanhoLote);
+  const totalLotes = lotesChaves.length;
   _atualizarControlesLoteImportacoesXml();
   _atualizarProgressoLoteImportacoesXml({
     fase: "preparando",
     loteAtual: 1,
-    totalLotes: 1,
+    totalLotes,
     processadas: 0,
     total: chaves.length,
-    tamanhoLote: chaves.length,
+    tamanhoLote: lotesChaves[0]?.length || 0,
     mensagem: `Enviando ${chaves.length} NF-e(s) para manutencao...`,
   });
   try {
-    const resp = await apiFetch("/api/estoque/nfe/direcionar/lote", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ destino: "manutencao", chaves }),
-    });
-    const data = await resp.json().catch(() => ({}));
-    if (!resp.ok) {
-      throw new Error(data?.erro || "Falha ao enviar as notas para manutencao.");
+    const direcionados = [];
+    const erros = [];
+    let processadas = 0;
+    for (let loteIndex = 0; loteIndex < lotesChaves.length; loteIndex += 1) {
+      const chavesLote = lotesChaves[loteIndex];
+      _atualizarProgressoLoteImportacoesXml({
+        fase: "preparando",
+        loteAtual: loteIndex + 1,
+        totalLotes,
+        processadas,
+        total: chaves.length,
+        tamanhoLote: chavesLote.length,
+        mensagem: `Enviando lote ${loteIndex + 1} de ${totalLotes} para manutencao...`,
+      });
+      const resp = await apiFetch("/api/estoque/nfe/direcionar/lote", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ destino: "manutencao", chaves: chavesLote }),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        throw new Error(data?.erro || `Falha ao enviar o lote ${loteIndex + 1} de ${totalLotes} para manutencao.`);
+      }
+      direcionados.push(...(Array.isArray(data?.direcionados) ? data.direcionados : []));
+      erros.push(...(Array.isArray(data?.erros) ? data.erros : []));
+      processadas += chavesLote.length;
     }
-    const direcionados = Array.isArray(data?.direcionados) ? data.direcionados : [];
-    const erros = Array.isArray(data?.erros) ? data.erros : [];
     const chavesDirecionadas = new Set(direcionados.map((item) => String(item.chave || item.nota_key || "")).filter(Boolean));
     if (chavesDirecionadas.size) {
       await registrarRegrasClassificacaoXml(Array.from(chavesDirecionadas), "manutencao");
@@ -16240,8 +16452,8 @@ async function direcionarSelecionadasXmlManutencao(){
       : "";
     _atualizarProgressoLoteImportacoesXml({
       fase: "concluido",
-      loteAtual: 1,
-      totalLotes: 1,
+      loteAtual: totalLotes,
+      totalLotes,
       processadas: direcionados.length,
       total: chaves.length,
       mensagem: `${direcionados.length} de ${chaves.length} NF-e(s) enviada(s) para manutencao.`,
@@ -16279,7 +16491,10 @@ async function importarSelecionadasXmlEstoque(){
 
   estoqueState.importacoesXmlLoteExecutando = true;
   const tipoMovimentoFiltro = String(document.getElementById("estoqueXmlPendentesTipo")?.value || "");
-  const tamanhoLote = Math.max(1, Number(estoqueState.importacoesXmlMeta?.lote_maximo || 500));
+  const tamanhoLote = Math.max(1, Number(
+    estoqueState.importacoesXmlMeta?.lote_recomendado
+    || Math.min(Number(estoqueState.importacoesXmlMeta?.lote_maximo || 500), 100)
+  ));
   const lotesChaves = _dividirImportacoesXmlEmLotes(chaves, tamanhoLote);
   const totalLotes = lotesChaves.length;
   _atualizarControlesLoteImportacoesXml();
@@ -16375,13 +16590,12 @@ async function importarSelecionadasXmlEstoque(){
       _atualizarProgressoLoteImportacoesXml({
         ...(estoqueState.importacoesXmlLoteProgresso || {}),
         fase: "pendente",
-        mensagem: (
-          `Importacao nao iniciada: ${errosQuePrecisamRevisao.length} nota(s) precisam `
-          + "de revisao antes de processar os lotes."
-        ),
+        mensagem: `${errosQuePrecisamRevisao.length} nota(s) serao ignoradas e permanecerao para revisao.`,
       });
-      alert(`O lote nao foi iniciado porque existem notas que precisam ser revisadas:\n${detalhes}${restante}`);
-      return;
+      if (!lotesPreparados.some((lote) => lote.length)) {
+        alert(`Nenhuma nota esta pronta. Revise os registros abaixo:\n${detalhes}${restante}`);
+        return;
+      }
     }
 
     const drafts = lotesPreparados.flat();
@@ -16442,10 +16656,13 @@ async function importarSelecionadasXmlEstoque(){
     const avisoConversao = conversoesParaConfirmar.length
       ? `\n${conversoesParaConfirmar.length} item(ns) usam conversao inferida ou cadastro ainda nao explicitado:\n${detalhesConversao}${restanteConversao}`
       : "";
+    const avisoIgnoradas = errosQuePrecisamRevisao.length
+      ? `\n${errosQuePrecisamRevisao.length} nota(s) com problema serao ignoradas e continuarao pendentes para revisao.`
+      : "";
     if (!confirm(
       `Confirmar importacao em massa de ${drafts.length} NF-e(s)?\n`
       + `${entradas} entrada(s), ${saidas} saida(s), ${totalItens} item(ns).`
-      + `${avisoConversao}\nCada nota sera protegida contra duplicidade antes de contabilizar o saldo.`
+      + `${avisoConversao}${avisoIgnoradas}\nCada nota sera protegida contra duplicidade antes de contabilizar o saldo.`
     )) {
       _atualizarProgressoLoteImportacoesXml({
         fase: "cancelado",
@@ -16567,8 +16784,9 @@ async function importarSelecionadasXmlEstoque(){
     await ensureProdutosEstoqueCache(true).catch(() => {});
     await carregarImportacoesXmlEstoque();
     const movimentos = sucessos.reduce((total, item) => total + item.movimentos, 0);
-    const mensagemFalhas = falhas.length
-      ? `\n${falhas.length} nota(s) ficaram pendentes:\n${falhas.slice(0, 10).map((item) => `- ${item.numero_nota || item.chave}: ${item.erro}`).join("\n")}`
+    const pendencias = [...errosQuePrecisamRevisao, ...falhas];
+    const mensagemFalhas = pendencias.length
+      ? `\n${pendencias.length} nota(s) ficaram pendentes:\n${pendencias.slice(0, 10).map((item) => `- ${item.numero_nota || item.chave}: ${item.erro}`).join("\n")}`
       : "";
     _atualizarProgressoLoteImportacoesXml({
       fase: "concluido",
@@ -16578,7 +16796,7 @@ async function importarSelecionadasXmlEstoque(){
       total: drafts.length,
       mensagem: (
         `Importacao concluida: ${sucessos.length} de ${drafts.length} nota(s) importada(s) `
-        + `em ${totalLotes} lote(s). ${falhas.length} pendente(s).`
+        + `em ${totalLotes} lote(s). ${pendencias.length} pendente(s).`
       ),
     });
     alert(`${sucessos.length} nota(s) importada(s), com ${movimentos} movimento(s) contabilizado(s).${mensagemFalhas}`);
@@ -16620,7 +16838,7 @@ async function abrirImportacaoXmlEstoque(notaKey){
     }
   }
   estoqueState.importDraftDirty = false;
-  setEstoqueView("lancar");
+  setEstoqueView("importar_xml");
   renderEstoqueImportPreview();
   document.getElementById("estoqueImportPreviewCard")?.scrollIntoView({ behavior: "smooth", block: "start" });
   renderImportacoesXmlEstoque();
@@ -16850,11 +17068,18 @@ async function confirmarImportacaoNfeEstoque(){
 
 function setEstoqueView(view){
   const admin = String(usuarioLogado?.perfil || "").toLowerCase() === "admin";
-  const nextView = view === "acerto" && admin
+  const requestedView = view === "lancar" ? "importar_xml" : view;
+  const nextView = requestedView === "acerto" && admin
     ? "acerto"
-    : view === "posicao"
+    : requestedView === "posicao"
     ? "posicao"
-    : (view === "cadastrar" ? "cadastrar" : (view === "rastreio" ? "rastreio" : "lancar"));
+    : requestedView === "cadastrar"
+    ? "cadastrar"
+    : requestedView === "rastreio"
+    ? "rastreio"
+    : requestedView === "movimentar"
+    ? "movimentar"
+    : "importar_xml";
   estoqueState.view = nextView;
   window.__estoqueView = nextView;
 
@@ -16863,22 +17088,35 @@ function setEstoqueView(view){
   const viewAcerto = document.getElementById("estoqueViewAcerto");
   const viewCadastrar = document.getElementById("estoqueViewCadastrar");
   const viewRastreio = document.getElementById("estoqueViewRastreio");
-  const btnLancar = document.getElementById("estoqueViewBtnLancar");
-  const btnConferir = document.getElementById("estoqueViewBtnConferir");
-  const btnAcerto = document.getElementById("estoqueViewBtnAcerto");
-  const btnCadastrar = document.getElementById("estoqueViewBtnCadastrar");
-  const btnRastreio = document.getElementById("estoqueViewBtnRastreio");
+  const importacoesBox = document.getElementById("estoqueImportacoesXmlBox");
+  const movimentoManualBox = document.getElementById("estoqueMovimentoManualBox");
+  const nfeManualBox = document.getElementById("estoqueNfeManualBox");
+  const menuAcerto = document.getElementById("estoqueMenuAcerto");
+  const titulo = document.getElementById("estoqueTitulo");
 
-  if (viewLancar) viewLancar.classList.toggle("hidden", nextView !== "lancar");
+  if (viewLancar) viewLancar.classList.toggle("hidden", !["importar_xml", "movimentar"].includes(nextView));
   if (viewConferir) viewConferir.classList.toggle("hidden", nextView !== "posicao");
   if (viewAcerto) viewAcerto.classList.toggle("hidden", nextView !== "acerto");
   if (viewCadastrar) viewCadastrar.classList.toggle("hidden", nextView !== "cadastrar");
   if (viewRastreio) viewRastreio.classList.toggle("hidden", nextView !== "rastreio");
-  if (btnLancar) btnLancar.classList.toggle("active", nextView === "lancar");
-  if (btnConferir) btnConferir.classList.toggle("active", nextView === "posicao");
-  if (btnAcerto) btnAcerto.classList.toggle("active", nextView === "acerto");
-  if (btnCadastrar) btnCadastrar.classList.toggle("active", nextView === "cadastrar");
-  if (btnRastreio) btnRastreio.classList.toggle("active", nextView === "rastreio");
+  if (importacoesBox) importacoesBox.classList.toggle("hidden", nextView !== "importar_xml");
+  if (movimentoManualBox) movimentoManualBox.classList.toggle("hidden", nextView !== "movimentar");
+  if (nfeManualBox) nfeManualBox.classList.toggle("hidden", nextView !== "importar_xml");
+  if (menuAcerto) menuAcerto.classList.toggle("hidden", !admin);
+  if (titulo) {
+    const titulos = {
+      importar_xml: "Compras / Importar XML",
+      movimentar: "Estoque / Movimentar",
+      posicao: "Estoque / Posicao atual",
+      acerto: "Estoque / Acerto",
+      cadastrar: "Estoque / Cadastrar produtos",
+      rastreio: "Estoque / Rastreio de lotes",
+    };
+    titulo.textContent = titulos[nextView] || "Estoque";
+  }
+  document.querySelectorAll("#submenuEstoque .submenu-item").forEach((item) => {
+    item.classList.toggle("active", item.dataset.estoqueView === nextView);
+  });
 
   renderEstoqueImportPreview();
   atualizarStatusCodbarSistema();
@@ -17607,7 +17845,7 @@ function _aplicarPreviewItensOcrEstoque(preview){
   const statusOcr = document.getElementById("estoqueNfeOcrStatus");
   if (status) status.textContent = `Itens da nota lidos por OCR. ${draft.itens.length} item(ns) carregado(s) para revisao.`;
   if (statusOcr) statusOcr.textContent = `Itens reconhecidos por OCR: ${draft.itens.length}. Revise codigo, descricao, quantidade e valor antes de confirmar.`;
-  setEstoqueView("lancar");
+  setEstoqueView("importar_xml");
   renderEstoqueImportPreview();
 }
 
@@ -17657,7 +17895,7 @@ function processarFotoManualItensEstoqueInput(ev){
   const statusFoto = document.getElementById("estoqueNfeOcrStatus");
   if (status) status.textContent = "Foto dos itens carregada. Complete a grade manualmente e confirme a importacao.";
   if (statusFoto) statusFoto.textContent = "Foto pronta para apoio visual. Digite codigo, descricao, quantidade e valor na grade abaixo.";
-  setEstoqueView("lancar");
+  setEstoqueView("importar_xml");
   renderEstoqueImportPreview();
   document.querySelector("#estoqueImportPreviewItemsBody .estoque-import-item-codnfe")?.focus();
   if (input) input.value = "";
@@ -18146,7 +18384,7 @@ async function importarNfeEstoque(){
       ? "Arquivo recebido. A chave foi usada para buscar o XML oficial via DF-e; revise os dados na confirmacao antes de importar."
       : "Arquivo lido. Revise os dados na confirmacao antes de importar.";
   }
-  setEstoqueView("lancar");
+  setEstoqueView("importar_xml");
   renderEstoqueImportPreview();
   document.getElementById("estoquePreviewNumeroNota")?.focus();
 }
@@ -18217,7 +18455,7 @@ async function importarHtmlPortalClipboardEstoque(){
       ? "HTML da consulta publica importado. Os itens foram carregados para revisao."
       : "HTML da consulta publica importado. Revise os dados; os itens nao vieram completos.";
   }
-  setEstoqueView("lancar");
+  setEstoqueView("importar_xml");
   renderEstoqueImportPreview();
   document.getElementById("estoquePreviewNumeroNota")?.focus();
 }
@@ -18241,7 +18479,7 @@ function _aplicarPreviewPortalNfeEstoque(preview, statusMensagem = "") {
         ? "Consulta publica recebida do portal. Os itens foram carregados para revisao."
         : "Consulta publica recebida do portal. Revise os dados e complete os itens se necessario.");
   }
-  setEstoqueView("lancar");
+  setEstoqueView("importar_xml");
   renderEstoqueImportPreview();
   document.getElementById("estoquePreviewNumeroNota")?.focus();
 }
@@ -18320,7 +18558,7 @@ async function buscarNfeEstoquePorChave(options = {}) {
         : `XML oficial carregado pelo DF-e.${motivo} Revise os dados na confirmacao antes de importar.${limiteResumo}`;
     }
   }
-  setEstoqueView("lancar");
+  setEstoqueView("importar_xml");
   renderEstoqueImportPreview();
   document.getElementById("estoquePreviewNumeroNota")?.focus();
 }
@@ -19417,7 +19655,7 @@ window.onload = async () => {
   bindEstoqueScannerInput();
   alternarModoNovaCameraConfig();
   verificarRetornoPortalNfePendente();
-  setEstoqueView(window.__estoqueView || "lancar");
+  setEstoqueView(window.__estoqueView || "posicao");
   renderFiltrosRelatorioFretes();
 
   // 2) Status pode rodar sem travar nada

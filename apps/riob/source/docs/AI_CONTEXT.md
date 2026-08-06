@@ -138,6 +138,13 @@ If you need context fast, read these files first:
   but never insert negative/zero visits in `vendas_diario_pedidos`, never retain
   their items, and never create their Kanban cards. The daily dashboard is a
   sales dashboard, not a visit/negativation archive.
+- Keep every operational screen task-focused and clean. The main menu defines
+  domains and its submenus define tasks; render only the selected task. Never
+  leave configuration, reports, registrations, imports, and manual operations
+  stacked together merely because they share a backend module. Configuration
+  belongs under Config, reports under Relatorios, registrations under Cadastros,
+  purchase-document intake under Compras, and stock position/movement/product
+  maintenance/traceability under Estoque.
 - Stock remains canonical in individual units, but production dashboards display
   `pallets + packages/boxes + remaining units`. Capacities are: water 150x12,
   PET 600 ml 132x12, GFA 600 ml 35x24, PET 2 L 80x6, PET 200 ml 304x12,
