@@ -94,6 +94,11 @@ leitor USB (bipe seguido de Enter) ou pela webcam em navegador com HTTPS. No
 cadastro, o codigo capturado preenche o novo produto; no pedido, um produto ja
 cadastrado e localizado e adicionado imediatamente, somando a quantidade quando
 o mesmo codigo e lido novamente. Codigos de barras duplicados sao rejeitados.
+No celular, o botao de camera tambem oferece captura nativa por foto, seguindo o
+mesmo fallback usado pelo RioB. Essa alternativa funciona mesmo quando a CA
+privada nao foi aceita pelo aparelho; a imagem e processada localmente no
+navegador pelo ZXing embarcado e nao e enviada ao servidor. A leitura continua
+por video ainda exige HTTPS confiavel e permissao para a webcam.
 
 Em `Cadastros > Produtos`, os itens existentes ficam disponiveis para busca e
 edicao dos dados comerciais, estoque e tributacao. O indicador fiscal dessa

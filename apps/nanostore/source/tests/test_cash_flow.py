@@ -344,6 +344,7 @@ class CashFlowTest(unittest.TestCase):
                     "Venda direta no caixa", 'id="cash-sale-barcode-input"', 'id="cash-sale-items-json"',
                     "Bipar com camera", "Leitura na venda direta", "BARCODE_INPUT_MODE",
                     "vendor/zxing-browser.min.js", 'data-barcode-input-mode="auto"',
+                    'id="scanner-photo-input"', 'capture="environment"', "decodeFromImageUrl",
                     "Buscar item similar", 'id="similar-product-modal"', "/api/products/similar",
                     "decodeFromVideoElement", "scannerVideo.srcObject = scannerStream",
                     'data-function-nav="estoque-visao"', 'data-function-nav="cadastros-produtos"',

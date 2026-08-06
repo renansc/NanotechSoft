@@ -1995,9 +1995,11 @@
           <strong id="scanner-modal-title">Leitura de codigo</strong>
           <button type="button" class="secondary-btn" id="close-scanner-modal-btn">Fechar</button>
         </div>
-        <p class="helper">Aponte a webcam para o codigo de barras ou digite o codigo manualmente.</p>
+        <p class="helper">Aponte a webcam para o codigo de barras, tire uma foto no celular ou digite o codigo manualmente.</p>
         <video id="scanner-video" class="scanner-video" autoplay playsinline muted></video>
+        <input type="file" id="scanner-photo-input" accept="image/*" capture="environment" hidden>
         <div class="row">
+          <button type="button" class="secondary-btn" id="scanner-photo-btn">Tirar foto do codigo</button>
           <label class="field-inline"><span>Codigo</span><input id="scanner-manual-code" placeholder="Codigo de barras, SKU ou nome"></label>
           <button type="button" id="scanner-manual-submit-btn">Buscar</button>
         </div>
@@ -2538,6 +2540,8 @@
       const scannerModal = document.getElementById("scanner-modal");
       const closeScannerModalBtn = document.getElementById("close-scanner-modal-btn");
       const scannerVideo = document.getElementById("scanner-video");
+      const scannerPhotoInput = document.getElementById("scanner-photo-input");
+      const scannerPhotoBtn = document.getElementById("scanner-photo-btn");
       const scannerManualCode = document.getElementById("scanner-manual-code");
       const scannerManualSubmitBtn = document.getElementById("scanner-manual-submit-btn");
       const scannerStatus = document.getElementById("scanner-status");
@@ -3083,21 +3087,23 @@
       }
       let currentScanTarget = "consult";
       let scannerSupported = false;
+      let scannerPhotoSupported = false;
 
       function updateScannerAvailability() {
         scannerSupported = !!(window.isSecureContext && navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+        scannerPhotoSupported = !!(window.File && window.URL && scannerPhotoInput);
         scanTriggers.forEach(function (button) {
           if (button === scanCashSaleBtn) {
             button.hidden = !cashSaleUsesCamera();
           } else {
-            button.hidden = !scannerSupported;
+            button.hidden = !(scannerSupported || scannerPhotoSupported);
           }
         });
         document.querySelectorAll(".scanner-support-note").forEach(function (note) {
           if (note.classList.contains("cash-sale-scanner-note")) {
-            note.hidden = !cashSaleUsesCamera() || scannerSupported;
+            note.hidden = !cashSaleUsesCamera() || scannerSupported || scannerPhotoSupported;
           } else {
-            note.hidden = scannerSupported;
+            note.hidden = scannerSupported || scannerPhotoSupported;
           }
         });
         if (cashSaleBarcodeInput) {
@@ -3114,7 +3120,7 @@
         if (httpsDeviceStatus) {
           httpsDeviceStatus.textContent = scannerSupported
             ? (("BarcodeDetector" in window) ? "Camera e leitura nativa prontas" : "Camera e leitor compativel prontos")
-            : (window.isSecureContext ? "Sem suporte suficiente de camera neste navegador" : "HTTPS necessario para camera");
+            : (scannerPhotoSupported ? "Captura de foto pronta; webcam continua exige HTTPS confiavel" : "Camera indisponivel neste navegador");
         }
       }
 
@@ -3302,22 +3308,15 @@
         scannerModal.hidden = false;
         scannerStatus.textContent = "Iniciando webcam...";
         if (!scannerSupported) {
-          scannerStatus.textContent = window.isSecureContext
-            ? "Seu navegador nao oferece suporte suficiente para webcam nesta tela."
-            : "A webcam exige HTTPS ou localhost seguro neste navegador.";
+          scannerStatus.textContent = scannerPhotoSupported
+            ? "Abrindo a camera do celular para fotografar o codigo..."
+            : (window.isSecureContext
+              ? "Seu navegador nao oferece suporte suficiente para camera nesta tela."
+              : "A webcam exige HTTPS ou localhost seguro neste navegador.");
+          if (scannerPhotoSupported) scannerPhotoInput.click();
           return;
         }
         try {
-          const applyScannedValue = async function (value) {
-            if (scannerReading || !value) return;
-            scannerReading = true;
-            stopScanner();
-            try {
-              await applyLookupResult(currentScanTarget, value);
-            } catch (error) {
-              alert(error.message || "Nao foi possivel ler o codigo.");
-            }
-          };
           scannerStream = await navigator.mediaDevices.getUserMedia({
             video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } },
             audio: false,
@@ -3359,9 +3358,59 @@
           }
         } catch (error) {
           const reason = error && error.name === "NotAllowedError"
-            ? "Permissao da camera negada. Libere a camera nas configuracoes do navegador."
+            ? "Permissao da webcam negada. Use Tirar foto do codigo ou libere a camera no navegador."
             : "Nao foi possivel acessar a camera. Confirme o HTTPS e a permissao do navegador.";
           scannerStatus.textContent = reason;
+        }
+      }
+
+      async function applyScannedValue(value) {
+        if (scannerReading || !value) return;
+        scannerReading = true;
+        stopScanner();
+        try {
+          await applyLookupResult(currentScanTarget, value);
+        } catch (error) {
+          alert(error.message || "Nao foi possivel ler o codigo.");
+        }
+      }
+
+      async function decodeScannerPhoto(file) {
+        if (!file) return;
+        scannerReading = false;
+        scannerModal.hidden = false;
+        scannerStatus.textContent = "Lendo o codigo na foto...";
+        const imageUrl = URL.createObjectURL(file);
+        try {
+          if ("BarcodeDetector" in window && window.createImageBitmap) {
+            try {
+              const bitmap = await createImageBitmap(file);
+              try {
+                const detector = new BarcodeDetector({ formats: ["ean_13", "ean_8", "code_128", "qr_code", "upc_a", "upc_e"] });
+                const barcodes = await detector.detect(bitmap);
+                if (barcodes.length) {
+                  await applyScannedValue(barcodes[0].rawValue);
+                  return;
+                }
+              } finally {
+                if (bitmap.close) bitmap.close();
+              }
+            } catch (error) {
+              console.warn("leitor nativo da foto indisponivel; tentando ZXing", error);
+            }
+          }
+          if (window.ZXingBrowser && window.ZXingBrowser.BrowserMultiFormatReader) {
+            const reader = new window.ZXingBrowser.BrowserMultiFormatReader();
+            const result = await reader.decodeFromImageUrl(imageUrl);
+            await applyScannedValue(result.getText());
+            return;
+          }
+          throw new Error("Leitor de codigo indisponivel.");
+        } catch (error) {
+          scannerStatus.textContent = "Nao localizamos um codigo nitido. Aproxime a camera, evite reflexos e tente outra foto.";
+        } finally {
+          URL.revokeObjectURL(imageUrl);
+          scannerPhotoInput.value = "";
         }
       }
 
@@ -3832,6 +3881,14 @@
       }
       if (scanCountProductBtn) {
         scanCountProductBtn.addEventListener("click", function () { startScanner("count"); });
+      }
+      if (scannerPhotoBtn) {
+        scannerPhotoBtn.addEventListener("click", function () { scannerPhotoInput?.click(); });
+      }
+      if (scannerPhotoInput) {
+        scannerPhotoInput.addEventListener("change", function () {
+          decodeScannerPhoto(scannerPhotoInput.files && scannerPhotoInput.files[0]);
+        });
       }
       if (openItemConsultBtn) {
         openItemConsultBtn.addEventListener("click", function () {
