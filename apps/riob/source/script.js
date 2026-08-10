@@ -7983,7 +7983,13 @@ function atualizarUsuarioLogadoUI() {
   atualizarStatusCodbarSistema();
   const admin = String(usuarioLogado?.perfil || "").toLowerCase() === "admin";
   document.getElementById("estoqueMenuAcerto")?.classList.toggle("hidden", !admin);
-  if (!admin && window.__estoqueView === "acerto") setEstoqueView("posicao");
+  const viewPendente = window.__estoqueViewPendente;
+  if (viewPendente) {
+    window.__estoqueViewPendente = "";
+    setEstoqueView(admin ? viewPendente : "posicao");
+  } else if (!admin && window.__estoqueView === "acerto") {
+    setEstoqueView("posicao");
+  }
 }
 
 function _syncBlockingPopupState() {
@@ -17069,7 +17075,15 @@ async function confirmarImportacaoNfeEstoque(){
 function setEstoqueView(view){
   const admin = String(usuarioLogado?.perfil || "").toLowerCase() === "admin";
   const requestedView = view === "lancar" ? "importar_xml" : view;
-  const nextView = requestedView === "acerto" && admin
+  const aguardandoIdentidade = requestedView === "acerto" && usuarioLogado === null;
+  if (aguardandoIdentidade) {
+    window.__estoqueViewPendente = "acerto";
+  } else if (requestedView !== "acerto") {
+    window.__estoqueViewPendente = "";
+  }
+  const nextView = aguardandoIdentidade
+    ? "posicao"
+    : requestedView === "acerto" && admin
     ? "acerto"
     : requestedView === "posicao"
     ? "posicao"
