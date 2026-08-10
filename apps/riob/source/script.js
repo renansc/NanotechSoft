@@ -4871,11 +4871,11 @@ const MONITOR_APPS = {
   },
   importar_xml: {
     label: "Importar XML",
-    url: () => "/importar-xml/",
+    url: () => "/apps/riob-xml/riob/",
   },
   gestor_emails: {
     label: "Gestor de E-mails",
-    url: () => "/gestor-emails/",
+    url: () => "/apps/riob-email/riob/",
   },
 };
 

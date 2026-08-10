@@ -1760,6 +1760,8 @@ def rewrite_riob_location(value, prefix="/apps/riob"):
         return value
     if value.startswith(prefix):
         return value
+    if value.startswith("/apps/"):
+        return value
     if value.startswith("/"):
         return prefix + value
     return value
@@ -1960,6 +1962,8 @@ def rewrite_local_riob_location(value, app_key):
         return prefix + (parsed.path or "/") + (("?" + parsed.query) if parsed.query else "")
     if value.startswith(prefix):
         return value
+    if value.startswith("/apps/"):
+        return value
     if value.startswith("/"):
         return prefix + value
     return value
@@ -1982,6 +1986,9 @@ def rewrite_local_riob_text(content, app_key, apply_theme=False):
     }
     for source, target in replacements.items():
         text = text.replace(source, target)
+    # Rotas absolutas de outros aplicativos do Portal nao recebem o prefixo
+    # do app local atual (por exemplo, /apps/riob-email/riob/).
+    text = text.replace(f"{prefix}/apps/", "/apps/")
     if apply_theme:
         if app_key == "riob":
             text = inject_before_body_close(text, riob_hash_bridge_script())
