@@ -7,8 +7,11 @@ __pycache__/
 *.py[cod]
 *.log
 *.db
+*.db-*
 *.sqlite
+*.sqlite-*
 *.sqlite3
+*.sqlite3-*
 *.gdb
 *.GDB
 *.sql

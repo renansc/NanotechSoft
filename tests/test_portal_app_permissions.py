@@ -78,6 +78,12 @@ class PortalAppPermissionsTests(unittest.TestCase):
         self.assertEqual("Posicao atual", secoes["estoque"][0]["nome"])
         self.assertIn("estoque", portal.MENU_SECTIONS)
 
+    def test_email_e_xml_usam_os_servicos_integrados_do_riob(self):
+        self.assertNotIn("riob-email", portal.LOCAL_RIOB_APPS)
+        self.assertNotIn("riob-xml", portal.LOCAL_RIOB_APPS)
+        self.assertEqual("/gestor-emails/", portal.riob_app_path("riob-email"))
+        self.assertEqual("/importar-xml/", portal.riob_app_path("riob-xml"))
+
 
 if __name__ == "__main__":
     unittest.main()

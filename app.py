@@ -203,26 +203,6 @@ LOCAL_RIOB_APPS = {
             "SECRET_KEY": os.environ.get("RIOB_ESXI_SECRET_KEY", "notechsoft-esxi"),
         },
     },
-    "riob-email": {
-        "cwd": APPS_DIR / "riob-email" / "source",
-        "script": "gerenciador_email.py",
-        "port": int(os.environ.get("RIOB_EMAIL_PORT", "8896")),
-        "env": {
-            "FLASK_RUN_HOST": "127.0.0.1",
-            "FLASK_RUN_PORT": os.environ.get("RIOB_EMAIL_PORT", "8896"),
-            "PORT": os.environ.get("RIOB_EMAIL_PORT", "8896"),
-        },
-    },
-    "riob-xml": {
-        "cwd": APPS_DIR / "riob-xml" / "source",
-        "script": "importador_xml_homologacao.py",
-        "port": int(os.environ.get("RIOB_XML_PORT", "8897")),
-        "env": {
-            "FLASK_RUN_HOST": "127.0.0.1",
-            "FLASK_RUN_PORT": os.environ.get("RIOB_XML_PORT", "8897"),
-            "PORT": os.environ.get("RIOB_XML_PORT", "8897"),
-        },
-    },
 }
 LOCAL_RIOB_ALIASES = {
     "riob-telefonia": ("riob", "#config:sip"),
