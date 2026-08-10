@@ -35,6 +35,9 @@ class PharmacyCustomer(TimestampMixin, db.Model):
     city = db.Column(db.String(100), default="", nullable=False)
     state = db.Column(db.String(2), default="", nullable=False)
     postal_code = db.Column(db.String(12), default="", nullable=False)
+    state_registration = db.Column(db.String(20), default="", nullable=False)
+    state_registration_indicator = db.Column(db.String(1), default="9", nullable=False)
+    city_code = db.Column(db.String(7), default="", nullable=False)
     notes = db.Column(db.Text, default="", nullable=False)
 
 
@@ -157,6 +160,36 @@ class FiscalSimulation(TimestampMixin, db.Model):
     xml_content = db.Column(db.Text, nullable=False)
 
     sale = db.relationship("PharmacySale", backref=db.backref("fiscal_simulations", lazy="dynamic"))
+
+
+class FiscalInvoice(TimestampMixin, db.Model):
+    __table_args__ = (
+        db.UniqueConstraint("environment", "series", "number", name="uq_fiscal_invoice_number"),
+        db.UniqueConstraint("sale_id", "environment", "document_model", name="uq_fiscal_invoice_sale"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    sale_id = db.Column(db.Integer, db.ForeignKey("pharmacy_sale.id"), nullable=False, index=True)
+    document_model = db.Column(db.String(2), nullable=False, default="55", index=True)
+    environment = db.Column(db.String(20), nullable=False, default="homologation", index=True)
+    series = db.Column(db.Integer, nullable=False)
+    number = db.Column(db.Integer, nullable=False)
+    access_key = db.Column(db.String(44), nullable=False, unique=True, index=True)
+    status = db.Column(db.String(40), nullable=False, default="generated", index=True)
+    status_code = db.Column(db.String(4), default="", nullable=False)
+    status_reason = db.Column(db.String(255), default="", nullable=False)
+    protocol = db.Column(db.String(30), default="", nullable=False, index=True)
+    issuer_cnpj = db.Column(db.String(20), nullable=False, index=True)
+    total_amount = db.Column(db.Numeric(12, 2), default=0, nullable=False)
+    certificate_serial = db.Column(db.String(160), default="", nullable=False)
+    certificate_fingerprint = db.Column(db.String(128), default="", nullable=False)
+    signed_xml = db.Column(db.Text, nullable=False)
+    response_xml = db.Column(db.Text, default="", nullable=False)
+    authorized_xml = db.Column(db.Text, default="", nullable=False)
+    transmitted_at = db.Column(db.DateTime, nullable=True)
+    authorized_at = db.Column(db.DateTime, nullable=True)
+
+    sale = db.relationship("PharmacySale", backref=db.backref("fiscal_invoices", lazy="dynamic"))
 
 
 class PharmacyPayment(TimestampMixin, db.Model):

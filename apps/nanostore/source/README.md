@@ -240,11 +240,22 @@ Configure o certificado somente por variaveis de ambiente:
 ```bash
 NANOSTORE_FISCAL_CERT_PATH=/caminho/seguro/emitente.pfx
 NANOSTORE_FISCAL_CERT_PASSWORD=senha-do-certificado
+NANOSTORE_NFE_SCHEMA_PATH=/caminho/seguro/schemas/nfe_v4.00.xsd
+NANOSTORE_NFE_HOMOLOGATION_TRANSMISSION_ENABLED=0
 ```
 
-Certificados vencidos podem ser usados apenas para exercitar o simulador. Uma
-integracao futura com homologacao deve exigir certificado vigente, cadastro
-fiscal completo, schemas oficiais e bloqueio independente para producao.
+Certificados vencidos podem ser usados apenas para exercitar o simulador. A
+geracao de NF-e 55 de homologacao exige A1 vigente, CNPJ compativel, emitente e
+destinatario completos e o perfil tributario inicialmente suportado (CRT 1,
+CSOSN 102 ou 500 e PIS/COFINS 49). A transmissao para a SEFAZ PR permanece bloqueada
+ate `NANOSTORE_NFE_HOMOLOGATION_TRANSMISSION_ENABLED=1`; nao existe rota de
+producao. Quando `NANOSTORE_NFE_SCHEMA_PATH` estiver configurado, o XML assinado
+tambem e validado pelo XSD oficial antes de ser persistido.
+
+NF-e oficiais usam tabela propria com unicidade por ambiente, serie e numero e
+por venda. O contador `FISCAL_HOMOLOGATION_NEXT_NUMBER_55` e exclusivo do
+ambiente de homologacao e nao interfere na numeracao de producao de outro
+emissor. Cada tentativa guarda XML assinado, resposta, status, motivo e protocolo.
 
 Antes de gerar a simulacao, o modulo valida o emitente e os itens: CNPJ
 compativel com o certificado, IE, UF, municipio IBGE, CRT, NCM, CEST quando

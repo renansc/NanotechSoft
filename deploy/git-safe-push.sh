@@ -17,7 +17,7 @@ ONLY_PATHS=()
 usage() {
   cat <<'EOF'
 Uso:
-  ./deploy/git-safe-push.sh -m "mensagem do commit" [opcoes]
+  ./git-safe-push.sh [opcoes]
 
 Opcoes:
   -m, --message TEXTO   Mensagem do commit
@@ -36,7 +36,7 @@ O script:
   - bloqueia arquivos sensiveis/runtime do stage
   - adiciona somente arquivos seguros
   - valida Python, manifests dos apps, clientes e docker compose
-  - opcionalmente builda e testa portal e RioB
+  - opcionalmente builda e testa portal, RioB e os dois proxies
   - commita quando houver alteracoes seguras
   - envia a branch atual para origin quando houver commits pendentes
 EOF
@@ -126,15 +126,22 @@ run_validations() {
   if [[ "$SKIP_HEALTH" != "1" ]]; then
     log "subindo bancos preservados, portal e RioB para checagem local"
     compose up -d "${DATABASE_SERVICES[@]}"
-    compose up -d --no-deps "${RUNTIME_SERVICES[@]}"
+    compose up -d --no-deps "${RUNTIME_SERVICES[@]}" "$PORTAL_PROXY_SERVICE"
     if ! wait_for_app 45 2; then
       compose logs --tail=120 "$APP_SERVICE" >&2 || true
       die "falha ao consultar o portal dentro do container"
     fi
-    if ! wait_for_riob 45 2; then
-      compose logs --tail=120 "$RIOB_APP_SERVICE" >&2 || true
-      die "falha ao consultar o RioB dentro do container"
+    log "reiniciando proxies para atualizar os upstreams Docker"
+    compose restart "$PORTAL_PROXY_SERVICE" "$RIOB_PROXY_SERVICE"
+    if ! wait_for_proxy_url "$PORTAL_PROXY_HEALTH_URL" 30 2; then
+      compose logs --tail=120 "$PORTAL_PROXY_SERVICE" >&2 || true
+      die "falha ao consultar o Portal pelo proxy"
     fi
+    if ! wait_for_proxy_url "$RIOB_PROXY_STATUS_URL" "$RIOB_PROXY_STARTUP_TRIES" 2; then
+      compose logs --tail=120 "$RIOB_PROXY_SERVICE" >&2 || true
+      die "falha ao consultar o RioB pelo proxy"
+    fi
+    log "RioB validado pelo proxy externo; a rota real responde /api/status"
   fi
 }
 
@@ -281,11 +288,6 @@ for path in "${FINAL_STAGED[@]}"; do
   fi
 done
 
-log "resumo do commit"
-git diff --cached --stat
-
-run_validations
-
 if [[ -z "$MESSAGE" ]]; then
   if [[ "$YES" == "1" ]]; then
     MESSAGE="Atualizacao operacional $(date '+%Y-%m-%d %H:%M')"
@@ -294,6 +296,11 @@ if [[ -z "$MESSAGE" ]]; then
   fi
 fi
 [[ -n "$MESSAGE" ]] || die "mensagem do commit vazia"
+
+log "resumo do commit"
+git diff --cached --stat
+
+run_validations
 
 if ! confirm "Confirmar commit e envio para Git?"; then
   die "operacao cancelada"

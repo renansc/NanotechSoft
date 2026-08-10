@@ -383,7 +383,8 @@
               <form data-api="/api/customers">
                 <div class="row"><label class="field-inline"><span>Nome</span><input name="name" required></label><label class="field-inline"><span>Documento</span><input name="document"></label><label class="field-inline"><span>Telefone</span><input name="phone" required></label></div>
                 <div class="row"><label class="field-inline"><span>Endereco</span><input name="address" required></label><label class="field-inline"><span>Numero</span><input name="address_number"></label><label class="field-inline"><span>Bairro</span><input name="neighborhood"></label></div>
-                <div class="row"><label class="field-inline"><span>Cidade</span><input name="city"></label><label class="field-inline"><span>UF</span><input name="state" maxlength="2"></label><label class="field-inline"><span>CEP</span><input name="postal_code"></label></div>
+                <div class="row"><label class="field-inline"><span>Cidade</span><input name="city"></label><label class="field-inline"><span>Codigo IBGE</span><input name="city_code" maxlength="7"></label><label class="field-inline"><span>UF</span><input name="state" maxlength="2"></label><label class="field-inline"><span>CEP</span><input name="postal_code"></label></div>
+                <div class="row"><label class="field-inline"><span>Indicador IE</span><select name="state_registration_indicator"><option value="9">9 - Nao contribuinte</option><option value="1">1 - Contribuinte</option><option value="2">2 - Isento</option></select></label><label class="field-inline"><span>Inscricao estadual</span><input name="state_registration"></label></div>
                 <label class="field-inline field-block"><span>Observacoes</span><textarea name="notes"></textarea></label>
                 <button type="submit">Salvar cliente</button>
               </form>
@@ -1156,7 +1157,7 @@
               <p class="eyebrow">Faturamento</p>
               <h2>Emissao das vendas</h2>
             </div>
-            <p class="section-copy">Ambiente local de simulacao, isolado da SEFAZ.</p>
+            <p class="section-copy">Simulacao local e NF-e 55 no ambiente de homologacao da SEFAZ PR.</p>
           </div>
 
           <nav class="function-nav" data-function-nav="faturamento" aria-label="Funcoes de faturamento">
@@ -1214,6 +1215,7 @@
                 </select>
               </label>
               <button type="button" id="fiscal-issue-selected" data-ready="{{ '1' if fiscal_status.ready_for_simulation else '0' }}" disabled>Emitir selecionadas</button>
+              <button type="button" id="fiscal-generate-homologation" class="secondary-btn" data-ready="{{ '1' if fiscal_status.valid_for_transmission and can_change_store_mode else '0' }}" disabled>Gerar NF-e 55 homologacao</button>
               <span id="fiscal-selection-count" class="muted-line">0 vendas selecionadas</span>
             </div>
             <div id="fiscal-feedback" class="fiscal-feedback" data-fiscal-feedback aria-live="polite"></div>
@@ -1258,6 +1260,16 @@
                 <p class="eyebrow">Historico</p>
                 <h3>XMLs assinados</h3>
               </div>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>NF-e homologacao</th><th>Venda</th><th>Chave</th><th>Status</th><th>Protocolo</th><th></th></tr></thead>
+                <tbody>
+                  {% for invoice in fiscal_invoices %}
+                  <tr><td>{{ invoice.series }}/{{ invoice.number }}</td><td>{{ invoice.sale_code }}</td><td>{{ invoice.access_key }}</td><td>{{ invoice.status_reason or invoice.status }}</td><td>{{ invoice.protocol or '-' }}</td><td><div class="document-actions"><a class="table-action" href="{{ invoice.xml_url }}">XML</a>{% if nfe_transmission_enabled and invoice.status in ['generated', 'communication_error'] %}<button type="button" class="table-action nfe-transmit" data-invoice-id="{{ invoice.id }}">Transmitir homologacao</button>{% endif %}</div></td></tr>
+                  {% else %}<tr><td colspan="6">Nenhuma NF-e de homologacao gerada.</td></tr>{% endfor %}
+                </tbody>
+              </table>
             </div>
             <div class="table-wrap">
               <table>
@@ -1790,6 +1802,12 @@
                 <label class="field-block"><span>CRT</span><select name="FISCAL_CRT" required><option value="">Selecione</option>{% for value, label in [('1', 'Simples Nacional'), ('2', 'Simples excesso sublimite'), ('3', 'Regime normal'), ('4', 'MEI')] %}<option value="{{ value }}" {% if settings_map.get('FISCAL_CRT') == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
                 <label class="field-block"><span>UF</span><input name="FISCAL_UF" value="{{ settings_map.get('FISCAL_UF', 'PR') }}" maxlength="2" required></label>
                 <label class="field-block"><span>Codigo IBGE municipio</span><input name="FISCAL_CITY_CODE" value="{{ settings_map.get('FISCAL_CITY_CODE', '') }}" maxlength="7" required></label>
+                <label class="field-block config-field-wide"><span>Logradouro</span><input name="FISCAL_ADDRESS" value="{{ settings_map.get('FISCAL_ADDRESS', '') }}" required></label>
+                <label class="field-block"><span>Numero</span><input name="FISCAL_ADDRESS_NUMBER" value="{{ settings_map.get('FISCAL_ADDRESS_NUMBER', '') }}" required></label>
+                <label class="field-block"><span>Bairro</span><input name="FISCAL_NEIGHBORHOOD" value="{{ settings_map.get('FISCAL_NEIGHBORHOOD', '') }}" required></label>
+                <label class="field-block"><span>Municipio</span><input name="FISCAL_CITY" value="{{ settings_map.get('FISCAL_CITY', '') }}" required></label>
+                <label class="field-block"><span>CEP</span><input name="FISCAL_POSTAL_CODE" value="{{ settings_map.get('FISCAL_POSTAL_CODE', '') }}" required></label>
+                <label class="field-block"><span>Telefone</span><input name="FISCAL_PHONE" value="{{ settings_map.get('FISCAL_PHONE', '') }}"></label>
                 <label class="field-block"><span>Serie NF-e</span><input name="FISCAL_SERIES_55" value="{{ settings_map.get('FISCAL_SERIES_55', '1') }}"></label>
                 <label class="field-block"><span>Serie NFC-e</span><input name="FISCAL_SERIES_65" value="{{ settings_map.get('FISCAL_SERIES_65', '1') }}"></label>
                 <div class="config-form-actions"><button type="submit">Salvar emitente</button></div>
@@ -1944,7 +1962,8 @@
           <div class="row"><label class="field-inline"><span>Nome</span><input name="name" required></label><label class="field-inline"><span>Telefone</span><input name="phone" inputmode="tel" required></label></div>
           <div class="row"><label class="field-inline"><span>Documento</span><input name="document"></label><label class="field-inline"><span>CEP</span><input name="postal_code" inputmode="numeric"></label></div>
           <div class="row"><label class="field-inline"><span>Endereco</span><input name="address" required></label><label class="field-inline"><span>Numero</span><input name="address_number"></label></div>
-          <div class="row"><label class="field-inline"><span>Bairro</span><input name="neighborhood"></label><label class="field-inline"><span>Cidade</span><input name="city"></label><label class="field-inline"><span>UF</span><input name="state" maxlength="2"></label></div>
+          <div class="row"><label class="field-inline"><span>Bairro</span><input name="neighborhood"></label><label class="field-inline"><span>Cidade</span><input name="city"></label><label class="field-inline"><span>Codigo IBGE</span><input name="city_code" maxlength="7"></label><label class="field-inline"><span>UF</span><input name="state" maxlength="2"></label></div>
+          <div class="row"><label class="field-inline"><span>Indicador IE</span><select name="state_registration_indicator"><option value="9">9 - Nao contribuinte</option><option value="1">1 - Contribuinte</option><option value="2">2 - Isento</option></select></label><label class="field-inline"><span>Inscricao estadual</span><input name="state_registration"></label></div>
           <label class="field-inline field-block"><span>Observacoes</span><textarea name="notes"></textarea></label>
           <p class="fiscal-feedback" id="quick-customer-feedback" aria-live="polite"></p>
           <button type="submit">Cadastrar e usar no pedido</button>
@@ -2312,6 +2331,7 @@
       const fiscalSelectAll = document.getElementById("fiscal-select-all");
       const fiscalSaleCheckboxes = Array.from(document.querySelectorAll(".fiscal-sale-checkbox"));
       const fiscalIssueSelected = document.getElementById("fiscal-issue-selected");
+      const fiscalGenerateHomologation = document.getElementById("fiscal-generate-homologation");
       const fiscalSelectionCount = document.getElementById("fiscal-selection-count");
       const fiscalFeedbacks = Array.from(document.querySelectorAll("[data-fiscal-feedback]"));
       const fiscalDocumentModel = document.getElementById("fiscal-document-model");
@@ -2327,6 +2347,9 @@
         }
         if (fiscalIssueSelected) {
           fiscalIssueSelected.disabled = fiscalIssueSelected.dataset.ready !== "1" || count === 0;
+        }
+        if (fiscalGenerateHomologation) {
+          fiscalGenerateHomologation.disabled = fiscalGenerateHomologation.dataset.ready !== "1" || count === 0;
         }
         if (fiscalSelectAll) {
           fiscalSelectAll.checked = fiscalSaleCheckboxes.length > 0 && count === fiscalSaleCheckboxes.length;
@@ -2366,6 +2389,28 @@
         }
       }
 
+      async function generateHomologationInvoices(saleIds) {
+        if (!saleIds.length || !fiscalGenerateHomologation) return;
+        fiscalGenerateHomologation.disabled = true;
+        fiscalGenerateHomologation.textContent = "Gerando XML oficial...";
+        fiscalFeedbacks.forEach((feedback) => {
+          feedback.classList.remove("is-error");
+          feedback.textContent = "Validando cadastros e assinando NF-e 55 de homologacao...";
+        });
+        try {
+          const result = await postJson("/api/fiscal/invoices/homologation", { sale_ids: saleIds });
+          fiscalFeedbacks.forEach((feedback) => { feedback.textContent = result.warning; });
+          window.setTimeout(() => window.location.reload(), 900);
+        } catch (error) {
+          fiscalFeedbacks.forEach((feedback) => {
+            feedback.classList.add("is-error");
+            feedback.textContent = error.message;
+          });
+          fiscalGenerateHomologation.textContent = "Gerar NF-e 55 homologacao";
+          refreshFiscalSelection();
+        }
+      }
+
       if (fiscalSelectAll) {
         fiscalSelectAll.addEventListener("change", () => {
           fiscalSaleCheckboxes.forEach((checkbox) => { checkbox.checked = fiscalSelectAll.checked; });
@@ -2376,6 +2421,23 @@
       if (fiscalIssueSelected) {
         fiscalIssueSelected.addEventListener("click", () => issueFiscalSimulations(selectedFiscalSaleIds(), fiscalIssueSelected));
       }
+      fiscalGenerateHomologation?.addEventListener("click", () => generateHomologationInvoices(selectedFiscalSaleIds()));
+      document.querySelectorAll(".nfe-transmit").forEach((button) => {
+        button.addEventListener("click", async () => {
+          if (!window.confirm("Transmitir esta NF-e 55 para a homologacao da SEFAZ PR?")) return;
+          button.disabled = true;
+          button.textContent = "Transmitindo...";
+          try {
+            const result = await postJson(`/api/fiscal/invoices/${button.dataset.invoiceId}/transmit`, {});
+            alert(`${result.invoice.status_code || ""} ${result.invoice.status_reason}`.trim());
+            window.location.reload();
+          } catch (error) {
+            alert(error.message);
+            button.disabled = false;
+            button.textContent = "Transmitir homologacao";
+          }
+        });
+      });
       document.querySelectorAll(".fiscal-issue-one").forEach((button) => {
         button.addEventListener("click", () => issueFiscalSimulations([Number(button.dataset.saleId)], button));
       });

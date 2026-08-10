@@ -24,12 +24,14 @@ from werkzeug.exceptions import HTTPException
 from .extensions import db
 from .documents import build_fiscal_pdf, build_order_pdf
 from .fiscal import build_signed_simulation, fiscal_certificate_status, load_fiscal_identity
+from .nfe import build_homologation_nfe, transmit_homologation_nfe
 from .tax import icms_code_profile, valid_gtin, validate_issuer, validate_product
 from .store_modes import STORE_MODES, resolve_store_mode
 from .models import (
     CashMovement,
     CashSession,
     DistributionTable,
+    FiscalInvoice,
     FiscalSimulation,
     IntegrationSetting,
     InventoryCount,
@@ -549,6 +551,7 @@ def _serialize_sale_report(sale):
 
 def _sale_fiscal_payload(sale):
     settings = _setting_map()
+    customer = sale.customer
     return {
         "code": sale.code,
         "customer_name": sale.customer_name,
@@ -557,12 +560,30 @@ def _sale_fiscal_payload(sale):
         "discount_amount": sale.discount_amount,
         "total_amount": sale.total_amount,
         "issuer": {key: settings.get(key, "") for key in (
-            "FISCAL_LEGAL_NAME", "FISCAL_CNPJ", "FISCAL_IE", "FISCAL_UF", "FISCAL_CITY_CODE", "FISCAL_CRT"
+            "FISCAL_LEGAL_NAME", "FISCAL_TRADE_NAME", "FISCAL_CNPJ", "FISCAL_IE", "FISCAL_CRT",
+            "FISCAL_ADDRESS", "FISCAL_ADDRESS_NUMBER", "FISCAL_NEIGHBORHOOD", "FISCAL_CITY",
+            "FISCAL_CITY_CODE", "FISCAL_UF", "FISCAL_POSTAL_CODE", "FISCAL_PHONE",
         )},
+        "customer": {
+            "name": customer.name if customer else sale.customer_name,
+            "document": customer.document if customer else "",
+            "phone": customer.phone if customer else sale.customer_phone,
+            "address": customer.address if customer else "",
+            "address_number": customer.address_number if customer else "",
+            "neighborhood": customer.neighborhood if customer else "",
+            "city": customer.city if customer else "",
+            "city_code": customer.city_code if customer else "",
+            "state": customer.state if customer else "",
+            "postal_code": customer.postal_code if customer else "",
+            "state_registration": customer.state_registration if customer else "",
+            "state_registration_indicator": customer.state_registration_indicator if customer else "9",
+        },
         "items": [
             {
                 "sku": item.product.sku if item.product else "",
                 "product_name": item.product.name if item.product else "",
+                "barcode": item.product.barcode if item.product else "",
+                "unit": item.product.unit if item.product else "UN",
                 "lot_code": item.lot.lot_code if item.lot else "",
                 "quantity": item.quantity,
                 "unit_price": item.unit_price,
@@ -597,6 +618,26 @@ def _serialize_fiscal_simulation(simulation):
         "created_at": simulation.created_at.isoformat() + "Z",
         "xml_url": f"/api/fiscal/simulations/{simulation.id}/xml",
         "pdf_url": f"/api/fiscal/simulations/{simulation.id}/pdf",
+    }
+
+
+def _serialize_fiscal_invoice(invoice):
+    return {
+        "id": invoice.id,
+        "sale_id": invoice.sale_id,
+        "sale_code": invoice.sale.code if invoice.sale else "",
+        "document_model": invoice.document_model,
+        "environment": invoice.environment,
+        "series": invoice.series,
+        "number": invoice.number,
+        "access_key": invoice.access_key,
+        "status": invoice.status,
+        "status_code": invoice.status_code,
+        "status_reason": invoice.status_reason,
+        "protocol": invoice.protocol,
+        "total_amount": float(invoice.total_amount or 0),
+        "created_at": invoice.created_at.isoformat() + "Z",
+        "xml_url": f"/api/fiscal/invoices/{invoice.id}/xml",
     }
 
 
@@ -651,7 +692,9 @@ def _serialize_customer(customer):
         "id": customer.id, "name": customer.name, "document": customer.document,
         "phone": customer.phone, "address": customer.address, "address_number": customer.address_number,
         "neighborhood": customer.neighborhood, "city": customer.city, "state": customer.state,
-        "postal_code": customer.postal_code, "full_address": address, "notes": customer.notes,
+        "postal_code": customer.postal_code, "state_registration": customer.state_registration,
+        "state_registration_indicator": customer.state_registration_indicator, "city_code": customer.city_code,
+        "full_address": address, "notes": customer.notes,
         "created_at": customer.created_at.isoformat() + "Z",
     }
 
@@ -1158,6 +1201,10 @@ def index():
     mode_key, store_mode = resolve_store_mode(_portal_store_mode() or settings_map.get("STORE_MODE"))
     company_logo_path = _company_logo_path(settings_map)
     fiscal_history = FiscalSimulation.query.order_by(FiscalSimulation.created_at.desc(), FiscalSimulation.id.desc()).limit(50).all()
+    invoice_history = FiscalInvoice.query.order_by(FiscalInvoice.created_at.desc(), FiscalInvoice.id.desc()).limit(50).all()
+    nfe_transmission_enabled = os.getenv(
+        "NANOSTORE_NFE_HOMOLOGATION_TRANSMISSION_ENABLED", ""
+    ).strip().lower() in {"1", "true", "yes", "on"}
     local_tz = ZoneInfo(os.environ.get("TZ", "America/Sao_Paulo"))
     local_today = datetime.now(local_tz).date()
     day_start = datetime.combine(local_today, time.min, local_tz).astimezone(timezone.utc).replace(tzinfo=None)
@@ -1198,6 +1245,8 @@ def index():
         ).order_by(PharmacySale.created_at.desc(), PharmacySale.id.desc()).limit(200).all(),
         kanban_sales=kanban_sales,
         fiscal_simulations=[_serialize_fiscal_simulation(item) for item in fiscal_history],
+        fiscal_invoices=[_serialize_fiscal_invoice(item) for item in invoice_history],
+        nfe_transmission_enabled=nfe_transmission_enabled,
         format_local_datetime=_format_local_datetime,
         menu_sections=menu_sections,
         mode_key=mode_key,
@@ -1336,8 +1385,13 @@ def api_customers():
         name=name, document=(payload.get("document") or "").strip(), phone=phone, address=address,
         address_number=(payload.get("address_number") or "").strip(), neighborhood=(payload.get("neighborhood") or "").strip(),
         city=(payload.get("city") or "").strip(), state=(payload.get("state") or "").strip().upper(),
-        postal_code=(payload.get("postal_code") or "").strip(), notes=(payload.get("notes") or "").strip(),
+        postal_code=(payload.get("postal_code") or "").strip(),
+        state_registration=(payload.get("state_registration") or "").strip(),
+        state_registration_indicator=(payload.get("state_registration_indicator") or "9").strip(),
+        city_code=(payload.get("city_code") or "").strip(), notes=(payload.get("notes") or "").strip(),
     )
+    if row.state_registration_indicator not in {"1", "2", "9"}:
+        abort(400, "Indicador de IE deve ser 1, 2 ou 9.")
     db.session.add(row)
     db.session.commit()
     return jsonify({"ok": True, "customer": _serialize_customer(row)})
@@ -1915,7 +1969,160 @@ def api_sale_fulfillment(sale_id):
 
 @bp.route("/api/fiscal/status")
 def api_fiscal_status():
-    return jsonify({"ok": True, **fiscal_certificate_status()})
+    transmission_enabled = os.getenv("NANOSTORE_NFE_HOMOLOGATION_TRANSMISSION_ENABLED", "").strip().lower() in {
+        "1", "true", "yes", "on"
+    }
+    return jsonify({"ok": True, **fiscal_certificate_status(), "homologation_transmission_enabled": transmission_enabled})
+
+
+def _reserve_homologation_number():
+    key = "FISCAL_HOMOLOGATION_NEXT_NUMBER_55"
+    setting = IntegrationSetting.query.filter_by(key=key).with_for_update().first()
+    if not setting:
+        setting = IntegrationSetting(key=key, value="1")
+        db.session.add(setting)
+        db.session.flush()
+    try:
+        number = int(str(setting.value).strip())
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Proximo numero da NF-e de homologacao e invalido.") from exc
+    if not 1 <= number <= 999_999_999:
+        raise ValueError("Proximo numero da NF-e de homologacao deve estar entre 1 e 999999999.")
+    setting.value = str(number + 1)
+    return number
+
+
+@bp.route("/api/fiscal/invoices/homologation", methods=["POST"])
+def api_fiscal_homologation_invoices():
+    if not _can_change_store_mode():
+        abort(403, "Somente administradores podem gerar NF-e de homologacao.")
+    payload = request.get_json(force=True) or {}
+    raw_sale_ids = payload.get("sale_ids")
+    if raw_sale_ids is None and payload.get("sale_id") is not None:
+        raw_sale_ids = [payload.get("sale_id")]
+    if not isinstance(raw_sale_ids, list) or not raw_sale_ids:
+        abort(400, "Selecione ao menos uma venda para homologar.")
+    try:
+        sale_ids = list(dict.fromkeys(int(value) for value in raw_sale_ids))
+    except (TypeError, ValueError):
+        abort(400, "Identificador de venda invalido.")
+    if len(sale_ids) > 20:
+        abort(400, "Gere no maximo 20 NF-e de homologacao por vez.")
+
+    try:
+        identity = load_fiscal_identity()
+        if not identity["valid_now"]:
+            raise RuntimeError("Certificado A1 vencido ou ainda nao valido; geracao oficial bloqueada.")
+        schema_path = Path(os.getenv("NANOSTORE_NFE_SCHEMA_PATH", "").strip())
+        if not str(schema_path) or str(schema_path) == "." or not schema_path.is_file():
+            raise RuntimeError("Schema oficial da NF-e nao configurado; geracao oficial bloqueada.")
+        settings = _setting_map()
+        try:
+            series = int(str(settings.get("FISCAL_SERIES_55") or "1").strip())
+        except ValueError as exc:
+            raise ValueError("Serie NF-e invalida.") from exc
+        if not 1 <= series <= 999:
+            raise ValueError("Serie NF-e deve estar entre 1 e 999.")
+
+        invoices = []
+        for sale_id in sale_ids:
+            sale = db.session.get(PharmacySale, sale_id)
+            if not sale:
+                raise ValueError(f"Venda {sale_id} nao encontrada.")
+            if sale.status == "cancelled":
+                raise ValueError(f"O pedido {sale.code} esta cancelado e nao pode ser faturado.")
+            existing = FiscalInvoice.query.filter_by(
+                sale_id=sale.id, environment="homologation", document_model="55"
+            ).first()
+            if existing:
+                raise ValueError(f"O pedido {sale.code} ja possui NF-e de homologacao {existing.series}/{existing.number}.")
+            number = _reserve_homologation_number()
+            result = build_homologation_nfe(
+                _sale_fiscal_payload(sale), series=series, number=number, identity=identity
+            )
+            invoice = FiscalInvoice(
+                sale_id=sale.id,
+                document_model="55",
+                environment="homologation",
+                series=result["series"],
+                number=result["number"],
+                access_key=result["access_key"],
+                status="generated",
+                status_reason="XML assinado, ainda nao transmitido.",
+                issuer_cnpj=result["issuer_cnpj"],
+                total_amount=sale.total_amount,
+                certificate_serial=result["certificate_serial"],
+                certificate_fingerprint=result["certificate_fingerprint"],
+                signed_xml=result["xml"],
+            )
+            db.session.add(invoice)
+            invoices.append(invoice)
+        db.session.commit()
+    except (RuntimeError, ValueError) as exc:
+        db.session.rollback()
+        abort(400, str(exc))
+
+    return jsonify({
+        "ok": True,
+        "count": len(invoices),
+        "transmitted": False,
+        "warning": "XML de homologacao gerado e assinado. Nenhum documento foi transmitido.",
+        "items": [_serialize_fiscal_invoice(invoice) for invoice in invoices],
+    })
+
+
+@bp.route("/api/fiscal/invoices/<int:invoice_id>/transmit", methods=["POST"])
+def api_fiscal_invoice_transmit(invoice_id):
+    if not _can_change_store_mode():
+        abort(403, "Somente administradores podem transmitir NF-e de homologacao.")
+    enabled = os.getenv("NANOSTORE_NFE_HOMOLOGATION_TRANSMISSION_ENABLED", "").strip().lower() in {
+        "1", "true", "yes", "on"
+    }
+    if not enabled:
+        abort(403, "Transmissao de homologacao bloqueada por configuracao do servidor.")
+    invoice = db.session.get(FiscalInvoice, invoice_id) or abort(404, "NF-e nao encontrada.")
+    if invoice.environment != "homologation" or invoice.document_model != "55":
+        abort(400, "Somente NF-e 55 de homologacao pode ser transmitida por esta rota.")
+    if invoice.status == "authorized":
+        return jsonify({"ok": True, "invoice": _serialize_fiscal_invoice(invoice), "already_authorized": True})
+    if invoice.status not in {"generated", "communication_error"}:
+        abort(409, "A NF-e nao esta disponivel para transmissao ou nova tentativa.")
+    try:
+        identity = load_fiscal_identity()
+        if identity["fingerprint"] != invoice.certificate_fingerprint:
+            raise RuntimeError("O certificado configurado nao e o mesmo usado para assinar esta NF-e.")
+        invoice.status = "transmitting"
+        invoice.status_reason = "Enviando para a SEFAZ PR."
+        db.session.commit()
+        result = transmit_homologation_nfe(invoice.signed_xml, batch_id=invoice.id, identity=identity)
+        invoice.response_xml = result["response_xml"]
+        invoice.status_code = result["status_code"]
+        invoice.status_reason = result["status_reason"]
+        invoice.protocol = result["protocol"]
+        invoice.transmitted_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        if result["authorized"]:
+            invoice.status = "authorized"
+            invoice.authorized_xml = result["authorized_xml"]
+            invoice.authorized_at = invoice.transmitted_at
+        else:
+            invoice.status = "rejected"
+        db.session.commit()
+    except RuntimeError as exc:
+        invoice.status = "communication_error"
+        invoice.status_reason = str(exc)[:255]
+        db.session.commit()
+        abort(502, str(exc))
+    return jsonify({"ok": True, "invoice": _serialize_fiscal_invoice(invoice)})
+
+
+@bp.route("/api/fiscal/invoices/<int:invoice_id>/xml")
+def api_fiscal_invoice_xml(invoice_id):
+    invoice = db.session.get(FiscalInvoice, invoice_id) or abort(404, "NF-e nao encontrada.")
+    content = invoice.authorized_xml or invoice.signed_xml
+    suffix = "procNFe" if invoice.authorized_xml else "nfe"
+    response = Response(content, mimetype="application/xml")
+    response.headers["Content-Disposition"] = f'attachment; filename="{invoice.access_key}-{suffix}.xml"'
+    return response
 
 
 @bp.route("/api/fiscal/simulations", methods=["POST"])

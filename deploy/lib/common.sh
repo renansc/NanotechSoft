@@ -9,10 +9,14 @@ DB_SERVICE="mysql"
 PACS_DB_SERVICE="pacs-postgres"
 RIOB_APP_SERVICE="riob-app"
 RIOB_PROXY_SERVICE="riob-proxy"
+PORTAL_PROXY_SERVICE="portal-proxy"
 BUILD_SERVICES=("$APP_SERVICE" "$RIOB_APP_SERVICE")
 RUNTIME_SERVICES=("$RIOB_APP_SERVICE" "$RIOB_PROXY_SERVICE" "$APP_SERVICE")
 DATABASE_SERVICES=("$DB_SERVICE" "$PACS_DB_SERVICE")
 APP_URL="http://127.0.0.1:${NOTECHSOFT_APP_PORT:-5600}/login"
+PORTAL_PROXY_HEALTH_URL="https://127.0.0.1:${NOTECHSOFT_HTTPS_PORT:-443}/healthz"
+RIOB_PROXY_STATUS_URL="https://127.0.0.1:${RB_HTTPS_PORT:-8899}/api/status"
+RIOB_PROXY_STARTUP_TRIES=120
 COMPOSE_CMD=()
 
 log() {
@@ -417,6 +421,23 @@ import urllib.request
 urllib.request.urlopen("http://127.0.0.1:8080/api/status", timeout=5).read()
 PY
     then
+      return 0
+    fi
+    sleep "$delay"
+  done
+
+  return 1
+}
+
+wait_for_proxy_url() {
+  local url="$1"
+  local tries="${2:-30}"
+  local delay="${3:-2}"
+  local attempt
+
+  command -v curl >/dev/null 2>&1 || return 1
+  for ((attempt=1; attempt<=tries; attempt+=1)); do
+    if curl --silent --show-error --fail --insecure --max-time 10 "$url" >/dev/null 2>&1; then
       return 0
     fi
     sleep "$delay"

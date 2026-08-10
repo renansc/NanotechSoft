@@ -45,6 +45,7 @@ def seed_defaults():
         "PHARMACY_MERCADO_LIVRE_SELLER_ID": "",
         "COMPANY_NAME": "NanoStore Farmacia",
         "STORE_MODE": "pharmacy",
+        "FISCAL_HOMOLOGATION_NEXT_NUMBER_55": "1",
     }
     for key, value in default_settings.items():
         if not IntegrationSetting.query.filter_by(key=key).first():
@@ -204,5 +205,16 @@ def upgrade_schema():
         sale_indexes = {index["name"] for index in inspector.get_indexes("pharmacy_sale")}
         if "ix_pharmacy_sale_completed_at" not in sale_indexes:
             db.session.execute(text("CREATE INDEX ix_pharmacy_sale_completed_at ON pharmacy_sale (completed_at)"))
+
+    if inspector.has_table("pharmacy_customer"):
+        customer_columns = {column["name"] for column in inspector.get_columns("pharmacy_customer")}
+        fiscal_columns = {
+            "state_registration": "VARCHAR(20) NOT NULL DEFAULT ''",
+            "state_registration_indicator": "VARCHAR(1) NOT NULL DEFAULT '9'",
+            "city_code": "VARCHAR(7) NOT NULL DEFAULT ''",
+        }
+        for column, definition in fiscal_columns.items():
+            if column not in customer_columns:
+                db.session.execute(text(f"ALTER TABLE pharmacy_customer ADD COLUMN {column} {definition}"))
 
     db.session.commit()

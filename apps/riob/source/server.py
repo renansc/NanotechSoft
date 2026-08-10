@@ -13415,6 +13415,7 @@ def dashboard():
     cursor.execute("""
         SELECT status, COUNT(*) as total
         FROM fretes
+        WHERE COALESCE(arquivado, 0) = 0
         GROUP BY status
     """)
     dados = cursor.fetchall()
@@ -35990,8 +35991,10 @@ def dashboard_frota():
                 INNER JOIN (
                     SELECT veiculo_id, MAX(id) AS max_id
                     FROM fretes
+                    WHERE COALESCE(arquivado, 0) = 0
                     GROUP BY veiculo_id
                 ) x ON x.veiculo_id = f1.veiculo_id AND x.max_id = f1.id
+                WHERE COALESCE(f1.arquivado, 0) = 0
             """)
             for f in (cur.fetchall() or []):
                 frete_por_veiculo[int(f.get("veiculo_id") or 0)] = f
