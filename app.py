@@ -2115,8 +2115,18 @@ def local_riob_proxy_response(app_key, subpath=""):
     data = request.get_data() if request.method in {"POST", "PUT", "PATCH"} else None
     req = urllib.request.Request(upstream_url, data=data, headers=headers, method=request.method)
 
+    # O redirecionamento precisa voltar ao navegador para que uma rota de outro
+    # modulo (por exemplo, XML -> Gestor de E-mails) seja processada novamente
+    # pelo Portal. O urlopen padrao segue o Location dentro do processo atual e
+    # transforma /apps/riob-email/... em uma requisicao indevida ao app XML.
+    class NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, redirect_req, fp, code, msg, redirect_headers, newurl):
+            return None
+
+    opener = urllib.request.build_opener(NoRedirect)
+
     try:
-        with urllib.request.urlopen(req, timeout=120) as resp:
+        with opener.open(req, timeout=120) as resp:
             body = resp.read()
             status = resp.status
             resp_headers = resp.headers
