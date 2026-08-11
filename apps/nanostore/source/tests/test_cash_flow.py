@@ -73,6 +73,35 @@ class CashFlowTest(unittest.TestCase):
         self.assertEqual(200, response.status_code)
         self.assertEqual("distributor", IntegrationSetting.query.filter_by(key="STORE_MODE").one().value)
 
+    def test_creates_distribution_table(self):
+        response = self.app.test_client().post("/api/tables", json={
+            "number": "12",
+            "name": "Mesa varanda",
+            "location": "Proximo a entrada",
+            "is_active": True,
+        })
+
+        self.assertEqual(201, response.status_code, response.get_json())
+        table = DistributionTable.query.one()
+        self.assertEqual(12, table.number)
+        self.assertEqual("Mesa varanda", table.name)
+        self.assertEqual("Proximo a entrada", table.location)
+        self.assertTrue(table.is_active)
+
+    def test_rejects_duplicate_distribution_table_number(self):
+        db.session.add(DistributionTable(number=4, name="Mesa existente", location="Sala"))
+        db.session.commit()
+
+        response = self.app.test_client().post("/api/tables", json={
+            "number": 4,
+            "name": "Mesa repetida",
+            "location": "Varanda",
+        })
+
+        self.assertEqual(400, response.status_code)
+        self.assertIn("este numero", response.get_json()["error"])
+        self.assertEqual(1, DistributionTable.query.count())
+
     def test_payment_requires_open_cash(self):
         sale = self.make_sale()
         response = self.app.test_client().post("/api/payments/process", json={"sale_id": sale.id, "method": "cash", "amount": "9"})

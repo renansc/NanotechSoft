@@ -1397,14 +1397,39 @@ def api_customers():
     return jsonify({"ok": True, "customer": _serialize_customer(row)})
 
 
-@bp.route("/api/tables")
+@bp.route("/api/tables", methods=["GET", "POST"])
 def api_tables():
-    rows = DistributionTable.query.order_by(DistributionTable.number.asc()).all()
-    return jsonify({"ok": True, "items": [
-        {"id": row.id, "number": row.number, "name": row.name, "location": row.location,
-         "reference": row.reference, "is_active": row.is_active}
-        for row in rows
-    ]})
+    if request.method == "GET":
+        rows = DistributionTable.query.order_by(DistributionTable.number.asc()).all()
+        return jsonify({"ok": True, "items": [
+            {"id": row.id, "number": row.number, "name": row.name, "location": row.location,
+             "reference": row.reference, "is_active": row.is_active}
+            for row in rows
+        ]})
+
+    payload = request.get_json(force=True)
+    try:
+        number = int(payload.get("number"))
+    except (TypeError, ValueError):
+        abort(400, "Informe um numero de mesa valido.")
+    name = (payload.get("name") or "").strip()
+    location = (payload.get("location") or "").strip()
+    if number <= 0:
+        abort(400, "O numero da mesa deve ser maior que zero.")
+    if not name:
+        abort(400, "Nome da mesa e obrigatorio.")
+    if DistributionTable.query.filter_by(number=number).first():
+        abort(400, "Ja existe uma mesa com este numero.")
+
+    row = DistributionTable(
+        number=number,
+        name=name,
+        location=location,
+        is_active=bool(payload.get("is_active", True)),
+    )
+    db.session.add(row)
+    db.session.commit()
+    return jsonify({"ok": True, "id": row.id}), 201
 
 
 @bp.route("/api/products", methods=["GET", "POST"])
