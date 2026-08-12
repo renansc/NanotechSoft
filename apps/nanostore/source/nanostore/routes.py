@@ -1235,6 +1235,7 @@ def index():
         suppliers=PharmacySupplier.query.order_by(PharmacySupplier.name.asc()).all(),
         customers=PharmacyCustomer.query.order_by(PharmacyCustomer.name.asc()).all(),
         distribution_tables=DistributionTable.query.filter_by(is_active=True).order_by(DistributionTable.number.asc()).all(),
+        distribution_tables_all=DistributionTable.query.order_by(DistributionTable.number.asc()).all(),
         settings_map=settings_map,
         company_logo_url="api/company/logo" if company_logo_path else "",
         company_logo_version=int(company_logo_path.stat().st_mtime) if company_logo_path else 0,
@@ -1430,6 +1431,35 @@ def api_tables():
     db.session.add(row)
     db.session.commit()
     return jsonify({"ok": True, "id": row.id}), 201
+
+
+@bp.route("/api/tables/<int:table_id>", methods=["PATCH"])
+def api_table_update(table_id):
+    row = db.session.get(DistributionTable, table_id) or abort(404, "Mesa nao encontrada.")
+    payload = request.get_json(force=True)
+    try:
+        number = int(payload.get("number"))
+    except (TypeError, ValueError):
+        abort(400, "Informe um numero de mesa valido.")
+    name = (payload.get("name") or "").strip()
+    location = (payload.get("location") or "").strip()
+    if number <= 0:
+        abort(400, "O numero da mesa deve ser maior que zero.")
+    if not name:
+        abort(400, "Nome da mesa e obrigatorio.")
+    duplicate = DistributionTable.query.filter(
+        DistributionTable.id != row.id,
+        DistributionTable.number == number,
+    ).first()
+    if duplicate:
+        abort(400, "Ja existe uma mesa com este numero.")
+
+    row.number = number
+    row.name = name
+    row.location = location
+    row.is_active = bool(payload.get("is_active", False))
+    db.session.commit()
+    return jsonify({"ok": True, "id": row.id})
 
 
 @bp.route("/api/products", methods=["GET", "POST"])

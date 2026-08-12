@@ -102,6 +102,44 @@ class CashFlowTest(unittest.TestCase):
         self.assertIn("este numero", response.get_json()["error"])
         self.assertEqual(1, DistributionTable.query.count())
 
+    def test_updates_distribution_table(self):
+        table = DistributionTable(number=7, name="Mesa antiga", location="Sala", is_active=True)
+        db.session.add(table)
+        db.session.commit()
+
+        response = self.app.test_client().patch(f"/api/tables/{table.id}", json={
+            "number": 8,
+            "name": "Mesa atualizada",
+            "location": "Varanda",
+            "is_active": False,
+        })
+
+        self.assertEqual(200, response.status_code, response.get_json())
+        db.session.refresh(table)
+        self.assertEqual(8, table.number)
+        self.assertEqual("Mesa atualizada", table.name)
+        self.assertEqual("Varanda", table.location)
+        self.assertFalse(table.is_active)
+
+    def test_rejects_duplicate_number_when_updating_distribution_table(self):
+        first = DistributionTable(number=1, name="Mesa um", location="Sala")
+        second = DistributionTable(number=2, name="Mesa dois", location="Varanda")
+        db.session.add_all([first, second])
+        db.session.commit()
+
+        response = self.app.test_client().patch(f"/api/tables/{second.id}", json={
+            "number": 1,
+            "name": "Mesa alterada",
+            "location": "Entrada",
+            "is_active": True,
+        })
+
+        self.assertEqual(400, response.status_code)
+        self.assertIn("este numero", response.get_json()["error"])
+        db.session.refresh(second)
+        self.assertEqual(2, second.number)
+        self.assertEqual("Mesa dois", second.name)
+
     def test_payment_requires_open_cash(self):
         sale = self.make_sale()
         response = self.app.test_client().post("/api/payments/process", json={"sale_id": sale.id, "method": "cash", "amount": "9"})
