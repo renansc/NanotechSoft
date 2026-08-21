@@ -206,8 +206,10 @@ de 90 dias e oferece descoberta manual de impressoras e computadores
 Windows/Linux por ICMP, NetBIOS e portas de serviço. Ao clicar em um equipamento,
 um card apresenta as métricas e a identificação recebidas do exporter. A coleta
 começa quando o módulo é aberto. CPU, memória e disco podem enviar alertas por
-SMTP ao atingirem os limites configurados; as variáveis `SMTP_*` e
-`TECH_ALERT_EMAIL_TO` ficam documentadas no README do módulo. Consulte
+SMTP ao atingirem os limites configurados. Por padrão, o remetente é uma conta
+de e-mail já configurada no RioB e `TECH_ALERT_EMAIL_TO` define somente o
+destinatário; a substituição opcional por `SMTP_*` fica documentada no README
+do módulo. Consulte
 `apps/tecnologia/README.md` para os limites do diagnóstico de Wi-Fi e a operação.
 
 O arquivo `clientes-modulos.json` define os clientes e quais modulos cada um possui. No deploy, configure `CLIENTE_DEPLOY_ID` com o ID do cliente, por exemplo `rio-branco`. Cada ambiente continua usando seu proprio banco via `NS_DB_NAME`/credenciais, sem misturar dados entre clientes.

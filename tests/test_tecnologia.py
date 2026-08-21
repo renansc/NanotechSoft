@@ -263,6 +263,28 @@ class TecnologiaMonitorTests(unittest.TestCase):
 
 
 class TecnologiaIntegrationTests(unittest.TestCase):
+    def test_technology_alert_uses_existing_riob_smtp_account(self):
+        riob_account = {
+            "host": "smtps.bol.com.br", "port": 587,
+            "user": "remetente@bol.com.br", "password": "stored-secret",
+            "sender": "remetente@bol.com.br", "useTls": True,
+            "source": "riob", "accountName": "Compras",
+        }
+        environment = {
+            "SMTP_HOST": "", "SMTP_USER": "", "SMTP_PASSWORD": "", "SMTP_FROM": "",
+            "TECH_ALERT_EMAIL_TO": "solucoestecnologicasrenan@gmail.com",
+        }
+        with (
+            mock.patch.dict(portal.os.environ, environment, clear=False),
+            mock.patch.object(portal, "technology_riob_smtp_config", return_value=riob_account),
+        ):
+            config = portal.technology_email_config()
+
+        self.assertTrue(config["configured"])
+        self.assertEqual("remetente@bol.com.br", config["sender"])
+        self.assertEqual("solucoestecnologicasrenan@gmail.com", config["recipient"])
+        self.assertEqual("riob", config["source"])
+
     def test_technology_alert_email_requires_password_when_user_is_configured(self):
         environment = {
             "SMTP_HOST": "smtp.gmail.com", "SMTP_PORT": "587",
@@ -384,6 +406,7 @@ class TecnologiaIntegrationTests(unittest.TestCase):
         self.assertIn("Atualizar agora", html)
         self.assertIn("Alertas por e-mail", html)
         self.assertIn("Enviar e-mail de teste", html)
+        self.assertIn("Remetente:", javascript)
         self.assertIn('const API = "/apps/tecnologia/api"', javascript)
 
     def test_javascript_has_valid_syntax_in_chrome(self):

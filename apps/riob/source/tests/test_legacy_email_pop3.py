@@ -6,13 +6,26 @@ import zipfile
 from datetime import datetime
 from email.message import EmailMessage
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from zoneinfo import ZoneInfo
 
 import legacy_services
 
 
 class LegacyEmailPop3Tests(unittest.TestCase):
+    def test_bol_seed_uses_official_smtp_hostname(self):
+        cursor = Mock()
+        with patch.dict(
+            os.environ,
+            {"RB_EMAIL_BOL_USER": "conta@bol.com.br", "RB_EMAIL_BOL_PASS": "secret"},
+            clear=False,
+        ):
+            os.environ.pop("RB_EMAIL_BOL_SMTP_HOST", None)
+            legacy_services._seed_env_email_accounts(cursor)
+
+        params = cursor.execute.call_args.args[1]
+        self.assertIn("smtps.bol.com.br", params)
+
     def test_homologacao_never_deletes_from_pop3(self):
         with patch.dict(
             os.environ,

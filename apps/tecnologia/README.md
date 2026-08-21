@@ -111,21 +111,26 @@ cada minuto: enquanto o problema continuar, há lembrete a cada 6 horas. A
 recuperação é avisada quando o recurso cai pelo menos 5 pontos percentuais
 abaixo do limite, evitando mensagens repetidas por pequenas oscilações.
 
-Configure o SMTP no `.env` e recrie o container do portal:
+Por padrão, o módulo reutiliza como remetente a primeira conta habilitada do
+RioB que tenha servidor SMTP, usuário e senha preenchidos em
+`riobranco.gestor_email_config`. As contas POP3/IMAP continuam responsáveis
+pelo recebimento; o envio usa o SMTP cadastrado na mesma conta. O endereço
+abaixo é somente o destinatário do alerta:
 
 ```dotenv
-SMTP_HOST=smtp.gmail.com
-SMTP_PORT=587
-SMTP_USER=conta-remetente@gmail.com
-SMTP_PASSWORD=senha-ou-senha-de-app
-SMTP_FROM=conta-remetente@gmail.com
-SMTP_USE_TLS=1
 TECH_ALERT_EMAIL_TO=solucoestecnologicasrenan@gmail.com
 ```
 
+Quando houver mais de uma conta com SMTP, `TECH_ALERT_EMAIL_ACCOUNT_ID`
+seleciona o ID desejado. As variáveis `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`,
+`SMTP_PASSWORD`, `SMTP_FROM` e `SMTP_USE_TLS` permanecem como substituição
+opcional para ambientes que não usam as contas do RioB; quando `SMTP_HOST`
+estiver vazio, a conta do RioB é usada automaticamente.
+
 O painel **Alertas por e-mail** mostra se a configuração está pronta, a
 quantidade de alertas ativos, o último envio e eventual erro. Administradores
-podem usar **Enviar e-mail de teste**. A senha nunca é devolvida pela API.
+podem usar **Enviar e-mail de teste**. O painel distingue remetente e
+destinatário, e a senha nunca é devolvida pela API.
 `TECH_ALERT_REMINDER_HOURS` altera o lembrete e
 `TECH_ALERT_RECOVERY_MARGIN_PCT` altera a margem de recuperação.
 

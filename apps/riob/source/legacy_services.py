@@ -172,7 +172,7 @@ def _seed_env_email_accounts(cur):
             os.environ.get("RB_EMAIL_BOL_MAILBOX", "INBOX"),
             bol_user,
             bol_pass,
-            os.environ.get("RB_EMAIL_BOL_SMTP_HOST", "smtp.bol.com.br"),
+            os.environ.get("RB_EMAIL_BOL_SMTP_HOST", "smtps.bol.com.br"),
             int(os.environ.get("RB_EMAIL_BOL_SMTP_PORT", "587")),
             _env_bool("RB_EMAIL_BOL_SMTP_TLS", "1"),
             os.environ.get("RB_EMAIL_BOL_SINCE_DATE", "2026-01-01"),
@@ -4455,7 +4455,7 @@ def config():
             <label>Senha / senha de app</label>
             <input name="email_pass" type="password">
             <label>Servidor SMTP</label>
-            <input name="smtp_host" value="smtp.bol.com.br">
+            <input name="smtp_host" value="smtps.bol.com.br">
             <label>Porta SMTP</label>
             <input name="smtp_port" type="number" value="587">
             <label><input type="checkbox" name="smtp_use_tls" checked> Usar TLS no SMTP</label><br><br>

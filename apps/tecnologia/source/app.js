@@ -93,8 +93,11 @@
     const lastError = alert.lastError
       ? `<div class="emailAlertError"><strong>Última falha</strong><span>${esc(alert.lastError)}</span></div>`
       : "";
+    const sender = alert.sender
+      ? `Remetente: ${alert.sender}${alert.accountName ? ` · ${alert.accountName}` : ""}`
+      : "Nenhuma conta remetente disponível";
     $("#emailAlertStatus").innerHTML = `<div class="emailAlertSummary">
-      <div>${configuration}<small>CPU, RAM e disco nos limites definidos em cada equipamento.</small></div>
+      <div>${configuration}<small>${esc(sender)}</small></div>
       <div><span>Destinatário</span><strong>${esc(alert.recipient)}</strong></div>
       <div><span>Alertas ativos</span><strong>${Number(alert.activeCount || 0)}</strong></div>
       <div><span>Último envio</span><strong>${esc(dateTime(alert.lastEmailAt))}</strong></div>

@@ -4872,6 +4872,51 @@ def technology_public_device(row):
     }
 
 
+def technology_riob_smtp_config():
+    schema = str(os.environ.get("RIOB_DB_NAME") or "riobranco").strip()
+    if not re.fullmatch(r"[A-Za-z0-9_]+", schema):
+        return None
+    try:
+        account_id = int(os.environ.get("TECH_ALERT_EMAIL_ACCOUNT_ID") or 0)
+    except (TypeError, ValueError):
+        account_id = 0
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute(
+            f"""
+            SELECT id, account_name, email_user, email_pass, smtp_host,
+                   smtp_port, smtp_use_tls
+            FROM `{schema}`.gestor_email_config
+            WHERE COALESCE(enabled, 1)=1
+              AND COALESCE(smtp_host, '') <> ''
+              AND COALESCE(email_user, '') <> ''
+              AND COALESCE(email_pass, '') <> ''
+            ORDER BY (id=%s) DESC, id ASC
+            LIMIT 1
+            """,
+            (account_id,),
+        )
+        row = cur.fetchone()
+    except mysql.connector.Error:
+        row = None
+    finally:
+        cur.close()
+        conn.close()
+    if not row:
+        return None
+    return {
+        "host": str(row.get("smtp_host") or "").strip(),
+        "port": int(row.get("smtp_port") or 587),
+        "user": str(row.get("email_user") or "").strip(),
+        "password": str(row.get("email_pass") or ""),
+        "sender": str(row.get("email_user") or "").strip(),
+        "useTls": bool(row.get("smtp_use_tls")),
+        "source": "riob",
+        "accountName": str(row.get("account_name") or f"Conta {row.get('id')}").strip(),
+    }
+
+
 def technology_email_config():
     host = str(os.environ.get("SMTP_HOST") or "").strip()
     user = str(os.environ.get("SMTP_USER") or "").strip()
@@ -4883,12 +4928,20 @@ def technology_email_config():
     except (TypeError, ValueError):
         port = 587
     use_tls = str(os.environ.get("SMTP_USE_TLS", "1")).strip().lower() not in {"0", "false", "nao", "não", "off"}
-    return {
-        "host": host, "port": port, "user": user,
-        "password": password,
-        "sender": sender, "recipient": recipient, "useTls": use_tls,
-        "configured": bool(host and sender and recipient and (not user or password)),
-    }
+    config = {
+        "host": host, "port": port, "user": user, "password": password,
+        "sender": sender, "useTls": use_tls, "source": "environment",
+        "accountName": "SMTP do ambiente",
+    } if host else (technology_riob_smtp_config() or {
+        "host": "", "port": port, "user": "", "password": "",
+        "sender": "", "useTls": use_tls, "source": "none", "accountName": "",
+    })
+    config["recipient"] = recipient
+    config["configured"] = bool(
+        config["host"] and config["sender"] and recipient
+        and (not config["user"] or config["password"])
+    )
+    return config
 
 
 def send_technology_email(subject, body):
@@ -5095,6 +5148,8 @@ def get_technology_alert_status():
     last_email = summary.get("ultimo_email_em")
     return {
         "configured": config["configured"], "recipient": config["recipient"],
+        "sender": config["sender"], "source": config["source"],
+        "accountName": config["accountName"],
         "activeCount": int(summary.get("ativos") or 0),
         "lastEmailAt": last_email.isoformat(timespec="seconds") if last_email else None,
         "lastError": (error or {}).get("ultimo_erro") or "",
