@@ -7,7 +7,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl ffmpeg iputils-ping openssh-client poppler-utils tesseract-ocr tesseract-ocr-por \
+    && apt-get install -y --no-install-recommends curl ffmpeg iputils-ping openssh-client poppler-utils snmp tesseract-ocr tesseract-ocr-por \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt ./

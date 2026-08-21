@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import re
 import mimetypes
+import smtplib
 import ssl
 import socket
 import subprocess
@@ -22,6 +23,7 @@ import urllib.parse
 import urllib.request
 import tempfile
 from io import BytesIO
+from email.message import EmailMessage
 
 from flask import Flask, Response, jsonify, redirect, render_template, request, send_file, send_from_directory, session, url_for
 import mysql.connector
@@ -39,7 +41,9 @@ from apps.financeiro.pdf_report import FinancePdfReportError, build_finance_titl
 from apps.financeiro.pix import PixPayloadError, build_static_pix_payload
 from apps.tecnologia.monitor import (
     build_network_diagnosis,
+    discover_computers,
     discover_printers,
+    measure_internet_speed,
     normalize_device_payload,
     probe_device,
 )
@@ -275,8 +279,16 @@ _raioxpacs_lock = threading.Lock()
 _raioxpacs_proc = None
 _finance_state_lock = threading.Lock()
 _technology_probe_lock = threading.Lock()
+_technology_speed_lock = threading.Lock()
 _technology_monitor_lock = threading.Lock()
 _technology_monitor_thread = None
+
+TECH_ALERT_DEFAULT_TO = "solucoestecnologicasrenan@gmail.com"
+TECH_ALERT_RESOURCES = {
+    "CPU": ("cpuPct", "cpu_alerta_pct", "CPU"),
+    "MEMORIA": ("memoryPct", "memoria_alerta_pct", "memória RAM"),
+    "DISCO": ("diskPct", "disco_alerta_pct", "disco"),
+}
 
 
 app = Flask(__name__)
@@ -388,6 +400,23 @@ def ensure_database():
     for statement in [s.strip() for s in schema.split(";") if s.strip()]:
         cur.execute(statement)
 
+    technology_columns = {
+        "download_alerta_mbps": "DECIMAL(10,2) NOT NULL DEFAULT 50",
+        "upload_alerta_mbps": "DECIMAL(10,2) NOT NULL DEFAULT 10",
+        "cpu_alerta_pct": "DECIMAL(6,2) NOT NULL DEFAULT 90",
+        "memoria_alerta_pct": "DECIMAL(6,2) NOT NULL DEFAULT 90",
+        "disco_alerta_pct": "DECIMAL(6,2) NOT NULL DEFAULT 90",
+        "trafego_alerta_mbps": "DECIMAL(10,2) NOT NULL DEFAULT 100",
+        "snmp_community": "VARCHAR(160) NOT NULL DEFAULT ''",
+        "snmp_port": "INT NOT NULL DEFAULT 161",
+        "agente_porta": "INT NULL",
+        "agente_path": "VARCHAR(120) NOT NULL DEFAULT '/metrics'",
+    }
+    for column_name, column_ddl in technology_columns.items():
+        cur.execute(f"SHOW COLUMNS FROM tecnologia_dispositivos LIKE '{column_name}'")
+        if not cur.fetchone():
+            cur.execute(f"ALTER TABLE tecnologia_dispositivos ADD COLUMN {column_name} {column_ddl}")
+
     cur.execute("SELECT COUNT(*) FROM tecnologia_dispositivos")
     if int((cur.fetchone() or [0])[0]) == 0:
         cur.executemany(
@@ -407,6 +436,38 @@ def ensure_database():
                 ("Impressora 196", "IMPRESSORA", "192.168.200.196", 9100, "ICMP", "A identificar", "Detectada com serviço de impressão RAW.", 0, 20, 5),
             ),
         )
+
+    for seed in (
+        ("Relógio ponto", "RELOGIO_PONTO", "192.168.200.110", None, "ICMP", "Rede principal", "Relógio ponto final 110.", 1, 20, 5),
+        ("NVR", "NVR", "192.168.200.210", None, "ICMP", "Rede principal", "Gravador de câmeras final 210.", 1, 20, 5),
+        ("PC DESKTOP-8VT53SS", "COMPUTADOR", "192.168.200.12", None, "ICMP", "Rede principal", "Windows 10 PC; nome NetBIOS DESKTOP-8VT53SS confirmado na varredura.", 0, 30, 5),
+        ("PC RB02", "COMPUTADOR", "192.168.200.21", None, "ICMP", "Rede principal", "Windows 10 PC; nome NetBIOS RB02 confirmado na varredura.", 0, 30, 5),
+        ("PC-03", "COMPUTADOR", "192.168.200.136", None, "ICMP", "Rede principal", "Windows 10 PC; nome NetBIOS PC-03 confirmado na varredura.", 0, 30, 5),
+        ("PC Linux 184", "COMPUTADOR", "192.168.200.184", 22, "ICMP", "Rede principal", "Linux Debian; SSH e fabricante da placa Elitegroup confirmados na varredura.", 0, 30, 5),
+        ("Notebook Renan", "NOTEBOOK", "192.168.200.122", None, "ICMP", "Rede principal", "Notebook Windows 11 informado; nome NetBIOS NOTEBOOK-RENAN confirmado na varredura.", 0, 30, 5),
+        ("Notebook WHITEVENDAS", "NOTEBOOK", "192.168.200.197", None, "ICMP", "Rede principal", "Notebook Windows 10 informado; nome NetBIOS WHITEVENDAS confirmado na varredura.", 0, 30, 5),
+    ):
+        cur.execute("SELECT id FROM tecnologia_dispositivos WHERE host=%s LIMIT 1", (seed[2],))
+        if not cur.fetchone():
+            cur.execute(
+                """
+                INSERT INTO tecnologia_dispositivos
+                    (nome, tipo, host, porta, sonda, localizacao, observacoes,
+                     critico, ativo, latencia_alerta_ms, perda_alerta_pct)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 1, %s, %s)
+                """,
+                seed,
+            )
+            if seed[2] == "192.168.200.122":
+                cur.execute(
+                    """
+                    UPDATE tecnologia_dispositivos
+                    SET porta=9182, sonda='PROMETHEUS', agente_porta=9182,
+                        agente_path='/metrics'
+                    WHERE id=%s
+                    """,
+                    (int(cur.lastrowid),),
+                )
 
     cur.execute("SHOW COLUMNS FROM usuarios LIKE 'nanostore_perfil'")
     if not cur.fetchone():
@@ -4749,10 +4810,24 @@ def tatoo_static(subpath):
 # ---------------------------------------------------------------------------
 # Tecnologia: monitoramento da rede local
 # ---------------------------------------------------------------------------
+def technology_json_value(value):
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str) and value:
+        try:
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, dict) else {}
+        except (TypeError, ValueError):
+            return {}
+    return {}
+
+
 def technology_public_metric(row, prefix=""):
     if not row or not row.get(f"{prefix}status"):
         return None
     checked_at = row.get(f"{prefix}verificado_em")
+    details = technology_json_value(row.get(f"{prefix}detalhes"))
+    telemetry = details.get("telemetry") if isinstance(details.get("telemetry"), dict) else None
     return {
         "status": row.get(f"{prefix}status"),
         "latencyMs": float(row[f"{prefix}latencia_ms"]) if row.get(f"{prefix}latencia_ms") is not None else None,
@@ -4761,6 +4836,7 @@ def technology_public_metric(row, prefix=""):
         "serviceOk": None if row.get(f"{prefix}servico_ok") is None else bool(row.get(f"{prefix}servico_ok")),
         "message": row.get(f"{prefix}mensagem") or "",
         "checkedAt": checked_at.isoformat(timespec="milliseconds") if hasattr(checked_at, "isoformat") else str(checked_at or ""),
+        "telemetry": telemetry,
     }
 
 
@@ -4778,11 +4854,250 @@ def technology_public_device(row):
         "ativo": bool(row.get("ativo")),
         "latenciaAlertaMs": float(row.get("latencia_alerta_ms") or 80),
         "perdaAlertaPct": float(row.get("perda_alerta_pct") or 5),
+        "downloadAlertMbps": float(row.get("download_alerta_mbps") or 50),
+        "uploadAlertMbps": float(row.get("upload_alerta_mbps") or 10),
+        "cpuAlertPct": float(row.get("cpu_alerta_pct") or 90),
+        "memoryAlertPct": float(row.get("memoria_alerta_pct") or 90),
+        "diskAlertPct": float(row.get("disco_alerta_pct") or 90),
+        "trafficAlertMbps": float(row.get("trafego_alerta_mbps") or 100),
+        "snmpPort": int(row.get("snmp_port") or 161),
+        "hasSnmpCommunity": bool(row.get("snmp_community")),
+        "agentPort": int(row["agente_porta"]) if row.get("agente_porta") is not None else None,
+        "agentPath": row.get("agente_path") or "/metrics",
         "availability24h": float(row["disponibilidade_24h"]) if row.get("disponibilidade_24h") is not None else None,
         "avgLatency24h": float(row["latencia_media_24h"]) if row.get("latencia_media_24h") is not None else None,
         "avgLoss24h": float(row["perda_media_24h"]) if row.get("perda_media_24h") is not None else None,
         "checks24h": int(row.get("checagens_24h") or 0),
         "ultimaMetrica": technology_public_metric(row, "ultima_"),
+    }
+
+
+def technology_email_config():
+    host = str(os.environ.get("SMTP_HOST") or "").strip()
+    user = str(os.environ.get("SMTP_USER") or "").strip()
+    password = str(os.environ.get("SMTP_PASSWORD") or "")
+    sender = str(os.environ.get("SMTP_FROM") or user).strip()
+    recipient = str(os.environ.get("TECH_ALERT_EMAIL_TO") or TECH_ALERT_DEFAULT_TO).strip()
+    try:
+        port = int(os.environ.get("SMTP_PORT") or 587)
+    except (TypeError, ValueError):
+        port = 587
+    use_tls = str(os.environ.get("SMTP_USE_TLS", "1")).strip().lower() not in {"0", "false", "nao", "não", "off"}
+    return {
+        "host": host, "port": port, "user": user,
+        "password": password,
+        "sender": sender, "recipient": recipient, "useTls": use_tls,
+        "configured": bool(host and sender and recipient and (not user or password)),
+    }
+
+
+def send_technology_email(subject, body):
+    config = technology_email_config()
+    if not config["configured"]:
+        raise RuntimeError("SMTP não configurado: informe servidor, remetente e credencial")
+    message = EmailMessage()
+    message["Subject"] = subject
+    message["From"] = config["sender"]
+    message["To"] = config["recipient"]
+    message.set_content(body)
+    context = ssl.create_default_context()
+    if config["port"] == 465:
+        client = smtplib.SMTP_SSL(config["host"], config["port"], timeout=15, context=context)
+    else:
+        client = smtplib.SMTP(config["host"], config["port"], timeout=15)
+    with client:
+        if config["port"] != 465 and config["useTls"]:
+            client.starttls(context=context)
+        if config["user"]:
+            client.login(config["user"], config["password"])
+        client.send_message(message)
+    return config["recipient"]
+
+
+def technology_alert_email_body(actions, now=None):
+    now = now or dt.datetime.now()
+    lines = [
+        "Monitoramento de Tecnologia - NanotechSoft",
+        f"Data: {now.strftime('%d/%m/%Y %H:%M:%S')}",
+        "",
+    ]
+    for action in actions:
+        lines.append(
+            f"{action['type']}: {action['deviceName']} ({action['host']}) - "
+            f"{action['label']} em {action['value']:.1f}% (limite {action['limit']:.1f}%)."
+        )
+    lines.extend([
+        "",
+        "Abra o módulo Tecnologia do portal para consultar a medição e o equipamento.",
+        "O aviso é repetido somente após o intervalo configurado enquanto o problema continuar.",
+    ])
+    return "\n".join(lines)
+
+
+def technology_resource_alert_action(previous, value, limit, now, retry_after, reminder_after, recovery_margin):
+    active = bool(previous and previous.get("ativo"))
+    if value >= limit:
+        if not active:
+            return "ALERTA"
+        if previous.get("ultimo_email_em") is None:
+            last_attempt = previous.get("ultima_tentativa_em")
+            if not last_attempt or now - last_attempt >= retry_after:
+                return "ALERTA"
+        elif now - previous["ultimo_email_em"] >= reminder_after:
+            return "LEMBRETE"
+    elif active and value <= max(0, limit - recovery_margin):
+        return "RECUPERADO"
+    return None
+
+
+def process_technology_resource_alerts(devices, results, now=None):
+    """Atualiza os limites e envia um único e-mail consolidado por coleta."""
+    now = now or dt.datetime.now()
+    try:
+        reminder_hours = max(1, float(os.environ.get("TECH_ALERT_REMINDER_HOURS") or 6))
+    except (TypeError, ValueError):
+        reminder_hours = 6
+    try:
+        recovery_margin = max(0, float(os.environ.get("TECH_ALERT_RECOVERY_MARGIN_PCT") or 5))
+    except (TypeError, ValueError):
+        recovery_margin = 5
+    retry_after = dt.timedelta(minutes=15)
+    reminder_after = dt.timedelta(hours=reminder_hours)
+    actions = []
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    try:
+        for device, result in zip(devices, results):
+            details = result.get("details") if isinstance(result.get("details"), dict) else {}
+            telemetry = details.get("telemetry") if isinstance(details.get("telemetry"), dict) else {}
+            for resource, (metric_key, limit_key, label) in TECH_ALERT_RESOURCES.items():
+                raw_value = telemetry.get(metric_key)
+                if raw_value is None:
+                    continue
+                try:
+                    value = float(raw_value)
+                    limit = float(device.get(limit_key) or 90)
+                except (TypeError, ValueError):
+                    continue
+                cur.execute(
+                    "SELECT * FROM tecnologia_alertas_recursos WHERE dispositivo_id=%s AND recurso=%s",
+                    (int(device["id"]), resource),
+                )
+                previous = cur.fetchone()
+                active = bool(previous and previous.get("ativo"))
+                action_type = technology_resource_alert_action(
+                    previous, value, limit, now, retry_after, reminder_after, recovery_margin,
+                )
+                if value >= limit:
+                    if previous:
+                        cur.execute(
+                            """
+                            UPDATE tecnologia_alertas_recursos
+                            SET ativo=1, valor_atual=%s, limite_pct=%s,
+                                disparado_em=IF(%s=0, %s, disparado_em),
+                                recuperado_em=IF(%s=0, NULL, recuperado_em),
+                                ultimo_email_em=IF(%s=0, NULL, ultimo_email_em),
+                                ultima_tentativa_em=IF(%s IS NULL, ultima_tentativa_em, %s),
+                                ultimo_erro=IF(%s=0, '', ultimo_erro)
+                            WHERE dispositivo_id=%s AND recurso=%s
+                            """,
+                            (
+                                value, limit, int(active), now, int(active), int(active),
+                                action_type, now, int(active), int(device["id"]), resource,
+                            ),
+                        )
+                    else:
+                        cur.execute(
+                            """
+                            INSERT INTO tecnologia_alertas_recursos
+                                (dispositivo_id, recurso, ativo, valor_atual, limite_pct,
+                                 disparado_em, ultima_tentativa_em)
+                            VALUES (%s, %s, 1, %s, %s, %s, %s)
+                            """,
+                            (int(device["id"]), resource, value, limit, now, now),
+                        )
+                elif active and value <= max(0, limit - recovery_margin):
+                    action_type = "RECUPERADO"
+                    cur.execute(
+                        """
+                        UPDATE tecnologia_alertas_recursos
+                        SET ativo=0, valor_atual=%s, limite_pct=%s, recuperado_em=%s,
+                            ultima_tentativa_em=%s, ultimo_erro=''
+                        WHERE dispositivo_id=%s AND recurso=%s
+                        """,
+                        (value, limit, now, now, int(device["id"]), resource),
+                    )
+                elif previous:
+                    cur.execute(
+                        """
+                        UPDATE tecnologia_alertas_recursos SET valor_atual=%s, limite_pct=%s
+                        WHERE dispositivo_id=%s AND recurso=%s
+                        """,
+                        (value, limit, int(device["id"]), resource),
+                    )
+                if action_type:
+                    actions.append({
+                        "deviceId": int(device["id"]),
+                        "deviceName": device.get("nome") or device.get("host") or "Equipamento",
+                        "host": device.get("host") or "", "resource": resource,
+                        "label": label, "value": value, "limit": limit, "type": action_type,
+                    })
+        conn.commit()
+        if not actions:
+            return []
+        has_problem = any(item["type"] != "RECUPERADO" for item in actions)
+        subject = "[NanotechSoft] Alerta de CPU, RAM ou disco" if has_problem else "[NanotechSoft] Recursos normalizados"
+        try:
+            send_technology_email(subject, technology_alert_email_body(actions, now=now))
+        except Exception as exc:
+            error = f"{type(exc).__name__}: {exc}"[:500]
+            for item in actions:
+                cur.execute(
+                    "UPDATE tecnologia_alertas_recursos SET ultimo_erro=%s WHERE dispositivo_id=%s AND recurso=%s",
+                    (error, item["deviceId"], item["resource"]),
+                )
+            conn.commit()
+            print(f"[tecnologia] e-mail de alerta não enviado: {error}", file=sys.stderr)
+        else:
+            for item in actions:
+                cur.execute(
+                    """
+                    UPDATE tecnologia_alertas_recursos SET ultimo_email_em=%s, ultimo_erro=''
+                    WHERE dispositivo_id=%s AND recurso=%s
+                    """,
+                    (now, item["deviceId"], item["resource"]),
+                )
+            conn.commit()
+        return actions
+    finally:
+        cur.close()
+        conn.close()
+
+
+def get_technology_alert_status():
+    config = technology_email_config()
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    cur.execute(
+        """
+        SELECT COUNT(CASE WHEN ativo=1 THEN 1 END) AS ativos,
+               MAX(ultimo_email_em) AS ultimo_email_em
+        FROM tecnologia_alertas_recursos
+        """
+    )
+    summary = cur.fetchone() or {}
+    cur.execute(
+        "SELECT ultimo_erro FROM tecnologia_alertas_recursos WHERE ultimo_erro <> '' ORDER BY updated_at DESC LIMIT 1"
+    )
+    error = cur.fetchone()
+    cur.close()
+    conn.close()
+    last_email = summary.get("ultimo_email_em")
+    return {
+        "configured": config["configured"], "recipient": config["recipient"],
+        "activeCount": int(summary.get("ativos") or 0),
+        "lastEmailAt": last_email.isoformat(timespec="seconds") if last_email else None,
+        "lastError": (error or {}).get("ultimo_erro") or "",
     }
 
 
@@ -4799,6 +5114,7 @@ def get_technology_devices(active_only=False):
                latest.jitter_ms AS ultima_jitter_ms,
                latest.servico_ok AS ultima_servico_ok,
                latest.mensagem AS ultima_mensagem,
+               latest.detalhes AS ultima_detalhes,
                latest.verificado_em AS ultima_verificado_em,
                stats.disponibilidade_24h,
                stats.latencia_media_24h,
@@ -4821,13 +5137,102 @@ def get_technology_devices(active_only=False):
             GROUP BY dispositivo_id
         ) stats ON stats.dispositivo_id=d.id
         {active_filter}
-        ORDER BY FIELD(d.tipo, 'INTERNET', 'ROTEADOR', 'SERVIDOR', 'IMPRESSORA', 'OUTRO'), d.nome
+        ORDER BY FIELD(d.tipo, 'INTERNET', 'ROTEADOR', 'SERVIDOR', 'COMPUTADOR', 'NOTEBOOK', 'NVR', 'RELOGIO_PONTO', 'IMPRESSORA', 'OUTRO'), d.nome
         """
     )
     rows = cur.fetchall()
     cur.close()
     conn.close()
     return rows
+
+
+def technology_public_speed(row):
+    if not row:
+        return None
+    checked_at = row.get("verificado_em")
+    return {
+        "id": int(row["id"]),
+        "deviceId": int(row["dispositivo_id"]),
+        "status": row.get("status") or "FALHA",
+        "downloadMbps": float(row["download_mbps"]) if row.get("download_mbps") is not None else None,
+        "uploadMbps": float(row["upload_mbps"]) if row.get("upload_mbps") is not None else None,
+        "latencyMs": float(row["latencia_ms"]) if row.get("latencia_ms") is not None else None,
+        "message": row.get("mensagem") or "",
+        "checkedAt": checked_at.isoformat(timespec="milliseconds") if hasattr(checked_at, "isoformat") else str(checked_at or ""),
+    }
+
+
+def get_latest_technology_speed():
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    cur.execute(
+        """
+        SELECT v.*, d.download_alerta_mbps, d.upload_alerta_mbps
+        FROM tecnologia_velocidade v
+        JOIN tecnologia_dispositivos d ON d.id=v.dispositivo_id
+        ORDER BY v.verificado_em DESC, v.id DESC LIMIT 1
+        """
+    )
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+    if not row:
+        return None
+    result = technology_public_speed(row)
+    result["downloadAlertMbps"] = float(row.get("download_alerta_mbps") or 50)
+    result["uploadAlertMbps"] = float(row.get("upload_alerta_mbps") or 10)
+    return result
+
+
+def collect_technology_speed(force=False):
+    with _technology_speed_lock:
+        interval = max(300, int(os.environ.get("TECH_SPEED_INTERVAL_SECONDS", "1800")))
+        devices = get_technology_devices(active_only=True)
+        internet = next((row for row in devices if row.get("tipo") == "INTERNET"), None)
+        if not internet:
+            raise ValueError("cadastre um equipamento do tipo INTERNET para medir o link")
+        conn = get_conn()
+        cur = conn.cursor(dictionary=True)
+        cur.execute(
+            """
+            SELECT * FROM tecnologia_velocidade
+            WHERE dispositivo_id=%s ORDER BY verificado_em DESC, id DESC LIMIT 1
+            """,
+            (int(internet["id"]),),
+        )
+        latest = cur.fetchone()
+        if not force and latest and latest.get("verificado_em"):
+            age = (dt.datetime.now() - latest["verificado_em"]).total_seconds()
+            if age < interval:
+                cur.close()
+                conn.close()
+                return technology_public_speed(latest)
+        result = measure_internet_speed()
+        if result.get("status") == "OK":
+            low_download = float(result.get("downloadMbps") or 0) < float(internet.get("download_alerta_mbps") or 50)
+            low_upload = float(result.get("uploadMbps") or 0) < float(internet.get("upload_alerta_mbps") or 10)
+            if low_download or low_upload:
+                result["status"] = "DEGRADADO"
+        cur.execute(
+            """
+            INSERT INTO tecnologia_velocidade
+                (dispositivo_id, status, download_mbps, upload_mbps, latencia_ms, mensagem, detalhes)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                int(internet["id"]), result.get("status") or "FALHA",
+                result.get("downloadMbps"), result.get("uploadMbps"), result.get("latencyMs"),
+                result.get("message") or "", json.dumps(result.get("details") or {}, ensure_ascii=False),
+            ),
+        )
+        speed_id = int(cur.lastrowid)
+        cur.execute("DELETE FROM tecnologia_velocidade WHERE verificado_em < NOW() - INTERVAL 90 DAY")
+        conn.commit()
+        cur.execute("SELECT * FROM tecnologia_velocidade WHERE id=%s", (speed_id,))
+        saved = cur.fetchone()
+        cur.close()
+        conn.close()
+        return technology_public_speed(saved)
 
 
 def collect_technology_metrics(device_ids=None):
@@ -4866,6 +5271,7 @@ def collect_technology_metrics(device_ids=None):
         conn.commit()
         cur.close()
         conn.close()
+        process_technology_resource_alerts(rows, results)
         return [
             {"deviceId": int(device["id"]), **result}
             for device, result in zip(rows, results)
@@ -4878,6 +5284,7 @@ def _technology_monitor_loop():
         try:
             ensure_database()
             collect_technology_metrics()
+            collect_technology_speed()
         except Exception as exc:
             print(f"[tecnologia] falha na coleta: {type(exc).__name__}: {exc}", file=sys.stderr)
         time.sleep(interval)
@@ -4908,12 +5315,39 @@ def technology_admin_or_error():
 def tecnologia_overview_api():
     start_technology_monitor()
     devices = [technology_public_device(row) for row in get_technology_devices()]
+    speed = get_latest_technology_speed()
     return jsonify({
         "devices": devices,
-        "diagnosis": build_network_diagnosis(devices),
+        "speed": speed,
+        "emailAlerts": get_technology_alert_status(),
+        "diagnosis": build_network_diagnosis(devices, speed),
         "monitorIntervalSeconds": max(15, int(os.environ.get("TECH_MONITOR_INTERVAL_SECONDS", "60"))),
+        "speedIntervalSeconds": max(300, int(os.environ.get("TECH_SPEED_INTERVAL_SECONDS", "1800"))),
         "subnet": "192.168.200.0/24",
     })
+
+
+@app.route("/apps/tecnologia/api/alerts/test-email", methods=["POST"])
+@login_required
+def tecnologia_alert_test_email_api():
+    denied = technology_admin_or_error()
+    if denied:
+        return denied
+    now = dt.datetime.now()
+    try:
+        recipient = send_technology_email(
+            "[NanotechSoft] Teste dos alertas de Tecnologia",
+            "\n".join([
+                "Monitoramento de Tecnologia - NanotechSoft",
+                f"Data: {now.strftime('%d/%m/%Y %H:%M:%S')}",
+                "",
+                "Este é um teste da configuração de e-mail.",
+                "Os alertas de CPU, memória RAM e disco estão habilitados.",
+            ]),
+        )
+    except Exception as exc:
+        return jsonify({"erro": f"Não foi possível enviar: {exc}"}), 400
+    return jsonify({"ok": True, "recipient": recipient})
 
 
 @app.route("/apps/tecnologia/api/probe", methods=["POST"])
@@ -4928,7 +5362,45 @@ def tecnologia_probe_api():
     except (TypeError, ValueError):
         return jsonify({"erro": "a lista de equipamentos é inválida"}), 400
     devices = [technology_public_device(row) for row in get_technology_devices()]
-    return jsonify({"results": results, "devices": devices, "diagnosis": build_network_diagnosis(devices)})
+    speed = get_latest_technology_speed()
+    return jsonify({"results": results, "devices": devices, "speed": speed, "diagnosis": build_network_diagnosis(devices, speed)})
+
+
+@app.route("/apps/tecnologia/api/speed-test", methods=["POST"])
+@login_required
+def tecnologia_speed_test_api():
+    try:
+        speed = collect_technology_speed(force=True)
+    except ValueError as exc:
+        return jsonify({"erro": str(exc)}), 400
+    devices = [technology_public_device(row) for row in get_technology_devices()]
+    return jsonify({"speed": speed, "diagnosis": build_network_diagnosis(devices, speed)})
+
+
+@app.route("/apps/tecnologia/api/speed-history")
+@login_required
+def tecnologia_speed_history_api():
+    try:
+        hours = min(2160, max(1, int(request.args.get("hours") or 168)))
+    except (TypeError, ValueError):
+        return jsonify({"erro": "período inválido"}), 400
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    cutoff = dt.datetime.now() - dt.timedelta(hours=hours)
+    cur.execute(
+        """
+        SELECT id, dispositivo_id, verificado_em, status, download_mbps,
+               upload_mbps, latencia_ms, mensagem
+        FROM tecnologia_velocidade
+        WHERE verificado_em >= %s
+        ORDER BY verificado_em ASC, id ASC LIMIT 3000
+        """,
+        (cutoff,),
+    )
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    return jsonify({"metrics": [technology_public_speed(row) for row in rows]})
 
 
 @app.route("/apps/tecnologia/api/history")
@@ -4945,7 +5417,7 @@ def tecnologia_history_api():
     cur.execute(
         """
         SELECT id, dispositivo_id, verificado_em, status, latencia_ms,
-               perda_pct, jitter_ms, servico_ok, mensagem
+               perda_pct, jitter_ms, servico_ok, mensagem, detalhes
         FROM tecnologia_metricas
         WHERE dispositivo_id=%s AND verificado_em >= %s
         ORDER BY verificado_em ASC, id ASC
@@ -4967,6 +5439,7 @@ def tecnologia_history_api():
             "jitterMs": float(row["jitter_ms"]) if row.get("jitter_ms") is not None else None,
             "serviceOk": None if row.get("servico_ok") is None else bool(row.get("servico_ok")),
             "message": row.get("mensagem") or "",
+            "telemetry": (technology_json_value(row.get("detalhes")).get("telemetry")),
         }
         for row in rows
     ]})
@@ -4978,8 +5451,10 @@ def tecnologia_create_device_api():
     denied = technology_admin_or_error()
     if denied:
         return denied
+    payload = request.get_json(silent=True) or {}
+    payload.pop("preserveSnmpCommunity", None)
     try:
-        data = normalize_device_payload(request.get_json(silent=True) or {})
+        data = normalize_device_payload(payload)
     except (TypeError, ValueError) as exc:
         return jsonify({"erro": str(exc)}), 400
     conn = get_conn()
@@ -4989,10 +5464,17 @@ def tecnologia_create_device_api():
             """
             INSERT INTO tecnologia_dispositivos
                 (nome, tipo, host, porta, sonda, localizacao, observacoes,
-                 critico, ativo, latencia_alerta_ms, perda_alerta_pct)
+                 critico, ativo, latencia_alerta_ms, perda_alerta_pct,
+                 download_alerta_mbps, upload_alerta_mbps, cpu_alerta_pct,
+                 memoria_alerta_pct, disco_alerta_pct, trafego_alerta_mbps,
+                 snmp_community, snmp_port, agente_porta, agente_path)
             VALUES (%(nome)s, %(tipo)s, %(host)s, %(porta)s, %(sonda)s,
                     %(localizacao)s, %(observacoes)s, %(critico)s, %(ativo)s,
-                    %(latencia_alerta_ms)s, %(perda_alerta_pct)s)
+                    %(latencia_alerta_ms)s, %(perda_alerta_pct)s,
+                    %(download_alerta_mbps)s, %(upload_alerta_mbps)s,
+                    %(cpu_alerta_pct)s, %(memoria_alerta_pct)s,
+                    %(disco_alerta_pct)s, %(trafego_alerta_mbps)s,
+                    %(snmp_community)s, %(snmp_port)s, %(agente_porta)s, %(agente_path)s)
             """,
             data,
         )
@@ -5023,12 +5505,24 @@ def tecnologia_device_api(device_id):
         cur.close()
         conn.close()
         return ("", 204) if changed else (jsonify({"erro": "equipamento não encontrado"}), 404)
+    payload = request.get_json(silent=True) or {}
+    cur.execute("SELECT snmp_community FROM tecnologia_dispositivos WHERE id=%s", (device_id,))
+    existing = cur.fetchone()
+    if not existing:
+        cur.close()
+        conn.close()
+        return jsonify({"erro": "equipamento não encontrado"}), 404
+    existing_community = str(existing[0] or "")
+    if not str(payload.get("snmpCommunity") or "").strip() and existing_community:
+        payload["preserveSnmpCommunity"] = True
     try:
-        data = normalize_device_payload(request.get_json(silent=True) or {})
+        data = normalize_device_payload(payload)
     except (TypeError, ValueError) as exc:
         cur.close()
         conn.close()
         return jsonify({"erro": str(exc)}), 400
+    if not data.get("snmp_community") and existing_community:
+        data["snmp_community"] = existing_community
     data["id"] = device_id
     try:
         cur.execute(
@@ -5038,7 +5532,15 @@ def tecnologia_device_api(device_id):
                 sonda=%(sonda)s, localizacao=%(localizacao)s,
                 observacoes=%(observacoes)s, critico=%(critico)s,
                 ativo=%(ativo)s, latencia_alerta_ms=%(latencia_alerta_ms)s,
-                perda_alerta_pct=%(perda_alerta_pct)s
+                perda_alerta_pct=%(perda_alerta_pct)s,
+                download_alerta_mbps=%(download_alerta_mbps)s,
+                upload_alerta_mbps=%(upload_alerta_mbps)s,
+                cpu_alerta_pct=%(cpu_alerta_pct)s,
+                memoria_alerta_pct=%(memoria_alerta_pct)s,
+                disco_alerta_pct=%(disco_alerta_pct)s,
+                trafego_alerta_mbps=%(trafego_alerta_mbps)s,
+                snmp_community=%(snmp_community)s, snmp_port=%(snmp_port)s,
+                agente_porta=%(agente_porta)s, agente_path=%(agente_path)s
             WHERE id=%(id)s
             """,
             data,
@@ -5069,6 +5571,26 @@ def tecnologia_discover_printers_api():
     existing = {(row["host"], int(row["porta"] or 0)) for row in get_technology_devices()}
     for item in discovered:
         item["registered"] = (item["host"], int(item["suggestedPort"])) in existing
+    return jsonify({"devices": discovered})
+
+
+@app.route("/apps/tecnologia/api/discover-computers", methods=["POST"])
+@login_required
+def tecnologia_discover_computers_api():
+    denied = technology_admin_or_error()
+    if denied:
+        return denied
+    payload = request.get_json(silent=True) or {}
+    try:
+        discovered = discover_computers(payload.get("subnet") or "192.168.200.0/24")
+    except ValueError as exc:
+        return jsonify({"erro": str(exc)}), 400
+    existing = {row["host"]: row for row in get_technology_devices()}
+    for item in discovered:
+        registered = existing.get(item["host"])
+        item["registered"] = bool(registered)
+        item["registeredName"] = registered.get("nome") if registered else ""
+        item["registeredType"] = registered.get("tipo") if registered else ""
     return jsonify({"devices": discovered})
 
 

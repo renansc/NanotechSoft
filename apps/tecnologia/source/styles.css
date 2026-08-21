@@ -38,6 +38,8 @@
 .techApp .eyebrow { display: block; font-size: .72rem; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; color: var(--tech-primary); }
 .techHero .eyebrow { color: #9ce4cf; }
 .heroActions { display: flex; flex-direction: column; align-items: flex-end; gap: 10px; min-width: 180px; }
+.heroButtons { display: flex; gap: 8px; }
+.techHero .heroButtons .btn:first-child { color: #fff; border-color: rgba(255, 255, 255, .55); background: rgba(255, 255, 255, .08); }
 .monitorState { font-size: .8rem; color: rgba(255, 255, 255, .78); }
 
 .techApp .btn, .techApp .iconButton {
@@ -61,7 +63,7 @@
 .techApp .tab.active { color: var(--tech-primary-dark); background: #dceee8; }
 .techView { display: grid; gap: 18px; }
 
-.kpiGrid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+.kpiGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
 .techApp .kpi, .techApp .panel {
   border: 1px solid var(--tech-line);
   border-radius: 16px;
@@ -72,6 +74,7 @@
 .techApp .kpi::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 4px; background: var(--tech-ok); }
 .techApp .kpi.warning::before { background: var(--tech-warning); }
 .techApp .kpi.danger::before { background: var(--tech-danger); }
+.techApp .kpi.speed::before { background: var(--tech-info); }
 .techApp .kpi span, .techApp .kpi small { display: block; color: var(--tech-muted); }
 .techApp .kpi span { font-size: .78rem; font-weight: 800; text-transform: uppercase; letter-spacing: .06em; }
 .techApp .kpi strong { display: block; margin: 7px 0 2px; font-size: 2rem; }
@@ -93,8 +96,19 @@
 .techApp .diag.critical { color: #842828; background: #fde9e9; }
 .techApp .diag.critical::before { content: "!"; background: var(--tech-danger); }
 
+.emailAlertStatus { display: grid; gap: 12px; }
+.emailAlertSummary { display: grid; grid-template-columns: 1.4fr 2fr .7fr 1fr; gap: 10px; }
+.emailAlertSummary > div { display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 5px; border-radius: 10px; padding: 12px; background: #f1f5f4; min-width: 0; }
+.emailAlertSummary span:not(.status), .emailAlertSummary small { color: var(--tech-muted); font-size: .7rem; }
+.emailAlertSummary strong { max-width: 100%; font-size: .82rem; overflow-wrap: anywhere; }
+.emailAlertError { display: grid; gap: 4px; border-radius: 10px; padding: 11px 13px; color: #842828; background: #fde9e9; font-size: .78rem; }
+
 .deviceGrid { display: grid; grid-template-columns: repeat(4, minmax(230px, 1fr)); gap: 13px; }
 .deviceCard { border: 1px solid var(--tech-line); border-radius: 13px; padding: 15px; background: #fcfdfd; }
+.clickableDevice { cursor: pointer; transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease; }
+.clickableDevice:hover, .clickableDevice:focus-visible { border-color: var(--tech-primary); box-shadow: 0 8px 24px rgba(18, 107, 84, .12); outline: none; }
+.deviceCard.clickableDevice:hover { transform: translateY(-2px); }
+.techApp tbody .clickableDevice:hover td, .techApp tbody .clickableDevice:focus-visible td { background: #f4f9f7; }
 .deviceCardHead { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .deviceCard h3 { margin: 0 0 4px; font-size: .98rem; }
 .deviceCard .target { color: var(--tech-muted); font: 700 .78rem ui-monospace, SFMono-Regular, Menlo, monospace; }
@@ -104,6 +118,20 @@
 .metricLine span { color: var(--tech-muted); font-size: .65rem; text-transform: uppercase; }
 .metricLine strong { margin-top: 3px; font-size: .85rem; }
 .deviceMessage { margin: 10px 0 0; color: var(--tech-muted); font-size: .76rem; }
+.resourceLine { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 5px; margin-top: 9px; }
+.resourceLine span { border-radius: 7px; padding: 6px; color: var(--tech-muted); background: #eaf2ef; font-size: .62rem; text-transform: uppercase; }
+.resourceLine strong { display: block; margin-top: 2px; color: var(--tech-ink); font-size: .72rem; text-transform: none; }
+
+.protocolGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+.protocolCard h2 { margin: 7px 0 10px; }
+.protocolCard p, .protocolCard li { color: var(--tech-muted); font-size: .86rem; line-height: 1.55; }
+.protocolCard ol { padding-left: 20px; }
+.protocolTag { display: inline-flex; border-radius: 999px; padding: 5px 9px; color: var(--tech-primary-dark); background: #dceee8; font-size: .7rem; font-weight: 800; text-transform: uppercase; }
+.protocolCard code { display: block; overflow-x: auto; border-radius: 9px; padding: 11px; color: #d8f7ed; background: #153a30; font-size: .74rem; white-space: nowrap; }
+.flowPanel { margin-top: 0; }
+.protocolFlow { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 16px; }
+.protocolFlow span { flex: 1; border: 1px solid var(--tech-line); border-radius: 10px; padding: 12px; text-align: center; font-weight: 750; }
+.protocolFlow small { color: var(--tech-muted); font-weight: 500; }
 
 .techApp .status { display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; padding: 5px 8px; font-size: .68rem; font-weight: 850; letter-spacing: .03em; }
 .techApp .status::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
@@ -158,12 +186,38 @@
 .techApp .checkRow label { display: flex; align-items: center; gap: 8px; }
 .techApp .checkRow input { width: auto; }
 .techApp .modalActions { display: flex; justify-content: flex-end; gap: 9px; }
+.deviceDetailsCard { width: min(880px, 100%) !important; }
+#deviceDetailsSubtitle { margin: 5px 0 0; font-size: .8rem; }
+.detailStatus { display: flex; align-items: center; justify-content: space-between; gap: 15px; border-radius: 11px; padding: 12px 14px; background: #f1f5f4; }
+.detailStatus > div { display: flex; align-items: center; gap: 10px; }
+.detailStatus > div > span:last-child, .detailStatus small { color: var(--tech-muted); font-size: .78rem; }
+.detailEndpoint { display: grid; grid-template-columns: auto 1fr auto 2fr; align-items: center; gap: 8px 12px; margin-top: 13px; border-bottom: 1px solid var(--tech-line); padding: 0 2px 14px; font-size: .78rem; }
+.detailEndpoint span { color: var(--tech-muted); font-weight: 750; text-transform: uppercase; }
+.detailEndpoint code { overflow: hidden; color: var(--tech-primary-dark); text-overflow: ellipsis; white-space: nowrap; }
+.detailSection { margin-top: 18px; }
+.detailSection h3 { margin: 0 0 10px; font-size: .9rem; }
+.detailSectionHead { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.detailSectionHead span { color: var(--tech-muted); font-size: .75rem; }
+.detailResources { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+.detailResources div, .detailIdentity div { border: 1px solid var(--tech-line); border-radius: 9px; padding: 10px; background: #fbfdfc; }
+.detailResources span, .detailIdentity span { display: block; color: var(--tech-muted); font-size: .65rem; text-transform: uppercase; }
+.detailResources strong, .detailIdentity strong { display: block; margin-top: 4px; font-size: .84rem; overflow-wrap: anywhere; }
+.detailIdentity { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.detailTableWrap { overflow-x: auto; border: 1px solid var(--tech-line); border-radius: 10px; }
+.detailTags { display: flex; flex-wrap: wrap; gap: 7px; }
+.detailTags span { border-radius: 999px; padding: 6px 9px; color: var(--tech-primary-dark); background: #e5f2ee; font-size: .72rem; }
+.detailNotice { display: grid; gap: 7px; margin-top: 18px; border-radius: 11px; padding: 15px; }
+.detailNotice.warning { color: #744a08; background: #fff2d8; }
+.detailNotice span, .detailNotice small { line-height: 1.45; }
 .techApp .toast { position: fixed; z-index: 1200; right: 24px; bottom: 24px; max-width: 390px; border-radius: 11px; padding: 13px 16px; color: #fff; background: #193d33; box-shadow: 0 12px 35px rgba(0, 0, 0, .24); font-size: .85rem; }
 .techApp .toast.error { background: #a43131; }
 
 @media (max-width: 1100px) {
   .techApp .kpiGrid, .techApp .deviceGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .dashboardGrid { grid-template-columns: 1fr; }
+  .resourceLine { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .detailResources, .detailIdentity { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .emailAlertSummary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 680px) {
@@ -171,11 +225,17 @@
   .techHero { align-items: flex-start; flex-direction: column; padding: 22px; }
   .heroActions { width: 100%; align-items: stretch; }
   .monitorState { text-align: left; }
-  .techApp .kpiGrid, .techApp .deviceGrid, .techApp .formGrid { grid-template-columns: 1fr; }
+  .techApp .kpiGrid, .techApp .deviceGrid, .techApp .formGrid, .protocolGrid { grid-template-columns: 1fr; }
   .techApp .panel { padding: 15px; }
   .techApp .panelHead, .techApp .historyHead, .techApp .inlineForm, .techApp .discoveryItem { align-items: stretch; flex-direction: column; }
   .historyFilters { flex-direction: column; }
   .historyFilters select, .inlineForm label { min-width: 0; }
   .techApp .formGrid .wide { grid-column: auto; }
   .techApp .checkRow { align-items: flex-start; flex-direction: column; gap: 10px; }
+  .heroButtons, .protocolFlow { align-items: stretch; flex-direction: column; }
+  .resourceLine { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .detailResources, .detailIdentity { grid-template-columns: 1fr; }
+  .detailStatus, .detailStatus > div { align-items: flex-start; flex-direction: column; }
+  .detailEndpoint { grid-template-columns: 1fr; }
+  .emailAlertSummary { grid-template-columns: 1fr; }
 }

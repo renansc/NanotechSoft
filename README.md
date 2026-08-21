@@ -199,9 +199,15 @@ Em um ambiente sem Docker CLI, o `./git-safe` pula Compose/build/health automati
 
 Os apps ficam dentro de `apps/`. Cada subpasta pode ter um `app.json`; tambem existe a tabela `installed_apps` para cadastro via banco.
 
-O módulo **Tecnologia** monitora o link, o roteador, servidores e impressoras por
-ICMP/TCP, mantém histórico de 90 dias e oferece descoberta manual de impressoras
-na rede privada. A coleta começa quando o módulo é aberto. Consulte
+O módulo **Tecnologia** monitora o link, o roteador, servidores, NVR, relógio
+ponto e impressoras. Além de ICMP/TCP, mede download/upload do link e aceita
+SNMP ou exporters Prometheus para CPU, memória, disco e rede. Mantém histórico
+de 90 dias e oferece descoberta manual de impressoras e computadores
+Windows/Linux por ICMP, NetBIOS e portas de serviço. Ao clicar em um equipamento,
+um card apresenta as métricas e a identificação recebidas do exporter. A coleta
+começa quando o módulo é aberto. CPU, memória e disco podem enviar alertas por
+SMTP ao atingirem os limites configurados; as variáveis `SMTP_*` e
+`TECH_ALERT_EMAIL_TO` ficam documentadas no README do módulo. Consulte
 `apps/tecnologia/README.md` para os limites do diagnóstico de Wi-Fi e a operação.
 
 O arquivo `clientes-modulos.json` define os clientes e quais modulos cada um possui. No deploy, configure `CLIENTE_DEPLOY_ID` com o ID do cliente, por exemplo `rio-branco`. Cada ambiente continua usando seu proprio banco via `NS_DB_NAME`/credenciais, sem misturar dados entre clientes.

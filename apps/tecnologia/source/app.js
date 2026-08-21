@@ -2,8 +2,9 @@
   "use strict";
 
   const API = "/apps/tecnologia/api";
-  const state = { devices: [], diagnosis: [], monitorIntervalSeconds: 60, metrics: [] };
+  const state = { devices: [], diagnosis: [], emailAlerts: null, monitorIntervalSeconds: 60, speed: null, metrics: [], speedMetrics: [] };
   let editingId = null;
+  let detailDeviceId = null;
   let toastTimer = null;
 
   const $ = (selector) => document.querySelector(selector);
@@ -38,10 +39,26 @@
     maximumFractionDigits: digits,
   });
   const target = (device) => `${device.host}${device.porta ? `:${device.porta}` : ""}`;
-  const statusKey = (metric) => (metric?.status || "PENDING").toLowerCase();
-  const statusLabel = (metric) => ({ ONLINE: "Online", DEGRADADO: "Instável", OFFLINE: "Offline", PENDING: "Aguardando" })[metric?.status || "PENDING"];
+  const statusKey = (metric) => ({ OK: "online", FALHA: "offline" })[metric?.status] || (metric?.status || "PENDING").toLowerCase();
+  const statusLabel = (metric) => ({ ONLINE: "Online", DEGRADADO: "Instável", OFFLINE: "Offline", PENDING: "Aguardando", OK: "Normal", FALHA: "Falhou" })[metric?.status || "PENDING"] || metric?.status;
   const statusBadge = (metric) => `<span class="status ${statusKey(metric)}">${statusLabel(metric)}</span>`;
   const dateTime = (value) => value ? new Date(value).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "medium" }) : "—";
+  const bytes = (value) => {
+    if (value == null) return "—";
+    const units = ["B", "KB", "MB", "GB", "TB"];
+    let amount = Number(value);
+    let unit = 0;
+    while (amount >= 1024 && unit < units.length - 1) { amount /= 1024; unit += 1; }
+    return `${number(amount, amount >= 100 ? 0 : 1)} ${units[unit]}`;
+  };
+  const duration = (value) => {
+    if (value == null) return "—";
+    const seconds = Math.max(0, Number(value));
+    const days = Math.floor(seconds / 86400);
+    const hours = Math.floor((seconds % 86400) / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    return [days ? `${days}d` : "", hours ? `${hours}h` : "", `${minutes}min`].filter(Boolean).join(" ");
+  };
 
   function renderKpis() {
     const active = state.devices.filter((device) => device.ativo);
@@ -54,6 +71,8 @@
     $("#kpiDegraded").textContent = count("DEGRADADO");
     $("#kpiOffline").textContent = count("OFFLINE");
     $("#kpiAvailability").textContent = availability == null ? "—" : `${number(availability, 1)}%`;
+    $("#kpiDownload").textContent = state.speed?.downloadMbps == null ? "—" : `${number(state.speed.downloadMbps)} Mbps`;
+    $("#kpiUpload").textContent = state.speed?.uploadMbps == null ? "—" : `${number(state.speed.uploadMbps)} Mbps`;
   }
 
   function renderDiagnosis() {
@@ -62,11 +81,39 @@
       : '<div class="diag info">Ainda não há diagnóstico disponível.</div>';
   }
 
+  function renderEmailAlerts() {
+    const alert = state.emailAlerts;
+    if (!alert) {
+      $("#emailAlertStatus").textContent = "Ainda não há informações da configuração.";
+      return;
+    }
+    const configuration = alert.configured
+      ? '<span class="status online">Envio configurado</span>'
+      : '<span class="status degradado">Aguardando SMTP</span>';
+    const lastError = alert.lastError
+      ? `<div class="emailAlertError"><strong>Última falha</strong><span>${esc(alert.lastError)}</span></div>`
+      : "";
+    $("#emailAlertStatus").innerHTML = `<div class="emailAlertSummary">
+      <div>${configuration}<small>CPU, RAM e disco nos limites definidos em cada equipamento.</small></div>
+      <div><span>Destinatário</span><strong>${esc(alert.recipient)}</strong></div>
+      <div><span>Alertas ativos</span><strong>${Number(alert.activeCount || 0)}</strong></div>
+      <div><span>Último envio</span><strong>${esc(dateTime(alert.lastEmailAt))}</strong></div>
+    </div>${lastError}`;
+  }
+
   function renderCards() {
     const active = state.devices.filter((device) => device.ativo);
     $("#deviceCards").innerHTML = active.length ? active.map((device) => {
       const metric = device.ultimaMetrica;
-      return `<article class="deviceCard">
+      const telemetry = metric?.telemetry;
+      const resourceLine = telemetry ? `<div class="resourceLine">
+        <span>CPU <strong>${number(telemetry.cpuPct)}%</strong></span>
+        <span>Memória <strong>${number(telemetry.memoryPct)}%</strong></span>
+        <span>Disco <strong>${number(telemetry.diskPct)}%</strong></span>
+        <span>Rede ↓ <strong>${number(telemetry.downloadMbps)} Mbps</strong></span>
+        <span>Rede ↑ <strong>${number(telemetry.uploadMbps)} Mbps</strong></span>
+      </div>` : "";
+      return `<article class="deviceCard clickableDevice" data-details="${device.id}" tabindex="0" role="button" aria-label="Abrir detalhes de ${esc(device.nome)}">
         <div class="deviceCardHead">
           <div><h3>${esc(device.nome)}</h3><span class="target">${esc(target(device))}</span></div>
           ${statusBadge(metric)}
@@ -76,6 +123,7 @@
           <div><span>Perda</span><strong>${number(metric?.packetLossPct)}%</strong></div>
           <div><span>Jitter</span><strong>${number(metric?.jitterMs)} ms</strong></div>
         </div>
+        ${resourceLine}
         <p class="deviceMessage">${esc(metric?.message || "Aguardando primeira medição")}${metric?.checkedAt ? ` · ${esc(dateTime(metric.checkedAt))}` : ""}</p>
       </article>`;
     }).join("") : '<p class="muted">Nenhum equipamento ativo.</p>';
@@ -92,9 +140,9 @@
   }
 
   function renderDeviceTable() {
-    $("#deviceTable").innerHTML = state.devices.map((device) => `<tr>
+    $("#deviceTable").innerHTML = state.devices.map((device) => `<tr class="clickableDevice" data-details="${device.id}" tabindex="0" aria-label="Abrir detalhes de ${esc(device.nome)}">
       <td><strong>${esc(device.nome)}</strong><br><small class="muted">${esc(device.tipo)}</small></td>
-      <td>${esc(device.sonda)}${device.critico ? '<br><small class="muted">Crítico</small>' : ""}</td>
+      <td>${esc(device.sonda)}${device.hasSnmpCommunity ? '<br><small class="muted">SNMP configurado</small>' : ""}${device.agentPort ? `<br><small class="muted">Exporter :${device.agentPort}</small>` : ""}${device.critico ? '<br><small class="muted">Crítico</small>' : ""}</td>
       <td><span class="target">${esc(target(device))}</span></td>
       <td>${esc(device.localizacao || "—")}</td>
       <td>${number(device.latenciaAlertaMs, 0)} ms / ${number(device.perdaAlertaPct)}%</td>
@@ -113,10 +161,75 @@
   function renderAll() {
     renderKpis();
     renderDiagnosis();
+    renderEmailAlerts();
     renderCards();
     renderQualityTable();
     renderDeviceTable();
     renderHistoryOptions();
+    if (detailDeviceId) renderDeviceDetails();
+  }
+
+  function renderDeviceDetails() {
+    const device = state.devices.find((item) => item.id === detailDeviceId);
+    if (!device) return closeDeviceDetails();
+    const metric = device.ultimaMetrica;
+    const telemetry = metric?.telemetry;
+    const prometheusEndpoint = device.agentPort ? `http://${device.host}:${device.agentPort}${device.agentPath || "/metrics"}` : "Não configurado";
+    $("#deviceDetailsTitle").textContent = device.nome;
+    $("#deviceDetailsSubtitle").textContent = `${device.tipo} · ${target(device)}`;
+    const resourceCards = [
+      ["CPU", telemetry?.cpuPct == null ? "—" : `${number(telemetry.cpuPct)}%`],
+      ["Memória", telemetry?.memoryPct == null ? "—" : `${number(telemetry.memoryPct)}%`],
+      ["Disco", telemetry?.diskPct == null ? "—" : `${number(telemetry.diskPct)}%`],
+      ["Rede recebida", telemetry?.downloadMbps == null ? "Aguardando 2ª coleta" : `${number(telemetry.downloadMbps, 3)} Mbps`],
+      ["Rede enviada", telemetry?.uploadMbps == null ? "Aguardando 2ª coleta" : `${number(telemetry.uploadMbps, 3)} Mbps`],
+    ].map(([label, value]) => `<div><span>${esc(label)}</span><strong>${esc(value)}</strong></div>`).join("");
+    const identity = [
+      ["Nome do sistema", telemetry?.systemName || "—"],
+      ["Sistema operacional", telemetry?.osName || "—"],
+      ["Versão", telemetry?.osVersion || "—"],
+      ["Build", telemetry?.osBuild || "—"],
+      ["Arquitetura", telemetry?.architecture || "—"],
+      ["Processadores lógicos", telemetry?.cpuCores ?? "—"],
+      ["Memória instalada", bytes(telemetry?.memoryTotalBytes)],
+      ["Tempo ligado", duration(telemetry?.uptimeSeconds)],
+    ].map(([label, value]) => `<div><span>${esc(label)}</span><strong>${esc(value)}</strong></div>`).join("");
+    const disks = telemetry?.disks?.length ? `<div class="detailSection"><h3>Discos</h3><div class="detailTableWrap"><table><thead><tr><th>Volume</th><th>Uso</th><th>Livre</th><th>Total</th></tr></thead><tbody>${telemetry.disks.map((disk) => `<tr><td>${esc(disk.name)}</td><td>${number(disk.usedPct)}%</td><td>${esc(bytes(disk.freeBytes))}</td><td>${esc(bytes(disk.sizeBytes))}</td></tr>`).join("")}</tbody></table></div></div>` : "";
+    const interfaces = telemetry?.interfaces?.length ? `<div class="detailSection"><h3>Interfaces monitoradas</h3><div class="detailTags">${telemetry.interfaces.map((name) => `<span>${esc(name)}</span>`).join("")}</div></div>` : "";
+    const telemetryBlock = telemetry ? `<div class="detailSection"><div class="detailSectionHead"><h3>Prometheus</h3><span>${number(telemetry.series, 0)} séries coletadas</span></div><div class="detailResources">${resourceCards}</div></div><div class="detailSection"><h3>Identificação do equipamento</h3><div class="detailIdentity">${identity}</div></div>${disks}${interfaces}` : `<div class="detailNotice warning"><strong>Sem métricas do Prometheus nesta coleta.</strong><span>${esc(metric?.message || "Aguardando a primeira coleta do exporter.")}</span><small>Confirme se o serviço está iniciado e se a porta ${esc(device.agentPort || 9182)} aceita conexão do servidor 192.168.200.254.</small></div>`;
+    $("#deviceDetailsBody").innerHTML = `<div class="detailStatus"><div>${statusBadge(metric)}<span>${esc(metric?.message || "Aguardando medição")}</span></div><small>Última coleta: ${esc(dateTime(metric?.checkedAt))}</small></div><div class="detailEndpoint"><span>Coleta</span><strong>${esc(device.sonda)}</strong><span>Endpoint</span><code>${esc(prometheusEndpoint)}</code></div>${telemetryBlock}`;
+  }
+
+  function openDeviceDetails(id) {
+    detailDeviceId = Number(id);
+    renderDeviceDetails();
+    $("#deviceDetailsModal").classList.remove("hidden");
+    $("#refreshDeviceDetails").focus();
+  }
+
+  function closeDeviceDetails() {
+    $("#deviceDetailsModal").classList.add("hidden");
+    detailDeviceId = null;
+  }
+
+  async function refreshDeviceDetails() {
+    const button = $("#refreshDeviceDetails");
+    if (!detailDeviceId) return;
+    button.disabled = true;
+    button.textContent = "Coletando...";
+    try {
+      const data = await request("/probe", { method: "POST", body: JSON.stringify({ deviceIds: [detailDeviceId] }) });
+      state.devices = data.devices || [];
+      state.diagnosis = data.diagnosis || [];
+      state.speed = data.speed || state.speed;
+      renderAll();
+      showToast("Informações do equipamento atualizadas.");
+    } catch (error) {
+      showToast(error.message, true);
+    } finally {
+      button.disabled = false;
+      button.textContent = "Atualizar agora";
+    }
   }
 
   async function loadOverview({ quiet = false } = {}) {
@@ -124,6 +237,8 @@
       const data = await request("/overview");
       state.devices = data.devices || [];
       state.diagnosis = data.diagnosis || [];
+      state.speed = data.speed || null;
+      state.emailAlerts = data.emailAlerts || null;
       state.monitorIntervalSeconds = data.monitorIntervalSeconds || 60;
       $("#monitorState").textContent = `Coleta automática a cada ${state.monitorIntervalSeconds}s`;
       renderAll();
@@ -141,6 +256,7 @@
       const data = await request("/probe", { method: "POST", body: "{}" });
       state.devices = data.devices || [];
       state.diagnosis = data.diagnosis || [];
+      state.speed = data.speed || state.speed;
       renderAll();
       if (!$("[data-page='historico']").classList.contains("hidden")) await loadHistory();
       showToast("Verificação concluída.");
@@ -152,8 +268,42 @@
     }
   }
 
+  async function testAlertEmail() {
+    const button = $("#testAlertEmail");
+    button.disabled = true;
+    button.textContent = "Enviando...";
+    try {
+      const data = await request("/alerts/test-email", { method: "POST", body: "{}" });
+      showToast(`E-mail de teste enviado para ${data.recipient}.`);
+      await loadOverview({ quiet: true });
+    } catch (error) {
+      showToast(error.message, true);
+    } finally {
+      button.disabled = false;
+      button.textContent = "Enviar e-mail de teste";
+    }
+  }
+
+  async function runSpeedTest() {
+    const button = $("#speedTest");
+    button.disabled = true;
+    button.textContent = "Medindo...";
+    try {
+      const data = await request("/speed-test", { method: "POST", body: "{}" });
+      state.speed = data.speed || null;
+      state.diagnosis = data.diagnosis || [];
+      renderAll();
+      showToast(`Velocidade medida: ${number(state.speed?.downloadMbps)} Mbps ↓ / ${number(state.speed?.uploadMbps)} Mbps ↑.`);
+    } catch (error) {
+      showToast(error.message, true);
+    } finally {
+      button.disabled = false;
+      button.textContent = "Testar velocidade";
+    }
+  }
+
   function setView(view, updateHash = true) {
-    const known = ["dashboard", "equipamentos", "historico"];
+    const known = ["dashboard", "equipamentos", "protocolos", "historico"];
     if (!known.includes(view)) view = "dashboard";
     $$(".techView").forEach((element) => element.classList.toggle("hidden", element.dataset.page !== view));
     $$(".tab").forEach((element) => element.classList.toggle("active", element.dataset.view === view));
@@ -173,6 +323,17 @@
     $("#deviceLocation").value = device?.localizacao || "";
     $("#deviceLatency").value = device?.latenciaAlertaMs ?? 80;
     $("#deviceLoss").value = device?.perdaAlertaPct ?? 5;
+    $("#deviceDownload").value = device?.downloadAlertMbps ?? 50;
+    $("#deviceUpload").value = device?.uploadAlertMbps ?? 10;
+    $("#deviceCpu").value = device?.cpuAlertPct ?? 90;
+    $("#deviceMemory").value = device?.memoryAlertPct ?? 90;
+    $("#deviceDisk").value = device?.diskAlertPct ?? 90;
+    $("#deviceTraffic").value = device?.trafficAlertMbps ?? 100;
+    $("#deviceSnmpCommunity").value = "";
+    $("#deviceSnmpCommunity").placeholder = device?.hasSnmpCommunity ? "Configurada — deixe vazio para manter" : "Comunidade somente leitura";
+    $("#deviceSnmpPort").value = device?.snmpPort ?? 161;
+    $("#deviceAgentPort").value = device?.agentPort || "";
+    $("#deviceAgentPath").value = device?.agentPath || "/metrics";
     $("#deviceNotes").value = device?.observacoes || "";
     $("#deviceCritical").checked = Boolean(device?.critico);
     $("#deviceActive").checked = device ? Boolean(device.ativo) : true;
@@ -196,6 +357,17 @@
       localizacao: $("#deviceLocation").value,
       latenciaAlertaMs: Number($("#deviceLatency").value),
       perdaAlertaPct: Number($("#deviceLoss").value),
+      downloadAlertMbps: Number($("#deviceDownload").value),
+      uploadAlertMbps: Number($("#deviceUpload").value),
+      cpuAlertPct: Number($("#deviceCpu").value),
+      memoryAlertPct: Number($("#deviceMemory").value),
+      diskAlertPct: Number($("#deviceDisk").value),
+      trafficAlertMbps: Number($("#deviceTraffic").value),
+      snmpCommunity: $("#deviceSnmpCommunity").value,
+      snmpPort: Number($("#deviceSnmpPort").value || 161),
+      agentPort: $("#deviceAgentPort").value ? Number($("#deviceAgentPort").value) : null,
+      agentPath: $("#deviceAgentPath").value || "/metrics",
+      preserveSnmpCommunity: Boolean(editingId),
       observacoes: $("#deviceNotes").value,
       critico: $("#deviceCritical").checked,
       ativo: $("#deviceActive").checked,
@@ -271,6 +443,55 @@
     }
   }
 
+  async function discoverComputers() {
+    const button = $("#discoverComputers");
+    const results = $("#computerDiscoveryResults");
+    button.disabled = true;
+    button.textContent = "Procurando...";
+    results.classList.add("muted");
+    results.textContent = "Consultando ICMP, NetBIOS e serviços de Windows/Linux...";
+    try {
+      const data = await request("/discover-computers", {
+        method: "POST",
+        body: JSON.stringify({ subnet: $("#computerDiscoverySubnet").value }),
+      });
+      const found = data.devices || [];
+      results.classList.toggle("muted", !found.length);
+      results.innerHTML = found.length ? found.map((item) => `<div class="discoveryItem">
+        <div><strong>${esc(item.name)}</strong> <span class="muted">${esc(item.host)}</span><br><small class="muted">${esc(item.osFamily)} · portas: ${item.ports.length ? item.ports.map(esc).join(", ") : "nenhuma porta TCP identificada"}</small></div>
+        ${item.registered ? `<span class="status online">${esc(item.registeredName || "Cadastrado")}</span>` : `<button class="smallButton" data-add-computer="${esc(item.host)}" data-computer-name="${esc(item.name)}" data-computer-type="${esc(item.suggestedType)}" data-computer-os="${esc(item.osFamily)}" type="button">Cadastrar</button>`}
+      </div>`).join("") : "Nenhum computador respondeu aos testes desta varredura.";
+    } catch (error) {
+      results.textContent = error.message;
+      showToast(error.message, true);
+    } finally {
+      button.disabled = false;
+      button.textContent = "Varrer Windows e Linux";
+    }
+  }
+
+  async function addComputer(button) {
+    try {
+      await request("/devices", {
+        method: "POST",
+        body: JSON.stringify({
+          nome: button.dataset.computerName, tipo: button.dataset.computerType,
+          host: button.dataset.addComputer, porta: null, sonda: "ICMP",
+          localizacao: "Rede principal", observacoes: `${button.dataset.computerOs} localizado pela descoberta da rede`,
+          critico: false, ativo: true, latenciaAlertaMs: 30, perdaAlertaPct: 5,
+          downloadAlertMbps: 50, uploadAlertMbps: 10, cpuAlertPct: 90,
+          memoryAlertPct: 90, diskAlertPct: 90, trafficAlertMbps: 100,
+          snmpPort: 161, agentPort: null, agentPath: "/metrics",
+        }),
+      });
+      await loadOverview();
+      await discoverComputers();
+      showToast("Computador cadastrado.");
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  }
+
   function renderHistory() {
     const metrics = state.metrics;
     const online = metrics.filter((item) => item.status !== "OFFLINE").length;
@@ -289,6 +510,11 @@
       <td>${number(metric.latencyMs)} ms</td><td>${number(metric.packetLossPct)}%</td>
       <td>${number(metric.jitterMs)} ms</td><td>${metric.serviceOk == null ? "—" : (metric.serviceOk ? "Disponível" : "Falhou")}</td>
     </tr>`).join("") || '<tr><td colspan="6" class="muted">Ainda não há medições neste período.</td></tr>';
+    $("#speedHistoryTable").innerHTML = [...state.speedMetrics].reverse().slice(0, 300).map((metric) => `<tr>
+      <td>${esc(dateTime(metric.checkedAt))}</td><td>${statusBadge(metric)}</td>
+      <td>${number(metric.downloadMbps)} Mbps</td><td>${number(metric.uploadMbps)} Mbps</td>
+      <td>${number(metric.latencyMs)} ms</td>
+    </tr>`).join("") || '<tr><td colspan="5" class="muted">Ainda não há testes de velocidade neste período.</td></tr>';
   }
 
   function renderChart(metrics) {
@@ -313,8 +539,13 @@
     const deviceId = Number($("#historyDevice").value || state.devices[0]?.id || 0);
     if (!deviceId) { state.metrics = []; renderHistory(); return; }
     try {
-      const data = await request(`/history?deviceId=${deviceId}&hours=${Number($("#historyHours").value || 24)}`);
+      const hours = Number($("#historyHours").value || 24);
+      const [data, speedData] = await Promise.all([
+        request(`/history?deviceId=${deviceId}&hours=${hours}`),
+        request(`/speed-history?hours=${hours}`),
+      ]);
       state.metrics = data.metrics || [];
+      state.speedMetrics = speedData.metrics || [];
       renderHistory();
     } catch (error) {
       showToast(error.message, true);
@@ -322,12 +553,19 @@
   }
 
   $("#probeAll").addEventListener("click", probeAll);
+  $("#speedTest").addEventListener("click", runSpeedTest);
+  $("#testAlertEmail").addEventListener("click", testAlertEmail);
   $("#newDevice").addEventListener("click", () => openDevice());
   $("#deviceForm").addEventListener("submit", saveDevice);
   $("#closeDeviceModal").addEventListener("click", closeDevice);
   $("#cancelDevice").addEventListener("click", closeDevice);
   $("#deviceModal").addEventListener("click", (event) => { if (event.target.id === "deviceModal") closeDevice(); });
+  $("#closeDeviceDetails").addEventListener("click", closeDeviceDetails);
+  $("#closeDeviceDetailsFooter").addEventListener("click", closeDeviceDetails);
+  $("#refreshDeviceDetails").addEventListener("click", refreshDeviceDetails);
+  $("#deviceDetailsModal").addEventListener("click", (event) => { if (event.target.id === "deviceDetailsModal") closeDeviceDetails(); });
   $("#discoverPrinters").addEventListener("click", discover);
+  $("#discoverComputers").addEventListener("click", discoverComputers);
   $("#historyDevice").addEventListener("change", loadHistory);
   $("#historyHours").addEventListener("change", loadHistory);
   $$(".tab").forEach((button) => button.addEventListener("click", () => setView(button.dataset.view)));
@@ -335,15 +573,35 @@
   $("#deviceTable").addEventListener("click", (event) => {
     const edit = event.target.closest("[data-edit]");
     const remove = event.target.closest("[data-delete]");
-    if (edit) openDevice(state.devices.find((device) => device.id === Number(edit.dataset.edit)));
-    if (remove) deleteDevice(Number(remove.dataset.delete));
+    if (edit) return openDevice(state.devices.find((device) => device.id === Number(edit.dataset.edit)));
+    if (remove) return deleteDevice(Number(remove.dataset.delete));
+    const details = event.target.closest("[data-details]");
+    if (details) openDeviceDetails(details.dataset.details);
+  });
+  $("#deviceTable").addEventListener("keydown", (event) => {
+    if (!["Enter", " "].includes(event.key) || event.target.closest("button")) return;
+    const details = event.target.closest("[data-details]");
+    if (details) { event.preventDefault(); openDeviceDetails(details.dataset.details); }
+  });
+  $("#deviceCards").addEventListener("click", (event) => {
+    const details = event.target.closest("[data-details]");
+    if (details) openDeviceDetails(details.dataset.details);
+  });
+  $("#deviceCards").addEventListener("keydown", (event) => {
+    if (!["Enter", " "].includes(event.key)) return;
+    const details = event.target.closest("[data-details]");
+    if (details) { event.preventDefault(); openDeviceDetails(details.dataset.details); }
   });
   $("#discoveryResults").addEventListener("click", (event) => {
     const button = event.target.closest("[data-add-printer]");
     if (button) addPrinter(button.dataset.addPrinter, Number(button.dataset.printerPort));
   });
+  $("#computerDiscoveryResults").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-add-computer]");
+    if (button) addComputer(button);
+  });
   window.addEventListener("hashchange", () => setView(location.hash.slice(1) || "dashboard", false));
-  window.addEventListener("keydown", (event) => { if (event.key === "Escape") closeDevice(); });
+  window.addEventListener("keydown", (event) => { if (event.key === "Escape") { closeDevice(); closeDeviceDetails(); } });
 
   setView(location.hash.slice(1) || "dashboard", false);
   loadOverview();

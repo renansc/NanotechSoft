@@ -12,17 +12,18 @@
       <div>
         <span class="eyebrow">Infraestrutura e conectividade</span>
         <h1>Monitoramento de Tecnologia</h1>
-        <p>Internet, roteador, servidores e impressoras da rede 192.168.200.0/24.</p>
+        <p>Internet, roteador, servidores, NVR, relógio ponto e impressoras da rede 192.168.200.0/24.</p>
       </div>
       <div class="heroActions">
         <span class="monitorState" id="monitorState">Carregando monitor...</span>
-        <button class="btn primary" id="probeAll" type="button">Verificar agora</button>
+        <div class="heroButtons"><button class="btn" id="speedTest" type="button">Testar velocidade</button><button class="btn primary" id="probeAll" type="button">Verificar agora</button></div>
       </div>
     </header>
 
     <nav class="techTabs" aria-label="Áreas do módulo">
       <button class="tab active" data-view="dashboard" type="button">Visão geral</button>
       <button class="tab" data-view="equipamentos" type="button">Equipamentos</button>
+      <button class="tab" data-view="protocolos" type="button">Agentes e protocolos</button>
       <button class="tab" data-view="historico" type="button">Histórico</button>
     </nav>
 
@@ -33,6 +34,8 @@
           <article class="kpi warning"><span>Instáveis</span><strong id="kpiDegraded">0</strong><small>acima dos limites</small></article>
           <article class="kpi danger"><span>Offline</span><strong id="kpiOffline">0</strong><small>sem resposta</small></article>
           <article class="kpi"><span>Disponibilidade</span><strong id="kpiAvailability">—</strong><small>média das últimas 24h</small></article>
+          <article class="kpi speed"><span>Download</span><strong id="kpiDownload">—</strong><small>último teste do link</small></article>
+          <article class="kpi speed"><span>Upload</span><strong id="kpiUpload">—</strong><small>último teste do link</small></article>
         </div>
 
         <div class="dashboardGrid">
@@ -49,10 +52,19 @@
               <li>Queda, perda de pacotes, latência e variação até cada equipamento.</li>
               <li>Disponibilidade das portas críticas: HTTPS, SMB e impressão.</li>
               <li>Saída para internet e resolução DNS.</li>
+              <li>Download e upload periódicos, CPU, memória, disco e tráfego quando houver agente/SNMP.</li>
             </ul>
-            <p class="scopeWarning">O servidor está ligado por cabo. Canal, potência, RSSI e roaming do Wi‑Fi exigem SNMP/API do roteador ou uma sonda conectada por Wi‑Fi.</p>
+            <p class="scopeWarning">Consumo por IP depende de NetFlow, sFlow, IPFIX ou API do roteador. O SNMP comum informa o volume total de cada interface.</p>
           </section>
         </div>
+
+        <section class="panel emailAlertPanel">
+          <div class="panelHead">
+            <div><span class="eyebrow">Avisos automáticos</span><h2>Alertas por e-mail</h2></div>
+            <button class="btn" id="testAlertEmail" type="button">Enviar e-mail de teste</button>
+          </div>
+          <div id="emailAlertStatus" class="emailAlertStatus">Carregando configuração...</div>
+        </section>
 
         <section class="panel">
           <div class="panelHead">
@@ -71,6 +83,35 @@
             </table>
           </div>
         </section>
+      </section>
+
+      <section class="techView hidden" data-page="protocolos">
+        <div class="protocolGrid">
+          <section class="panel protocolCard">
+            <span class="protocolTag">Rede e dispositivos</span><h2>SNMP</h2>
+            <p>Use SNMP somente leitura para roteadores, switches, NVRs e impressoras. O módulo coleta identificação, CPU quando disponível e tráfego das interfaces.</p>
+            <ol><li>Ative SNMP no equipamento.</li><li>Restrinja o acesso ao servidor <strong>192.168.200.254</strong>.</li><li>Edite o equipamento, escolha SNMP e informe a comunidade.</li></ol>
+            <p class="scopeWarning">SNMP v2c não criptografa a comunidade. Prefira uma comunidade exclusiva e somente leitura; suporte a SNMPv3 fica indicado como próxima evolução.</p>
+          </section>
+          <section class="panel protocolCard">
+            <span class="protocolTag">Linux</span><h2>Node Exporter</h2>
+            <p>Para Ubuntu/Linux, o exporter Prometheus entrega CPU, memória, discos e rede sem criar login próprio no portal.</p>
+            <code>node_exporter --web.listen-address=:9100</code>
+            <p>Cadastre a sonda <strong>Prometheus exporter</strong>, porta 9100 e caminho <strong>/metrics</strong>.</p>
+          </section>
+          <section class="panel protocolCard">
+            <span class="protocolTag">Windows</span><h2>Windows Exporter</h2>
+            <p>Para Windows, instale o windows_exporter como serviço e libere a porta apenas para o servidor de monitoramento.</p>
+            <code>msiexec /i windows_exporter.msi ENABLED_COLLECTORS=cpu,cs,logical_disk,memory,net,os</code>
+            <p>Cadastre a sonda <strong>Prometheus exporter</strong>, normalmente na porta 9182.</p>
+          </section>
+          <section class="panel protocolCard">
+            <span class="protocolTag">Inventário</span><h2>GLPI Agent</h2>
+            <p>O GLPI Agent é a opção indicada para inventário de hardware, programas instalados, número de série e ativos. Ele complementa o monitoramento; exige uma instância GLPI para receber os inventários.</p>
+            <p class="muted">Zabbix Agent também é compatível como estratégia futura, mas nesta etapa o formato aberto Prometheus evita instalar um servidor Zabbix separado.</p>
+          </section>
+        </div>
+        <section class="panel flowPanel"><span class="eyebrow">Limites e segurança</span><h2>Como os dados se completam</h2><div class="protocolFlow"><span>ICMP/TCP<br><small>disponibilidade</small></span><b>+</b><span>SNMP/exporter<br><small>recursos e interfaces</small></span><b>+</b><span>GLPI Agent<br><small>hardware e programas</small></span><b>=</b><span>Diagnóstico completo</span></div></section>
       </section>
 
       <section class="techView hidden" data-page="equipamentos">
@@ -98,9 +139,25 @@
           </div>
           <div id="discoveryResults" class="discoveryResults muted">Execute a descoberta para localizar novas impressoras.</div>
         </section>
+
+        <section class="panel discoverPanel">
+          <div class="panelHead">
+            <div><span class="eyebrow">Estações de trabalho</span><h2>Descobrir computadores</h2></div>
+            <button class="btn" id="discoverComputers" type="button">Varrer Windows e Linux</button>
+          </div>
+          <div class="inlineForm">
+            <label>Sub-rede<input id="computerDiscoverySubnet" value="192.168.200.0/24" inputmode="numeric"></label>
+            <p>Combina ICMP, NetBIOS e portas de Windows/Linux. A versão exata do Windows precisa ser confirmada no equipamento ou por agente.</p>
+          </div>
+          <div id="computerDiscoveryResults" class="discoveryResults muted">Execute a descoberta para localizar computadores ativos.</div>
+        </section>
       </section>
 
       <section class="techView hidden" data-page="historico">
+        <section class="panel">
+          <div class="panelHead"><div><span class="eyebrow">Link de internet</span><h2>Histórico de velocidade</h2></div></div>
+          <div class="tableWrap"><table><thead><tr><th>Data</th><th>Status</th><th>Download</th><th>Upload</th><th>Latência</th></tr></thead><tbody id="speedHistoryTable"></tbody></table></div>
+        </section>
         <section class="panel">
           <div class="panelHead historyHead">
             <div><span class="eyebrow">Série temporal</span><h2>Histórico de medições</h2></div>
@@ -121,19 +178,40 @@
       </section>
     </main>
 
+    <div class="modal hidden" id="deviceDetailsModal" role="dialog" aria-modal="true" aria-labelledby="deviceDetailsTitle">
+      <section class="modalCard deviceDetailsCard">
+        <div class="panelHead">
+          <div><span class="eyebrow">Informações monitoradas</span><h2 id="deviceDetailsTitle">Equipamento</h2><p id="deviceDetailsSubtitle" class="muted"></p></div>
+          <button class="iconButton" id="closeDeviceDetails" type="button" aria-label="Fechar">×</button>
+        </div>
+        <div id="deviceDetailsBody"></div>
+        <div class="modalActions"><button class="btn" id="closeDeviceDetailsFooter" type="button">Fechar</button><button class="btn primary" id="refreshDeviceDetails" type="button">Atualizar agora</button></div>
+      </section>
+    </div>
+
     <div class="modal hidden" id="deviceModal" role="dialog" aria-modal="true" aria-labelledby="deviceModalTitle">
       <form class="modalCard" id="deviceForm">
         <div class="panelHead"><h2 id="deviceModalTitle">Novo equipamento</h2><button class="iconButton" id="closeDeviceModal" type="button" aria-label="Fechar">×</button></div>
         <input id="deviceId" type="hidden">
         <div class="formGrid">
           <label>Nome<input id="deviceName" maxlength="120" required></label>
-          <label>Tipo<select id="deviceType"><option>INTERNET</option><option>ROTEADOR</option><option>SERVIDOR</option><option>IMPRESSORA</option><option>OUTRO</option></select></label>
+          <label>Tipo<select id="deviceType"><option>INTERNET</option><option>ROTEADOR</option><option>SERVIDOR</option><option>COMPUTADOR</option><option>NOTEBOOK</option><option>NVR</option><option value="RELOGIO_PONTO">RELÓGIO PONTO</option><option>IMPRESSORA</option><option>OUTRO</option></select></label>
           <label>IP ou host<input id="deviceHost" maxlength="253" required placeholder="192.168.200.10"></label>
           <label>Porta TCP<input id="devicePort" type="number" min="1" max="65535" placeholder="9100"></label>
-          <label>Teste<select id="deviceProbe"><option value="ICMP">ICMP + porta</option><option value="TCP">TCP</option></select></label>
+          <label>Teste/coleta<select id="deviceProbe"><option value="ICMP">ICMP + porta</option><option value="TCP">TCP</option><option value="SNMP">SNMP v2c + ICMP</option><option value="PROMETHEUS">Prometheus exporter + ICMP</option></select></label>
           <label>Localização<input id="deviceLocation" maxlength="160"></label>
           <label>Alerta de latência (ms)<input id="deviceLatency" type="number" min="1" max="60000" value="80" required></label>
           <label>Alerta de perda (%)<input id="deviceLoss" type="number" min="0" max="100" step="0.1" value="5" required></label>
+          <label>Download mínimo (Mbps)<input id="deviceDownload" type="number" min="0.1" max="100000" step="0.1" value="50" required></label>
+          <label>Upload mínimo (Mbps)<input id="deviceUpload" type="number" min="0.1" max="100000" step="0.1" value="10" required></label>
+          <label>Alerta CPU (%)<input id="deviceCpu" type="number" min="1" max="100" step="0.1" value="90" required></label>
+          <label>Alerta memória (%)<input id="deviceMemory" type="number" min="1" max="100" step="0.1" value="90" required></label>
+          <label>Alerta disco (%)<input id="deviceDisk" type="number" min="1" max="100" step="0.1" value="90" required></label>
+          <label>Alerta tráfego (Mbps)<input id="deviceTraffic" type="number" min="0.1" max="100000" step="0.1" value="100" required></label>
+          <label>Comunidade SNMP<input id="deviceSnmpCommunity" type="password" maxlength="160" autocomplete="new-password" placeholder="Manter a atual quando vazio"></label>
+          <label>Porta SNMP<input id="deviceSnmpPort" type="number" min="1" max="65535" value="161"></label>
+          <label>Porta do exporter<input id="deviceAgentPort" type="number" min="1" max="65535" placeholder="9100 ou 9182"></label>
+          <label>Caminho do exporter<input id="deviceAgentPath" maxlength="120" value="/metrics"></label>
           <label class="wide">Observações<textarea id="deviceNotes" maxlength="500" rows="3"></textarea></label>
         </div>
         <div class="checkRow"><label><input id="deviceCritical" type="checkbox"> Equipamento crítico</label><label><input id="deviceActive" type="checkbox" checked> Monitoramento ativo</label></div>
