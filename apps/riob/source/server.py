@@ -38,8 +38,16 @@ from html.parser import HTMLParser
 from urllib.parse import urlparse, unquote
 import paramiko
 import nfe_ws
-from vendas_diario import discover_txt_files, parse_report, read_report
+from vendas_diario import discover_txt_files, intervalo_semana_iso, parse_report, read_report
 from vendas_carga_pdf import parse_carga_pdf, parse_cargas_pdf
+from vendas_referencias import (
+    classificar_etapa_conciliacao,
+    codigo_numerico,
+    mapas_carga_equivalentes,
+    normalizar_cliente,
+    parse_rotas_pdf,
+    separar_codigo_nome,
+)
 
 app = Flask(__name__, static_folder='.')
 
@@ -1241,6 +1249,7 @@ def ensure_schema():
             "ALTER TABLE rastreabilidade_lancamento_vinculos ADD INDEX idx_rastreio_vinculo_codigo (lote_codigo)",
             "ALTER TABLE rastreabilidade_lancamento_vinculos ADD INDEX idx_rastreio_vinculo_tipo (tipo_movimento)",
             "ALTER TABLE rastreabilidade_lancamento_vinculos ADD INDEX idx_rastreio_vinculo_nota (numero_nota)",
+            "ALTER TABLE rastreabilidade_lancamento_vinculos ADD INDEX idx_rastreio_vinculo_referencia (origem_tipo, referencia_id)",
         ):
             try:
                 cur.execute(ddl)
@@ -1679,12 +1688,21 @@ def ensure_schema():
             vendedor_codigo VARCHAR(80) DEFAULT '',
             vendedor_nome VARCHAR(255) DEFAULT '',
             numero_nf VARCHAR(80) DEFAULT '',
+            cliente_codigo VARCHAR(40) DEFAULT '',
             cliente VARCHAR(255) DEFAULT '',
             cliente_norm VARCHAR(255) DEFAULT '',
             cidade VARCHAR(180) DEFAULT '',
+            rota_codigo VARCHAR(40) DEFAULT '',
+            rota_nome VARCHAR(255) DEFAULT '',
+            mapa_numero VARCHAR(40) DEFAULT '',
+            endereco VARCHAR(500) DEFAULT '',
+            bairro VARCHAR(180) DEFAULT '',
+            uf VARCHAR(10) DEFAULT '',
+            data_pedido DATE NULL,
             grupo_raw VARCHAR(180) DEFAULT '',
             grupo_norm VARCHAR(180) DEFAULT '',
             categoria_norm VARCHAR(180) DEFAULT '',
+            produto_codigo VARCHAR(40) DEFAULT '',
             produto VARCHAR(255) DEFAULT '',
             tipo_operacao VARCHAR(180) DEFAULT '',
             condicao VARCHAR(180) DEFAULT '',
@@ -1693,6 +1711,7 @@ def ensure_schema():
             litros DECIMAL(18,3) DEFAULT 0,
             caixas DECIMAL(18,3) DEFAULT 0,
             caixa_fisica DECIMAL(18,3) DEFAULT 0,
+            peso DECIMAL(18,3) DEFAULT 0,
             valor_venda DECIMAL(18,2) DEFAULT 0,
             valor_devolvido DECIMAL(18,2) DEFAULT 0,
             bonificacao DECIMAL(18,2) DEFAULT 0,
@@ -1700,6 +1719,12 @@ def ensure_schema():
             quantidade_devolvida DECIMAL(18,3) DEFAULT 0,
             litro_devolvido DECIMAL(18,3) DEFAULT 0,
             caixa_devolvida DECIMAL(18,3) DEFAULT 0,
+            motorista_codigo VARCHAR(40) DEFAULT '',
+            motorista_nome VARCHAR(255) DEFAULT '',
+            ajudante1_codigo VARCHAR(40) DEFAULT '',
+            ajudante1_nome VARCHAR(255) DEFAULT '',
+            ajudante2_codigo VARCHAR(40) DEFAULT '',
+            ajudante2_nome VARCHAR(255) DEFAULT '',
             criado_em DATETIME DEFAULT CURRENT_TIMESTAMP,
             INDEX idx_vendas_relatorio_itens_import (import_id),
             INDEX idx_vendas_relatorio_itens_vendedor (import_id, vendedor_key_upper),
@@ -1708,7 +1733,9 @@ def ensure_schema():
             INDEX idx_vendas_relatorio_itens_cliente (import_id, cliente_norm),
             INDEX idx_vendas_relatorio_itens_data_vendedor (import_id, data_ref, vendedor_key_upper),
             INDEX idx_vendas_relatorio_itens_data_cliente (import_id, data_ref, cliente_norm),
-            INDEX idx_vendas_relatorio_itens_data_grupo (import_id, data_ref, grupo_norm)
+            INDEX idx_vendas_relatorio_itens_data_grupo (import_id, data_ref, grupo_norm),
+            INDEX idx_vendas_relatorio_itens_mapa (import_id, mapa_numero),
+            INDEX idx_vendas_relatorio_itens_cliente_codigo (import_id, cliente_codigo)
         )
         """)
         cur.execute("""
@@ -1831,6 +1858,51 @@ def ensure_schema():
         )
         """)
         cur.execute("UPDATE vendas_diario_kanban SET origem_tipo='pdf' WHERE mapa_numero<>'' AND origem_tipo='txt'")
+
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS vendas_clientes_referencia (
+            codigo VARCHAR(40) PRIMARY KEY,
+            rota_codigo VARCHAR(40) NOT NULL DEFAULT '',
+            documento VARCHAR(30) NOT NULL DEFAULT '',
+            razao_social VARCHAR(255) NOT NULL DEFAULT '',
+            fantasia VARCHAR(255) NOT NULL DEFAULT '',
+            endereco VARCHAR(500) NOT NULL DEFAULT '',
+            rua VARCHAR(255) NOT NULL DEFAULT '',
+            numero VARCHAR(40) NOT NULL DEFAULT '',
+            cidade VARCHAR(180) NOT NULL DEFAULT '',
+            uf VARCHAR(10) NOT NULL DEFAULT '',
+            cep VARCHAR(20) NOT NULL DEFAULT '',
+            bairro VARCHAR(180) NOT NULL DEFAULT '',
+            vendedor_codigo VARCHAR(40) NOT NULL DEFAULT '',
+            vendedor_nome VARCHAR(255) NOT NULL DEFAULT '',
+            status VARCHAR(40) NOT NULL DEFAULT '',
+            arquivo_nome VARCHAR(255) NOT NULL DEFAULT '',
+            atualizado_em DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            INDEX idx_vendas_clientes_rota (rota_codigo),
+            INDEX idx_vendas_clientes_cidade (cidade),
+            INDEX idx_vendas_clientes_vendedor (vendedor_codigo)
+        )
+        """)
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS vendas_rotas_referencia (
+            codigo VARCHAR(40) PRIMARY KEY,
+            descricao VARCHAR(500) NOT NULL DEFAULT '',
+            arquivo_nome VARCHAR(255) NOT NULL DEFAULT '',
+            atualizado_em DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        )
+        """)
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS vendas_referencias_importacoes (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            tipo VARCHAR(30) NOT NULL,
+            arquivo_nome VARCHAR(255) NOT NULL DEFAULT '',
+            assinatura CHAR(64) NOT NULL,
+            registros INT NOT NULL DEFAULT 0,
+            importado_em DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE KEY uq_vendas_referencias_assinatura_tipo (assinatura, tipo),
+            INDEX idx_vendas_referencias_tipo (tipo, importado_em)
+        )
+        """)
 
         
         # 2b) Se as tabelas já existiam antigas, garante colunas esperadas
@@ -2726,9 +2798,33 @@ def ensure_schema():
         except Exception:
             pass
         for stmt in (
+            "ALTER TABLE vendas_relatorio_itens ADD COLUMN cliente_codigo VARCHAR(40) DEFAULT ''",
+            "ALTER TABLE vendas_relatorio_itens ADD COLUMN rota_codigo VARCHAR(40) DEFAULT ''",
+            "ALTER TABLE vendas_relatorio_itens ADD COLUMN rota_nome VARCHAR(255) DEFAULT ''",
+            "ALTER TABLE vendas_relatorio_itens ADD COLUMN mapa_numero VARCHAR(40) DEFAULT ''",
+            "ALTER TABLE vendas_relatorio_itens ADD COLUMN endereco VARCHAR(500) DEFAULT ''",
+            "ALTER TABLE vendas_relatorio_itens ADD COLUMN bairro VARCHAR(180) DEFAULT ''",
+            "ALTER TABLE vendas_relatorio_itens ADD COLUMN uf VARCHAR(10) DEFAULT ''",
+            "ALTER TABLE vendas_relatorio_itens ADD COLUMN data_pedido DATE NULL",
+            "ALTER TABLE vendas_relatorio_itens ADD COLUMN produto_codigo VARCHAR(40) DEFAULT ''",
+            "ALTER TABLE vendas_relatorio_itens ADD COLUMN peso DECIMAL(18,3) DEFAULT 0",
+            "ALTER TABLE vendas_relatorio_itens ADD COLUMN motorista_codigo VARCHAR(40) DEFAULT ''",
+            "ALTER TABLE vendas_relatorio_itens ADD COLUMN motorista_nome VARCHAR(255) DEFAULT ''",
+            "ALTER TABLE vendas_relatorio_itens ADD COLUMN ajudante1_codigo VARCHAR(40) DEFAULT ''",
+            "ALTER TABLE vendas_relatorio_itens ADD COLUMN ajudante1_nome VARCHAR(255) DEFAULT ''",
+            "ALTER TABLE vendas_relatorio_itens ADD COLUMN ajudante2_codigo VARCHAR(40) DEFAULT ''",
+            "ALTER TABLE vendas_relatorio_itens ADD COLUMN ajudante2_nome VARCHAR(255) DEFAULT ''",
+        ):
+            try:
+                cur.execute(stmt)
+            except Exception:
+                pass
+        for stmt in (
             "ALTER TABLE vendas_relatorio_itens ADD INDEX idx_vendas_relatorio_itens_data_vendedor (import_id, data_ref, vendedor_key_upper)",
             "ALTER TABLE vendas_relatorio_itens ADD INDEX idx_vendas_relatorio_itens_data_cliente (import_id, data_ref, cliente_norm)",
             "ALTER TABLE vendas_relatorio_itens ADD INDEX idx_vendas_relatorio_itens_data_grupo (import_id, data_ref, grupo_norm)",
+            "ALTER TABLE vendas_relatorio_itens ADD INDEX idx_vendas_relatorio_itens_mapa (import_id, mapa_numero)",
+            "ALTER TABLE vendas_relatorio_itens ADD INDEX idx_vendas_relatorio_itens_cliente_codigo (import_id, cliente_codigo)",
         ):
             try:
                 cur.execute(stmt)
@@ -11535,7 +11631,7 @@ _bootstrap_sip_config_from_env()
 
 from legacy_services import register_legacy_services
 
-LEGACY_SERVICES_MIGRATION = register_legacy_services(
+register_legacy_services(
     app=app,
     conn_factory=get_conn,
     data_root=DATA_ROOT,
@@ -11552,16 +11648,13 @@ LEGACY_SERVICES_MIGRATION = register_legacy_services(
 )
 
 if _as_bool(
-    os.environ.get("RB_SYNC_ABASTECIMENTOS_XML_STARTUP", "1"),
-    True,
+    os.environ.get("RB_SYNC_ABASTECIMENTOS_XML_STARTUP", "0"),
+    False,
 ):
     try:
-        ABASTECIMENTOS_XML_STARTUP = sincronizar_abastecimentos_xml(dry_run=False)
+        sincronizar_abastecimentos_xml(dry_run=False)
     except Exception as exc:
-        ABASTECIMENTOS_XML_STARTUP = {"erro": str(exc)}
         app.logger.exception("Falha ao sincronizar abastecimentos XML na inicializacao")
-else:
-    ABASTECIMENTOS_XML_STARTUP = {"desabilitado": True}
 
 def _normalizar_km_base(km_base, km_atual):
     """
@@ -14850,7 +14943,7 @@ def _rastreio_modo_resultado(*listas):
 
 
 try:
-    if _as_bool(os.environ.get("RB_RASTREIO_BOOTSTRAP_STARTUP", "1"), True):
+    if _as_bool(os.environ.get("RB_RASTREIO_BOOTSTRAP_STARTUP", "0"), False):
         _rastreio_criar_amarracao_inicial()
 except Exception as exc:
     app.logger.warning("Falha ao criar amarracao inicial de rastreabilidade: %s", exc)
@@ -25691,7 +25784,10 @@ def _vendas_primeiro_campo_vendedor(raw):
     if not isinstance(raw, dict):
         return ""
     primeiro_valor = ""
-    for campo in ("Vendedor Pedido", "Vendedor Cadastro", "Vendedor 2"):
+    for campo in (
+        "Vendedor Pedido", "Vendedor Cadastro", "Vendedor 2",
+        "Supervisor Pedido", "Supervisor Cadastro", "Supervisor 2",
+    ):
         valor = _as_str(raw.get(campo))
         if not valor:
             continue
@@ -25706,6 +25802,12 @@ def _vendas_normalizar_linha(raw):
     vendedor_raw = _vendas_primeiro_campo_vendedor(raw)
     vendedor_info = _split_codigo_nome(vendedor_raw)
     vendedor_key = " - ".join(part for part in (vendedor_info["codigo"], vendedor_info["nome"]) if part) or "SEM VENDEDOR"
+    cliente_codigo, _cliente_nome = separar_codigo_nome(raw.get("Cliente"))
+    rota_codigo, rota_nome = separar_codigo_nome(raw.get("Rota"))
+    produto_codigo, _produto_nome = separar_codigo_nome(raw.get("Produto"))
+    motorista_codigo, motorista_nome = separar_codigo_nome(raw.get("Motorista"))
+    ajudante1_codigo, ajudante1_nome = separar_codigo_nome(raw.get("Ajudante1"))
+    ajudante2_codigo, ajudante2_nome = separar_codigo_nome(raw.get("Ajudante2"))
     caixa_fisica = _as_float_br(raw.get("Caixa Física"), 0.0)
     bonificacao = 0.0
     for campo in (
@@ -25729,6 +25831,7 @@ def _vendas_normalizar_linha(raw):
         "TAB VENDA",
         "TAB_VENDA",
         "Tab de Venda",
+        "Tab.Venda",
     ):
         if campo in raw and _as_str(raw.get(campo)) != "":
             tab_venda_raw = raw.get(campo)
@@ -25740,8 +25843,17 @@ def _vendas_normalizar_linha(raw):
         "vendedor_codigo": vendedor_info["codigo"],
         "vendedor_nome": vendedor_info["nome"] or vendedor_key,
         "numero_nf": _as_str(raw.get("Número nf")),
+        "cliente_codigo": codigo_numerico(cliente_codigo),
         "cliente": _as_str(raw.get("Cliente")),
         "cidade": _as_str(raw.get("Cidade")),
+        "rota_codigo": codigo_numerico(rota_codigo),
+        "rota_nome": rota_nome,
+        "mapa_numero": re.sub(r"\D+", "", _as_str(raw.get("Mapa"))),
+        "endereco": _as_str(raw.get("Endereço") or raw.get("Endereco")),
+        "bairro": _as_str(raw.get("Bairro")),
+        "uf": _as_str(raw.get("UF")),
+        "data_pedido": _fmt_date(_parse_data_br(raw.get("Data Pedido"))) or _as_str(raw.get("Data Pedido")),
+        "produto_codigo": codigo_numerico(produto_codigo),
         "produto": _as_str(raw.get("Produto")),
         "tipo_operacao": _as_str(raw.get("Tipo Operação")),
         "condicao": _as_str(raw.get("Condição")),
@@ -25750,12 +25862,19 @@ def _vendas_normalizar_linha(raw):
         "litros": _as_float_br(raw.get("Litro"), 0.0),
         "caixas": caixa_fisica,
         "caixa_fisica": caixa_fisica,
+        "peso": _as_float_br(raw.get("Peso"), 0.0),
         "valor_venda": _as_float_br(raw.get("Valor Venda"), 0.0),
         "valor_devolvido": _as_float_br(raw.get("Valor Devolvido"), 0.0),
         "bonificacao": bonificacao,
         "quantidade_devolvida": _as_float_br(raw.get("Quantidade Devolvida"), 0.0),
         "litro_devolvido": _as_float_br(raw.get("Litro Devolvido"), 0.0),
         "caixa_devolvida": _as_float_br(raw.get("Caixa Fisica Devolvida"), 0.0),
+        "motorista_codigo": codigo_numerico(motorista_codigo),
+        "motorista_nome": motorista_nome,
+        "ajudante1_codigo": codigo_numerico(ajudante1_codigo),
+        "ajudante1_nome": ajudante1_nome,
+        "ajudante2_codigo": codigo_numerico(ajudante2_codigo),
+        "ajudante2_nome": ajudante2_nome,
     }
     if tab_venda == 91:
         if row["valor_venda"] > 0 and row["bonificacao"] <= 0:
@@ -25809,10 +25928,20 @@ def _vendas_importar_csv_para_cache(source_path, source_type="csv_relatorios_dir
         cur.executemany("""
             INSERT INTO vendas_relatorio_itens (
                 import_id, data_ref, data_texto, vendedor_key, vendedor_key_upper, vendedor_codigo,
-                vendedor_nome, numero_nf, cliente, cliente_norm, cidade, grupo_raw, grupo_norm, categoria_norm,
-                produto, tipo_operacao, condicao, tab_venda, quantidade, litros, caixas, caixa_fisica, valor_venda,
-                valor_devolvido, bonificacao, valor_liquido, quantidade_devolvida, litro_devolvido, caixa_devolvida
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                vendedor_nome, numero_nf, cliente_codigo, cliente, cliente_norm, cidade,
+                rota_codigo, rota_nome, mapa_numero, endereco, bairro, uf, data_pedido,
+                grupo_raw, grupo_norm, categoria_norm, produto_codigo, produto, tipo_operacao, condicao,
+                tab_venda, quantidade, litros, caixas, caixa_fisica, peso, valor_venda,
+                valor_devolvido, bonificacao, valor_liquido, quantidade_devolvida, litro_devolvido,
+                caixa_devolvida, motorista_codigo, motorista_nome, ajudante1_codigo, ajudante1_nome,
+                ajudante2_codigo, ajudante2_nome
+            ) VALUES (
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s
+            )
         """, lote)
         total_rows += len(lote)
         lote = []
@@ -25857,12 +25986,21 @@ def _vendas_importar_csv_para_cache(source_path, source_type="csv_relatorios_dir
                 _as_str(row.get("vendedor_codigo")),
                 _as_str(row.get("vendedor_nome")) or vendedor_key,
                 _as_str(row.get("numero_nf")),
+                _as_str(row.get("cliente_codigo")),
                 cliente,
                 cliente_norm,
                 _as_str(row.get("cidade")),
+                _as_str(row.get("rota_codigo")),
+                _as_str(row.get("rota_nome")),
+                _as_str(row.get("mapa_numero")),
+                _as_str(row.get("endereco")),
+                _as_str(row.get("bairro")),
+                _as_str(row.get("uf")),
+                _parse_data_br(row.get("data_pedido")),
                 grupo_raw,
                 grupo_norm,
                 categoria_norm,
+                _as_str(row.get("produto_codigo")),
                 _as_str(row.get("produto")),
                 _as_str(row.get("tipo_operacao")),
                 _as_str(row.get("condicao")),
@@ -25871,6 +26009,7 @@ def _vendas_importar_csv_para_cache(source_path, source_type="csv_relatorios_dir
                 round(_as_float(row.get("litros"), 0.0), 3),
                 round(_as_float(row.get("caixas"), 0.0), 3),
                 round(_as_float(row.get("caixa_fisica"), 0.0), 3),
+                round(_as_float(row.get("peso"), 0.0), 3),
                 round(_as_float(row.get("valor_venda"), 0.0), 2),
                 round(_as_float(row.get("valor_devolvido"), 0.0), 2),
                 round(_as_float(row.get("bonificacao"), 0.0), 2),
@@ -25878,6 +26017,12 @@ def _vendas_importar_csv_para_cache(source_path, source_type="csv_relatorios_dir
                 round(_as_float(row.get("quantidade_devolvida"), 0.0), 3),
                 round(_as_float(row.get("litro_devolvido"), 0.0), 3),
                 round(_as_float(row.get("caixa_devolvida"), 0.0), 3),
+                _as_str(row.get("motorista_codigo")),
+                _as_str(row.get("motorista_nome")),
+                _as_str(row.get("ajudante1_codigo")),
+                _as_str(row.get("ajudante1_nome")),
+                _as_str(row.get("ajudante2_codigo")),
+                _as_str(row.get("ajudante2_nome")),
             ))
             if len(lote) >= 500:
                 _flush_rows()
@@ -25934,6 +26079,10 @@ def _vendas_importar_csv_assincrono(source_path, source_type="csv_relatorios_dir
                     _vendas_cache_set_active(_as_str(entry.get("id")))
                 except Exception:
                     pass
+                try:
+                    _vendas_diario_unificar_cards_semelhantes(usuario="sellout_automatico")
+                except Exception:
+                    app.logger.exception("falha na conciliacao automatica TXT/PDF/SELLOUT")
                 try:
                     _vendas_bonificacoes_processar_cache_assincrono(_as_str(entry.get("id")))
                 except Exception:
@@ -26106,15 +26255,26 @@ _VENDAS_IMPORT_COLUNAS_UTILIZADAS = [
     "Numero nf",
     "Cliente",
     "Cidade",
+    "Rota",
+    "Mapa",
+    "Endereço",
+    "Bairro",
+    "UF",
+    "Data Pedido",
+    "Motorista",
+    "Ajudante1",
+    "Ajudante2",
     "Grupo",
     "Categoria",
     "Produto",
     "Marca",
     "Tipo Operacao",
     "Condicao",
+    "Tab.Venda",
     "Quantidade",
     "Litro",
     "Caixa Fisica",
+    "Peso",
     "Valor Venda",
     "Bonificacao",
     "Valor Devolvido",
@@ -31724,7 +31884,11 @@ def vendas_diario_api():
             row = cur.fetchone() or {}
             data_ref = _fmt_date(row.get("data_ref"))
         cur.execute("""
-            SELECT p.id, p.data_ref, p.vendedor_codigo, p.cliente_codigo, p.cliente_nome, p.fantasia,
+            SELECT p.id, p.data_ref, p.vendedor_codigo,
+                   (SELECT MAX(cc.nome) FROM comissao_cadastros cc
+                    WHERE LOWER(cc.funcao)='vendedor' AND cc.ativo=1
+                      AND cc.codigo=CAST(p.vendedor_codigo AS UNSIGNED)) AS vendedor_nome,
+                   p.cliente_codigo, p.cliente_nome, p.fantasia,
                    p.cidade, p.status, p.motivo_codigo, p.motivo, p.valor_total, p.peso_bruto,
                    COALESCE(iv.itens,0) AS itens,
                    COALESCE(iv.valor_bonificacao,0) AS valor_bonificacao,
@@ -31738,6 +31902,25 @@ def vendas_diario_api():
                 FROM vendas_diario_itens GROUP BY pedido_id
             ) iv ON iv.pedido_id=p.id
             WHERE p.data_ref=%s
+              AND NOT (
+                  EXISTS (
+                      SELECT 1 FROM vendas_diario_kanban kpdf
+                      WHERE kpdf.importacao_id=p.importacao_id
+                        AND kpdf.vendedor_codigo=p.vendedor_codigo
+                        AND kpdf.origem_tipo='pdf'
+                  )
+                  AND EXISTS (
+                      SELECT 1
+                      FROM vendas_diario_pedidos ptxt
+                      JOIN vendas_diario_kanban ktxt
+                        ON ktxt.importacao_id=ptxt.importacao_id
+                       AND ktxt.vendedor_codigo=ptxt.vendedor_codigo
+                      WHERE ptxt.data_ref=p.data_ref
+                        AND ptxt.vendedor_codigo=p.vendedor_codigo
+                        AND ktxt.origem_tipo='txt'
+                        AND ktxt.status<>'excluido'
+                  )
+              )
               AND NOT EXISTS (
                   SELECT 1 FROM vendas_diario_kanban kf
                   LEFT JOIN vendas_diario_kanban kp ON kp.id=kf.card_principal_id
@@ -31748,6 +31931,7 @@ def vendas_diario_api():
             ORDER BY p.vendedor_codigo, p.cliente_nome
         """, (data_ref or "1900-01-01",))
         orders = cur.fetchall() or []
+        _vendas_diario_preencher_nomes_vendedores(cur, orders)
         cur.execute("SELECT DISTINCT data_ref FROM vendas_diario_importacoes ORDER BY data_ref DESC LIMIT 90")
         dates = [_fmt_date(row.get("data_ref")) for row in (cur.fetchall() or [])]
         return jsonify({
@@ -31787,6 +31971,7 @@ def vendas_diario_dashboard_api():
             data_ref = _fmt_date((cur.fetchone() or {}).get("data_ref"))
         cur.execute("""
             SELECT p.vendedor_codigo,
+                   MAX(cv.nome) AS vendedor_nome,
                    COUNT(*) AS clientes,
                    SUM(CASE WHEN p.status='positiva' THEN 1 ELSE 0 END) AS positivos,
                    SUM(CASE WHEN p.status='negativa' THEN 1 ELSE 0 END) AS negativos,
@@ -31803,7 +31988,32 @@ def vendas_diario_dashboard_api():
                 FROM vendas_diario_itens
                 GROUP BY pedido_id
             ) iv ON iv.pedido_id=p.id
+            LEFT JOIN (
+                SELECT codigo, MAX(nome) AS nome
+                FROM comissao_cadastros
+                WHERE LOWER(funcao)='vendedor' AND ativo=1 AND codigo IS NOT NULL
+                GROUP BY codigo
+            ) cv ON cv.codigo=CAST(p.vendedor_codigo AS UNSIGNED)
             WHERE p.data_ref=%s
+              AND NOT (
+                  EXISTS (
+                      SELECT 1 FROM vendas_diario_kanban kpdf
+                      WHERE kpdf.importacao_id=p.importacao_id
+                        AND kpdf.vendedor_codigo=p.vendedor_codigo
+                        AND kpdf.origem_tipo='pdf'
+                  )
+                  AND EXISTS (
+                      SELECT 1
+                      FROM vendas_diario_pedidos ptxt
+                      JOIN vendas_diario_kanban ktxt
+                        ON ktxt.importacao_id=ptxt.importacao_id
+                       AND ktxt.vendedor_codigo=ptxt.vendedor_codigo
+                      WHERE ptxt.data_ref=p.data_ref
+                        AND ptxt.vendedor_codigo=p.vendedor_codigo
+                        AND ktxt.origem_tipo='txt'
+                        AND ktxt.status<>'excluido'
+                  )
+              )
               AND NOT EXISTS (
                   SELECT 1 FROM vendas_diario_kanban kf
                   LEFT JOIN vendas_diario_kanban kp ON kp.id=kf.card_principal_id
@@ -31827,6 +32037,7 @@ def vendas_diario_dashboard_api():
             item["valor_total"] = item["valor_bruto"]
             item["status"] = "sem_vendas" if positives == 0 else ("atencao" if rate < 30 else "com_vendas")
             sellers.append(item)
+        _vendas_diario_preencher_nomes_vendedores(cur, sellers)
         cur.execute("SELECT DISTINCT data_ref FROM vendas_diario_importacoes ORDER BY data_ref DESC LIMIT 90")
         dates = [_fmt_date(row.get("data_ref")) for row in (cur.fetchall() or [])]
         return jsonify({
@@ -31861,10 +32072,34 @@ def _vendas_diario_kanban_sincronizar(cur):
     """)
 
 
+def _vendas_diario_preencher_nomes_vendedores(cur, rows):
+    """Completa nomes ausentes usando a mesma base do relatorio Vendas."""
+    missing = sorted({
+        _as_int(row.get("vendedor_codigo"), 0)
+        for row in (rows or [])
+        if not _as_str(row.get("vendedor_nome")) and _as_int(row.get("vendedor_codigo"), 0) > 0
+    })
+    if not missing:
+        return rows
+    placeholders = ",".join(["%s"] * len(missing))
+    cur.execute(f"""
+        SELECT CAST(vendedor_codigo AS UNSIGNED) AS codigo,
+               MAX(NULLIF(vendedor_nome,'')) AS nome
+        FROM vendas_relatorio_itens
+        WHERE CAST(vendedor_codigo AS UNSIGNED) IN ({placeholders})
+        GROUP BY CAST(vendedor_codigo AS UNSIGNED)
+    """, tuple(missing))
+    names = {_as_int(item.get("codigo"), 0): _as_str(item.get("nome")) for item in (cur.fetchall() or [])}
+    for row in rows or []:
+        if not _as_str(row.get("vendedor_nome")):
+            row["vendedor_nome"] = names.get(_as_int(row.get("vendedor_codigo"), 0), "")
+    return rows
+
+
 def _vendas_diario_cidades_card(card):
     return {
         _estoque_xml_normalizar_texto(part)
-        for part in re.split(r"\s*(?:/|;|,)\s*", _as_str((card or {}).get("cidade")))
+        for part in re.split(r"\s*(?:/|\||;|,)\s*", _as_str((card or {}).get("cidade")))
         if _estoque_xml_normalizar_texto(part)
     }
 
@@ -31884,80 +32119,291 @@ def _vendas_diario_cards_compativeis(first, second):
 
 
 def _vendas_diario_unificar_cards_semelhantes(usuario="importacao_automatica"):
+    """Une somente TXT/PDF com correspondencia inequivoca confirmada no SELLOUT."""
     conn = get_conn()
     cur = conn.cursor(dictionary=True)
+    unificados = []
+    ambiguos = 0
     try:
+        sellout = _vendas_diario_sellout_ativo(cur)
+        if not _as_str(sellout.get("id")):
+            return {"grupos": 0, "cards_unificados": 0, "ambiguos": 0, "confirmacao_manual": True}
         cur.execute("""
-            SELECT k.*, i.data_ref
+            SELECT k.id,k.vendedor_codigo,k.origem_tipo,k.mapa_numero,k.rota,k.cidade,
+                   k.veiculo_id,i.data_ref
             FROM vendas_diario_kanban k
             JOIN vendas_diario_importacoes i ON i.id=k.importacao_id
             WHERE k.card_principal_id IS NULL
-              AND k.frete_id IS NULL
-              AND k.status NOT IN ('enviado_frete', 'excluido')
-            ORDER BY i.data_ref, k.id
-            FOR UPDATE
+              AND k.status NOT IN ('enviado_frete','excluido')
+              AND k.origem_tipo IN ('txt','pdf')
+            ORDER BY i.data_ref,k.vendedor_codigo,k.id
         """)
-        cards = list(cur.fetchall() or [])
-        parent = {card["id"]: card["id"] for card in cards}
+        grupos = defaultdict(lambda: {"txt": [], "pdf": []})
+        for row in cur.fetchall() or []:
+            chave = (_fmt_date(row.get("data_ref")), _as_int(row.get("vendedor_codigo"), 0))
+            if chave[0] and chave[1] > 0:
+                grupos[chave][_as_str(row.get("origem_tipo")).lower()].append(row)
 
-        def find(card_id):
-            while parent[card_id] != card_id:
-                parent[card_id] = parent[parent[card_id]]
-                card_id = parent[card_id]
-            return card_id
-
-        def union(first_id, second_id):
-            first_root, second_root = find(first_id), find(second_id)
-            if first_root != second_root:
-                parent[max(first_root, second_root)] = min(first_root, second_root)
-
-        for index, card in enumerate(cards):
-            for other in cards[index + 1:]:
-                if _vendas_diario_cards_compativeis(card, other):
-                    union(card["id"], other["id"])
-
-        groups = {}
-        for card in cards:
-            groups.setdefault(find(card["id"]), []).append(card)
-
-        grouped_cards = 0
-        grouped_sets = 0
-        status_order = {"importado": 0, "conferir_estoque": 1, "conferido": 2}
-        for members in groups.values():
-            if len(members) < 2:
+        candidatos = {
+            chave: fontes for chave, fontes in grupos.items()
+            if fontes.get("txt") and fontes.get("pdf")
+        }
+        indices = _vendas_diario_sellout_indices(
+            cur, sellout, data_vendedores=list(candidatos.keys())
+        )
+        for chave, fontes in candidatos.items():
+            if len(fontes["txt"]) != 1 or len(fontes["pdf"]) != 1:
+                ambiguos += 1
                 continue
-            members.sort(key=lambda item: item["id"])
-            principal = members[0]
-            status = min(
-                (_as_str(item.get("status")) for item in members),
-                key=lambda value: status_order.get(value, 0),
+            txt, pdf = fontes["txt"][0], fontes["pdf"][0]
+            final = (indices.get("data_vendedor") or {}).get(chave) or {}
+            if _as_int(final.get("linhas"), 0) <= 0:
+                continue
+            if not mapas_carga_equivalentes(
+                pdf.get("mapa_numero"), final.get("mapas"), txt.get("vendedor_codigo")
+            ):
+                ambiguos += 1
+                continue
+            cidades_pdf = _vendas_diario_cidades_card(pdf)
+            cidades_final = _vendas_diario_cidades_card({"cidade": final.get("cidades")})
+            if not cidades_pdf or not cidades_final or not (cidades_pdf & cidades_final):
+                ambiguos += 1
+                continue
+            txt_vehicle = _as_int(txt.get("veiculo_id"), 0)
+            pdf_vehicle = _as_int(pdf.get("veiculo_id"), 0)
+            if txt_vehicle and pdf_vehicle and txt_vehicle != pdf_vehicle:
+                ambiguos += 1
+                continue
+
+            identificador = (
+                f"VD-{chave[0].replace('-', '')}-V{chave[1]}-"
+                f"{min(_as_int(txt.get('id'), 0), _as_int(pdf.get('id'), 0))}-"
+                f"{max(_as_int(txt.get('id'), 0), _as_int(pdf.get('id'), 0))}"
             )
-            cur.execute(
-                "UPDATE vendas_diario_kanban SET status=%s, atualizado_em=NOW() WHERE id=%s",
-                (status, principal["id"]),
+            cur.execute("""
+                UPDATE vendas_diario_kanban
+                SET card_principal_id=%s, atualizado_em=NOW()
+                WHERE id=%s AND card_principal_id IS NULL
+            """, (_as_int(txt.get("id"), 0), _as_int(pdf.get("id"), 0)))
+            if cur.rowcount <= 0:
+                continue
+            detalhe = (
+                "Uniao automatica TXT/PDF confirmada pelo SELLOUT: mesma data, vendedor, "
+                "cidade e sufixo do mapa; documentos e divergencias preservados. "
+                f"Identificador: {identificador}."
             )
-            for child in members[1:]:
-                cur.execute(
-                    "UPDATE vendas_diario_kanban SET card_principal_id=%s, atualizado_em=NOW() WHERE id=%s",
-                    (principal["id"], child["id"]),
-                )
-                cur.execute("""INSERT INTO vendas_diario_kanban_historico
-                    (card_id,acao,card_origem_id,card_destino_id,usuario,detalhes)
-                    VALUES (%s,'unido_automaticamente',%s,%s,%s,%s)
-                """, (
-                    principal["id"], child["id"], principal["id"], usuario,
-                    "Uniao automatica por data e rota ou cidade coincidente; documentos preservados.",
-                ))
-                grouped_cards += 1
-            grouped_sets += 1
+            cur.execute("""INSERT INTO vendas_diario_kanban_historico
+                (card_id,acao,card_origem_id,card_destino_id,usuario,detalhes)
+                VALUES (%s,'unido_txt_pdf_automatico',%s,%s,%s,%s)""",
+                (_as_int(txt.get("id"), 0), _as_int(pdf.get("id"), 0),
+                 _as_int(txt.get("id"), 0), _as_str(usuario) or "importacao_automatica", detalhe))
+            unificados.append({
+                "txt_id": _as_int(txt.get("id"), 0),
+                "pdf_id": _as_int(pdf.get("id"), 0),
+                "identificador": identificador,
+                "mapa_pdf": _as_str(pdf.get("mapa_numero")),
+                "mapa_sellout": _as_str(final.get("mapas")),
+            })
         conn.commit()
-        return {"grupos": grouped_sets, "cards_unificados": grouped_cards}
+        return {
+            "grupos": len(candidatos),
+            "cards_unificados": len(unificados),
+            "ambiguos": ambiguos,
+            "confirmacao_manual": ambiguos > 0,
+            "unificados": unificados,
+        }
     except Exception:
         conn.rollback()
         raise
     finally:
         cur.close()
         conn.close()
+
+
+def _vendas_diario_sellout_ativo(cur):
+    cur.execute("""
+        SELECT id, source_name, rows_importadas, importado_em
+        FROM vendas_relatorios_importados
+        WHERE ativo=1 AND status='pronto'
+        ORDER BY importado_em DESC
+        LIMIT 1
+    """)
+    row = cur.fetchone() or {}
+    if row:
+        row["importado_em"] = _fmt_dt(row.get("importado_em"))
+    return row
+
+
+def _vendas_diario_sellout_indices(cur, sellout, mapas=None, data_vendedores=None):
+    import_id = _as_str((sellout or {}).get("id"))
+    indices = {"mapas": {}, "data_vendedor": {}}
+    if not import_id:
+        return indices
+    mapas = sorted({_as_str(item) for item in (mapas or []) if _as_str(item)})
+    data_vendedores = sorted({
+        (_fmt_date(item[0]), _as_int(item[1], 0))
+        for item in (data_vendedores or [])
+        if isinstance(item, (list, tuple)) and len(item) >= 2 and _fmt_date(item[0]) and _as_int(item[1], 0) > 0
+    })
+
+    select_resumo = """
+        COUNT(*) linhas,
+        COUNT(DISTINCT NULLIF(v.numero_nf,'')) notas,
+        COUNT(DISTINCT NULLIF(v.cliente_codigo,'')) clientes,
+        COALESCE(SUM(v.valor_venda),0) valor_bruto,
+        COALESCE(SUM(v.valor_devolvido),0) valor_devolvido,
+        COALESCE(SUM(v.bonificacao),0) valor_bonificacao,
+        COALESCE(SUM(v.valor_liquido),0) valor_liquido,
+        COALESCE(SUM(v.peso),0) peso,
+        GROUP_CONCAT(DISTINCT NULLIF(v.mapa_numero,'') ORDER BY v.mapa_numero SEPARATOR ', ') mapas,
+        GROUP_CONCAT(DISTINCT NULLIF(
+             CASE WHEN CHAR_LENGTH(v.mapa_numero)>=4
+                  THEN TRIM(LEADING '0' FROM LEFT(v.mapa_numero,2)) ELSE '' END,
+             '') ORDER BY LEFT(v.mapa_numero,2) SEPARATOR ', ') caminhoes,
+        GROUP_CONCAT(DISTINCT NULLIF(CONCAT_WS(' - ',NULLIF(v.rota_codigo,''),
+             COALESCE(NULLIF(v.rota_nome,''),NULLIF(rr.descricao,''))), '')
+             ORDER BY v.rota_codigo SEPARATOR ' | ') rotas,
+        GROUP_CONCAT(DISTINCT NULLIF(COALESCE(NULLIF(v.cidade,''),NULLIF(cr.cidade,'')),'')
+             ORDER BY COALESCE(NULLIF(v.cidade,''),NULLIF(cr.cidade,'')) SEPARATOR ' | ') cidades,
+        GROUP_CONCAT(DISTINCT NULLIF(COALESCE(NULLIF(v.endereco,''),NULLIF(cr.endereco,'')),'')
+             ORDER BY COALESCE(NULLIF(v.endereco,''),NULLIF(cr.endereco,'')) SEPARATOR ' | ') enderecos,
+        GROUP_CONCAT(DISTINCT NULLIF(v.motorista_nome,'') ORDER BY v.motorista_nome SEPARATOR ', ') motoristas,
+        GROUP_CONCAT(DISTINCT NULLIF(v.ajudante1_nome,'') ORDER BY v.ajudante1_nome SEPARATOR ', ') ajudantes1,
+        GROUP_CONCAT(DISTINCT NULLIF(v.ajudante2_nome,'') ORDER BY v.ajudante2_nome SEPARATOR ', ') ajudantes2,
+        MIN(COALESCE(v.data_pedido,v.data_ref)) data_inicial,
+        MAX(COALESCE(v.data_pedido,v.data_ref)) data_final
+    """
+    joins = """
+        LEFT JOIN vendas_clientes_referencia cr ON cr.codigo=LPAD(v.cliente_codigo,5,'0')
+        LEFT JOIN vendas_rotas_referencia rr ON rr.codigo=v.rota_codigo
+    """
+    if mapas:
+        cur.execute(f"""
+            SELECT v.mapa_numero chave_mapa, {select_resumo}
+            FROM vendas_relatorio_itens v
+            {joins}
+            WHERE v.import_id=%s AND v.mapa_numero IN ({','.join(['%s'] * len(mapas))})
+            GROUP BY v.mapa_numero
+        """, tuple([import_id] + mapas))
+        for row in cur.fetchall() or []:
+            row["data_inicial"] = _fmt_date(row.get("data_inicial"))
+            row["data_final"] = _fmt_date(row.get("data_final"))
+            indices["mapas"][_as_str(row.get("chave_mapa"))] = row
+
+    if data_vendedores:
+        pares_sql = ",".join(["(%s,%s)"] * len(data_vendedores))
+        params = [import_id]
+        for data_ref, vendedor in data_vendedores:
+            params.extend([data_ref, vendedor])
+        cur.execute(f"""
+            SELECT COALESCE(v.data_pedido,v.data_ref) chave_data,
+                   CAST(v.vendedor_codigo AS UNSIGNED) chave_vendedor,
+                   {select_resumo}
+            FROM vendas_relatorio_itens v
+            {joins}
+            WHERE v.import_id=%s
+              AND (COALESCE(v.data_pedido,v.data_ref), CAST(v.vendedor_codigo AS UNSIGNED)) IN ({pares_sql})
+            GROUP BY COALESCE(v.data_pedido,v.data_ref), CAST(v.vendedor_codigo AS UNSIGNED)
+        """, tuple(params))
+        for row in cur.fetchall() or []:
+            row["data_inicial"] = _fmt_date(row.get("data_inicial"))
+            row["data_final"] = _fmt_date(row.get("data_final"))
+            chave = (_fmt_date(row.get("chave_data")), _as_int(row.get("chave_vendedor"), 0))
+            indices["data_vendedor"][chave] = row
+    return indices
+
+
+def _vendas_diario_combinar_finais(rows):
+    rows = [row for row in (rows or []) if row]
+    if not rows:
+        return {}
+    final = {}
+    for campo in ("linhas", "notas", "clientes", "valor_bruto", "valor_devolvido", "valor_bonificacao", "valor_liquido", "peso"):
+        final[campo] = sum(_as_float(row.get(campo), 0) for row in rows)
+    for campo in ("mapas", "caminhoes", "rotas", "cidades", "enderecos", "motoristas", "ajudantes1", "ajudantes2"):
+        valores = []
+        separador = r"\s*\|\s*" if campo in {"rotas", "cidades", "enderecos"} else r"\s*,\s*"
+        for row in rows:
+            for valor in re.split(separador, _as_str(row.get(campo))):
+                if valor and valor not in valores:
+                    valores.append(valor)
+        final[campo] = " | ".join(valores)
+    datas_iniciais = [_fmt_date(row.get("data_inicial")) for row in rows if _fmt_date(row.get("data_inicial"))]
+    datas_finais = [_fmt_date(row.get("data_final")) for row in rows if _fmt_date(row.get("data_final"))]
+    final["data_inicial"] = min(datas_iniciais) if datas_iniciais else None
+    final["data_final"] = max(datas_finais) if datas_finais else None
+    final["notas"] = int(final["notas"])
+    final["clientes"] = int(final["clientes"])
+    final["linhas"] = int(final["linhas"])
+    return final
+
+
+def _vendas_diario_conciliacao_card(card, fontes, sellout, indices):
+    tipos = {_as_str(item.get("origem_tipo")).lower() for item in (fontes or [])}
+    tem_txt = "txt" in tipos
+    tem_pdf = "pdf" in tipos
+    base = classificar_etapa_conciliacao(tem_txt=tem_txt, tem_pdf=tem_pdf)
+    base.update({"tem_txt": tem_txt, "tem_pdf": tem_pdf, "tem_sellout": False, "divergencias": []})
+    import_id = _as_str((sellout or {}).get("id"))
+    if not import_id:
+        return base
+
+    mapas = sorted({
+        re.sub(r"\D+", "", _as_str(item.get("mapa_numero")))
+        for item in (fontes or [])
+        if re.sub(r"\D+", "", _as_str(item.get("mapa_numero")))
+    })
+    if mapas:
+        final = _vendas_diario_combinar_finais([
+            (indices.get("mapas") or {}).get(mapa) for mapa in mapas
+        ])
+        criterio = "mapa"
+    else:
+        final = {}
+        criterio = ""
+    if _as_int(final.get("linhas"), 0) <= 0:
+        data_ref = _fmt_date(card.get("data_ref"))
+        vendedor = _as_int(card.get("vendedor_codigo"), 0)
+        if not data_ref or vendedor <= 0:
+            return base
+        final = dict((indices.get("data_vendedor") or {}).get((data_ref, vendedor)) or {})
+        criterio = "mapa_equivalente_data_vendedor" if mapas else "data_vendedor"
+    if _as_int(final.get("linhas"), 0) <= 0:
+        return base
+    divergencias = []
+    valor_origem = round(_as_float(card.get("valor_total"), 0), 2)
+    valor_final = round(_as_float(final.get("valor_bruto"), 0), 2)
+    if tem_txt and abs(valor_final - valor_origem) > 0.02:
+        divergencias.append({
+            "campo": "valor_bruto", "origem": valor_origem, "sellout": valor_final,
+            "diferenca": round(valor_final - valor_origem, 2),
+        })
+    clientes_origem = _as_int(card.get("clientes"), 0)
+    clientes_final = _as_int(final.get("clientes"), 0)
+    if tem_txt and clientes_origem and clientes_final != clientes_origem:
+        divergencias.append({
+            "campo": "clientes", "origem": clientes_origem, "sellout": clientes_final,
+            "diferenca": clientes_final - clientes_origem,
+        })
+
+    resultado = classificar_etapa_conciliacao(
+        tem_txt=tem_txt, tem_pdf=tem_pdf, tem_sellout=True, divergencias=divergencias
+    )
+    resultado.update({
+        "tem_txt": tem_txt,
+        "tem_pdf": tem_pdf,
+        "tem_sellout": True,
+        "criterio": criterio,
+        "chaves": mapas or [f"{_fmt_date(card.get('data_ref'))} / vendedor {card.get('vendedor_codigo') or '-'}"],
+        "divergencias": divergencias,
+        "final": final,
+        "arquivo": {
+            "id": import_id,
+            "nome": _as_str(sellout.get("source_name")),
+            "importado_em": _as_str(sellout.get("importado_em")),
+        },
+    })
+    return resultado
 
 
 @app.route("/api/vendas/diario/kanban", methods=["GET"])
@@ -31967,8 +32413,13 @@ def vendas_diario_kanban_api():
     try:
         _vendas_diario_kanban_sincronizar(cur)
         conn.commit()
+        sellout = _vendas_diario_sellout_ativo(cur)
         cur.execute("""
-            SELECT k.id, k.importacao_id, k.vendedor_codigo, k.status, k.frete_id, k.nome_frete,
+            SELECT k.id, k.importacao_id, k.vendedor_codigo,
+                   (SELECT MAX(cc.nome) FROM comissao_cadastros cc
+                    WHERE LOWER(cc.funcao)='vendedor' AND cc.ativo=1
+                      AND cc.codigo=CAST(k.vendedor_codigo AS UNSIGNED)) AS vendedor_nome,
+                   k.status, k.frete_id, k.nome_frete,
                    k.cidade, k.cidade_cadastro_id, k.veiculo_id, k.colaborador_motorista_id, k.colaborador_entregador_id,
                    k.observacao, k.mapa_numero, k.rota,
                    (SELECT COALESCE(SUM(ks.peso_total),0) FROM vendas_diario_kanban ks WHERE COALESCE(ks.card_principal_id,ks.id)=k.id) AS peso_total,
@@ -31990,6 +32441,15 @@ def vendas_diario_kanban_api():
             JOIN vendas_diario_kanban kc ON COALESCE(kc.card_principal_id, kc.id)=k.id
             JOIN vendas_diario_pedidos p ON p.importacao_id=kc.importacao_id AND p.vendedor_codigo=kc.vendedor_codigo
             WHERE k.card_principal_id IS NULL AND k.status NOT IN ('enviado_frete', 'excluido')
+              AND NOT (
+                  kc.origem_tipo='pdf'
+                  AND EXISTS (
+                      SELECT 1 FROM vendas_diario_kanban ktxt
+                      WHERE COALESCE(ktxt.card_principal_id,ktxt.id)=k.id
+                        AND ktxt.origem_tipo='txt'
+                        AND ktxt.status<>'excluido'
+                  )
+              )
             GROUP BY k.id, k.importacao_id, k.vendedor_codigo, k.status, k.frete_id, k.nome_frete,
                      k.cidade, k.cidade_cadastro_id, k.veiculo_id, k.colaborador_motorista_id, k.colaborador_entregador_id,
                      k.observacao, k.mapa_numero, k.rota, k.origem_tipo, k.card_principal_id,
@@ -31999,53 +32459,149 @@ def vendas_diario_kanban_api():
             ORDER BY imp.data_ref, k.id
         """)
         cards = cur.fetchall() or []
-        for card in cards:
-            cur.execute("""
-                SELECT kf.id, kf.origem_tipo, kf.importacao_id, kf.vendedor_codigo, kf.mapa_numero, kf.rota, imf.arquivo_nome
+        _vendas_diario_preencher_nomes_vendedores(cur, cards)
+        root_ids = [_as_int(card.get("id"), 0) for card in cards if _as_int(card.get("id"), 0)]
+        fontes_por_card = defaultdict(list)
+        clientes_por_card = defaultdict(list)
+        produtos_por_card = defaultdict(list)
+        produtos_origem_por_card = defaultdict(list)
+        if root_ids:
+            placeholders = ",".join(["%s"] * len(root_ids))
+            cur.execute(f"""
+                SELECT COALESCE(kf.card_principal_id,kf.id) root_id,
+                       kf.id, kf.origem_tipo, kf.importacao_id, kf.vendedor_codigo,
+                       kf.mapa_numero, kf.rota, imf.arquivo_nome, imf.data_ref
                 FROM vendas_diario_kanban kf
                 JOIN vendas_diario_importacoes imf ON imf.id=kf.importacao_id
-                WHERE COALESCE(kf.card_principal_id,kf.id)=%s ORDER BY kf.id
-            """, (card["id"],))
-            card["fontes"] = cur.fetchall() or []
-            cur.execute("""
-                SELECT p.cliente_codigo, p.cliente_nome, p.fantasia, p.cidade,
-                       p.status, p.motivo, p.valor_total
+                WHERE COALESCE(kf.card_principal_id,kf.id) IN ({placeholders})
+                ORDER BY root_id,kf.id
+            """, tuple(root_ids))
+            for row in cur.fetchall() or []:
+                fontes_por_card[_as_int(row.get("root_id"), 0)].append(row)
+
+            cur.execute(f"""
+                SELECT COALESCE(kf.card_principal_id,kf.id) root_id,
+                       p.cliente_codigo,p.cliente_nome,p.fantasia,p.cidade,p.status,p.motivo,p.valor_total
                 FROM vendas_diario_pedidos p
-                JOIN vendas_diario_kanban kf ON kf.importacao_id=p.importacao_id AND kf.vendedor_codigo=p.vendedor_codigo
-                WHERE COALESCE(kf.card_principal_id,kf.id)=%s
+                JOIN vendas_diario_kanban kf
+                  ON kf.importacao_id=p.importacao_id AND kf.vendedor_codigo=p.vendedor_codigo
+                WHERE COALESCE(kf.card_principal_id,kf.id) IN ({placeholders})
                   AND p.status='positiva' AND p.valor_total>0
-                ORDER BY p.status, p.cliente_nome
-            """, (card["id"],))
-            card["clientes_lista"] = cur.fetchall() or []
-            cur.execute("""
-                SELECT i.produto_codigo, i.descricao, i.unidade,
-                       SUM(CASE WHEN i.tabela_venda<>91 THEN i.quantidade ELSE 0 END) AS quantidade_venda,
-                       SUM(CASE WHEN i.tabela_venda=91 THEN i.quantidade ELSE 0 END) AS quantidade_bonificada,
-                       SUM(CASE WHEN i.tabela_venda<>91 THEN i.quantidade * i.valor_unitario ELSE 0 END) AS valor_venda,
-                       SUM(CASE WHEN i.tabela_venda=91 THEN i.quantidade * i.valor_unitario ELSE 0 END) AS valor_bonificado
+                ORDER BY root_id,p.cliente_nome
+            """, tuple(root_ids))
+            for row in cur.fetchall() or []:
+                clientes_por_card[_as_int(row.get("root_id"), 0)].append(row)
+
+            cur.execute(f"""
+                SELECT COALESCE(kf.card_principal_id,kf.id) root_id,
+                       i.produto_codigo,i.descricao,i.unidade,
+                       SUM(CASE WHEN i.tabela_venda<>91 THEN i.quantidade ELSE 0 END) quantidade_venda,
+                       SUM(CASE WHEN i.tabela_venda=91 THEN i.quantidade ELSE 0 END) quantidade_bonificada,
+                       SUM(CASE WHEN i.tabela_venda<>91 THEN i.quantidade*i.valor_unitario ELSE 0 END) valor_venda,
+                       SUM(CASE WHEN i.tabela_venda=91 THEN i.quantidade*i.valor_unitario ELSE 0 END) valor_bonificado
                 FROM vendas_diario_itens i
                 JOIN vendas_diario_pedidos p ON p.id=i.pedido_id
-                JOIN vendas_diario_kanban kf ON kf.importacao_id=p.importacao_id AND kf.vendedor_codigo=p.vendedor_codigo
-                WHERE COALESCE(kf.card_principal_id,kf.id)=%s
+                JOIN vendas_diario_kanban kf
+                  ON kf.importacao_id=p.importacao_id AND kf.vendedor_codigo=p.vendedor_codigo
+                WHERE COALESCE(kf.card_principal_id,kf.id) IN ({placeholders})
                   AND p.status='positiva' AND p.valor_total>0
-                GROUP BY i.produto_codigo, i.descricao, i.unidade
-                ORDER BY i.descricao
-            """, (card["id"],))
-            products = cur.fetchall() or []
-            cur.execute("""
-                SELECT kf.origem_tipo, i.produto_codigo, i.descricao, i.unidade,
+                GROUP BY root_id,i.produto_codigo,i.descricao,i.unidade
+                ORDER BY root_id,i.descricao
+            """, tuple(root_ids))
+            for row in cur.fetchall() or []:
+                produtos_por_card[_as_int(row.get("root_id"), 0)].append(row)
+
+            cur.execute(f"""
+                SELECT COALESCE(kf.card_principal_id,kf.id) root_id,
+                       kf.origem_tipo,i.produto_codigo,i.descricao,i.unidade,
                        SUM(CASE WHEN i.tabela_venda<>91 THEN i.quantidade ELSE 0 END) quantidade_venda,
                        SUM(CASE WHEN i.tabela_venda=91 THEN i.quantidade ELSE 0 END) quantidade_bonificada,
                        SUM(CASE WHEN i.tabela_venda<>91 THEN i.quantidade*i.valor_unitario ELSE 0 END) valor_venda
                 FROM vendas_diario_itens i
                 JOIN vendas_diario_pedidos p ON p.id=i.pedido_id
-                JOIN vendas_diario_kanban kf ON kf.importacao_id=p.importacao_id AND kf.vendedor_codigo=p.vendedor_codigo
-                WHERE COALESCE(kf.card_principal_id,kf.id)=%s
+                JOIN vendas_diario_kanban kf
+                  ON kf.importacao_id=p.importacao_id AND kf.vendedor_codigo=p.vendedor_codigo
+                WHERE COALESCE(kf.card_principal_id,kf.id) IN ({placeholders})
                   AND p.status='positiva' AND p.valor_total>0
-                GROUP BY kf.origem_tipo,i.produto_codigo,i.descricao,i.unidade
-                ORDER BY kf.origem_tipo,i.descricao
-            """, (card["id"],))
-            por_origem = cur.fetchall() or []
+                GROUP BY root_id,kf.origem_tipo,i.produto_codigo,i.descricao,i.unidade
+                ORDER BY root_id,kf.origem_tipo,i.descricao
+            """, tuple(root_ids))
+            for row in cur.fetchall() or []:
+                produtos_origem_por_card[_as_int(row.get("root_id"), 0)].append(row)
+
+        mapas_relevantes = {
+            re.sub(r"\D+", "", _as_str(fonte.get("mapa_numero")))
+            for fontes in fontes_por_card.values() for fonte in fontes
+            if re.sub(r"\D+", "", _as_str(fonte.get("mapa_numero")))
+        }
+        data_vendedores_relevantes = {
+            (_fmt_date(card.get("data_ref")), _as_int(card.get("vendedor_codigo"), 0))
+            for card in cards
+            if _fmt_date(card.get("data_ref")) and _as_int(card.get("vendedor_codigo"), 0) > 0
+        }
+        sellout_indices = _vendas_diario_sellout_indices(
+            cur, sellout, mapas=mapas_relevantes, data_vendedores=data_vendedores_relevantes
+        )
+
+        cur.execute("SELECT id,nome,placa FROM veiculos")
+        veiculos_por_codigo = defaultdict(list)
+        for veiculo in cur.fetchall() or []:
+            codigo = re.sub(r"\D+", "", _as_str(veiculo.get("nome"))).lstrip("0")
+            if codigo:
+                veiculos_por_codigo[codigo].append(veiculo)
+        cur.execute("SELECT id,nome FROM colaboradores WHERE is_motorista=1")
+        motoristas_por_nome = defaultdict(list)
+        for motorista in cur.fetchall() or []:
+            chave = _estoque_xml_normalizar_texto(motorista.get("nome"))
+            if chave:
+                motoristas_por_nome[chave].append(motorista)
+
+        for card in cards:
+            card_id = _as_int(card.get("id"), 0)
+            card["fontes"] = fontes_por_card.get(card_id, [])
+            card["fontes_total"] = len(card["fontes"])
+            card["origens_tipos"] = ",".join(sorted({
+                _as_str(item.get("origem_tipo")).lower()
+                for item in card["fontes"] if _as_str(item.get("origem_tipo"))
+            }))
+            card["clientes_lista"] = clientes_por_card.get(card_id, [])
+            products = produtos_por_card.get(card_id, [])
+            por_origem = produtos_origem_por_card.get(card_id, [])
+            card["conciliacao"] = _vendas_diario_conciliacao_card(
+                card, card["fontes"], sellout, sellout_indices
+            )
+            final = card["conciliacao"].get("final") or {}
+            codigos_caminhao = [
+                item.strip() for item in re.split(r"\s*(?:,|\|)\s*", _as_str(final.get("caminhoes")))
+                if item.strip()
+            ]
+            veiculos_sugeridos = []
+            for codigo in codigos_caminhao:
+                candidatos = veiculos_por_codigo.get(re.sub(r"\D+", "", codigo).lstrip("0"), [])
+                if len(candidatos) == 1 and candidatos[0] not in veiculos_sugeridos:
+                    veiculos_sugeridos.append(candidatos[0])
+            if veiculos_sugeridos:
+                final["caminhoes_cadastro"] = " | ".join(
+                    f"{_as_str(item.get('nome'))} ({_as_str(item.get('placa'))})".strip()
+                    for item in veiculos_sugeridos
+                )
+            if len(codigos_caminhao) == 1 and len(veiculos_sugeridos) == 1:
+                final["veiculo_id_sugerido"] = _as_int(veiculos_sugeridos[0].get("id"), 0)
+
+            nomes_motorista = [
+                item.strip() for item in re.split(r"\s*(?:,|\|)\s*", _as_str(final.get("motoristas")))
+                if item.strip()
+            ]
+            if len(nomes_motorista) == 1:
+                candidatos = motoristas_por_nome.get(_estoque_xml_normalizar_texto(nomes_motorista[0]), [])
+                if len(candidatos) == 1:
+                    final["colaborador_motorista_id_sugerido"] = _as_int(candidatos[0].get("id"), 0)
+
+            card["cidade_resolvida"] = _as_str(card.get("cidade")) or _as_str(final.get("cidades"))
+            card["rota_resolvida"] = _as_str(card.get("rota")) or _as_str(final.get("rotas"))
+            card["mapas_resolvidos"] = _as_str(final.get("mapas")) or _as_str(card.get("mapas_numeros"))
+            card["caminhao_resolvido"] = _as_str(final.get("caminhoes_cadastro")) or _as_str(final.get("caminhoes"))
+            card["motorista_resolvido"] = _as_str(final.get("motoristas"))
             card["produtos_por_origem"] = por_origem
             # Documentos convergentes sao evidencia da mesma carga, nao novas
             # saidas. TXT e mais detalhado; PDF e contingencia. Nunca somar as
@@ -32057,21 +32613,253 @@ def vendas_diario_kanban_api():
             card["sugestao_baixa_fonte"] = fonte_baixa
             card["sugestao_baixa_estoque"] = sugestao
         for card in cards:
+            source_ids = sorted(_as_int(item.get("id"), 0) for item in (card.get("fontes") or []) if _as_int(item.get("id"), 0))
+            card["uniao_identificador"] = (
+                f"VD-{_fmt_date(card.get('data_ref')).replace('-', '')}-{'-'.join(str(item) for item in source_ids)}"
+                if len(source_ids) > 1 else ""
+            )
             card["sugestoes_uniao"] = [
                 {"id": other["id"], "vendedor_codigo": other["vendedor_codigo"], "origens_tipos": other.get("origens_tipos"),
-                 "rota": other.get("rota"), "mapa_numero": other.get("mapa_numero")}
-                for other in cards if other["id"] != card["id"] and (
-                    (card.get("cidade_cadastro_id") and card.get("cidade_cadastro_id") == other.get("cidade_cadastro_id"))
-                    or (card.get("mapa_numero") and card.get("mapa_numero") == other.get("mapa_numero"))
-                    or (card.get("rota") and _estoque_xml_normalizar_texto(card.get("rota")) == _estoque_xml_normalizar_texto(other.get("rota")))
-                )
+                 "rota": other.get("rota"), "mapa_numero": other.get("mapa_numero"),
+                 "data_ref": other.get("data_ref"), "valor_total": _as_float(other.get("valor_total"), 0),
+                 "valor_divergencia": round(_as_float(other.get("valor_total"), 0) - _as_float(card.get("valor_total"), 0), 2),
+                 "identificador": f"VD-{_fmt_date(card.get('data_ref')).replace('-', '')}-V{_as_int(card.get('vendedor_codigo'), 0)}-{min(_as_int(card.get('id'), 0), _as_int(other.get('id'), 0))}-{max(_as_int(card.get('id'), 0), _as_int(other.get('id'), 0))}",
+                 "criterios": ["mesma data", "mesmo vendedor", "fontes TXT/PDF"]}
+                for other in cards if other["id"] != card["id"]
+                and _fmt_date(card.get("data_ref")) == _fmt_date(other.get("data_ref"))
+                and _as_int(card.get("vendedor_codigo"), 0) == _as_int(other.get("vendedor_codigo"), 0)
+                and {str(card.get("origens_tipos") or card.get("origem_tipo") or "").lower(), str(other.get("origens_tipos") or other.get("origem_tipo") or "").lower()} == {"txt", "pdf"}
             ]
         cur.execute("SELECT DISTINCT vendedor_codigo FROM vendas_diario_pedidos WHERE vendedor_codigo<>'' AND vendedor_codigo NOT LIKE 'MAPA-%' ORDER BY vendedor_codigo")
         vendedores = [_as_str(row.get("vendedor_codigo")) for row in (cur.fetchall() or [])]
-        return jsonify({"cards": cards, "vendedores_disponiveis": vendedores})
+        return jsonify({"cards": cards, "vendedores_disponiveis": vendedores, "sellout_ativo": sellout})
     finally:
         cur.close()
         conn.close()
+
+
+@app.route("/api/vendas/diario/cargas-semana", methods=["GET"])
+def vendas_diario_cargas_semana_api():
+    semana_solicitada = _as_str(request.args.get("semana"))
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    try:
+        referencia = None
+        if not semana_solicitada:
+            cur.execute("""
+                SELECT MAX(imp.data_ref) data_ref
+                FROM vendas_diario_kanban k
+                JOIN vendas_diario_importacoes imp ON imp.id=k.importacao_id
+                WHERE k.origem_tipo='pdf' AND k.status<>'excluido'
+            """)
+            referencia = (cur.fetchone() or {}).get("data_ref")
+        try:
+            semana_inicio, semana_fim, semana = intervalo_semana_iso(
+                semana_solicitada, referencia=referencia
+            )
+        except ValueError as exc:
+            return jsonify({"erro": str(exc)}), 400
+
+        cur.execute("""
+            SELECT k.id, k.vendedor_codigo, k.status, k.frete_id, k.nome_frete,
+                   k.cidade, k.rota, resumo.data_ref, resumo.peso_total,
+                   resumo.qtd_entregas, resumo.mapas, resumo.cidades_fontes,
+                   resumo.rotas_fontes, resumo.origens_tipos,
+                   COALESCE(cm.nome, '') motorista_nome,
+                   COALESCE(ce.nome, '') entregador_nome,
+                   COALESCE(v.nome, '') caminhao,
+                   COALESCE(v.placa, '') placa,
+                   COALESCE(f.status, '') frete_status
+            FROM vendas_diario_kanban k
+            JOIN (
+                SELECT COALESCE(kf.card_principal_id,kf.id) root_id,
+                       MIN(CASE WHEN kf.origem_tipo='pdf' THEN imp.data_ref END) data_ref,
+                       COALESCE(SUM(kf.peso_total),0) peso_total,
+                       COALESCE(SUM(kf.qtd_entregas),0) qtd_entregas,
+                       GROUP_CONCAT(DISTINCT NULLIF(kf.mapa_numero,'') ORDER BY kf.id SEPARATOR ', ') mapas,
+                       GROUP_CONCAT(DISTINCT NULLIF(kf.cidade,'') ORDER BY kf.id SEPARATOR ' | ') cidades_fontes,
+                       GROUP_CONCAT(DISTINCT NULLIF(kf.rota,'') ORDER BY kf.id SEPARATOR ' | ') rotas_fontes,
+                       GROUP_CONCAT(DISTINCT kf.origem_tipo ORDER BY kf.origem_tipo SEPARATOR ',') origens_tipos
+                FROM vendas_diario_kanban kf
+                JOIN vendas_diario_importacoes imp ON imp.id=kf.importacao_id
+                WHERE kf.status<>'excluido'
+                GROUP BY COALESCE(kf.card_principal_id,kf.id)
+                HAVING SUM(CASE WHEN kf.origem_tipo='pdf' AND imp.data_ref BETWEEN %s AND %s THEN 1 ELSE 0 END)>0
+            ) resumo ON resumo.root_id=k.id
+            LEFT JOIN fretes f ON f.id=k.frete_id
+            LEFT JOIN colaboradores cm ON cm.id=COALESCE(f.colaborador_motorista_id,k.colaborador_motorista_id)
+            LEFT JOIN colaboradores ce ON ce.id=COALESCE(f.colaborador_entregador_id,k.colaborador_entregador_id)
+            LEFT JOIN veiculos v ON v.id=COALESCE(f.veiculo_id,k.veiculo_id)
+            WHERE k.card_principal_id IS NULL AND k.status<>'excluido'
+            ORDER BY resumo.data_ref, resumo.mapas, k.id
+        """, (semana_inicio, semana_fim))
+        cargas = cur.fetchall() or []
+        _vendas_diario_preencher_nomes_vendedores(cur, cargas)
+
+        root_ids = [_as_int(item.get("id"), 0) for item in cargas if _as_int(item.get("id"), 0)]
+        fontes_por_card = defaultdict(list)
+        if root_ids:
+            placeholders = ",".join(["%s"] * len(root_ids))
+            cur.execute(f"""
+                SELECT COALESCE(kf.card_principal_id,kf.id) root_id,
+                       kf.id, kf.origem_tipo, kf.mapa_numero, imp.data_ref
+                FROM vendas_diario_kanban kf
+                JOIN vendas_diario_importacoes imp ON imp.id=kf.importacao_id
+                WHERE COALESCE(kf.card_principal_id,kf.id) IN ({placeholders})
+                  AND kf.status<>'excluido'
+                ORDER BY root_id,kf.id
+            """, tuple(root_ids))
+            for fonte in cur.fetchall() or []:
+                fontes_por_card[_as_int(fonte.get("root_id"), 0)].append(fonte)
+
+        sellout = _vendas_diario_sellout_ativo(cur)
+        mapas_relevantes = {
+            re.sub(r"\D+", "", _as_str(fonte.get("mapa_numero")))
+            for fontes in fontes_por_card.values() for fonte in fontes
+            if re.sub(r"\D+", "", _as_str(fonte.get("mapa_numero")))
+        }
+        data_vendedores = {
+            (_fmt_date(item.get("data_ref")), _as_int(item.get("vendedor_codigo"), 0))
+            for item in cargas
+            if _fmt_date(item.get("data_ref")) and _as_int(item.get("vendedor_codigo"), 0)>0
+        }
+        indices_data = _vendas_diario_sellout_indices(
+            cur, sellout, data_vendedores=data_vendedores
+        )
+        mapas_sellout = set()
+        for resumo_data in (indices_data.get("data_vendedor") or {}).values():
+            mapas_sellout.update(
+                item for item in re.split(r"\s*,\s*", _as_str(resumo_data.get("mapas"))) if item
+            )
+        indices_mapa = _vendas_diario_sellout_indices(
+            cur, sellout, mapas=mapas_relevantes | mapas_sellout
+        )
+        cargas_por_data_vendedor = Counter(
+            (_fmt_date(item.get("data_ref")), _as_int(item.get("vendedor_codigo"), 0))
+            for item in cargas
+        )
+
+        cur.execute("SELECT id,nome,placa FROM veiculos")
+        veiculos_por_codigo = defaultdict(list)
+        for veiculo in cur.fetchall() or []:
+            codigo = re.sub(r"\D+", "", _as_str(veiculo.get("nome"))).lstrip("0")
+            if codigo:
+                veiculos_por_codigo[codigo].append(veiculo)
+
+        resultado = []
+        for carga in cargas:
+            fontes = fontes_por_card.get(_as_int(carga.get("id"), 0), [])
+            mapas_pdf = sorted({
+                re.sub(r"\D+", "", _as_str(fonte.get("mapa_numero")))
+                for fonte in fontes
+                if _as_str(fonte.get("origem_tipo")).lower() == "pdf"
+                and re.sub(r"\D+", "", _as_str(fonte.get("mapa_numero")))
+            })
+            chave_data_vendedor = (
+                _fmt_date(carga.get("data_ref")), _as_int(carga.get("vendedor_codigo"), 0)
+            )
+            resumo_data = (indices_data.get("data_vendedor") or {}).get(chave_data_vendedor) or {}
+            candidatos_sellout = [
+                item for item in re.split(r"\s*,\s*", _as_str(resumo_data.get("mapas"))) if item
+            ]
+            mapas_finais = []
+            correspondencia_ambigua = False
+            for mapa_pdf in mapas_pdf:
+                candidatos = [
+                    mapa_final for mapa_final in candidatos_sellout
+                    if mapas_carga_equivalentes(
+                        mapa_pdf, mapa_final, _as_str(carga.get("vendedor_codigo"))
+                    )
+                ]
+                if len(candidatos) == 1:
+                    if candidatos[0] not in mapas_finais:
+                        mapas_finais.append(candidatos[0])
+                elif len(candidatos) > 1:
+                    correspondencia_ambigua = True
+                elif (indices_mapa.get("mapas") or {}).get(mapa_pdf):
+                    mapas_finais.append(mapa_pdf)
+                else:
+                    correspondencia_ambigua = True
+            if mapas_finais and not correspondencia_ambigua:
+                final = _vendas_diario_combinar_finais([
+                    (indices_mapa.get("mapas") or {}).get(mapa) for mapa in mapas_finais
+                ])
+            elif cargas_por_data_vendedor[chave_data_vendedor] == 1:
+                final = dict(resumo_data)
+            else:
+                final = {}
+            caminhao = _as_str(carga.get("caminhao"))
+            placa = _as_str(carga.get("placa"))
+            if not caminhao:
+                veiculos_resolvidos = []
+                for codigo in re.split(r"\s*(?:,|\|)\s*", _as_str(final.get("caminhoes"))):
+                    candidatos = veiculos_por_codigo.get(re.sub(r"\D+", "", codigo).lstrip("0"), [])
+                    if len(candidatos) == 1 and candidatos[0] not in veiculos_resolvidos:
+                        veiculos_resolvidos.append(candidatos[0])
+                if veiculos_resolvidos:
+                    caminhao = " | ".join(_as_str(item.get("nome")) for item in veiculos_resolvidos)
+                    placa = " | ".join(_as_str(item.get("placa")) for item in veiculos_resolvidos)
+                else:
+                    caminhao = _as_str(final.get("caminhoes"))
+
+            entregadores = []
+            if _as_str(carga.get("entregador_nome")):
+                entregadores.append(_as_str(carga.get("entregador_nome")))
+            else:
+                for campo in ("ajudantes1", "ajudantes2"):
+                    for nome in re.split(r"\s*(?:,|\|)\s*", _as_str(final.get(campo))):
+                        if nome and nome not in entregadores:
+                            entregadores.append(nome)
+
+            peso = _as_float(carga.get("peso_total"), 0) or _as_float(final.get("peso"), 0)
+            entregas = _as_int(carga.get("qtd_entregas"), 0) or _as_int(final.get("clientes"), 0)
+            resultado.append({
+                "id": _as_int(carga.get("id"), 0),
+                "data_ref": _fmt_date(carga.get("data_ref")),
+                "mapa": _as_str(carga.get("mapas")) or _as_str(final.get("mapas")),
+                "mapa_sellout": _as_str(final.get("mapas")),
+                "motorista": _as_str(carga.get("motorista_nome")) or _as_str(final.get("motoristas")),
+                "entregador": " | ".join(entregadores),
+                "vendedor_codigo": _as_str(carga.get("vendedor_codigo")),
+                "vendedor_nome": _as_str(carga.get("vendedor_nome")),
+                "caminhao": caminhao,
+                "placa": placa,
+                "cidade": _as_str(carga.get("cidade")) or _as_str(carga.get("cidades_fontes")) or _as_str(final.get("cidades")),
+                "rota": _as_str(carga.get("rota")) or _as_str(carga.get("rotas_fontes")) or _as_str(final.get("rotas")),
+                "peso": peso,
+                "qtd_entregas": entregas,
+                "status": _as_str(carga.get("frete_status")) or _as_str(carga.get("status")),
+                "frete_id": _as_int(carga.get("frete_id"), 0) or None,
+                "confirmada_sellout": _as_int(final.get("linhas"), 0)>0,
+            })
+
+        resumo = {
+            "cargas": len(resultado),
+            "peso_total": sum(_as_float(item.get("peso"), 0) for item in resultado),
+            "qtd_entregas": sum(_as_int(item.get("qtd_entregas"), 0) for item in resultado),
+        }
+        return jsonify({
+            "semana": semana,
+            "semana_inicio": semana_inicio.isoformat(),
+            "semana_fim": semana_fim.isoformat(),
+            "cargas": resultado,
+            "resumo": resumo,
+            "sellout_ativo": sellout,
+        })
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.route("/api/vendas/diario/kanban/conciliar", methods=["POST"])
+def vendas_diario_kanban_conciliar_api():
+    try:
+        resultado = _vendas_diario_unificar_cards_semelhantes(
+            usuario=_usuario_ator_req() or "sellout_automatico"
+        )
+        return jsonify({"ok": True, "conciliacao": resultado})
+    except Exception as exc:
+        return jsonify({"erro": f"Falha ao conciliar TXT/PDF/SELLOUT: {str(exc)}"}), 500
 
 
 @app.route("/api/vendas/diario/kanban/<int:card_id>/status", methods=["PUT"])
@@ -32097,6 +32885,7 @@ def vendas_diario_kanban_status_api(card_id):
 def vendas_diario_kanban_unir_api(card_id):
     data = request.get_json(silent=True) or {}
     destino_id = _as_int(data.get("destino_card_id"), 0)
+    identificador = _as_str(data.get("identificador"))[:120]
     if not destino_id or destino_id == card_id:
         return jsonify({"erro": "Selecione outro card como destino."}), 400
     usuario = _usuario_ator_req()
@@ -32114,17 +32903,24 @@ def vendas_diario_kanban_unir_api(card_id):
             return jsonify({"erro": "Card de origem ou destino invalido."}), 404
         if _fmt_date(origem.get("data_ref")) != _fmt_date(destino.get("data_ref")):
             return jsonify({"erro": "Somente cards da mesma data podem ser unidos."}), 409
+        if _as_int(origem.get("vendedor_codigo"), 0) != _as_int(destino.get("vendedor_codigo"), 0):
+            return jsonify({"erro": "A conciliacao TXT/PDF exige o mesmo vendedor."}), 409
+        if {_as_str(origem.get("origem_tipo")).lower(), _as_str(destino.get("origem_tipo")).lower()} != {"txt", "pdf"}:
+            return jsonify({"erro": "A confirmacao deve vincular uma origem TXT a uma origem PDF."}), 409
         if _as_int(origem.get("veiculo_id"), 0) and _as_int(destino.get("veiculo_id"), 0) and origem.get("veiculo_id") != destino.get("veiculo_id"):
             return jsonify({"erro": "Cards ligados a caminhoes diferentes nao podem ser unidos."}), 409
         if origem.get("status") in {"enviado_frete", "excluido"} or destino.get("status") in {"enviado_frete", "excluido"}:
             return jsonify({"erro": "Nao e possivel unir cards enviados ou excluidos."}), 409
         cur.execute("UPDATE vendas_diario_kanban SET card_principal_id=%s, atualizado_em=NOW() WHERE id=%s OR card_principal_id=%s", (destino_id, card_id, card_id))
+        detalhe = "Uniao TXT/PDF confirmada; documentos e divergencias preservados."
+        if identificador:
+            detalhe += f" Identificador: {identificador}."
         cur.execute("""INSERT INTO vendas_diario_kanban_historico
             (card_id,acao,card_origem_id,card_destino_id,usuario,detalhes)
-            VALUES (%s,'unido',%s,%s,%s,'Uniao manual confirmada; documentos preservados.')""",
-            (destino_id, card_id, destino_id, usuario))
+            VALUES (%s,'unido_txt_pdf',%s,%s,%s,%s)""",
+            (destino_id, card_id, destino_id, usuario, detalhe))
         conn.commit()
-        return jsonify({"ok": True, "card_origem_id": card_id, "card_destino_id": destino_id})
+        return jsonify({"ok": True, "card_origem_id": card_id, "card_destino_id": destino_id, "identificador": identificador})
     except Exception:
         conn.rollback()
         raise
@@ -32432,6 +33228,125 @@ def vendas_diario_importar_carga_pdf_api():
     except Exception as exc:
         return jsonify({"erro": f"Falha ao ler ou importar PDF da carga: {str(exc)}"}), 400
     return jsonify(result), (409 if result.get("status") == "erro" else 200)
+
+
+def _vendas_referencia_salvar_upload(file_storage, subdir, extensoes):
+    filename = secure_filename(getattr(file_storage, "filename", "") or "")
+    extensao = os.path.splitext(filename)[1].lower()
+    if not filename or extensao not in extensoes:
+        esperados = ", ".join(sorted(extensoes))
+        raise ValueError(f"Formato invalido. Envie um arquivo {esperados}.")
+    target_dir = os.path.join(VENDAS_UPLOADS_DIR, subdir)
+    os.makedirs(target_dir, exist_ok=True)
+    target_path = os.path.join(target_dir, f"{uuid.uuid4().hex}_{filename}")
+    file_storage.save(target_path)
+    with open(target_path, "rb") as handle:
+        assinatura = hashlib.sha256(handle.read()).hexdigest()
+    return filename, target_path, assinatura
+
+
+def _vendas_referencia_registrar_importacao(cur, tipo, filename, assinatura, registros):
+    cur.execute("""
+        INSERT INTO vendas_referencias_importacoes (tipo, arquivo_nome, assinatura, registros)
+        VALUES (%s,%s,%s,%s)
+        ON DUPLICATE KEY UPDATE arquivo_nome=VALUES(arquivo_nome), registros=VALUES(registros), importado_em=NOW()
+    """, (tipo, filename, assinatura, registros))
+
+
+@app.route("/api/vendas/diario/importar-clientes", methods=["POST"])
+def vendas_diario_importar_clientes_api():
+    uploaded = request.files.get("arquivo")
+    if not uploaded or not getattr(uploaded, "filename", ""):
+        return jsonify({"erro": "Selecione o cadastro de clientes em CSV ou XLSX."}), 400
+    try:
+        filename, target_path, assinatura = _vendas_referencia_salvar_upload(
+            uploaded, "clientes", {".csv", ".xlsx"}
+        )
+        _fieldnames, rows = _vendas_relatorio_dict_rows(target_path)
+        clientes = [cliente for cliente in (normalizar_cliente(row) for row in rows) if cliente]
+        if not clientes:
+            raise ValueError("Nenhum cliente valido foi reconhecido no arquivo.")
+        conn = get_conn(); cur = conn.cursor()
+        try:
+            cur.executemany("""
+                INSERT INTO vendas_clientes_referencia
+                    (codigo, rota_codigo, documento, razao_social, fantasia, endereco, rua, numero,
+                     cidade, uf, cep, bairro, vendedor_codigo, vendedor_nome, status, arquivo_nome)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                ON DUPLICATE KEY UPDATE
+                    rota_codigo=VALUES(rota_codigo), documento=VALUES(documento),
+                    razao_social=VALUES(razao_social), fantasia=VALUES(fantasia), endereco=VALUES(endereco),
+                    rua=VALUES(rua), numero=VALUES(numero), cidade=VALUES(cidade), uf=VALUES(uf),
+                    cep=VALUES(cep), bairro=VALUES(bairro), vendedor_codigo=VALUES(vendedor_codigo),
+                    vendedor_nome=VALUES(vendedor_nome), status=VALUES(status),
+                    arquivo_nome=VALUES(arquivo_nome), atualizado_em=NOW()
+            """, [(
+                item["codigo"], item["rota_codigo"], item["documento"], item["razao_social"],
+                item["fantasia"], item["endereco"], item["rua"], item["numero"], item["cidade"],
+                item["uf"], item["cep"], item["bairro"], item["vendedor_codigo"],
+                item["vendedor_nome"], item["status"], filename,
+            ) for item in clientes])
+            _vendas_referencia_registrar_importacao(cur, "clientes", filename, assinatura, len(clientes))
+            conn.commit()
+        except Exception:
+            conn.rollback(); raise
+        finally:
+            cur.close(); conn.close()
+        return jsonify({"ok": True, "arquivo": filename, "clientes": len(clientes)})
+    except Exception as exc:
+        return jsonify({"erro": f"Falha ao importar cadastro de clientes: {exc}"}), 400
+
+
+@app.route("/api/vendas/diario/importar-rotas", methods=["POST"])
+def vendas_diario_importar_rotas_api():
+    uploaded = request.files.get("arquivo")
+    if not uploaded or not getattr(uploaded, "filename", ""):
+        return jsonify({"erro": "Selecione a tabela de rotas em PDF."}), 400
+    try:
+        filename, target_path, assinatura = _vendas_referencia_salvar_upload(uploaded, "rotas", {".pdf"})
+        rotas = parse_rotas_pdf(target_path)
+        if not rotas:
+            raise ValueError("Nenhuma rota valida foi reconhecida no PDF.")
+        conn = get_conn(); cur = conn.cursor()
+        try:
+            cur.executemany("""
+                INSERT INTO vendas_rotas_referencia (codigo, descricao, arquivo_nome)
+                VALUES (%s,%s,%s)
+                ON DUPLICATE KEY UPDATE descricao=VALUES(descricao), arquivo_nome=VALUES(arquivo_nome), atualizado_em=NOW()
+            """, [(item["codigo"], item["descricao"], filename) for item in rotas])
+            _vendas_referencia_registrar_importacao(cur, "rotas", filename, assinatura, len(rotas))
+            conn.commit()
+        except Exception:
+            conn.rollback(); raise
+        finally:
+            cur.close(); conn.close()
+        return jsonify({"ok": True, "arquivo": filename, "rotas": len(rotas)})
+    except Exception as exc:
+        return jsonify({"erro": f"Falha ao importar tabela de rotas: {exc}"}), 400
+
+
+@app.route("/api/vendas/diario/referencias", methods=["GET"])
+def vendas_diario_referencias_api():
+    conn = get_conn(); cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute("SELECT COUNT(*) total FROM vendas_clientes_referencia")
+        clientes = _as_int((cur.fetchone() or {}).get("total"), 0)
+        cur.execute("SELECT COUNT(*) total FROM vendas_rotas_referencia")
+        rotas = _as_int((cur.fetchone() or {}).get("total"), 0)
+        cur.execute("""
+            SELECT tipo, arquivo_nome, registros, importado_em
+            FROM vendas_referencias_importacoes
+            ORDER BY importado_em DESC, id DESC
+        """)
+        ultimos = {}
+        for row in cur.fetchall() or []:
+            tipo = _as_str(row.get("tipo"))
+            if tipo and tipo not in ultimos:
+                row["importado_em"] = _fmt_dt(row.get("importado_em"))
+                ultimos[tipo] = row
+        return jsonify({"clientes": clientes, "rotas": rotas, "ultimas_importacoes": ultimos})
+    finally:
+        cur.close(); conn.close()
 
 @app.route("/api/vendas/diario/vendedores", methods=["GET"])
 def vendas_diario_vendedores_api():

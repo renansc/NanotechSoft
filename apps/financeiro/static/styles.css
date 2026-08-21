@@ -263,6 +263,13 @@ textarea{
   gap: 10px;
 }
 
+.accountStatusBadges{
+  display:flex;
+  align-items:flex-end;
+  flex-direction:column;
+  gap:6px;
+}
+
 .accountStatusMetrics{
   display:grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -288,13 +295,128 @@ textarea{
   overflow-wrap:anywhere;
 }
 
+.accountBalanceAudit{
+  border-top:1px solid var(--line);
+  padding-top:9px;
+  font-size:12px;
+  line-height:1.45;
+}
+
+.accountBalanceAudit ul{
+  margin:6px 0 0;
+  padding-left:18px;
+}
+
+.accountBalanceAudit.okText{ color:var(--ok); }
+.accountBalanceAudit.badText{ color:var(--bad); }
+.accountBalanceAudit .muted{ color:var(--muted); }
+
+.attachmentCodes{
+  margin-top:8px;
+  padding:9px 10px;
+  border:1px solid var(--line);
+  border-radius:10px;
+  background:rgba(17,26,51,.36);
+  font-size:12px;
+  overflow-wrap:anywhere;
+}
+
+.installmentImportModal{ width:min(1100px, 100%); }
+.installmentPreviewTable{ min-width:760px; }
+.installmentPreviewTable input[type="date"]{ min-width:145px; }
+.installmentPreviewTable input[type="number"]{ min-width:120px; }
+.installmentCode{ max-width:360px; overflow-wrap:anywhere; font-size:11px; }
+
+.paymentCodeModal{
+  width:min(820px, 100%);
+  text-align:center;
+}
+
+.paymentCodeSummary{
+  display:flex;
+  justify-content:center;
+  align-items:center;
+  gap:10px;
+  flex-wrap:wrap;
+  margin-bottom:12px;
+}
+
+.paymentCodeSummary > *{
+  border:1px solid var(--line);
+  border-radius:999px;
+  padding:7px 11px;
+}
+
+.paymentCodeTabs{ justify-content:center; }
+
+.paymentCodeImageBox{
+  display:flex;
+  justify-content:center;
+  align-items:center;
+  min-height:220px;
+  margin:12px 0;
+  padding:14px;
+  border-radius:14px;
+  background:#fff;
+  overflow:auto;
+}
+
+.paymentCodeImageBox img{
+  display:block;
+  max-width:100%;
+  max-height:55vh;
+  object-fit:contain;
+}
+
+.paymentCodeText{
+  margin:10px 0;
+  padding:12px;
+  border:1px solid var(--line);
+  border-radius:12px;
+}
+
+#codigoPagamentoTexto{
+  margin:7px 0;
+  font-size:14px;
+  font-weight:800;
+  letter-spacing:.04em;
+  overflow-wrap:anywhere;
+  user-select:all;
+}
+
+.paymentCodeHint{ margin-top:10px; }
+
+.bankPaymentDetails{
+  display:grid;
+  grid-template-columns:repeat(2, minmax(150px, 1fr));
+  width:min(560px, 100%);
+  gap:10px;
+  color:#111827;
+  text-align:left;
+}
+
+.bankPaymentDetails > div{
+  display:flex;
+  flex-direction:column;
+  gap:4px;
+  padding:12px;
+  border:1px solid #d1d5db;
+  border-radius:12px;
+  background:#f8fafc;
+}
+
+.bankPaymentDetails span{ color:#64748b; font-size:12px; }
+.bankPaymentDetails b{ overflow-wrap:anywhere; }
+
 @media (max-width: 700px){
   .accountStatusMetrics{ grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 420px){
   .accountStatusHead{ flex-direction:column; }
+  .accountStatusBadges{ align-items:flex-start; }
   .accountStatusMetrics{ grid-template-columns: 1fr; }
+  .bankPaymentDetails{ grid-template-columns:1fr; }
 }
 
 .list{
@@ -327,8 +449,61 @@ textarea{
 .badge.ok{ background: rgba(94,234,212,.12); border-color: rgba(94,234,212,.35); }
 .badge.warn{ background: rgba(251,191,36,.10); border-color: rgba(251,191,36,.25); }
 .badge.bad{ background: rgba(251,113,133,.12); border-color: rgba(251,113,133,.35); }
+.badge.match{ background: rgba(96,165,250,.14); border-color: rgba(96,165,250,.45); }
 .badge.transfer{ background: rgba(168,85,247,.12); border-color: rgba(168,85,247,.32); }
 .badge.categoryTag{ background: rgba(96,165,250,.10); border-color: rgba(96,165,250,.25); }
+
+.reconciliationLegend{
+  display:flex;
+  flex-wrap:wrap;
+  gap:10px 18px;
+  margin: 4px 0 14px;
+  padding: 12px;
+  border:1px solid var(--line);
+  border-radius:14px;
+  background:rgba(15,23,48,.35);
+  color:var(--muted);
+  font-size:12px;
+}
+
+.reconciliationLegend > span{
+  display:flex;
+  align-items:center;
+  gap:7px;
+}
+
+.item.matchSuggested{
+  border-color:rgba(96,165,250,.45);
+  background:rgba(30,64,175,.10);
+}
+
+.item.matchChosen{
+  outline:2px solid rgba(96,165,250,.42);
+  border-color:rgba(96,165,250,.65);
+}
+
+.matchChoice{
+  display:flex;
+  align-items:center;
+  justify-content:flex-end;
+  gap:7px;
+  cursor:pointer;
+}
+
+.matchChoice input{
+  width:18px;
+  height:18px;
+  accent-color:var(--primary);
+}
+
+.linkTarget{
+  max-width:260px;
+  margin-top:5px;
+  color:var(--muted);
+  font-size:11px;
+  line-height:1.35;
+  overflow-wrap:anywhere;
+}
 
 .tagList{
   display:flex;
@@ -350,6 +525,35 @@ textarea{
 }
 
 .tableWrap{ overflow:auto; margin-top: 10px; }
+.importHistoryCard{margin-top:16px}
+.importAccountActions{align-items:center;justify-content:flex-end}
+.importAccountActions select{min-width:180px;max-width:240px}
+@media(max-width:760px){.importAccountActions{width:100%;justify-content:flex-start}.importAccountActions select{flex:1;min-width:150px}}
+.filteredTitlesTotal{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:16px;
+  margin-top:12px;
+  padding:12px 14px;
+  border:1px solid var(--line);
+  border-radius:14px;
+  background:rgba(15,23,48,.45);
+}
+.filteredTitlesTotal > div{
+  display:flex;
+  align-items:baseline;
+  gap:10px;
+}
+.filteredTitlesTotal strong{
+  font-size:18px;
+}
+@media (max-width: 520px){
+  .filteredTitlesTotal{
+    align-items:flex-start;
+    flex-direction:column;
+  }
+}
 .table{
   width:100%;
   border-collapse: collapse;

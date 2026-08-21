@@ -47,8 +47,8 @@
     ],
     "workflow": [
       {
-        "nome": "Kanban Vendas Diario",
-        "url": "/apps/riob#vendas:kanban"
+        "nome": "Vendas Diario RioB",
+        "url": "/apps/riob#workflow:vendas_diario"
       },
       {
         "nome": "Kanban RioB",
@@ -105,8 +105,12 @@
     ],
     "compras": [
       {
-        "nome": "Importar XML RioB",
-        "url": "/apps/riob#estoque:importar_xml"
+        "nome": "Importar XML (Bipe) RioB",
+        "url": "/apps/riob#estoque:importar_xml_bipe"
+      },
+      {
+        "nome": "Importar XML Auto RioB",
+        "url": "/apps/riob#estoque:importar_xml_auto"
       }
     ],
     "estoque": [
@@ -134,7 +138,7 @@
     "relatorios": [
       {
         "nome": "Vendas RioB",
-        "url": "/apps/riob#vendas"
+        "url": "/apps/riob#vendas:relatorio"
       },
       {
         "nome": "Comissões",
@@ -149,7 +153,7 @@
     "import_export": [
       {
         "nome": "Importar Vendas Diario",
-        "url": "/apps/riob#vendas:importar"
+        "url": "/apps/riob#workflow:vendas_diario_importar"
       },
       {
         "nome": "Comissões",

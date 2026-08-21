@@ -1,6 +1,7 @@
 # Um app por linha. No deploy do cliente, carregue somente os apps listados aqui.
 automacao
 financeiro
+tecnologia
 nanoponto
 zap
 nanostore

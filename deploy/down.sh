@@ -9,5 +9,5 @@ cd_project
 require_compose
 
 log "parando portal e RioB sem remover bancos, volumes ou dados..."
-compose stop "$APP_SERVICE" "$RIOB_PROXY_SERVICE" "$RIOB_APP_SERVICE"
+compose stop "${RUNTIME_SERVICES[@]}"
 compose ps "${DATABASE_SERVICES[@]}" "${RUNTIME_SERVICES[@]}"

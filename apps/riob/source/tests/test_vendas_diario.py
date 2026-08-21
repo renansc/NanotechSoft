@@ -1,10 +1,21 @@
 import os
 import unittest
+from pathlib import Path
 
-from vendas_diario import parse_report, read_report
+from vendas_diario import intervalo_semana_iso, parse_report, read_report
 
 
 class VendasDiarioParserTest(unittest.TestCase):
+    def test_calcula_intervalo_da_semana_iso(self):
+        inicio, fim, semana = intervalo_semana_iso("2026-W33")
+        self.assertEqual("2026-08-10", inicio.isoformat())
+        self.assertEqual("2026-08-16", fim.isoformat())
+        self.assertEqual("2026-W33", semana)
+
+    def test_rejeita_semana_iso_invalida(self):
+        with self.assertRaisesRegex(ValueError, "Semana invalida"):
+            intervalo_semana_iso("2026-W54")
+
     def test_parses_two_column_items_and_negative_order(self):
         text = """
     BEBIDAS WHITE RIVER LTDA                                   31/07/26  10 18     1
@@ -37,6 +48,90 @@ class VendasDiarioParserTest(unittest.TestCase):
         self.assertGreater(len(parsed["orders"]), 300)
         self.assertGreater(sum(len(order["items"]) for order in parsed["orders"]), 200)
 
+
+class VendasDiarioNavigationTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        source_dir = Path(__file__).resolve().parents[1]
+        cls.page = (source_dir / "RioBranco.html").read_text(encoding="utf-8")
+        cls.script = (source_dir / "script.js").read_text(encoding="utf-8")
+
+    def test_importacao_fica_no_menu_import_e_kanban_no_workflow(self):
+        self.assertIn('data-tab="import"', self.page)
+        self.assertIn('data-import-view="sellout"', self.page)
+        self.assertIn('>Importar SELLOUT</div>', self.page)
+        self.assertNotIn('data-workflow-view="vendas_diario_importar"', self.page)
+        self.assertIn('data-workflow-view="vendas_diario"', self.page)
+        self.assertNotIn('data-vendas-view="diario"', self.page)
+        self.assertIn(
+            '<section id="vendasDiarioImportarWorkflow" class="section">',
+            self.page,
+        )
+        self.assertIn('<section id="vendasDiarioWorkflow" class="section">', self.page)
+
+        relatorio = self.page.split('<section id="vendas" class="section">', 1)[1]
+        relatorio = relatorio.split('<section id="vendasDiarioImportarWorkflow"', 1)[0]
+        self.assertNotIn('id="vendasViewDiario"', relatorio)
+        self.assertNotIn('Selecionar TXT do PC', relatorio)
+        self.assertNotIn('Ler pastas automaticamente', relatorio)
+
+        importacao = self.page.split('<section id="vendasDiarioImportarWorkflow"', 1)[1]
+        importacao = importacao.split('<section id="vendasDiarioWorkflow"', 1)[0]
+        self.assertIn('Selecionar TXT do PC', importacao)
+        self.assertIn('Ler pastas automaticamente', importacao)
+        self.assertIn('id="vendasDiarioBody"', importacao)
+        self.assertNotIn('id="vendasDiarioKanbanImportado"', importacao)
+
+        kanban = self.page.split('<section id="vendasDiarioWorkflow"', 1)[1]
+        kanban = kanban.split('<!-- =====================================================', 1)[0]
+        self.assertIn('id="vendasDiarioKanbanImportado"', kanban)
+        self.assertIn("1. Venda TXT recebida", kanban)
+        self.assertIn("2. Carga PDF formada", kanban)
+        self.assertIn("3. SELLOUT confirmado", kanban)
+        self.assertIn("Listar cargas da semana", kanban)
+        self.assertIn('type="week" id="vendasDiarioSemana"', kanban)
+        self.assertIn('id="vendasDiarioCargasSemanaBody"', kanban)
+        self.assertIn('id="vendasDiarioSellout"', importacao)
+        self.assertIn('id="vendasDiarioClientes"', importacao)
+        self.assertIn('id="vendasDiarioRotas"', importacao)
+        self.assertIn("Import / Importar SELLOUT", importacao)
+        self.assertNotIn('Selecionar TXT do PC', kanban)
+        self.assertNotIn('id="vendasDiarioBody"', kanban)
+
+    def test_navegacao_preserva_links_antigos_no_novo_workflow(self):
+        self.assertIn(
+            '"vendasDiarioImportarWorkflow"',
+            self.script,
+        )
+        self.assertIn(
+            '["importar", "vendas_diario_importar", "importar_vendas_diario"].includes(rawView)',
+            self.script,
+        )
+        self.assertIn('function openImportView(ev, view)', self.script)
+
+    def test_card_resumido_tem_uma_acao_e_salvar_mantem_popup_aberto(self):
+        render_card = self.script.split(
+            "function _renderCardKanbanVendasDiario(card){", 1
+        )[1].split("async function carregarKanbanVendasDiario", 1)[0]
+        salvar_card = self.script.split(
+            "async function salvarCardVendasDiario(){", 1
+        )[1].split("async function excluirCardVendasDiario", 1)[0]
+
+        self.assertEqual(1, render_card.count(">Abrir</button>"))
+        self.assertNotIn(">Editar</button>", render_card)
+        self.assertNotIn(">Enviar para Liberado</button>", render_card)
+        self.assertNotIn("fecharCardVendasDiario()", salvar_card)
+        self.assertIn("Card salvo. Você pode enviá-lo para Liberado.", salvar_card)
+
+    def test_card_exibe_dados_logisticos_resolvidos_do_sellout(self):
+        render_card = self.script.split(
+            "function _renderCardKanbanVendasDiario(card){", 1
+        )[1].split("async function carregarKanbanVendasDiario", 1)[0]
+        self.assertIn("cidade_resolvida", render_card)
+        self.assertIn("rota_resolvida", render_card)
+        self.assertIn("mapas_resolvidos", render_card)
+        self.assertIn("caminhao_resolvido", render_card)
+        self.assertIn("não informado no SELLOUT", render_card)
 
 if __name__ == "__main__":
     unittest.main()

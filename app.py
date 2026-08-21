@@ -1,7 +1,9 @@
 from functools import wraps
 import base64
+import concurrent.futures
 import datetime as dt
 from decimal import Decimal
+import hashlib
 import html as html_lib
 import json
 import os
@@ -18,17 +20,37 @@ import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
+import tempfile
+from io import BytesIO
 
-from flask import Flask, Response, jsonify, redirect, render_template, request, send_from_directory, session, url_for
+from flask import Flask, Response, jsonify, redirect, render_template, request, send_file, send_from_directory, session, url_for
 import mysql.connector
 from mysql.connector import errorcode
 from werkzeug.security import check_password_hash, generate_password_hash
+from werkzeug.utils import secure_filename
+
+from apps.financeiro.pdf_import import (
+    FinancePdfImportError,
+    extract_bank_statement_pdf,
+    extract_installment_pdf,
+    extract_installment_pdf_page,
+)
+from apps.financeiro.pdf_report import FinancePdfReportError, build_finance_titles_pdf
+from apps.financeiro.pix import PixPayloadError, build_static_pix_payload
+from apps.tecnologia.monitor import (
+    build_network_diagnosis,
+    discover_printers,
+    normalize_device_payload,
+    probe_device,
+)
 
 
 BASE_DIR = Path(__file__).resolve().parent
 BACKUP_FORMAT = "nanotechsoft.portal.backup"
 BACKUP_VERSION = 1
 MAX_BACKUP_BYTES = int(os.environ.get("NS_BACKUP_MAX_BYTES", str(25 * 1024 * 1024)))
+MAX_FINANCE_PDF_BYTES = 15 * 1024 * 1024
+MAX_FINANCE_ATTACHMENT_BYTES = 15 * 1024 * 1024
 
 
 def load_env_file(path):
@@ -88,20 +110,36 @@ AUTOMACAO_DIR = Path(os.environ.get(
 ))
 FINANCEIRO_DIR = BASE_DIR / "apps" / "financeiro"
 FINANCEIRO_STATIC_DIR = FINANCEIRO_DIR / "static"
+FINANCEIRO_ATTACHMENTS_DIR = Path(os.environ.get(
+    "FINANCEIRO_ATTACHMENTS_DIR",
+    str(FINANCEIRO_DIR / "dados" / "anexos"),
+))
 NANOPONTO_DIR = Path(os.environ.get("NANOPONTO_APP_DIR", str(app_source_dir("nanoponto"))))
 ZAP_DIR = Path(os.environ.get("ZAP_APP_DIR", str(app_source_dir("zap"))))
 NANOSTORE_DIR = Path(os.environ.get("NANOSTORE_APP_DIR", str(app_source_dir("nanostore"))))
 GPSMUSICAL_DIR = Path(os.environ.get("GPSMUSICAL_APP_DIR", str(app_source_dir("gpsmusical"))))
 BPA_DIR = Path(os.environ.get("BPA_APP_DIR", str(app_source_dir("bpa"))))
 TATOO_DIR = Path(os.environ.get("TATOO_APP_DIR", str(app_source_dir("tatoo"))))
+TECNOLOGIA_DIR = Path(os.environ.get("TECNOLOGIA_APP_DIR", str(app_source_dir("tecnologia"))))
 RAIOXPACS_DIR = Path(os.environ.get("RAIOXPACS_APP_DIR", str(app_source_dir("pacs"))))
 NANOTECH_SHARED_DIR = Path(os.environ.get("NANOTECH_SHARED_DIR", str(APPS_DIR / "shared")))
-FINANCEIRO_COLLECTIONS = ("contas", "categorias", "lancamentos", "imports", "reconciliations", "titulos", "compras")
+FINANCEIRO_COLLECTIONS = (
+    "contas",
+    "categorias",
+    "lancamentos",
+    "imports",
+    "reconciliations",
+    "ignoredBankTransactions",
+    "favorecidos",
+    "titulos",
+    "compras",
+)
 FINANCEIRO_VIEWS = {
     "dashboard",
     "lancamentos",
     "contas",
     "categorias",
+    "cadastros",
     "importar",
     "conciliacao",
     "compras",
@@ -112,6 +150,7 @@ FINANCEIRO_VIEWS = {
 FINANCEIRO_ACTIVE_PAGES = {
     "dashboard": "dashboards",
     "categorias": "cadastros",
+    "cadastros": "cadastros",
     "conciliacao": "workflow",
     "compras": "compras",
     "contas": "financeiro",
@@ -234,6 +273,10 @@ _nanostore_lock = threading.Lock()
 _nanostore_proc = None
 _raioxpacs_lock = threading.Lock()
 _raioxpacs_proc = None
+_finance_state_lock = threading.Lock()
+_technology_probe_lock = threading.Lock()
+_technology_monitor_lock = threading.Lock()
+_technology_monitor_thread = None
 
 
 app = Flask(__name__)
@@ -345,6 +388,26 @@ def ensure_database():
     for statement in [s.strip() for s in schema.split(";") if s.strip()]:
         cur.execute(statement)
 
+    cur.execute("SELECT COUNT(*) FROM tecnologia_dispositivos")
+    if int((cur.fetchone() or [0])[0]) == 0:
+        cur.executemany(
+            """
+            INSERT INTO tecnologia_dispositivos
+                (nome, tipo, host, porta, sonda, localizacao, observacoes,
+                 critico, ativo, latencia_alerta_ms, perda_alerta_pct)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 1, %s, %s)
+            """,
+            (
+                ("Link de internet", "INTERNET", "1.1.1.1", 443, "ICMP", "Internet", "Valida saída TCP, ICMP e resolução DNS.", 1, 80, 5),
+                ("Roteador e DHCP", "ROTEADOR", "192.168.200.1", 80, "ICMP", "Rede principal", "Gateway e servidor DHCP da rede 192.168.200.0/24.", 1, 10, 2),
+                ("Servidor Ubuntu", "SERVIDOR", "192.168.200.254", 443, "ICMP", "Servidor local", "Host do NanotechSoft e proxy HTTPS.", 1, 10, 2),
+                ("Servidor Windows", "SERVIDOR", "192.168.200.121", 445, "ICMP", "Servidor local", "Valida disponibilidade do Windows e do serviço SMB.", 1, 10, 2),
+                ("Impressora 138", "IMPRESSORA", "192.168.200.138", 9100, "ICMP", "A identificar", "Detectada com serviço de impressão RAW e LPD.", 0, 20, 5),
+                ("Impressora 147", "IMPRESSORA", "192.168.200.147", 9100, "ICMP", "A identificar", "Detectada com serviço de impressão RAW e LPD.", 0, 20, 5),
+                ("Impressora 196", "IMPRESSORA", "192.168.200.196", 9100, "ICMP", "A identificar", "Detectada com serviço de impressão RAW.", 0, 20, 5),
+            ),
+        )
+
     cur.execute("SHOW COLUMNS FROM usuarios LIKE 'nanostore_perfil'")
     if not cur.fetchone():
         cur.execute(
@@ -453,7 +516,11 @@ def bootstrap_request():
 
 @app.after_request
 def add_no_cache_headers(resp):
-    if request.path.startswith("/api/") or request.path in {"/", "/login", "/config"}:
+    if (
+        request.path.startswith("/api/")
+        or request.path.startswith("/apps/tecnologia/api/")
+        or request.path in {"/", "/login", "/config"}
+    ):
         resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
         resp.headers["Pragma"] = "no-cache"
         resp.headers["Expires"] = "0"
@@ -1265,6 +1332,8 @@ def enforce_app_permission():
 
     usuario = current_user_or_logout()
     if not usuario:
+        if path.startswith("/apps/tecnologia/api/"):
+            return jsonify({"erro": "login necessário"}), 401
         return redirect(url_for("login_page"))
     if not app_visible_to_user({"app_key": app_key}, usuario):
         return jsonify({"erro": "app nao liberado para este usuario"}), 403
@@ -1359,7 +1428,10 @@ def login_required(view):
 
 
 def current_user_or_logout():
-    user = get_user_by_id(session["usuario_id"])
+    user_id = session.get("usuario_id")
+    if not user_id:
+        return None
+    user = get_user_by_id(user_id)
     if not user or int(user.get("ativo") or 0) != 1:
         session.clear()
         return None
@@ -1827,17 +1899,33 @@ def riob_hash_bridge_script():
         window.openGestaoFrotaView(null, view);
         return;
       }
+      if (section === "workflow" && view && typeof window.openWorkflowView === "function") {
+        window.openWorkflowView(null, view);
+        return;
+      }
       if (section === "vendas" && view && typeof window.openVendasView === "function") {
         if (view === "comissao" && typeof window.openVendasComissao === "function") {
           window.openVendasComissao(null);
           return;
         }
-        window.openVendasView(null, ["kanban", "importar"].includes(view) ? "diario" : view);
+        if (["importar", "vendas_diario_importar", "importar_vendas_diario"].includes(view) && typeof window.openWorkflowView === "function") {
+          window.openWorkflowView(null, "vendas_diario_importar");
+          return;
+        }
+        if (["diario", "vendas_diario", "kanban"].includes(view) && typeof window.openWorkflowView === "function") {
+          window.openWorkflowView(null, "vendas_diario");
+          return;
+        }
+        window.openVendasView(null, view);
         return;
       }
       if (section === "estoque" && typeof window.openEstoqueView === "function") {
         if (view === "importar_xml" && typeof window.openComprasView === "function") {
-          window.openComprasView(null, "importar_xml");
+          window.openComprasView(null, "importar_xml_bipe");
+          return;
+        }
+        if (["importar_xml_bipe", "importar_xml_auto"].includes(view) && typeof window.openComprasView === "function") {
+          window.openComprasView(null, view);
           return;
         }
         window.openEstoqueView(null, view || "posicao");
@@ -4422,18 +4510,21 @@ STATIC_APP_DIRS = {
     "gpsmusical": GPSMUSICAL_DIR,
     "bpa": BPA_DIR,
     "tatoo": TATOO_DIR,
+    "tecnologia": TECNOLOGIA_DIR,
 }
 
 STATIC_APP_INDEX = {
     "gpsmusical": "index.html",
     "bpa": "index.html",
     "tatoo": "index.html",
+    "tecnologia": "index.html",
 }
 
 STATIC_APP_NAMES = {
     "gpsmusical": "GPS Musical",
     "bpa": "BPA",
     "tatoo": "Tatoo",
+    "tecnologia": "Tecnologia",
 }
 
 
@@ -4444,6 +4535,8 @@ def static_app_active_page(app_key, subpath):
         return "cadastros"
     if app_key == "tatoo":
         return "cadastros"
+    if app_key == "tecnologia":
+        return "dashboards"
     return "dashboards"
 
 
@@ -4654,6 +4747,358 @@ def tatoo_static(subpath):
 
 
 # ---------------------------------------------------------------------------
+# Tecnologia: monitoramento da rede local
+# ---------------------------------------------------------------------------
+def technology_public_metric(row, prefix=""):
+    if not row or not row.get(f"{prefix}status"):
+        return None
+    checked_at = row.get(f"{prefix}verificado_em")
+    return {
+        "status": row.get(f"{prefix}status"),
+        "latencyMs": float(row[f"{prefix}latencia_ms"]) if row.get(f"{prefix}latencia_ms") is not None else None,
+        "packetLossPct": float(row.get(f"{prefix}perda_pct") or 0),
+        "jitterMs": float(row[f"{prefix}jitter_ms"]) if row.get(f"{prefix}jitter_ms") is not None else None,
+        "serviceOk": None if row.get(f"{prefix}servico_ok") is None else bool(row.get(f"{prefix}servico_ok")),
+        "message": row.get(f"{prefix}mensagem") or "",
+        "checkedAt": checked_at.isoformat(timespec="milliseconds") if hasattr(checked_at, "isoformat") else str(checked_at or ""),
+    }
+
+
+def technology_public_device(row):
+    return {
+        "id": int(row["id"]),
+        "nome": row.get("nome") or "",
+        "tipo": row.get("tipo") or "OUTRO",
+        "host": row.get("host") or "",
+        "porta": int(row["porta"]) if row.get("porta") is not None else None,
+        "sonda": row.get("sonda") or "ICMP",
+        "localizacao": row.get("localizacao") or "",
+        "observacoes": row.get("observacoes") or "",
+        "critico": bool(row.get("critico")),
+        "ativo": bool(row.get("ativo")),
+        "latenciaAlertaMs": float(row.get("latencia_alerta_ms") or 80),
+        "perdaAlertaPct": float(row.get("perda_alerta_pct") or 5),
+        "availability24h": float(row["disponibilidade_24h"]) if row.get("disponibilidade_24h") is not None else None,
+        "avgLatency24h": float(row["latencia_media_24h"]) if row.get("latencia_media_24h") is not None else None,
+        "avgLoss24h": float(row["perda_media_24h"]) if row.get("perda_media_24h") is not None else None,
+        "checks24h": int(row.get("checagens_24h") or 0),
+        "ultimaMetrica": technology_public_metric(row, "ultima_"),
+    }
+
+
+def get_technology_devices(active_only=False):
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    active_filter = "WHERE d.ativo=1" if active_only else ""
+    cur.execute(
+        f"""
+        SELECT d.*,
+               latest.status AS ultima_status,
+               latest.latencia_ms AS ultima_latencia_ms,
+               latest.perda_pct AS ultima_perda_pct,
+               latest.jitter_ms AS ultima_jitter_ms,
+               latest.servico_ok AS ultima_servico_ok,
+               latest.mensagem AS ultima_mensagem,
+               latest.verificado_em AS ultima_verificado_em,
+               stats.disponibilidade_24h,
+               stats.latencia_media_24h,
+               stats.perda_media_24h,
+               stats.checagens_24h
+        FROM tecnologia_dispositivos d
+        LEFT JOIN tecnologia_metricas latest ON latest.id = (
+            SELECT m.id FROM tecnologia_metricas m
+            WHERE m.dispositivo_id=d.id
+            ORDER BY m.verificado_em DESC, m.id DESC LIMIT 1
+        )
+        LEFT JOIN (
+            SELECT dispositivo_id,
+                   ROUND(AVG(status <> 'OFFLINE') * 100, 2) AS disponibilidade_24h,
+                   ROUND(AVG(latencia_ms), 2) AS latencia_media_24h,
+                   ROUND(AVG(perda_pct), 2) AS perda_media_24h,
+                   COUNT(*) AS checagens_24h
+            FROM tecnologia_metricas
+            WHERE verificado_em >= NOW() - INTERVAL 24 HOUR
+            GROUP BY dispositivo_id
+        ) stats ON stats.dispositivo_id=d.id
+        {active_filter}
+        ORDER BY FIELD(d.tipo, 'INTERNET', 'ROTEADOR', 'SERVIDOR', 'IMPRESSORA', 'OUTRO'), d.nome
+        """
+    )
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    return rows
+
+
+def collect_technology_metrics(device_ids=None):
+    requested = {int(item) for item in (device_ids or [])}
+    with _technology_probe_lock:
+        rows = get_technology_devices(active_only=True)
+        if requested:
+            rows = [row for row in rows if int(row["id"]) in requested]
+        if not rows:
+            return []
+        workers = min(16, len(rows))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
+            results = list(executor.map(probe_device, rows))
+        conn = get_conn()
+        cur = conn.cursor()
+        for device, result in zip(rows, results):
+            cur.execute(
+                """
+                INSERT INTO tecnologia_metricas
+                    (dispositivo_id, status, latencia_ms, perda_pct, jitter_ms,
+                     servico_ok, mensagem, detalhes)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    int(device["id"]),
+                    result["status"],
+                    result.get("latencyMs"),
+                    result.get("packetLossPct") or 0,
+                    result.get("jitterMs"),
+                    result.get("serviceOk"),
+                    result.get("message") or "",
+                    json.dumps(result.get("details") or {}, ensure_ascii=False),
+                ),
+            )
+        cur.execute("DELETE FROM tecnologia_metricas WHERE verificado_em < NOW() - INTERVAL 90 DAY")
+        conn.commit()
+        cur.close()
+        conn.close()
+        return [
+            {"deviceId": int(device["id"]), **result}
+            for device, result in zip(rows, results)
+        ]
+
+
+def _technology_monitor_loop():
+    interval = max(15, int(os.environ.get("TECH_MONITOR_INTERVAL_SECONDS", "60")))
+    while True:
+        try:
+            ensure_database()
+            collect_technology_metrics()
+        except Exception as exc:
+            print(f"[tecnologia] falha na coleta: {type(exc).__name__}: {exc}", file=sys.stderr)
+        time.sleep(interval)
+
+
+def start_technology_monitor():
+    global _technology_monitor_thread
+    with _technology_monitor_lock:
+        if _technology_monitor_thread and _technology_monitor_thread.is_alive():
+            return
+        _technology_monitor_thread = threading.Thread(
+            target=_technology_monitor_loop,
+            name="tecnologia-monitor",
+            daemon=True,
+        )
+        _technology_monitor_thread.start()
+
+
+def technology_admin_or_error():
+    usuario = current_user_or_logout()
+    if not usuario or not user_is_admin(usuario):
+        return jsonify({"erro": "somente administradores podem alterar o monitoramento"}), 403
+    return None
+
+
+@app.route("/apps/tecnologia/api/overview")
+@login_required
+def tecnologia_overview_api():
+    start_technology_monitor()
+    devices = [technology_public_device(row) for row in get_technology_devices()]
+    return jsonify({
+        "devices": devices,
+        "diagnosis": build_network_diagnosis(devices),
+        "monitorIntervalSeconds": max(15, int(os.environ.get("TECH_MONITOR_INTERVAL_SECONDS", "60"))),
+        "subnet": "192.168.200.0/24",
+    })
+
+
+@app.route("/apps/tecnologia/api/probe", methods=["POST"])
+@login_required
+def tecnologia_probe_api():
+    payload = request.get_json(silent=True) or {}
+    ids = payload.get("deviceIds") or []
+    if not isinstance(ids, list):
+        return jsonify({"erro": "a lista de equipamentos é inválida"}), 400
+    try:
+        results = collect_technology_metrics(ids)
+    except (TypeError, ValueError):
+        return jsonify({"erro": "a lista de equipamentos é inválida"}), 400
+    devices = [technology_public_device(row) for row in get_technology_devices()]
+    return jsonify({"results": results, "devices": devices, "diagnosis": build_network_diagnosis(devices)})
+
+
+@app.route("/apps/tecnologia/api/history")
+@login_required
+def tecnologia_history_api():
+    try:
+        device_id = int(request.args.get("deviceId") or 0)
+        hours = min(720, max(1, int(request.args.get("hours") or 24)))
+    except (TypeError, ValueError):
+        return jsonify({"erro": "filtro de histórico inválido"}), 400
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    cutoff = dt.datetime.now() - dt.timedelta(hours=hours)
+    cur.execute(
+        """
+        SELECT id, dispositivo_id, verificado_em, status, latencia_ms,
+               perda_pct, jitter_ms, servico_ok, mensagem
+        FROM tecnologia_metricas
+        WHERE dispositivo_id=%s AND verificado_em >= %s
+        ORDER BY verificado_em ASC, id ASC
+        LIMIT 3000
+        """,
+        (device_id, cutoff),
+    )
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    return jsonify({"metrics": [
+        {
+            "id": int(row["id"]),
+            "deviceId": int(row["dispositivo_id"]),
+            "checkedAt": row["verificado_em"].isoformat(timespec="milliseconds"),
+            "status": row["status"],
+            "latencyMs": float(row["latencia_ms"]) if row.get("latencia_ms") is not None else None,
+            "packetLossPct": float(row.get("perda_pct") or 0),
+            "jitterMs": float(row["jitter_ms"]) if row.get("jitter_ms") is not None else None,
+            "serviceOk": None if row.get("servico_ok") is None else bool(row.get("servico_ok")),
+            "message": row.get("mensagem") or "",
+        }
+        for row in rows
+    ]})
+
+
+@app.route("/apps/tecnologia/api/devices", methods=["POST"])
+@login_required
+def tecnologia_create_device_api():
+    denied = technology_admin_or_error()
+    if denied:
+        return denied
+    try:
+        data = normalize_device_payload(request.get_json(silent=True) or {})
+    except (TypeError, ValueError) as exc:
+        return jsonify({"erro": str(exc)}), 400
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            INSERT INTO tecnologia_dispositivos
+                (nome, tipo, host, porta, sonda, localizacao, observacoes,
+                 critico, ativo, latencia_alerta_ms, perda_alerta_pct)
+            VALUES (%(nome)s, %(tipo)s, %(host)s, %(porta)s, %(sonda)s,
+                    %(localizacao)s, %(observacoes)s, %(critico)s, %(ativo)s,
+                    %(latencia_alerta_ms)s, %(perda_alerta_pct)s)
+            """,
+            data,
+        )
+        device_id = int(cur.lastrowid)
+        conn.commit()
+    except mysql.connector.IntegrityError:
+        conn.rollback()
+        cur.close()
+        conn.close()
+        return jsonify({"erro": "este host e porta já estão cadastrados"}), 409
+    cur.close()
+    conn.close()
+    return jsonify({"id": device_id}), 201
+
+
+@app.route("/apps/tecnologia/api/devices/<int:device_id>", methods=["PUT", "DELETE"])
+@login_required
+def tecnologia_device_api(device_id):
+    denied = technology_admin_or_error()
+    if denied:
+        return denied
+    conn = get_conn()
+    cur = conn.cursor()
+    if request.method == "DELETE":
+        cur.execute("DELETE FROM tecnologia_dispositivos WHERE id=%s", (device_id,))
+        changed = cur.rowcount
+        conn.commit()
+        cur.close()
+        conn.close()
+        return ("", 204) if changed else (jsonify({"erro": "equipamento não encontrado"}), 404)
+    try:
+        data = normalize_device_payload(request.get_json(silent=True) or {})
+    except (TypeError, ValueError) as exc:
+        cur.close()
+        conn.close()
+        return jsonify({"erro": str(exc)}), 400
+    data["id"] = device_id
+    try:
+        cur.execute(
+            """
+            UPDATE tecnologia_dispositivos
+            SET nome=%(nome)s, tipo=%(tipo)s, host=%(host)s, porta=%(porta)s,
+                sonda=%(sonda)s, localizacao=%(localizacao)s,
+                observacoes=%(observacoes)s, critico=%(critico)s,
+                ativo=%(ativo)s, latencia_alerta_ms=%(latencia_alerta_ms)s,
+                perda_alerta_pct=%(perda_alerta_pct)s
+            WHERE id=%(id)s
+            """,
+            data,
+        )
+        changed = cur.rowcount
+        conn.commit()
+    except mysql.connector.IntegrityError:
+        conn.rollback()
+        cur.close()
+        conn.close()
+        return jsonify({"erro": "este host e porta já estão cadastrados"}), 409
+    cur.close()
+    conn.close()
+    return jsonify({"ok": True, "changed": bool(changed)})
+
+
+@app.route("/apps/tecnologia/api/discover-printers", methods=["POST"])
+@login_required
+def tecnologia_discover_printers_api():
+    denied = technology_admin_or_error()
+    if denied:
+        return denied
+    payload = request.get_json(silent=True) or {}
+    try:
+        discovered = discover_printers(payload.get("subnet") or "192.168.200.0/24")
+    except ValueError as exc:
+        return jsonify({"erro": str(exc)}), 400
+    existing = {(row["host"], int(row["porta"] or 0)) for row in get_technology_devices()}
+    for item in discovered:
+        item["registered"] = (item["host"], int(item["suggestedPort"])) in existing
+    return jsonify({"devices": discovered})
+
+
+@app.route("/apps/tecnologia")
+@login_required
+def tecnologia_static_root():
+    start_technology_monitor()
+    return static_app_response("tecnologia")
+
+
+@app.route("/apps/tecnologia/original")
+@login_required
+def tecnologia_original_root():
+    start_technology_monitor()
+    return static_app_response("tecnologia", integrated=False)
+
+
+@app.route("/apps/tecnologia/original/<path:subpath>")
+@login_required
+def tecnologia_original_static(subpath):
+    return static_app_response("tecnologia", subpath, integrated=False)
+
+
+@app.route("/apps/tecnologia/<path:subpath>")
+@login_required
+def tecnologia_static(subpath):
+    return static_app_response("tecnologia", subpath)
+
+
+# ---------------------------------------------------------------------------
 # Integracao do app Financeiro
 # ---------------------------------------------------------------------------
 def default_finance_state():
@@ -4671,6 +5116,8 @@ def default_finance_state():
         "lancamentos": [],
         "imports": [],
         "reconciliations": [],
+        "ignoredBankTransactions": [],
+        "favorecidos": [],
         "titulos": [],
         "compras": [],
         "config": {"tolDias": 3, "tolValor": 0.5, "scoreMin": 60},
@@ -4687,6 +5134,16 @@ def normalize_finance_state(data):
         if isinstance(config, dict):
             state["config"].update(config)
     return state
+
+
+def finance_state_revision(state):
+    canonical = json.dumps(
+        state,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
 
 
 def record_id(collection, item, fallback_index):
@@ -4706,6 +5163,8 @@ def get_finance_state():
         "lancamentos": [],
         "imports": [],
         "reconciliations": [],
+        "ignoredBankTransactions": [],
+        "favorecidos": [],
         "titulos": [],
         "compras": [],
         "config": {"tolDias": 3, "tolValor": 0.5, "scoreMin": 60},
@@ -4784,12 +5243,13 @@ def extract_finance_content(active_view="dashboard"):
     source = set_finance_initial_view(source, active_view)
     main = re.search(r'<main class="container">(.*?)</main>', source, flags=re.I | re.S)
     footer = re.search(r'<footer class="footer">(.*?)</footer>', source, flags=re.I | re.S)
+    app_js_version = (FINANCEIRO_STATIC_DIR / "app.js").stat().st_mtime_ns
     parts = [
         '<div class="financeiro-app">',
         f'<main class="container">{main.group(1)}</main>' if main else source,
         f'<footer class="footer">{footer.group(1)}</footer>' if footer else "",
         "</div>",
-        '<script src="/apps/financeiro/static/app.js"></script>',
+        f'<script src="/apps/financeiro/static/app.js?v={app_js_version}"></script>',
     ]
     return "\n".join(parts)
 
@@ -4827,13 +5287,14 @@ def financeiro_original_page():
     source = (FINANCEIRO_DIR / "source.html").read_text(encoding="utf-8", errors="replace")
     source = source.replace('href="styles.css"', 'href="/apps/financeiro/static/styles.css"')
     source = source.replace('<script src="../shared/remote-store.js"></script>', "")
+    app_js_version = (FINANCEIRO_STATIC_DIR / "app.js").stat().st_mtime_ns
     source = source.replace(
         '<script src="app.js"></script>',
         (
             "<script>"
             f"window.FINANCEIRO_ALLOWED = {json.dumps(allowed_resources_for_app(usuario, 'financeiro'))};"
             "</script>"
-            '<script src="/apps/financeiro/static/app.js"></script>'
+            f'<script src="/apps/financeiro/static/app.js?v={app_js_version}"></script>'
         ),
     )
     source = apply_standalone_theme(source)
@@ -4846,7 +5307,11 @@ def financeiro_static(filename):
     usuario = current_user_or_logout()
     if not app_visible_to_user({"app_key": "financeiro"}, usuario):
         return jsonify({"erro": "acesso negado"}), 403
-    return send_from_directory(FINANCEIRO_STATIC_DIR, filename)
+    response = send_from_directory(FINANCEIRO_STATIC_DIR, filename)
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
 
 
 @app.route("/apps/financeiro/api/state", methods=["GET", "PUT"])
@@ -4856,9 +5321,177 @@ def financeiro_state_api():
     if not app_visible_to_user({"app_key": "financeiro"}, usuario):
         return jsonify({"erro": "acesso negado"}), 403
     if request.method == "GET":
-        return jsonify({"ok": True, "state": get_finance_state()})
+        state = get_finance_state()
+        revision = finance_state_revision(state)
+        if request.args.get("revision") == revision:
+            return jsonify({"ok": True, "changed": False, "revision": revision})
+        return jsonify({"ok": True, "changed": True, "revision": revision, "state": state})
     data = request.get_json(silent=True) or {}
-    return jsonify({"ok": True, "state": save_finance_state(data.get("state") or data)})
+    expected_revision = str(data.get("revision") or "").strip()
+    if not expected_revision:
+        return jsonify({
+            "error": "Atualize a tela antes de salvar os dados financeiros.",
+            "code": "finance_revision_required",
+        }), 428
+    with _finance_state_lock:
+        current_state = get_finance_state()
+        current_revision = finance_state_revision(current_state)
+        if expected_revision != current_revision:
+            return jsonify({
+                "error": "Os dados financeiros foram atualizados em outra aba.",
+                "code": "finance_revision_conflict",
+                "currentRevision": current_revision,
+            }), 409
+        state = save_finance_state(data.get("state") or {})
+    return jsonify({
+        "ok": True,
+        "changed": True,
+        "revision": finance_state_revision(state),
+        "state": state,
+    })
+
+
+@app.route("/apps/financeiro/api/titles-report-pdf", methods=["POST"])
+@login_required
+def financeiro_titles_report_pdf_api():
+    usuario = current_user_or_logout()
+    if not app_visible_to_user({"app_key": "financeiro"}, usuario):
+        return jsonify({"error": "Acesso negado."}), 403
+
+    data = request.get_json(silent=True) or {}
+    report_type = str(data.get("tipo") or "").upper()
+    required_resource = {"AP": "pagar", "AR": "receber"}.get(report_type)
+    if not required_resource:
+        return jsonify({"error": "Tipo de relatório inválido."}), 400
+
+    allowed = allowed_resources_for_app(usuario, "financeiro")
+    if "*" not in allowed and required_resource not in allowed:
+        return jsonify({"error": "Acesso negado a este relatório."}), 403
+
+    raw_ids = data.get("tituloIds")
+    if not isinstance(raw_ids, list):
+        return jsonify({"error": "Informe as contas que devem compor o relatório."}), 400
+    title_ids = list(dict.fromkeys(
+        str(title_id).strip() for title_id in raw_ids if str(title_id).strip()
+    ))
+    if len(title_ids) > 2000:
+        return jsonify({"error": "O relatório excede o limite de 2000 contas. Reduza o filtro."}), 413
+
+    state = get_finance_state()
+    expected_revision = str(data.get("revision") or "").strip()
+    if expected_revision != finance_state_revision(state):
+        return jsonify({
+            "error": "Os dados financeiros foram atualizados. Aguarde a sincronização e gere o relatório novamente."
+        }), 409
+    title_by_id = {
+        str(title.get("id")): title
+        for title in state.get("titulos", [])
+        if isinstance(title, dict) and title.get("id") and title.get("tipo") == report_type
+    }
+    if any(title_id not in title_by_id for title_id in title_ids):
+        return jsonify({
+            "error": "As contas foram atualizadas. Atualize a tela e gere o relatório novamente."
+        }), 409
+    titles = [title_by_id[title_id] for title_id in title_ids]
+
+    raw_filters = data.get("filtros") if isinstance(data.get("filtros"), list) else []
+    filters = []
+    for item in raw_filters[:8]:
+        if not isinstance(item, dict):
+            continue
+        filters.append((str(item.get("label") or "")[:60], str(item.get("value") or "")[:180]))
+
+    try:
+        output, attachment_count = build_finance_titles_pdf(
+            state,
+            titles,
+            report_type,
+            filters,
+            FINANCEIRO_ATTACHMENTS_DIR,
+        )
+    except FinancePdfReportError as exc:
+        return jsonify({"error": str(exc)}), 422
+    except RuntimeError:
+        app.logger.exception("Dependências indisponíveis para gerar o relatório financeiro")
+        return jsonify({"error": "O servidor não está preparado para gerar o PDF."}), 503
+    except Exception:
+        app.logger.exception("Falha ao gerar relatório financeiro em PDF")
+        return jsonify({"error": "Não foi possível gerar o relatório em PDF."}), 500
+
+    filename = (
+        "contas-a-pagar" if report_type == "AP" else "contas-a-receber"
+    ) + f"_{dt.date.today().isoformat()}.pdf"
+    response = send_file(
+        output,
+        mimetype="application/pdf",
+        as_attachment=False,
+        download_name=filename,
+        max_age=0,
+    )
+    response.headers["Cache-Control"] = "private, no-store"
+    response.headers["X-Finance-Pdf-Attachments"] = str(attachment_count)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
+@app.route("/apps/financeiro/api/import-pdf", methods=["POST"])
+@login_required
+def financeiro_import_pdf_api():
+    usuario = current_user_or_logout()
+    if not app_visible_to_user({"app_key": "financeiro"}, usuario):
+        return jsonify({"erro": "acesso negado"}), 403
+
+    upload = request.files.get("file")
+    if not upload or not upload.filename:
+        return jsonify({"error": "Selecione um arquivo PDF."}), 400
+    if Path(secure_filename(upload.filename)).suffix.lower() != ".pdf":
+        return jsonify({"error": "O arquivo deve estar no formato PDF."}), 400
+
+    raw = upload.stream.read(MAX_FINANCE_PDF_BYTES + 1)
+    if len(raw) > MAX_FINANCE_PDF_BYTES:
+        return jsonify({"error": "O PDF excede o limite de 15 MB."}), 413
+    if not raw.startswith(b"%PDF-"):
+        return jsonify({"error": "O arquivo enviado não é um PDF válido."}), 400
+
+    try:
+        with tempfile.TemporaryDirectory(prefix="financeiro-upload-") as temp_dir:
+            pdf_path = Path(temp_dir) / "extrato.pdf"
+            pdf_path.write_bytes(raw)
+            parsed = extract_bank_statement_pdf(pdf_path)
+    except FinancePdfImportError as exc:
+        return jsonify({"error": str(exc)}), 422
+
+    return jsonify({"ok": True, **parsed})
+
+
+@app.route("/apps/financeiro/api/import-installments-pdf", methods=["POST"])
+@login_required
+def financeiro_import_installments_pdf_api():
+    usuario = current_user_or_logout()
+    if not app_visible_to_user({"app_key": "financeiro"}, usuario):
+        return jsonify({"error": "Acesso negado."}), 403
+
+    upload = request.files.get("file")
+    if not upload or not upload.filename:
+        return jsonify({"error": "Selecione o PDF com as parcelas."}), 400
+    if Path(secure_filename(upload.filename)).suffix.lower() != ".pdf":
+        return jsonify({"error": "O arquivo deve estar no formato PDF."}), 400
+
+    raw = upload.stream.read(MAX_FINANCE_PDF_BYTES + 1)
+    if len(raw) > MAX_FINANCE_PDF_BYTES:
+        return jsonify({"error": "O PDF excede o limite de 15 MB."}), 413
+    if not raw.startswith(b"%PDF-"):
+        return jsonify({"error": "O arquivo enviado não é um PDF válido."}), 400
+
+    try:
+        with tempfile.TemporaryDirectory(prefix="financeiro-parcelas-upload-") as temp_dir:
+            pdf_path = Path(temp_dir) / "parcelas.pdf"
+            pdf_path.write_bytes(raw)
+            parsed = extract_installment_pdf(pdf_path)
+    except FinancePdfImportError as exc:
+        return jsonify({"error": str(exc)}), 422
+
+    return jsonify({"ok": True, **parsed})
 
 
 @app.route("/api/finance/reminders/run", methods=["POST"])
@@ -4885,12 +5518,203 @@ def finance_purchase_research():
     return jsonify({"error": "Pesquisa de compras ainda nao configurada neste portal."}), 501
 
 
-@app.route("/api/finance/attachments", methods=["POST", "DELETE"])
+@app.route("/api/finance/attachments", methods=["GET", "POST", "DELETE"])
 @login_required
 def finance_attachments():
+    usuario = current_user_or_logout()
+    if not app_visible_to_user({"app_key": "financeiro"}, usuario):
+        return jsonify({"error": "Acesso negado."}), 403
+
+    def requested_attachment_name():
+        value = str(request.args.get("path") or "").strip()
+        if not value or Path(value).name != value or secure_filename(value) != value:
+            return ""
+        return value
+
+    if request.method == "GET":
+        filename = requested_attachment_name()
+        if not filename:
+            return jsonify({"error": "Anexo inválido."}), 400
+        response = send_from_directory(FINANCEIRO_ATTACHMENTS_DIR, filename, conditional=True)
+        response.headers["Cache-Control"] = "private, no-store"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        return response
+
     if request.method == "DELETE":
+        filename = requested_attachment_name()
+        if not filename:
+            return jsonify({"error": "Anexo inválido."}), 400
+        attachment_path = FINANCEIRO_ATTACHMENTS_DIR / filename
+        try:
+            attachment_path.unlink(missing_ok=True)
+        except OSError:
+            return jsonify({"error": "Não foi possível remover o anexo."}), 500
         return ("", 204)
-    return jsonify({"attachment": None, "message": "Anexos financeiros ainda nao configurados neste portal."})
+
+    upload = request.files.get("file")
+    if not upload or not upload.filename:
+        return jsonify({"error": "Selecione um PDF ou imagem."}), 400
+    original_name = secure_filename(upload.filename)
+    suffix = Path(original_name).suffix.lower()
+    allowed_suffixes = {".pdf", ".png", ".jpg", ".jpeg", ".webp", ".gif"}
+    if suffix not in allowed_suffixes:
+        return jsonify({"error": "Formato permitido: PDF, PNG, JPG, WEBP ou GIF."}), 400
+
+    raw = upload.stream.read(MAX_FINANCE_ATTACHMENT_BYTES + 1)
+    if len(raw) > MAX_FINANCE_ATTACHMENT_BYTES:
+        return jsonify({"error": "O anexo excede o limite de 15 MB."}), 413
+    valid_magic = (
+        (suffix == ".pdf" and raw.startswith(b"%PDF-"))
+        or (suffix == ".png" and raw.startswith(b"\x89PNG\r\n\x1a\n"))
+        or (suffix in {".jpg", ".jpeg"} and raw.startswith(b"\xff\xd8\xff"))
+        or (suffix == ".webp" and raw.startswith(b"RIFF") and raw[8:12] == b"WEBP")
+        or (suffix == ".gif" and raw.startswith((b"GIF87a", b"GIF89a")))
+    )
+    if not valid_magic:
+        return jsonify({"error": "O conteúdo do anexo não corresponde ao formato informado."}), 400
+
+    attachment_id = secure_filename(request.form.get("attachmentId") or "")
+    if not attachment_id:
+        attachment_id = hashlib.sha256(raw).hexdigest()[:24]
+    filename = f"{attachment_id}-{hashlib.sha256(raw).hexdigest()[:16]}{suffix}"
+    FINANCEIRO_ATTACHMENTS_DIR.mkdir(parents=True, exist_ok=True)
+    (FINANCEIRO_ATTACHMENTS_DIR / filename).write_bytes(raw)
+    mime = mimetypes.guess_type(original_name)[0] or "application/octet-stream"
+    return jsonify({
+        "attachment": {
+            "id": attachment_id,
+            "name": original_name,
+            "mime": mime,
+            "size": len(raw),
+            "path": filename,
+            "url": url_for("finance_attachments", path=filename),
+        }
+    })
+
+
+def _finance_attachment_pdf_from_request():
+    filename = str(request.args.get("path") or "").strip()
+    if not filename or Path(filename).name != filename or secure_filename(filename) != filename:
+        return None
+    attachment_path = FINANCEIRO_ATTACHMENTS_DIR / filename
+    if attachment_path.suffix.lower() != ".pdf" or not attachment_path.is_file():
+        return None
+    return attachment_path
+
+
+@app.route("/api/finance/attachments/payment-code-info")
+@login_required
+def finance_attachment_payment_code_info():
+    usuario = current_user_or_logout()
+    if not app_visible_to_user({"app_key": "financeiro"}, usuario):
+        return jsonify({"error": "Acesso negado."}), 403
+    attachment_path = _finance_attachment_pdf_from_request()
+    if attachment_path is None:
+        return jsonify({"error": "PDF não encontrado."}), 404
+    try:
+        page = max(1, min(60, int(request.args.get("page") or 1)))
+        region = max(1, min(10, int(request.args.get("region") or 1)))
+        items = extract_installment_pdf_page(attachment_path, page)
+        item = items[min(region - 1, len(items) - 1)] if items else None
+    except (ValueError, FinancePdfImportError) as exc:
+        return jsonify({"error": str(exc)}), 422
+    if not item:
+        return jsonify({"error": "Código de pagamento não reconhecido nesta página."}), 422
+    return jsonify({"ok": True, "payment": item})
+
+
+@app.route("/api/finance/attachments/payment-code-image")
+@login_required
+def finance_attachment_payment_code_image():
+    usuario = current_user_or_logout()
+    if not app_visible_to_user({"app_key": "financeiro"}, usuario):
+        return jsonify({"error": "Acesso negado."}), 403
+    attachment_path = _finance_attachment_pdf_from_request()
+    if attachment_path is None:
+        return jsonify({"error": "PDF não encontrado."}), 404
+    try:
+        page = max(1, min(60, int(request.args.get("page") or 1)))
+        region = max(1, min(10, int(request.args.get("region") or 1)))
+        regions = max(region, min(10, int(request.args.get("regions") or 1)))
+    except ValueError:
+        return jsonify({"error": "Página ou região inválida."}), 400
+    kind = "qr" if request.args.get("kind") == "qr" else "barcode"
+
+    try:
+        from PIL import Image, ImageOps
+        with tempfile.TemporaryDirectory(prefix="financeiro-codigo-") as temp_dir:
+            prefix = Path(temp_dir) / "page"
+            subprocess.run(
+                [
+                    "pdftoppm", "-f", str(page), "-l", str(page), "-singlefile",
+                    "-r", "240", "-png", str(attachment_path), str(prefix),
+                ],
+                check=True, capture_output=True, timeout=45,
+            )
+            with Image.open(str(prefix) + ".png") as source:
+                image = source.convert("RGB")
+                width, height = image.size
+                region_height = height / regions
+                top = (region - 1) * region_height
+                if kind == "qr":
+                    crop_box = (
+                        int(width * 0.58), int(top + region_height * 0.36),
+                        int(width * 0.77), int(top + region_height * 0.68),
+                    )
+                else:
+                    crop_box = (
+                        int(width * 0.19), int(top + region_height * 0.76),
+                        int(width * 0.79), int(top + region_height * 0.97),
+                    )
+                cropped = ImageOps.expand(image.crop(crop_box), border=24, fill="white")
+                output = BytesIO()
+                cropped.save(output, format="PNG", optimize=True)
+                output.seek(0)
+    except (OSError, subprocess.SubprocessError):
+        return jsonify({"error": "Não foi possível gerar a imagem do código."}), 500
+    return send_file(output, mimetype="image/png", max_age=0)
+
+
+@app.route("/api/finance/pix-code", methods=["POST"])
+@login_required
+def finance_pix_code():
+    usuario = current_user_or_logout()
+    if not app_visible_to_user({"app_key": "financeiro"}, usuario):
+        return jsonify({"error": "Acesso negado."}), 403
+    data = request.get_json(silent=True) or {}
+    try:
+        pix = build_static_pix_payload(
+            key=data.get("key"),
+            key_type=data.get("keyType"),
+            amount=data.get("amount"),
+            merchant_name=data.get("merchantName"),
+            merchant_city=data.get("merchantCity"),
+        )
+        import qrcode
+
+        qr = qrcode.QRCode(
+            version=None,
+            error_correction=qrcode.constants.ERROR_CORRECT_M,
+            box_size=10,
+            border=4,
+        )
+        qr.add_data(pix["payload"])
+        qr.make(fit=True)
+        image = qr.make_image(fill_color="black", back_color="white")
+        output = BytesIO()
+        image.save(output, format="PNG")
+        image_data = base64.b64encode(output.getvalue()).decode("ascii")
+    except PixPayloadError as exc:
+        return jsonify({"error": str(exc)}), 422
+    except Exception:
+        app.logger.exception("Falha ao gerar QR Code Pix")
+        return jsonify({"error": "Não foi possível gerar o QR Code Pix."}), 500
+
+    return jsonify({
+        "ok": True,
+        **pix,
+        "image": f"data:image/png;base64,{image_data}",
+    })
 
 
 @app.route("/api/finance/attachments/decode", methods=["POST"])

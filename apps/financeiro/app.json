@@ -27,6 +27,12 @@
     ],
     "cadastros": [
       {
+        "nome": "Favorecidos de pagamento",
+        "url": "/apps/financeiro?view=cadastros",
+        "grupo": "Financeiro",
+        "recurso": "cadastros"
+      },
+      {
         "nome": "Financeiro Categorias",
         "url": "/apps/financeiro?view=categorias",
         "grupo": "Financeiro",
@@ -59,7 +65,7 @@
     ],
     "import_export": [
       {
-        "nome": "Importar OFX",
+        "nome": "Importar Extrato",
         "url": "/apps/financeiro?view=importar",
         "recurso": "importar"
       }

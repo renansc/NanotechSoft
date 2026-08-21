@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Relatorios - Rio Branco</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; font-family: Arial, sans-serif; background: #f4f6f9; }
+    body { display: grid; grid-template-rows: auto 1fr; }
+    header { display: flex; align-items: center; gap: 14px; padding: 12px 18px; color: #fff; background: #ff9800; }
+    header strong { font-size: 18px; margin-right: auto; }
+    nav { display: flex; gap: 8px; flex-wrap: wrap; }
+    button { border: 1px solid rgba(255,255,255,.7); border-radius: 4px; padding: 9px 14px; color: #fff; background: transparent; font-weight: 700; cursor: pointer; }
+    button:hover, button.active { color: #8a4d00; background: #fff; }
+    iframe { width: 100%; height: 100%; border: 0; background: #fff; }
+    @media (max-width: 680px) {
+      header { align-items: stretch; flex-direction: column; }
+      nav { display: grid; grid-template-columns: repeat(2, 1fr); }
+      button { padding-inline: 6px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <strong>Relatorios Rio Branco</strong>
+    <nav aria-label="Tipos de relatorio">
+      <button type="button" class="active" data-report="vendas">Vendas</button>
+      <button type="button" data-report="venda-diario">Venda Diario</button>
+      <button type="button" data-report="comissoes">Comissoes</button>
+      <button type="button" data-report="frota">Frota</button>
+    </nav>
+  </header>
+  <iframe id="reportFrame" title="Relatorio selecionado"></iframe>
+
+  <script>
+    const frame = document.getElementById("reportFrame");
+    let selectedReport = "vendas";
+
+    function hideApplicationNavigation() {
+      const doc = frame.contentDocument;
+      if (!doc || doc.getElementById("public-reports-style")) return;
+      const style = doc.createElement("style");
+      style.id = "public-reports-style";
+      style.textContent = `
+        header, .topo, .menu, .menu-overlay, .menu-toggle, .nanotech-badge,
+        #chatFab, #chatWidget, .chat-fab, .chat-widget { display:none !important; }
+        html, body { min-height:100% !important; }
+        body { padding:0 !important; }
+        .section { margin-top:0 !important; }
+      `;
+      doc.head.appendChild(style);
+    }
+
+    function openSelectedReport() {
+      const win = frame.contentWindow;
+      if (!win) return;
+      hideApplicationNavigation();
+      if (selectedReport === "vendas" && typeof win.openVendasView === "function") {
+        win.openVendasView(null, "relatorio");
+      } else if (selectedReport === "venda-diario" && typeof win.openDashboardView === "function") {
+        win.openDashboardView(null, "vendas_diario");
+      } else if (selectedReport === "comissoes" && typeof win.openComissaoView === "function") {
+        win.openComissaoView(null, "relatorios");
+      } else if (selectedReport === "frota" && typeof win.openGestaoFrotaView === "function") {
+        win.openGestaoFrotaView(null, "relatorios");
+      }
+    }
+
+    function selectReport(report) {
+      selectedReport = report;
+      document.querySelectorAll("[data-report]").forEach((button) => {
+        button.classList.toggle("active", button.dataset.report === report);
+      });
+      openSelectedReport();
+    }
+
+    document.querySelectorAll("[data-report]").forEach((button) => {
+      button.addEventListener("click", () => selectReport(button.dataset.report));
+    });
+
+    frame.addEventListener("load", () => {
+      hideApplicationNavigation();
+      window.setTimeout(openSelectedReport, 100);
+    });
+    frame.src = "RioBranco.html?tv=1&no_login=1&_=" + Date.now();
+  </script>
+</body>
+</html>

@@ -1,5 +1,7 @@
+import json
 import unittest
 from unittest import mock
+from pathlib import Path
 
 import app as portal
 
@@ -65,7 +67,10 @@ class PortalAppPermissionsTests(unittest.TestCase):
                 "app_key": "riob",
                 "nome": "RioB",
                 "menu_groups": {
-                    "compras": [{"nome": "Importar XML RioB", "url": "/apps/riob#estoque:importar_xml"}],
+                    "compras": [
+                        {"nome": "Importar XML (Bipe) RioB", "url": "/apps/riob#estoque:importar_xml_bipe"},
+                        {"nome": "Importar XML Auto RioB", "url": "/apps/riob#estoque:importar_xml_auto"},
+                    ],
                     "estoque": [{"nome": "Posicao atual RioB", "url": "/apps/riob#estoque:posicao"}],
                 },
                 "config_groups": {},
@@ -74,7 +79,8 @@ class PortalAppPermissionsTests(unittest.TestCase):
 
         secoes = portal.menu_sections(apps, usuario)
 
-        self.assertEqual("Importar XML", secoes["compras"][0]["nome"])
+        self.assertEqual("Importar XML (Bipe)", secoes["compras"][0]["nome"])
+        self.assertEqual("Importar XML Auto", secoes["compras"][1]["nome"])
         self.assertEqual("Posicao atual", secoes["estoque"][0]["nome"])
         self.assertIn("estoque", portal.MENU_SECTIONS)
 
@@ -83,6 +89,35 @@ class PortalAppPermissionsTests(unittest.TestCase):
         self.assertNotIn("riob-xml", portal.LOCAL_RIOB_APPS)
         self.assertEqual("/gestor-emails/", portal.riob_app_path("riob-email"))
         self.assertEqual("/importar-xml/", portal.riob_app_path("riob-xml"))
+
+    def test_manifest_separa_vendas_diario_do_relatorio_de_vendas(self):
+        project_dir = Path(__file__).resolve().parents[1]
+        manifest = json.loads(
+            (project_dir / "apps/riob/app.json").read_text(encoding="utf-8")
+        )
+        groups = manifest["menu_groups"]
+        workflow_urls = {item["url"] for item in groups["workflow"]}
+        import_items = {
+            item["nome"]: item["url"] for item in groups["import_export"]
+        }
+
+        self.assertIn("/apps/riob#workflow:vendas_diario", workflow_urls)
+        self.assertEqual(
+            "/apps/riob#workflow:vendas_diario_importar",
+            import_items["Importar Vendas Diario"],
+        )
+        self.assertIn(
+            {"nome": "Vendas RioB", "url": "/apps/riob#vendas:relatorio"},
+            groups["relatorios"],
+        )
+
+    def test_hash_bridge_redireciona_vendas_diario_para_workflow(self):
+        bridge = portal.riob_hash_bridge_script()
+
+        self.assertIn('section === "workflow"', bridge)
+        self.assertIn('window.openWorkflowView(null, "vendas_diario")', bridge)
+        self.assertIn('window.openWorkflowView(null, "vendas_diario_importar")', bridge)
+        self.assertIn('["diario", "vendas_diario", "kanban"]', bridge)
 
 
 if __name__ == "__main__":

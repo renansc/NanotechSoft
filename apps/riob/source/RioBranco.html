@@ -55,12 +55,20 @@
       <div class="submenu" id="submenuWorkflow">
         <div class="submenu-item active" data-workflow-view="fretes" onclick="openWorkflowView(event,'fretes')">Fretes</div>
         <div class="submenu-item" data-workflow-view="comissao" onclick="openWorkflowView(event,'comissao')">Comissões</div>
+        <div class="submenu-item" data-workflow-view="vendas_diario" onclick="openWorkflowView(event,'vendas_diario')">Vendas Diário</div>
+      </div>
+    </div>
+    <div class="menu-item has-submenu" data-tab="import" onclick="toggleImportSubmenu(event)">
+      Import <span class="submenu-caret">&#9662;</span>
+      <div class="submenu" id="submenuImport">
+        <div class="submenu-item active" data-import-view="sellout" onclick="openImportView(event,'sellout')">Importar SELLOUT</div>
       </div>
     </div>
     <div class="menu-item has-submenu" data-tab="compras" onclick="toggleComprasSubmenu(event)">
       Compras <span class="submenu-caret">&#9662;</span>
       <div class="submenu" id="submenuCompras">
-        <div class="submenu-item active" onclick="openComprasView(event,'importar_xml')">Importar XML</div>
+        <div class="submenu-item active" data-compras-view="importar_xml_bipe" onclick="openComprasView(event,'importar_xml_bipe')">Importar XML (Bipe)</div>
+        <div class="submenu-item" data-compras-view="importar_xml_auto" onclick="openComprasView(event,'importar_xml_auto')">Importar XML Auto</div>
       </div>
     </div>
     <div class="menu-item has-submenu" data-tab="estoque" onclick="toggleEstoqueSubmenu(event)">
@@ -83,7 +91,7 @@
     </div>
     <div class="menu-item" onclick="showTab('devolucoes',this)">Devoluções</div>
     <div class="menu-item has-submenu" data-tab="gestaofrota" onclick="toggleGestaoFrotaSubmenu(event)">Gestao Frota <span class="submenu-caret">&#9662;</span><div class="submenu" id="submenuGestaoFrota"><div class="submenu-item active" onclick="openGestaoFrotaView(event,'registrar')">Registrar</div><div class="submenu-item" onclick="openGestaoFrotaView(event,'lista')">Lista</div><div class="submenu-item" onclick="openGestaoFrotaView(event,'relatorios')">Relatorios</div><div class="submenu-item" onclick="openGestaoFrotaCargas(event)">Cadastro Cargas</div><div class="submenu-item" onclick="openGestaoFrotaEscala(event)">Escala</div></div></div>
-    <div class="menu-item has-submenu" data-tab="vendas" onclick="toggleVendasSubmenu(event)">Vendas <span class="submenu-caret">&#9662;</span><div class="submenu" id="submenuVendas"><div class="submenu-item active" data-vendas-view="relatorio" onclick="openVendasView(event,'relatorio')">Relatorio</div><div class="submenu-item" data-vendas-view="diario" onclick="openVendasView(event,'diario')">Vendas diario</div><div class="submenu-item" data-vendas-view="pontosvenda" onclick="openVendasView(event,'pontosvenda')">Pontos de Venda</div></div></div>
+    <div class="menu-item has-submenu" data-tab="vendas" onclick="toggleVendasSubmenu(event)">Vendas <span class="submenu-caret">&#9662;</span><div class="submenu" id="submenuVendas"><div class="submenu-item active" data-vendas-view="relatorio" onclick="openVendasView(event,'relatorio')">Relatório</div><div class="submenu-item" data-vendas-view="pontosvenda" onclick="openVendasView(event,'pontosvenda')">Pontos de Venda</div></div></div>
     <div class="menu-item has-submenu" data-tab="monitor" onclick="toggleMonitorSubmenu(event)">Monitor <span class="submenu-caret">&#9662;</span><div class="submenu" id="submenuMonitor"><div class="submenu-item active" data-monitor-view="esxi" onclick="openMonitorView(event,'esxi')">ESXi</div><div class="submenu-item" data-monitor-view="cameras" onclick="openMonitorView(event,'cameras')">Cameras</div><div class="submenu-item" data-monitor-view="automacao" onclick="openMonitorView(event,'automacao')">Automacao</div><div class="submenu-item" data-monitor-view="gestor_emails" onclick="openMonitorView(event,'gestor_emails')">Gestor de E-mails</div><div class="submenu-item" data-monitor-view="comunicacao" onclick="openMonitorComunicacao(event)">Comunicacao</div></div></div>
     <div class="menu-item" onclick="showTab('agentia',this); iniciarAgentIa()">Agent IA</div>
     <div class="menu-item has-submenu" data-tab="config" onclick="toggleConfigSubmenu(event)">Config <span class="submenu-caret">&#9662;</span><div class="submenu" id="submenuConfig"><div class="submenu-item active" onclick="openConfigView(event,'status')">Status</div><div class="submenu-item" onclick="openConfigView(event,'logs')">Logs</div><div class="submenu-item" onclick="openConfigView(event,'cameras')">Cameras</div><div class="submenu-item" onclick="openConfigView(event,'sip')">SIP</div><div class="submenu-item" onclick="openConfigView(event,'nfe')">NF-e</div><div class="submenu-item" onclick="openConfigView(event,'vendas')">Vendas</div><div class="submenu-item" onclick="openDocsPortal(event)">Docs</div></div></div>
@@ -406,6 +414,7 @@
       <h3 id="vendasDiarioModalTitulo">Card de Vendas Diario</h3>
       <input type="hidden" id="vendasDiarioModalId">
       <div id="vendasDiarioModalResumo" class="hint"></div>
+      <div id="vendasDiarioModalStatusMsg" class="hint"></div>
       <div class="vendas-diario-modal-grid">
         <label>Nome do frete<input type="text" id="vendasDiarioModalNome"></label>
         <label>Cidade/rota cadastrada<select id="vendasDiarioModalCidadeCadastro"><option value="">Selecione no cadastro do Kanban</option></select></label>
@@ -569,10 +578,10 @@
     <div class="boxFrota" id="estoqueImportacoesXmlBox">
       <div class="estoque-import-header">
         <div>
-          <h3>Importacoes XML aguardando confirmacao</h3>
+          <h3>Importar XML Auto — aguardando confirmacao</h3>
           <div id="estoqueXmlPendentesResumo" class="hint">Carregando entradas e saidas reconhecidas pelo Importar XML...</div>
         </div>
-        <div class="estoque-inline-actions">
+        <div class="estoque-xml-toolbar-row estoque-xml-filter-row" aria-label="Filtros da importacao XML automatica">
           <input type="search" id="estoqueXmlPendentesBusca" placeholder="Buscar nota, empresa, item, rota ou lote" oninput="renderImportacoesXmlEstoque()">
           <select id="estoqueXmlPendentesTipo" onchange="renderImportacoesXmlEstoque()">
             <option value="">Entradas e saidas</option>
@@ -603,6 +612,9 @@
             <option value="estoque">Sugeridas para estoque</option>
             <option value="manutencao">Sugeridas para manutencao</option>
           </select>
+          <button type="button" class="btn-secondary" onclick="limparFiltrosImportacoesXmlEstoque()">Limpar filtros</button>
+        </div>
+        <div class="estoque-xml-toolbar-row estoque-xml-action-row" aria-label="Acoes da importacao XML automatica">
           <select id="estoqueXmlAprenderEscopo" title="Como reaplicar esta classificacao nas proximas NF-e">
             <option value="empresa">Aprender pela empresa</option>
             <option value="item">Aprender pelo item</option>
@@ -614,7 +626,6 @@
           <button type="button" onclick="selecionarImportacoesXmlPorFiltro('data')">Selecionar data</button>
           <button type="button" onclick="selecionarImportacoesXmlPorFiltro('rota')">Selecionar rota/frete</button>
           <button type="button" onclick="selecionarImportacoesXmlPorFiltro('lote')">Selecionar importacao</button>
-          <button type="button" class="btn-secondary" onclick="limparFiltrosImportacoesXmlEstoque()">Limpar filtros</button>
           <button type="button" id="estoqueXmlImportarLoteBtn" onclick="importarSelecionadasXmlEstoque()" disabled>Contabilizar no estoque (0)</button>
           <button type="button" id="estoqueXmlManutencaoLoteBtn" onclick="direcionarSelecionadasXmlManutencao()" disabled>Classificar como manutencao (0)</button>
           <button type="button" id="estoqueXmlExcluirLoteBtn" class="btn-danger" onclick="excluirSelecionadasXmlEstoque()" disabled>Excluir da fila (0)</button>
@@ -687,7 +698,7 @@
       </div>
 
       <div class="boxFrota" id="estoqueNfeManualBox">
-        <h3>NF-e automatica pela chave</h3>
+        <h3>Importar XML por bipe/leitor</h3>
         <div class="estoque-inline-actions">
           <button type="button" onclick="abrirCameraEstoque('estoqueChaveAcesso')">Bipar chave com camera/webcam</button>
           <button type="button" onclick="abrirPortalOficialNfeConfig('estoque')">Abrir site da Receita</button>
@@ -708,15 +719,16 @@
       </div>
     </div>
 
-    <div id="estoqueImportPreviewCard" class="boxFrota hidden">
+    <div id="estoqueImportPreviewLayer" class="estoque-import-preview-layer hidden" role="dialog" aria-modal="true" aria-labelledby="estoqueImportPreviewTitle" onclick="fecharModalImportacaoEstoqueBackdrop(event)">
+    <div id="estoqueImportPreviewCard" class="boxFrota estoque-import-preview-card" onclick="event.stopPropagation()">
       <div class="estoque-import-header">
         <div>
-          <h3>Confirmacao da Importacao</h3>
+          <h3 id="estoqueImportPreviewTitle">Confirmacao da Importacao</h3>
           <small id="estoqueImportPreviewFonte" class="hint">Revise os dados antes de lancar no estoque.</small>
         </div>
         <div class="estoque-inline-actions">
           <button type="button" class="estoque-import-add-btn" onclick="adicionarItemImportacaoEstoque()">Adicionar Item</button>
-          <button type="button" onclick="cancelarImportacaoNfeEstoque()">Cancelar</button>
+          <button type="button" onclick="fecharEdicaoImportacaoEstoque()">Cancelar</button>
         </div>
       </div>
       <div id="estoqueImportPreviewStatus" class="hint">Selecione um XML ou PDF para revisar antes de importar.</div>
@@ -794,6 +806,7 @@
         <button type="button" class="estoque-import-add-btn" onclick="adicionarItemImportacaoEstoque()">Adicionar Item</button>
         <button type="button" id="estoqueImportConfirmBtn" onclick="confirmarImportacaoNfeEstoque()">Lancar NF-e no Estoque</button>
       </div>
+    </div>
     </div>
     </div>
 
@@ -2441,7 +2454,11 @@
       </div>
     </div>
 
-    <div id="vendasViewDiario" class="dash-view hidden">
+  </section>
+
+  <section id="vendasDiarioImportarWorkflow" class="section">
+    <h2>Import / Importar SELLOUT</h2>
+    <div id="vendasViewDiario" class="dash-view">
       <div class="boxFrota">
         <div class="vendas-box-head">
           <div>
@@ -2461,19 +2478,18 @@
           <input class="hidden" type="file" id="vendasDiarioCargaPdf" accept=".pdf,application/pdf" onchange="prepararImportacaoCargaPdfVendasDiario()">
           <button type="button" onclick="document.getElementById('vendasDiarioCargaPdf').click()">Importar carga PDF</button>
           <button type="button" onclick="importarVendasDiarioPasta()">Ler pastas automaticamente</button>
-          </div>
+        </div>
+        <div class="vendas-diario-import-box vendas-diario-import-box--referencias">
+          <strong>Rotina de importação:</strong>
+          <input class="hidden" type="file" id="vendasDiarioSellout" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onchange="importarSelloutVendasDiario()">
+          <button type="button" onclick="document.getElementById('vendasDiarioSellout').click()">1. Importar SELLOUT final</button>
+          <input class="hidden" type="file" id="vendasDiarioClientes" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onchange="importarReferenciaVendasDiario('clientes')">
+          <button type="button" class="btn-secondary" onclick="document.getElementById('vendasDiarioClientes').click()">2. Importar cadastro de clientes</button>
+          <input class="hidden" type="file" id="vendasDiarioRotas" accept=".pdf,application/pdf" onchange="importarReferenciaVendasDiario('rotas')">
+          <button type="button" class="btn-secondary" onclick="document.getElementById('vendasDiarioRotas').click()">3. Importar tabela de rotas</button>
+          <span id="vendasDiarioReferenciasInfo" class="hint">Cadastros de apoio ainda não consultados.</span>
+        </div>
         <div id="vendasDiarioResumo" class="vendas-resumo-cards vendas-resumo-cards--wide"></div>
-      </div>
-      <div class="boxFrota">
-        <div class="vendas-box-head">
-          <h3>Fila de conferencia</h3>
-          <button type="button" onclick="carregarKanbanVendasDiario()">Atualizar Kanban</button>
-        </div>
-        <div class="vendas-diario-kanban">
-          <section class="vendas-diario-kanban-col"><h4>Importado</h4><div id="vendasDiarioKanbanImportado"></div></section>
-          <section class="vendas-diario-kanban-col"><h4>Conferir estoque</h4><div id="vendasDiarioKanbanEstoque"></div></section>
-          <section class="vendas-diario-kanban-col"><h4>Conferido</h4><div id="vendasDiarioKanbanConferido"></div></section>
-        </div>
       </div>
       <div class="boxFrota">
         <div style="overflow:auto; max-height:620px;">
@@ -2482,6 +2498,44 @@
             <tbody id="vendasDiarioBody"></tbody>
           </table>
         </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="vendasDiarioWorkflow" class="section">
+    <h2>Workflow / Vendas Diário</h2>
+    <div class="boxFrota">
+      <div class="vendas-box-head">
+        <div><h3>Conciliação em três estados</h3><div id="vendasDiarioKanbanInfo" class="hint">O SELLOUT é a confirmação final e mantém visíveis as alterações ocorridas entre TXT e PDF.</div></div>
+        <div class="vendas-toolbar">
+          <button type="button" class="btn-secondary" onclick="abrirCargasSemanaVendasDiario()">Listar cargas da semana</button>
+          <button type="button" onclick="carregarKanbanVendasDiario()">Atualizar Kanban</button>
+        </div>
+      </div>
+      <div id="vendasDiarioConciliacaoResumo" class="vendas-resumo-cards"></div>
+      <section id="vendasDiarioCargasSemana" class="vendas-diario-cargas-semana hidden">
+        <div class="vendas-box-head">
+          <div>
+            <h3>Cargas da semana</h3>
+            <div id="vendasDiarioCargasSemanaInfo" class="hint">Selecione uma semana no calendário.</div>
+          </div>
+          <div class="vendas-toolbar">
+            <label>Semana <input type="week" id="vendasDiarioSemana" onchange="carregarCargasSemanaVendasDiario()"></label>
+            <button type="button" id="vendasDiarioSemanaCarregar" onclick="carregarCargasSemanaVendasDiario()">Listar</button>
+          </div>
+        </div>
+        <div id="vendasDiarioCargasSemanaResumo" class="vendas-resumo-cards"></div>
+        <div class="vendas-diario-cargas-semana-tabela">
+          <table>
+            <thead><tr><th>Data</th><th>Carga / mapa</th><th>Motorista</th><th>Entregador</th><th>Vendedor</th><th>Caminhão</th><th>Placa</th><th>Cidade</th><th>Rota</th><th>Peso</th><th>Entregas</th></tr></thead>
+            <tbody id="vendasDiarioCargasSemanaBody"><tr><td colspan="11">Selecione uma semana.</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+      <div class="vendas-diario-kanban">
+        <section class="vendas-diario-kanban-col"><h4>1. Venda TXT recebida</h4><div id="vendasDiarioKanbanImportado"></div></section>
+        <section class="vendas-diario-kanban-col"><h4>2. Carga PDF formada</h4><div id="vendasDiarioKanbanEstoque"></div></section>
+        <section class="vendas-diario-kanban-col"><h4>3. SELLOUT confirmado</h4><div id="vendasDiarioKanbanConferido"></div></section>
       </div>
     </div>
   </section>

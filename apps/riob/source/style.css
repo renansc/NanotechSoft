@@ -1294,6 +1294,13 @@ button:hover{ background:#e68900; }
 .vendas-diario-status--sem_vendas{background:#fee2e2;color:#991b1b}
 .vendas-diario-import-box{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:14px 0;padding:12px;border:1px dashed #fdba74;border-radius:10px;background:#fff7ed}
 .vendas-diario-import-box .hint{flex:1;min-width:180px}
+.vendas-diario-import-box--referencias{border-color:#93c5fd;background:#eff6ff}
+.vendas-diario-cargas-semana{margin:14px 0 18px;padding:14px;border:1px solid #bfdbfe;border-radius:12px;background:#f8fbff}
+.vendas-diario-cargas-semana h3{margin:0 0 4px}
+.vendas-diario-cargas-semana-tabela{margin-top:12px;max-height:560px;overflow:auto;border:1px solid #dbeafe;border-radius:9px;background:#fff}
+.vendas-diario-cargas-semana-tabela table{min-width:1380px;margin:0}
+.vendas-diario-cargas-semana-tabela thead th{position:sticky;top:0;z-index:1;background:#1d4ed8;color:#fff;white-space:nowrap}
+.vendas-diario-cargas-semana-tabela td{vertical-align:top}
 .vendas-diario-kanban{display:grid;grid-template-columns:repeat(3,minmax(280px,1fr));gap:14px;align-items:start;overflow:auto}
 .vendas-diario-kanban-col{min-width:280px;padding:10px;border-radius:12px;background:#f8fafc;border:1px solid #e2e8f0}
 .vendas-diario-kanban-col h4{text-align:center;margin:2px 0 10px}
@@ -1305,9 +1312,17 @@ button:hover{ background:#e68900; }
 .vendas-diario-kanban-card summary{cursor:pointer;font-weight:700}
 .vendas-diario-card-indicadores{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}
 .vendas-diario-card-indicadores span{padding:3px 6px;border-radius:6px;background:#f1f5f9;font-size:.75rem}
-.vendas-diario-card-acoes{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;margin:9px 0}
-.vendas-diario-card-acoes .btn-secondary{grid-column:1/-1}
-.vendas-diario-card-acoes button{padding:7px 8px;font-size:.76rem}
+.vendas-diario-etapas{display:grid;grid-template-columns:repeat(3,1fr);gap:5px;margin:9px 0}
+.vendas-diario-etapas span{padding:5px 4px;border-radius:6px;background:#e2e8f0;color:#64748b;text-align:center;font-size:.72rem;font-weight:800}
+.vendas-diario-etapas span.is-done{background:#dcfce7;color:#166534}
+.vendas-diario-etapas span.has-warning{background:#fef3c7;color:#92400e}
+.vendas-diario-conciliacao-status{margin:7px 0;padding:7px 9px;border-radius:7px;background:#f1f5f9;color:#334155;font-size:.8rem}
+.vendas-diario-conciliacao-status--sellout_confirmado{background:#dcfce7;color:#166534}
+.vendas-diario-conciliacao-status--sellout_com_divergencias{background:#fef3c7;color:#92400e}
+.vendas-diario-sellout{background:#f0fdf4;padding:8px!important;border-radius:7px;border-top:0!important}
+.vendas-diario-divergencia{padding:6px;border-left:3px solid #f59e0b;background:#fffbeb;color:#78350f}
+.vendas-diario-card-acoes{display:block;margin:9px 0}
+.vendas-diario-card-acoes button{width:100%;padding:7px 8px;font-size:.76rem}
 .vendas-diario-card-lista{display:grid;gap:5px;margin-top:7px;max-height:240px;overflow:auto;font-size:.78rem}
 .vendas-diario-card-lista>div{padding:6px;border-radius:6px;background:#f8fafc}
 .vendas-diario-sugestao{background:#fff7ed;padding:8px!important;border-radius:7px;border-top:0!important}
@@ -1453,6 +1468,62 @@ button:hover{ background:#e68900; }
   gap:10px;
   align-items:center;
   margin-bottom:10px;
+}
+
+#estoqueImportacoesXmlBox .estoque-import-header > div:first-child{
+  flex:1 0 100%;
+}
+
+.estoque-xml-toolbar-row{
+  display:flex;
+  flex:1 0 100%;
+  width:100%;
+  gap:8px;
+  align-items:center;
+  flex-wrap:nowrap;
+  overflow-x:auto;
+  padding:3px 1px 8px;
+  scrollbar-width:thin;
+}
+
+.estoque-xml-toolbar-row input,
+.estoque-xml-toolbar-row select,
+.estoque-xml-toolbar-row button,
+.estoque-xml-toolbar-row label{
+  flex:0 0 auto;
+  width:auto;
+  min-width:150px;
+  margin:0;
+  white-space:nowrap;
+}
+
+.estoque-xml-toolbar-row input[type="search"]{
+  width:300px;
+}
+
+.estoque-xml-toolbar-row .config-check{
+  display:flex;
+  align-items:center;
+  min-width:auto;
+  gap:6px;
+}
+
+.estoque-xml-toolbar-row .config-check input{
+  width:auto;
+  min-width:0;
+}
+
+.estoque-xml-action-row{
+  padding-top:8px;
+  border-top:1px solid #e2e8f0;
+}
+
+.estoque-xml-row-actions{
+  white-space:nowrap;
+}
+
+.estoque-xml-row-actions button + button{
+  margin-left:6px;
 }
 
 .estoque-filtros{
@@ -1844,6 +1915,56 @@ button:hover{ background:#e68900; }
   gap:12px;
   align-items:flex-start;
   flex-wrap:wrap;
+}
+
+.estoque-import-preview-layer:not(.is-modal){
+  margin-top:15px;
+}
+
+.estoque-import-preview-layer.is-modal{
+  position:fixed;
+  inset:0;
+  z-index:32000;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  padding:20px;
+  background:rgba(15, 23, 42, .72);
+  overflow:auto;
+  overscroll-behavior:contain;
+}
+
+.estoque-import-preview-layer.is-modal.hidden{
+  display:none;
+}
+
+.estoque-import-preview-layer.is-modal .estoque-import-preview-card{
+  flex:none;
+  width:min(1480px, 96vw);
+  max-height:calc(100dvh - 40px);
+  overflow:auto;
+  border-radius:14px;
+  box-shadow:0 24px 70px rgba(0, 0, 0, .4);
+}
+
+body.estoque-import-modal-open{
+  overflow:hidden !important;
+}
+
+@media (max-width:700px){
+  .estoque-import-preview-layer.is-modal{
+    align-items:flex-start;
+    padding:8px;
+  }
+
+  .estoque-import-preview-layer.is-modal .estoque-import-preview-card{
+    width:100%;
+    max-height:calc(100dvh - 16px);
+  }
+
+  .estoque-xml-toolbar-row input[type="search"]{
+    width:250px;
+  }
 }
 
 .estoque-lote-progresso{

@@ -11,18 +11,24 @@
       </div>
     </div>
 
-    <form id="loginForm" class="login-form">
+    <form id="loginForm" class="login-form" autocomplete="off">
       <label>
         Usuario
-        <input id="loginUsuario" name="login" type="text" value="admin" autocomplete="username" required>
+        <input id="loginUsuario" name="login" type="text" autocomplete="off" required>
       </label>
       <label>
         Senha
-        <input id="loginSenha" name="senha" type="password" value="admin" autocomplete="current-password" required>
+        <input id="loginSenha" name="senha" type="password" autocomplete="off" required>
       </label>
       <button type="submit">Entrar</button>
       <div id="loginMsg" class="form-msg" role="status"></div>
     </form>
+
+    <div class="login-shortcuts" aria-label="Acessos sem login">
+      <a class="action-link" href="https://192.168.200.254:8899/relatorios.html">
+        Acessar somente relatorios
+      </a>
+    </div>
   </section>
 </main>
 {% endblock %}

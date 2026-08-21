@@ -472,8 +472,6 @@ def ensure_service_schema():
             """
         )
         _seed_env_email_accounts(cur)
-        _backfill_email_suppliers_from_xml(cur)
-        _backfill_auto_parts_maintenance(conn)
         conn.commit()
     finally:
         conn.close()

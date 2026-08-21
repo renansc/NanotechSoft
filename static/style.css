@@ -311,6 +311,14 @@ body.theme-pacsred {
   gap: 12px;
 }
 
+.login-shortcuts {
+  display: grid;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+  text-align: center;
+}
+
 .config-panel h3 {
   margin: 0;
 }

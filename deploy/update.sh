@@ -46,6 +46,7 @@ if ! wait_for_riob 45 2; then
   compose logs --tail=120 "$RIOB_APP_SERVICE" >&2 || true
   die "RioB nao respondeu apos update"
 fi
+refresh_and_validate_proxies
 
 compose ps "${RUNTIME_SERVICES[@]}"
-log "update de producao concluido sem operacoes de banco"
+log "update de producao concluido e validado pelos proxies, sem operacoes de banco"

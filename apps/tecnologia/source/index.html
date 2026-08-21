@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Tecnologia</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div class="techApp">
+    <header class="techHero">
+      <div>
+        <span class="eyebrow">Infraestrutura e conectividade</span>
+        <h1>Monitoramento de Tecnologia</h1>
+        <p>Internet, roteador, servidores e impressoras da rede 192.168.200.0/24.</p>
+      </div>
+      <div class="heroActions">
+        <span class="monitorState" id="monitorState">Carregando monitor...</span>
+        <button class="btn primary" id="probeAll" type="button">Verificar agora</button>
+      </div>
+    </header>
+
+    <nav class="techTabs" aria-label="Áreas do módulo">
+      <button class="tab active" data-view="dashboard" type="button">Visão geral</button>
+      <button class="tab" data-view="equipamentos" type="button">Equipamentos</button>
+      <button class="tab" data-view="historico" type="button">Histórico</button>
+    </nav>
+
+    <main>
+      <section class="techView" data-page="dashboard">
+        <div class="kpiGrid">
+          <article class="kpi"><span>Online</span><strong id="kpiOnline">0</strong><small>equipamentos respondendo</small></article>
+          <article class="kpi warning"><span>Instáveis</span><strong id="kpiDegraded">0</strong><small>acima dos limites</small></article>
+          <article class="kpi danger"><span>Offline</span><strong id="kpiOffline">0</strong><small>sem resposta</small></article>
+          <article class="kpi"><span>Disponibilidade</span><strong id="kpiAvailability">—</strong><small>média das últimas 24h</small></article>
+        </div>
+
+        <div class="dashboardGrid">
+          <section class="panel diagnosisPanel">
+            <div class="panelHead">
+              <div><span class="eyebrow">Análise automática</span><h2>Diagnóstico da rede</h2></div>
+            </div>
+            <div id="diagnosisList" class="diagnosisList"></div>
+          </section>
+          <section class="panel scopePanel">
+            <span class="eyebrow">Escopo atual</span>
+            <h2>O que conseguimos medir</h2>
+            <ul>
+              <li>Queda, perda de pacotes, latência e variação até cada equipamento.</li>
+              <li>Disponibilidade das portas críticas: HTTPS, SMB e impressão.</li>
+              <li>Saída para internet e resolução DNS.</li>
+            </ul>
+            <p class="scopeWarning">O servidor está ligado por cabo. Canal, potência, RSSI e roaming do Wi‑Fi exigem SNMP/API do roteador ou uma sonda conectada por Wi‑Fi.</p>
+          </section>
+        </div>
+
+        <section class="panel">
+          <div class="panelHead">
+            <div><span class="eyebrow">Tempo real</span><h2>Equipamentos monitorados</h2></div>
+            <button class="btn" type="button" data-open-view="equipamentos">Gerenciar</button>
+          </div>
+          <div id="deviceCards" class="deviceGrid"></div>
+        </section>
+
+        <section class="panel">
+          <div class="panelHead"><div><span class="eyebrow">Últimas 24 horas</span><h2>Qualidade e disponibilidade</h2></div></div>
+          <div class="tableWrap">
+            <table>
+              <thead><tr><th>Equipamento</th><th>Disponibilidade</th><th>Latência média</th><th>Perda média</th><th>Amostras</th></tr></thead>
+              <tbody id="qualityTable"></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+
+      <section class="techView hidden" data-page="equipamentos">
+        <section class="panel">
+          <div class="panelHead">
+            <div><span class="eyebrow">Cadastro</span><h2>Equipamentos</h2></div>
+            <button class="btn primary" id="newDevice" type="button">Adicionar equipamento</button>
+          </div>
+          <div class="tableWrap">
+            <table>
+              <thead><tr><th>Nome</th><th>Tipo</th><th>Destino</th><th>Local</th><th>Limites</th><th>Status</th><th></th></tr></thead>
+              <tbody id="deviceTable"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="panel discoverPanel">
+          <div class="panelHead">
+            <div><span class="eyebrow">Rede local</span><h2>Descobrir impressoras</h2></div>
+            <button class="btn" id="discoverPrinters" type="button">Varrer portas de impressão</button>
+          </div>
+          <div class="inlineForm">
+            <label>Sub-rede<input id="discoverySubnet" value="192.168.200.0/24" inputmode="numeric"></label>
+            <p>Busca manual somente nas portas 9100, 631 e 515, limitada a uma rede privada /24.</p>
+          </div>
+          <div id="discoveryResults" class="discoveryResults muted">Execute a descoberta para localizar novas impressoras.</div>
+        </section>
+      </section>
+
+      <section class="techView hidden" data-page="historico">
+        <section class="panel">
+          <div class="panelHead historyHead">
+            <div><span class="eyebrow">Série temporal</span><h2>Histórico de medições</h2></div>
+            <div class="historyFilters">
+              <select id="historyDevice" aria-label="Equipamento"></select>
+              <select id="historyHours" aria-label="Período"><option value="6">6 horas</option><option value="24" selected>24 horas</option><option value="168">7 dias</option><option value="720">30 dias</option></select>
+            </div>
+          </div>
+          <div id="historySummary" class="historySummary"></div>
+          <div class="chartBox">
+            <div class="chartLegend"><span><i class="latencyDot"></i> Latência (ms)</span><span><i class="lossDot"></i> Perda (%)</span></div>
+            <svg id="historyChart" viewBox="0 0 1000 260" preserveAspectRatio="none" aria-label="Gráfico de latência e perda"></svg>
+          </div>
+          <div class="tableWrap">
+            <table><thead><tr><th>Data</th><th>Status</th><th>Latência</th><th>Perda</th><th>Jitter</th><th>Serviço</th></tr></thead><tbody id="historyTable"></tbody></table>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <div class="modal hidden" id="deviceModal" role="dialog" aria-modal="true" aria-labelledby="deviceModalTitle">
+      <form class="modalCard" id="deviceForm">
+        <div class="panelHead"><h2 id="deviceModalTitle">Novo equipamento</h2><button class="iconButton" id="closeDeviceModal" type="button" aria-label="Fechar">×</button></div>
+        <input id="deviceId" type="hidden">
+        <div class="formGrid">
+          <label>Nome<input id="deviceName" maxlength="120" required></label>
+          <label>Tipo<select id="deviceType"><option>INTERNET</option><option>ROTEADOR</option><option>SERVIDOR</option><option>IMPRESSORA</option><option>OUTRO</option></select></label>
+          <label>IP ou host<input id="deviceHost" maxlength="253" required placeholder="192.168.200.10"></label>
+          <label>Porta TCP<input id="devicePort" type="number" min="1" max="65535" placeholder="9100"></label>
+          <label>Teste<select id="deviceProbe"><option value="ICMP">ICMP + porta</option><option value="TCP">TCP</option></select></label>
+          <label>Localização<input id="deviceLocation" maxlength="160"></label>
+          <label>Alerta de latência (ms)<input id="deviceLatency" type="number" min="1" max="60000" value="80" required></label>
+          <label>Alerta de perda (%)<input id="deviceLoss" type="number" min="0" max="100" step="0.1" value="5" required></label>
+          <label class="wide">Observações<textarea id="deviceNotes" maxlength="500" rows="3"></textarea></label>
+        </div>
+        <div class="checkRow"><label><input id="deviceCritical" type="checkbox"> Equipamento crítico</label><label><input id="deviceActive" type="checkbox" checked> Monitoramento ativo</label></div>
+        <div class="modalActions"><button class="btn" id="cancelDevice" type="button">Cancelar</button><button class="btn primary" type="submit">Salvar</button></div>
+      </form>
+    </div>
+    <div id="toast" class="toast hidden" role="status"></div>
+  </div>
+  <script src="./app.js"></script>
+</body>
+</html>

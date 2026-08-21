@@ -11,7 +11,8 @@ RIOB_APP_SERVICE="riob-app"
 RIOB_PROXY_SERVICE="riob-proxy"
 PORTAL_PROXY_SERVICE="portal-proxy"
 BUILD_SERVICES=("$APP_SERVICE" "$RIOB_APP_SERVICE")
-RUNTIME_SERVICES=("$RIOB_APP_SERVICE" "$RIOB_PROXY_SERVICE" "$APP_SERVICE")
+PROXY_SERVICES=("$PORTAL_PROXY_SERVICE" "$RIOB_PROXY_SERVICE")
+RUNTIME_SERVICES=("$RIOB_APP_SERVICE" "$RIOB_PROXY_SERVICE" "$APP_SERVICE" "$PORTAL_PROXY_SERVICE")
 DATABASE_SERVICES=("$DB_SERVICE" "$PACS_DB_SERVICE")
 APP_URL="http://127.0.0.1:${NOTECHSOFT_APP_PORT:-5600}/login"
 PORTAL_PROXY_HEALTH_URL="https://127.0.0.1:${NOTECHSOFT_HTTPS_PORT:-443}/healthz"
@@ -277,6 +278,7 @@ financeiro_views = set(getattr(portal, "FINANCEIRO_VIEWS", (
     "lancamentos",
     "contas",
     "categorias",
+    "cadastros",
     "importar",
     "conciliacao",
     "compras",
@@ -288,6 +290,7 @@ financeiro_views = set(getattr(portal, "FINANCEIRO_VIEWS", (
     "lancamentos",
     "contas",
     "categorias",
+    "cadastros",
     "importar",
     "conciliacao",
     "compras",
@@ -444,4 +447,18 @@ wait_for_proxy_url() {
   done
 
   return 1
+}
+
+refresh_and_validate_proxies() {
+  log "reiniciando proxies para atualizar os enderecos internos Docker..."
+  compose restart "${PROXY_SERVICES[@]}"
+
+  if ! wait_for_proxy_url "$PORTAL_PROXY_HEALTH_URL" 30 2; then
+    compose logs --tail=120 "$PORTAL_PROXY_SERVICE" >&2 || true
+    die "portal nao respondeu pelo proxy apos atualizar os enderecos internos"
+  fi
+  if ! wait_for_proxy_url "$RIOB_PROXY_STATUS_URL" "$RIOB_PROXY_STARTUP_TRIES" 2; then
+    compose logs --tail=120 "$RIOB_PROXY_SERVICE" >&2 || true
+    die "RioB nao respondeu pelo proxy apos atualizar os enderecos internos"
+  fi
 }

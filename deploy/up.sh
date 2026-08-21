@@ -29,6 +29,7 @@ if ! wait_for_riob 45 2; then
   compose logs --tail=120 "$RIOB_APP_SERVICE" >&2 || true
   die "RioB nao respondeu a tempo"
 fi
+refresh_and_validate_proxies
 
 compose ps "${DATABASE_SERVICES[@]}" "${RUNTIME_SERVICES[@]}"
-log "portal e RioB prontos; bancos preservados"
+log "portal e RioB prontos pelos proxies externos; bancos preservados"

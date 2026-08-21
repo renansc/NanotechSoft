@@ -79,12 +79,24 @@ O recurso mantem agenda e periodicidade de visitas, vendedor, cliente e rota.
 
 - `GET /api/vendas/diario`: consulta os pedidos diarios importados, opcionalmente por `?data=AAAA-MM-DD`.
 - `GET /api/vendas/diario/dashboard`: consolida status, positivacao, volume e valor diario por vendedor.
-- `GET /api/vendas/diario/kanban`: retorna um card persistido por importacao e vendedor, com clientes, produtos e sugestao de baixa.
+- `GET /api/vendas/diario/kanban`: retorna os cards persistidos com clientes,
+  produtos, sugestao de baixa e a etapa de evidencia atual: venda TXT, carga PDF
+  ou SELLOUT confirmado.
 - O Kanban diario cria e lista cards somente para vendedores com pelo menos um pedido positivo; vendedores com apenas pedidos negativos permanecem no relatorio, mas nao geram card de frete.
 - `PUT /api/vendas/diario/kanban/<id>/status`: move o card entre `importado`, `conferir_estoque` e `conferido`; nenhum desses status altera o estoque automaticamente.
 - `PUT /api/vendas/diario/kanban/<id>` e `DELETE /api/vendas/diario/kanban/<id>`: salvam o rascunho editavel ou ocultam o card ainda nao vinculado.
-- `POST /api/vendas/diario/kanban/<id>/enviar-frete`: valida cidade, caminhao, motorista e entregador, cria um frete `carregando` no Kanban RioB e vincula o card de origem em uma unica transacao. O envio nao baixa estoque.
+- `POST /api/vendas/diario/kanban/<id>/enviar-frete`: valida cidade, caminhao, motorista e entregador, cria um frete `liberado` no Kanban RioB e vincula o card de origem em uma unica transacao. O envio nao baixa estoque.
 - `POST /api/vendas/diario/importar-carga-pdf`: importa o PDF de Carga do Caminhao, reconhece mapa, rota, cidades, peso, entregas, volumes, valores e produtos e cria um card de carga elegivel ao mesmo fluxo de frete.
+- `POST /api/vendas/cache/importar`: na tela de importacao diaria, recebe tambem o
+  SELLOUT final em CSV ou XLSX. Alem das metricas de vendas, a persistencia
+  conserva cliente, rota, mapa, endereco, cidade, motorista e ajudantes para a
+  conciliacao operacional.
+- `POST /api/vendas/diario/importar-clientes`: importa o cadastro de clientes em
+  CSV ou XLSX, normalizando codigo, endereco, cidade, rota e vendedor.
+- `POST /api/vendas/diario/importar-rotas`: importa a tabela codigo/descricao de
+  rotas em PDF.
+- `GET /api/vendas/diario/referencias`: informa as quantidades e os ultimos
+  arquivos de clientes e rotas importados.
 - O campo de cidade do popup diario usa obrigatoriamente `comissao_cidades.id`, sincronizado com as cidades e rotas do Kanban RioB. O texto original do TXT/PDF e apenas referencia e nunca e enviado diretamente ao frete.
 - `POST /api/vendas/diario/importar`: dispara a varredura idempotente da pasta ou aceita um TXT manual no campo multipart `arquivo`.
 - O compartilhamento SMB deve ser montado no host e exposto ao container em `/imports/vendas-diario`; a rotina automatica roda por padrao as 08:00.
@@ -179,7 +191,23 @@ validos mesmo sem chamada textual direta.
 - `POST /api/vendas/diario/kanban/<card_id>/separar` devolve uma origem a um card
   independente.
 - Toda uniao/separacao e registrada em `vendas_diario_kanban_historico`.
-- Cidade/rota, mapa e data geram sugestoes; nenhuma uniao e automatica.
+- Cidade/rota, mapa e data geram sugestoes. A uniao e automatica somente para
+  um par unico TXT/PDF confirmado no SELLOUT por mesma data, vendedor, cidade,
+  mapa final unico e sufixo equivalente do mapa; ambiguidades continuam manuais.
 - TXT, PDF e XML sao evidencias alternativas da carga. A sugestao de baixa nao
   soma fontes convergentes: XML oficial tem prioridade, depois TXT e por ultimo
   PDF. A baixa efetiva continua dependendo da conferencia de estoque existente.
+- O fluxo de validacao possui tres estados independentes do status operacional
+  do card: `1. Venda TXT recebida`, `2. Carga PDF formada` e `3. SELLOUT
+  confirmado`.
+- O SELLOUT e a fonte final. O vinculo usa primeiro o numero do mapa; quando o
+  PDF ainda nao existe, usa data do pedido e vendedor. Valor e quantidade de
+  clientes do TXT continuam visiveis ao lado do final, e qualquer alteracao e
+  apresentada como divergencia em vez de sobrescrever a evidencia anterior.
+- A rotina fica no menu `Import -> Importar SELLOUT`, que concentra SELLOUT,
+  cadastro de clientes e tabela de rotas.
+- Cadastro de clientes e tabela de rotas enriquecem o resultado final com
+  endereco estruturado, cidade e descricao oficial da rota. Motorista e
+  ajudantes vem do proprio SELLOUT quando preenchidos; o sistema nao inventa
+  equipe quando o arquivo traz `000-` ou campo vazio. O prefixo do mapa sugere
+  o caminhao quando existe veiculo com o mesmo numero no cadastro.

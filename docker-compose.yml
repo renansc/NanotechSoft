@@ -111,7 +111,7 @@ services:
       RB_AUTOMACAO_MONITOR_CONTAINER_PATH: /opt/automacao-monitor
       RB_IMPORTAR_XML_LEGACY_DIR: /legacy/ImportarXml
       RB_GESTOR_EMAIL_LEGACY_DIR: /legacy/GestorEmails
-      RB_MIGRATE_LEGACY_SERVICES: ${RB_MIGRATE_LEGACY_SERVICES:-1}
+      RB_MIGRATE_LEGACY_SERVICES: ${RB_MIGRATE_LEGACY_SERVICES:-0}
       RB_SYNC_ABASTECIMENTOS_XML_STARTUP: ${RB_SYNC_ABASTECIMENTOS_XML_STARTUP:-0}
       RB_ENV: ${RB_ENV:-producao}
       APP_ENV: ${RB_ENV:-producao}
@@ -124,6 +124,7 @@ services:
       RB_VENDAS_DIARIO_PDF_DIR: /imports/vendas-diario/pdf
       RB_VENDAS_DIARIO_HORA: ${RB_VENDAS_DIARIO_HORA:-08:00}
       RB_VENDAS_DIARIO_AUTO: ${RB_VENDAS_DIARIO_AUTO:-1}
+      RB_RASTREIO_BOOTSTRAP_STARTUP: ${RB_RASTREIO_BOOTSTRAP_STARTUP:-0}
     volumes:
       - riob_app_data:/data/app
       - riob_cameras_data:/data/cameras

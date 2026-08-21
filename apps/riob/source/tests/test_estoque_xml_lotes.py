@@ -333,11 +333,18 @@ class EstoqueXmlLotesTests(unittest.TestCase):
             page = source.read()
 
         self.assertIn('data-tab="compras"', page)
+        self.assertIn('data-compras-view="importar_xml_bipe"', page)
+        self.assertIn('data-compras-view="importar_xml_auto"', page)
+        self.assertIn('id="estoqueImportPreviewLayer"', page)
+        self.assertIn("estoque-xml-filter-row", page)
+        self.assertIn("estoque-xml-action-row", page)
         self.assertIn('id="submenuEstoque"', page)
         self.assertNotIn('data-monitor-view="importar_xml"', page)
         self.assertIn('id="estoqueMovimentoManualBox"', page)
         self.assertIn("function openComprasView", script)
-        self.assertIn("nextView !== \"movimentar\"", script)
+        self.assertIn('setEstoqueView("importar_xml_auto")', script)
+        self.assertIn("function fecharModalImportacaoEstoqueBackdrop", script)
+        self.assertIn('["importar_xml_bipe", "importar_xml_auto", "movimentar"].includes(nextView)', script)
 
 
 if __name__ == "__main__":

@@ -18,6 +18,27 @@ ORDER_TOTAL_RE = re.compile(r"TOTAL DO PEDIDO\s+([\d.,]+)")
 WEIGHT_RE = re.compile(r"PESO BRUTO TOTAL\s+([\d.,]+)Kg", re.IGNORECASE)
 
 
+def intervalo_semana_iso(semana="", referencia=None):
+    valor = str(semana or "").strip().upper()
+    if valor:
+        match = re.fullmatch(r"(\d{4})-W(\d{2})", valor)
+        if not match:
+            raise ValueError("Semana invalida. Use o formato AAAA-WNN.")
+        try:
+            inicio = datetime.date.fromisocalendar(int(match.group(1)), int(match.group(2)), 1)
+        except ValueError as exc:
+            raise ValueError("Semana invalida. Selecione uma semana valida no calendario.") from exc
+    else:
+        if isinstance(referencia, datetime.datetime):
+            referencia = referencia.date()
+        if not isinstance(referencia, datetime.date):
+            referencia = datetime.date.today()
+        inicio = referencia - datetime.timedelta(days=referencia.weekday())
+    fim = inicio + datetime.timedelta(days=6)
+    ano_iso, numero_iso, _ = inicio.isocalendar()
+    return inicio, fim, f"{ano_iso:04d}-W{numero_iso:02d}"
+
+
 def _decimal(value):
     text = str(value or "").strip()
     if "," in text and "." in text:

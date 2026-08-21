@@ -199,6 +199,11 @@ Em um ambiente sem Docker CLI, o `./git-safe` pula Compose/build/health automati
 
 Os apps ficam dentro de `apps/`. Cada subpasta pode ter um `app.json`; tambem existe a tabela `installed_apps` para cadastro via banco.
 
+O módulo **Tecnologia** monitora o link, o roteador, servidores e impressoras por
+ICMP/TCP, mantém histórico de 90 dias e oferece descoberta manual de impressoras
+na rede privada. A coleta começa quando o módulo é aberto. Consulte
+`apps/tecnologia/README.md` para os limites do diagnóstico de Wi-Fi e a operação.
+
 O arquivo `clientes-modulos.json` define os clientes e quais modulos cada um possui. No deploy, configure `CLIENTE_DEPLOY_ID` com o ID do cliente, por exemplo `rio-branco`. Cada ambiente continua usando seu proprio banco via `NS_DB_NAME`/credenciais, sem misturar dados entre clientes.
 
 Se `CLIENTE_DEPLOY_ID` nao estiver configurado, o portal usa `apps_liberados.txt` como fallback local/legado.
@@ -245,5 +250,11 @@ marcados como publicos pelas integracoes permanecem acessiveis sem sessao.
 ## Financeiro
 
 O app financeiro fica em `apps/financeiro` e roda integrado ao shell do NanotechSoft. Os dados foram migrados do backup JSON inicial para MySQL nas tabelas `financeiro_registros` e `financeiro_config`.
+
+O Dashboard Financeiro e as telas de Contas a Pagar e Contas a Receber possuem a ação **Imprimir PDF**. Os relatórios mantêm a conta, o período, o status e a busca atualmente selecionados. Em Contas a Pagar e Contas a Receber, os PDFs anexados aos títulos ou aos lançamentos vinculados são acrescentados ao final do relatório em um único arquivo, sem duplicar um mesmo anexo físico. O dashboard continua usando a caixa de impressão do navegador.
+
+Na tela **Importar Extrato**, o histórico de importações permite trocar a conta de um lote inteiro ou excluir somente as transações bancárias daquela importação. A troca acompanha lançamentos, títulos e compras vinculados; a exclusão remove as conciliações, mas preserva os registros do sistema, deixando-os desvinculados para evitar perda acidental.
+
+Na **Conciliação**, os matches confirmados são a fonte única do vínculo banco-lançamento. As criações em lote ignoram transações já vinculadas ou com candidato similar, e títulos não podem tomar uma transação pertencente a outro lançamento. Ao carregar estados gravados por versões anteriores, o app restaura vínculos parciais e cancela somente títulos/lançamentos comprovadamente duplicados que tenham sido gerados do próprio extrato.
 
 O tema padrao do portal continua sendo `Rio Branco`. O tema original do financeiro fica disponivel como `Fin Blue`, e o tema do RaioxPacs fica disponivel como `PACS Red`; nenhum deles e aplicado automaticamente ao abrir um app.

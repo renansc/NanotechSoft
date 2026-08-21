@@ -62,6 +62,41 @@ CREATE TABLE IF NOT EXISTS financeiro_config (
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS tecnologia_dispositivos (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    nome VARCHAR(120) NOT NULL,
+    tipo VARCHAR(30) NOT NULL DEFAULT 'OUTRO',
+    host VARCHAR(253) NOT NULL,
+    porta INT NULL,
+    sonda VARCHAR(20) NOT NULL DEFAULT 'ICMP',
+    localizacao VARCHAR(160) NOT NULL DEFAULT '',
+    observacoes VARCHAR(500) NOT NULL DEFAULT '',
+    critico TINYINT(1) NOT NULL DEFAULT 0,
+    ativo TINYINT(1) NOT NULL DEFAULT 1,
+    latencia_alerta_ms DECIMAL(10,2) NOT NULL DEFAULT 80,
+    perda_alerta_pct DECIMAL(6,2) NOT NULL DEFAULT 5,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_tecnologia_host_porta (host, porta),
+    INDEX idx_tecnologia_tipo_ativo (tipo, ativo)
+);
+
+CREATE TABLE IF NOT EXISTS tecnologia_metricas (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    dispositivo_id INT NOT NULL,
+    verificado_em DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    status VARCHAR(20) NOT NULL,
+    latencia_ms DECIMAL(10,2) NULL,
+    perda_pct DECIMAL(6,2) NOT NULL DEFAULT 0,
+    jitter_ms DECIMAL(10,2) NULL,
+    servico_ok TINYINT(1) NULL,
+    mensagem VARCHAR(255) NOT NULL DEFAULT '',
+    detalhes JSON NULL,
+    INDEX idx_tecnologia_metricas_dispositivo_data (dispositivo_id, verificado_em),
+    INDEX idx_tecnologia_metricas_status_data (status, verificado_em),
+    FOREIGN KEY (dispositivo_id) REFERENCES tecnologia_dispositivos(id) ON DELETE CASCADE
+);
+
 INSERT INTO portal_config (id, tema)
 VALUES (1, 'rio_branco')
 ON DUPLICATE KEY UPDATE id = id;

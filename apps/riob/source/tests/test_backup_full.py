@@ -156,6 +156,114 @@ class SalesImportTests(unittest.TestCase):
         self.assertEqual(row["vendedor_nome"], "Maria")
         self.assertEqual(row["vendedor_key"], "456 - Maria")
 
+    def test_sales_import_keeps_sellout_reconciliation_fields(self):
+        row = server._vendas_normalizar_linha({
+            "Data": "17/08/2026",
+            "Data Pedido": "16/08/2026",
+            "Vendedor Pedido": "015-MARCOS LEANDRO",
+            "Cliente": "00014-MERCADO TESTE",
+            "Rota": "514-GOIOERE/MOREIRA SALES",
+            "Cidade": "MOREIRA SALES",
+            "Número nf": "570001",
+            "Produto": "007000-GUARANA PET 6X2",
+            "Mapa": "0151601",
+            "Endereço": "AV TESTE, 706",
+            "Bairro": "CENTRO",
+            "UF": "PR",
+            "Motorista": "009-JOSE MARIO",
+            "Ajudante1": "002-DANIEL",
+            "Ajudante2": "000-",
+            "Tab.Venda": "91",
+            "Quantidade": "2,000",
+            "Peso": "24,000",
+            "Valor Venda": "69,80",
+        })
+
+        self.assertEqual("14", row["cliente_codigo"])
+        self.assertEqual("514", row["rota_codigo"])
+        self.assertEqual("0151601", row["mapa_numero"])
+        self.assertEqual("7000", row["produto_codigo"])
+        self.assertEqual("9", row["motorista_codigo"])
+        self.assertEqual(91, row["tab_venda"])
+        self.assertEqual(69.8, row["bonificacao"])
+        self.assertEqual(0.0, row["valor_venda"])
+
+    def test_sellout_confirms_card_by_map_and_preserves_changes(self):
+        card = {
+            "data_ref": "2026-08-17",
+            "vendedor_codigo": "15",
+            "valor_total": 100.0,
+            "clientes": 2,
+        }
+        fontes = [
+            {"origem_tipo": "txt", "mapa_numero": ""},
+            {"origem_tipo": "pdf", "mapa_numero": "0151601"},
+        ]
+        indices = {"mapas": {"0151601": {
+            "linhas": 4,
+            "notas": 2,
+            "clientes": 2,
+            "valor_bruto": 110.0,
+            "valor_devolvido": 0,
+            "valor_bonificacao": 0,
+            "valor_liquido": 110.0,
+            "peso": 20.0,
+            "mapas": "0151601",
+            "caminhoes": "73",
+            "rotas": "514 - GOIOERE/MOREIRA SALES",
+            "cidades": "MOREIRA SALES",
+            "enderecos": "AV TESTE, 706",
+            "motoristas": "JOSE MARIO",
+            "ajudantes1": "DANIEL",
+            "ajudantes2": "",
+            "data_inicial": "2026-08-17",
+            "data_final": "2026-08-17",
+        }}, "data_vendedor": {}}
+
+        conciliacao = server._vendas_diario_conciliacao_card(
+            card, fontes, {"id": "sellout-1", "source_name": "SELLOUT.CSV"}, indices
+        )
+
+        self.assertEqual(3, conciliacao["etapa"])
+        self.assertEqual("mapa", conciliacao["criterio"])
+        self.assertEqual("sellout_com_divergencias", conciliacao["status"])
+        self.assertEqual("AV TESTE, 706", conciliacao["final"]["enderecos"])
+        self.assertEqual("73", conciliacao["final"]["caminhoes"])
+        self.assertEqual(10.0, conciliacao["divergencias"][0]["diferenca"])
+
+    def test_sellout_falls_back_to_date_and_seller_for_equivalent_pdf_map(self):
+        card = {
+            "data_ref": "2026-08-04",
+            "vendedor_codigo": "16",
+            "valor_total": 8641.68,
+            "clientes": 19,
+        }
+        fontes = [
+            {"origem_tipo": "txt", "mapa_numero": ""},
+            {"origem_tipo": "pdf", "mapa_numero": "160401"},
+        ]
+        final = {
+            "linhas": 70, "notas": 23, "clientes": 19,
+            "valor_bruto": 7626.24, "valor_devolvido": 138,
+            "valor_bonificacao": 877.44, "valor_liquido": 6610.80,
+            "peso": 0, "mapas": "7310401", "caminhoes": "73",
+            "rotas": "544 - MARINGA", "cidades": "MARINGA",
+            "enderecos": "AV TESTE", "motoristas": "",
+            "ajudantes1": "", "ajudantes2": "",
+            "data_inicial": "2026-08-04", "data_final": "2026-08-04",
+        }
+        indices = {"mapas": {}, "data_vendedor": {("2026-08-04", 16): final}}
+
+        conciliacao = server._vendas_diario_conciliacao_card(
+            card, fontes, {"id": "sellout-1", "source_name": "SELLOUT.CSV"}, indices
+        )
+
+        self.assertEqual(3, conciliacao["etapa"])
+        self.assertTrue(conciliacao["tem_pdf"])
+        self.assertTrue(conciliacao["tem_sellout"])
+        self.assertEqual("mapa_equivalente_data_vendedor", conciliacao["criterio"])
+        self.assertEqual("MARINGA", conciliacao["final"]["cidades"])
+
 
 if __name__ == "__main__":
     unittest.main()

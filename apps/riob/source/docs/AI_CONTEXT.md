@@ -93,11 +93,30 @@ If you need context fast, read these files first:
   transactionally while retaining union and undo audit entries.
 - Daily-sales evidence can arrive as TXT, load PDF, and outgoing NF-e XML. TXT
   keeps its seller from the source; PDF must not be imported without an operator
-  selecting the responsible seller. Compatible sources are suggestions only:
-  union, separation, and movement between cards require explicit confirmation
-  and an audit entry. Preserve every original document and never merge cards
-  assigned to different trucks or dates. The outgoing-XML/freight link remains
-  the definitive RioB Kanban link after the sales card reaches Loading.
+  selecting the responsible seller. A deterministic TXT/PDF pair may be joined
+  automatically only when the active SELLOUT confirms the same date, seller,
+  city, one final map, and the PDF/final map suffix; write an audit entry and
+  preserve both originals. Ambiguous unions, separation, and movement between
+  cards require explicit confirmation. Never merge cards assigned to different
+  trucks or dates. The outgoing-XML/freight link remains the definitive RioB
+  Kanban link after the sales card reaches Loading.
+- Daily-sales validation has three evidence stages: TXT received, load PDF
+  formed, and final SELLOUT confirmed. Import SELLOUT as CSV/XLSX and preserve
+  its customer, route, map, address, city, driver, and helper fields. Match by
+  map first; before a PDF exists, use order date plus seller. SELLOUT is the
+  final operational confirmation, but differences in gross value or customer
+  count must stay visible instead of rewriting the prior TXT/PDF evidence.
+- The recurring three-file routine is exposed under `Import -> Importar
+  SELLOUT`. Resolved city, route, and map values must appear on the final card.
+  Suggest a registered truck from the map prefix, but never fabricate a driver
+  or helper when the SELLOUT field is blank/`000-`.
+- The Daily Sales workflow weekly-load report is selected by ISO week and lists
+  one row per PDF load, including cards already sent to freight. Prefer current
+  card/freight assignments and fill missing truck, crew, city, and route from
+  the active SELLOUT; never invent missing crew names.
+- The customer CSV/XLSX and route-table PDF are reference imports for this
+  reconciliation. They enrich missing address/city/route descriptions and do
+  not replace the original uploaded documents.
 - PDF signature deduplication must not silently swallow a reimport. If the prior
   PDF card is logically deleted and has no freight, reimport reactivates that
   same card, updates its synthetic order and card to the operator-selected

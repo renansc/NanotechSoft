@@ -1,0 +1,181 @@
+.techApp {
+  color-scheme: light;
+  --tech-bg: #f3f6f5;
+  --tech-panel: #ffffff;
+  --tech-ink: #17231f;
+  --tech-muted: #66736e;
+  --tech-line: #dce4e1;
+  --tech-primary: #126b54;
+  --tech-primary-dark: #0c4c3b;
+  --tech-ok: #16835d;
+  --tech-warning: #b66b05;
+  --tech-danger: #c13f3f;
+  --tech-info: #2e6f9c;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.techApp, .techApp * { box-sizing: border-box; }
+.techApp { color: var(--tech-ink); background: var(--tech-bg); }
+.techApp button, .techApp input, .techApp select, .techApp textarea { font: inherit; }
+.techApp button { cursor: pointer; }
+.techApp .hidden { display: none !important; }
+.techApp .muted { color: var(--tech-muted); }
+
+.techApp { max-width: 1500px; margin: 0 auto; padding: 26px; }
+.techHero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 30px;
+  border-radius: 22px;
+  color: #fff;
+  background: linear-gradient(125deg, #102c27, #126b54 62%, #2a9172);
+  box-shadow: 0 18px 45px rgba(18, 57, 47, .2);
+}
+.techHero h1 { margin: 5px 0 8px; font-size: clamp(1.65rem, 3vw, 2.7rem); line-height: 1.05; }
+.techHero p { margin: 0; color: rgba(255, 255, 255, .78); }
+.techApp .eyebrow { display: block; font-size: .72rem; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; color: var(--tech-primary); }
+.techHero .eyebrow { color: #9ce4cf; }
+.heroActions { display: flex; flex-direction: column; align-items: flex-end; gap: 10px; min-width: 180px; }
+.monitorState { font-size: .8rem; color: rgba(255, 255, 255, .78); }
+
+.techApp .btn, .techApp .iconButton {
+  border: 1px solid var(--tech-line);
+  border-radius: 10px;
+  color: var(--tech-ink);
+  background: #fff;
+  font-weight: 700;
+  padding: 10px 14px;
+  transition: transform .15s ease, border-color .15s ease, box-shadow .15s ease;
+}
+.techApp .btn:hover, .techApp .iconButton:hover { border-color: #93aaa2; box-shadow: 0 5px 15px rgba(22, 46, 39, .1); transform: translateY(-1px); }
+.techApp .btn:disabled { cursor: wait; opacity: .65; transform: none; }
+.techApp .btn.primary { color: #fff; background: var(--tech-primary); border-color: var(--tech-primary); }
+.techHero .btn.primary { color: var(--tech-primary-dark); background: #fff; border-color: #fff; }
+.btn.danger { color: var(--tech-danger); }
+.techApp .iconButton { border: 0; background: transparent; padding: 2px 8px; font-size: 1.7rem; box-shadow: none; }
+
+.techTabs { display: flex; gap: 7px; padding: 18px 4px 12px; overflow-x: auto; }
+.techApp .tab { border: 0; border-radius: 999px; padding: 9px 16px; color: var(--tech-muted); background: transparent; font-weight: 750; white-space: nowrap; }
+.techApp .tab.active { color: var(--tech-primary-dark); background: #dceee8; }
+.techView { display: grid; gap: 18px; }
+
+.kpiGrid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+.techApp .kpi, .techApp .panel {
+  border: 1px solid var(--tech-line);
+  border-radius: 16px;
+  background: var(--tech-panel);
+  box-shadow: 0 5px 22px rgba(23, 53, 44, .055);
+}
+.techApp .kpi { position: relative; overflow: hidden; padding: 18px 20px; }
+.techApp .kpi::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 4px; background: var(--tech-ok); }
+.techApp .kpi.warning::before { background: var(--tech-warning); }
+.techApp .kpi.danger::before { background: var(--tech-danger); }
+.techApp .kpi span, .techApp .kpi small { display: block; color: var(--tech-muted); }
+.techApp .kpi span { font-size: .78rem; font-weight: 800; text-transform: uppercase; letter-spacing: .06em; }
+.techApp .kpi strong { display: block; margin: 7px 0 2px; font-size: 2rem; }
+.techApp .kpi small { font-size: .75rem; }
+.techApp .panel { padding: 20px; }
+.techApp .panelHead { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 17px; }
+.techApp .panelHead h2, .techApp .scopePanel h2 { margin: 3px 0 0; font-size: 1.12rem; }
+.dashboardGrid { display: grid; grid-template-columns: 1.45fr 1fr; gap: 18px; }
+.scopePanel ul { margin: 16px 0; padding-left: 20px; color: var(--tech-muted); line-height: 1.6; }
+.scopeWarning { margin: 0; border-radius: 10px; padding: 12px; color: #7b500d; background: #fff3dd; font-size: .85rem; line-height: 1.45; }
+
+.diagnosisList { display: grid; gap: 10px; }
+.techApp .diag { display: flex; gap: 10px; align-items: flex-start; border-radius: 11px; padding: 12px 13px; font-size: .88rem; line-height: 1.45; background: #eef4f2; }
+.techApp .diag::before { content: "i"; flex: 0 0 22px; display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; color: #fff; background: var(--tech-info); font-weight: 900; }
+.techApp .diag.ok { color: #0f6346; background: #e5f5ef; }
+.techApp .diag.ok::before { content: "✓"; background: var(--tech-ok); }
+.techApp .diag.warning { color: #794c05; background: #fff2d8; }
+.techApp .diag.warning::before { content: "!"; background: var(--tech-warning); }
+.techApp .diag.critical { color: #842828; background: #fde9e9; }
+.techApp .diag.critical::before { content: "!"; background: var(--tech-danger); }
+
+.deviceGrid { display: grid; grid-template-columns: repeat(4, minmax(230px, 1fr)); gap: 13px; }
+.deviceCard { border: 1px solid var(--tech-line); border-radius: 13px; padding: 15px; background: #fcfdfd; }
+.deviceCardHead { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.deviceCard h3 { margin: 0 0 4px; font-size: .98rem; }
+.deviceCard .target { color: var(--tech-muted); font: 700 .78rem ui-monospace, SFMono-Regular, Menlo, monospace; }
+.metricLine { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 15px; }
+.metricLine div { border-radius: 8px; padding: 8px; background: #f1f5f4; }
+.metricLine span, .metricLine strong { display: block; }
+.metricLine span { color: var(--tech-muted); font-size: .65rem; text-transform: uppercase; }
+.metricLine strong { margin-top: 3px; font-size: .85rem; }
+.deviceMessage { margin: 10px 0 0; color: var(--tech-muted); font-size: .76rem; }
+
+.techApp .status { display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; padding: 5px 8px; font-size: .68rem; font-weight: 850; letter-spacing: .03em; }
+.techApp .status::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.techApp .status.online { color: #0d704e; background: #dcf3ea; }
+.techApp .status.degradado { color: #8b5703; background: #fff0cf; }
+.techApp .status.offline { color: #9f3030; background: #fbe2e2; }
+.techApp .status.pending { color: #65716d; background: #edf1f0; }
+
+.techApp .tableWrap { overflow-x: auto; }
+.techApp table { width: 100%; border-collapse: collapse; font-size: .84rem; }
+.techApp th { padding: 10px; color: var(--tech-muted); text-align: left; font-size: .68rem; text-transform: uppercase; letter-spacing: .04em; border-bottom: 1px solid var(--tech-line); }
+.techApp td { padding: 12px 10px; border-bottom: 1px solid #edf1f0; vertical-align: middle; }
+.techApp tbody tr:last-child td { border-bottom: 0; }
+.tableActions { display: flex; justify-content: flex-end; gap: 6px; }
+.techApp .smallButton { border: 0; border-radius: 7px; padding: 6px 8px; background: #edf3f1; color: var(--tech-primary-dark); font-size: .75rem; font-weight: 750; }
+.techApp .smallButton.danger { color: var(--tech-danger); }
+
+.discoverPanel { margin-top: 0; }
+.inlineForm { display: flex; align-items: end; gap: 18px; }
+.techApp label { display: grid; gap: 6px; color: var(--tech-muted); font-size: .76rem; font-weight: 750; }
+.inlineForm label { min-width: 250px; }
+.inlineForm p { margin: 0 0 9px; color: var(--tech-muted); font-size: .8rem; }
+.techApp input, .techApp select, .techApp textarea {
+  width: 100%; border: 1px solid #cdd8d4; border-radius: 9px; padding: 10px 11px; color: var(--tech-ink); background: #fff; outline: none;
+}
+.techApp input:focus, .techApp select:focus, .techApp textarea:focus { border-color: var(--tech-primary); box-shadow: 0 0 0 3px rgba(18, 107, 84, .11); }
+.discoveryResults { margin-top: 16px; }
+.discoveryItem { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 11px 12px; border: 1px solid var(--tech-line); border-radius: 10px; margin-top: 8px; }
+
+.historyHead { align-items: flex-end; }
+.historyFilters { display: flex; gap: 8px; }
+.historyFilters select { min-width: 170px; }
+.historySummary { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+.summaryPill { border-radius: 999px; padding: 7px 10px; color: var(--tech-muted); background: #eff4f2; font-size: .75rem; }
+.summaryPill strong { color: var(--tech-ink); }
+.chartBox { min-width: 0; border: 1px solid var(--tech-line); border-radius: 12px; padding: 13px; background: #fbfcfc; }
+.chartLegend { display: flex; justify-content: flex-end; gap: 14px; color: var(--tech-muted); font-size: .7rem; }
+.chartLegend i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 4px; }
+.latencyDot { background: var(--tech-primary); }
+.lossDot { background: var(--tech-warning); }
+#historyChart { display: block; width: 100%; height: 260px; margin-top: 8px; }
+.chartGrid { stroke: #e1e8e5; stroke-width: 1; vector-effect: non-scaling-stroke; }
+.chartLatency, .chartLoss { fill: none; stroke-width: 2.5; vector-effect: non-scaling-stroke; }
+.chartLatency { stroke: var(--tech-primary); }
+.chartLoss { stroke: var(--tech-warning); }
+
+.techApp .modal { position: fixed; z-index: 1000; inset: 0; display: grid; place-items: center; padding: 20px; background: rgba(8, 22, 18, .56); }
+.techApp .modalCard { width: min(760px, 100%); max-height: 94vh; overflow-y: auto; border-radius: 17px; padding: 22px; background: #fff; box-shadow: 0 25px 80px rgba(0, 0, 0, .3); }
+.techApp .formGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.techApp .formGrid .wide { grid-column: 1 / -1; }
+.techApp .checkRow { display: flex; gap: 24px; margin: 17px 0; }
+.techApp .checkRow label { display: flex; align-items: center; gap: 8px; }
+.techApp .checkRow input { width: auto; }
+.techApp .modalActions { display: flex; justify-content: flex-end; gap: 9px; }
+.techApp .toast { position: fixed; z-index: 1200; right: 24px; bottom: 24px; max-width: 390px; border-radius: 11px; padding: 13px 16px; color: #fff; background: #193d33; box-shadow: 0 12px 35px rgba(0, 0, 0, .24); font-size: .85rem; }
+.techApp .toast.error { background: #a43131; }
+
+@media (max-width: 1100px) {
+  .techApp .kpiGrid, .techApp .deviceGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .dashboardGrid { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 680px) {
+  .techApp { padding: 14px; }
+  .techHero { align-items: flex-start; flex-direction: column; padding: 22px; }
+  .heroActions { width: 100%; align-items: stretch; }
+  .monitorState { text-align: left; }
+  .techApp .kpiGrid, .techApp .deviceGrid, .techApp .formGrid { grid-template-columns: 1fr; }
+  .techApp .panel { padding: 15px; }
+  .techApp .panelHead, .techApp .historyHead, .techApp .inlineForm, .techApp .discoveryItem { align-items: stretch; flex-direction: column; }
+  .historyFilters { flex-direction: column; }
+  .historyFilters select, .inlineForm label { min-width: 0; }
+  .techApp .formGrid .wide { grid-column: auto; }
+  .techApp .checkRow { align-items: flex-start; flex-direction: column; gap: 10px; }
+}

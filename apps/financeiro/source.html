@@ -23,6 +23,7 @@
       <button class="tab" data-view="lancamentos">Lançamentos</button>
       <button class="tab" data-view="contas">Contas</button>
       <button class="tab" data-view="categorias">Categorias</button>
+      <button class="tab" data-view="cadastros">Cadastros</button>
       <button class="tab" data-view="importar">Importar OFX</button>
       <button class="tab" data-view="conciliacao">Conciliação</button>
       <button class="tab" data-view="compras">Compras</button>
@@ -43,6 +44,7 @@
               <select id="dashConta"></select>
               <input type="month" id="dashMes" />
               <button class="btn" id="btnHoje">Mês atual</button>
+              <button class="btn" id="btnImprimirDashboard" title="Abra a impressão e escolha Salvar como PDF">Imprimir PDF</button>
             </div>
           </div>
           <div class="kpis">
@@ -151,6 +153,7 @@
                 <th>Categoria</th>
                 <th>Descrição</th>
                 <th class="right">Valor</th>
+                <th>Anexos</th>
                 <th>Conciliado</th>
                 <th class="right">Ações</th>
               </tr>
@@ -201,6 +204,18 @@
             </label>
           </div>
 
+          <div class="divider"></div>
+
+          <div>
+            <div class="muted" style="margin-bottom:6px"><b>Anexos do lançamento</b> (PDF/Imagem, até 15 MB).</div>
+            <div class="row gap wrap">
+              <input type="file" id="lAnexoFile" accept=".pdf,image/*" />
+              <button class="btn" id="btnAddLancAnexo">Adicionar anexo</button>
+            </div>
+            <div id="listaLancAnexos" class="list compact"></div>
+            <div class="previewBox" id="lAnexoPreview" style="margin-top:10px">Selecione um anexo para visualizar.</div>
+          </div>
+
           <div class="row end gap">
             <button class="btn" id="btnCancelarLanc">Cancelar</button>
             <button class="btn primary" id="btnSalvarLanc">Salvar</button>
@@ -222,7 +237,7 @@
 
         <div class="card">
           <div class="cardhead">
-            <h2>OFX importados</h2>
+            <h2>Extratos importados</h2>
             <div class="muted">Histórico das importações (para conciliação).</div>
           </div>
           <div id="listaImports" class="list"></div>
@@ -245,6 +260,9 @@
             </label>
             <label>Saldo inicial (R$)
               <input type="number" id="cSaldo" step="0.01" inputmode="decimal" />
+            </label>
+            <label>Data do saldo inicial
+              <input type="date" id="cSaldoData" />
             </label>
           </div>
 
@@ -274,21 +292,126 @@
       </div>
     </section>
 
-    <!-- IMPORTAR OFX -->
+    <!-- CADASTROS DE PAGAMENTO -->
+    <section class="view hidden" id="view-cadastros">
+      <div class="card">
+        <div class="cardhead">
+          <div>
+            <h2>Favorecidos de pagamento</h2>
+            <div class="muted">Reutilize PIX, conta bancária ou o portal de segunda via nos próximos títulos.</div>
+          </div>
+          <div class="row gap wrap">
+            <input type="text" id="favBusca" placeholder="Buscar favorecido...">
+            <button class="btn primary" id="btnNovoFavorecido">+ Novo favorecido</button>
+          </div>
+        </div>
+        <div class="tableWrap">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Favorecido</th>
+                <th>PIX</th>
+                <th>Banco</th>
+                <th>Agência / conta</th>
+                <th>Portal</th>
+                <th class="right">Ações</th>
+              </tr>
+            </thead>
+            <tbody id="tbFavorecidos"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="modal hidden" id="modalFavorecido">
+        <div class="modalBox">
+          <div class="modalHead">
+            <h3 id="modalFavorecidoTitle">Novo favorecido</h3>
+            <button class="iconBtn" id="btnFecharFavorecido">✕</button>
+          </div>
+          <div class="formGrid">
+            <label class="span2">Nome do favorecido
+              <input type="text" id="favNome" placeholder="Ex.: Energia elétrica, Fornecedor X">
+            </label>
+
+            <div class="span2 sectionBox">
+              <div><b>Link de acesso / segunda via</b></div>
+              <div class="muted">Portal para consultar a fatura, imprimir o PDF ou obter o QR Code.</div>
+              <div class="formGrid nestedGrid">
+                <label class="span2">Endereço do site
+                  <input type="url" id="favAccessUrl" placeholder="Ex.: www.fornecedor.com.br/segunda-via">
+                </label>
+              </div>
+            </div>
+
+            <div class="span2 sectionBox">
+              <div><b>PIX</b></div>
+              <div class="muted">Opcional quando houver conta bancária ou link de acesso.</div>
+              <div class="formGrid nestedGrid">
+                <label>Tipo da chave
+                  <select id="favPixKeyType">
+                    <option value="TELEFONE">Telefone</option>
+                    <option value="CPF_CNPJ">CPF/CNPJ</option>
+                    <option value="EMAIL">E-mail</option>
+                    <option value="ALEATORIA">Chave aleatória</option>
+                  </select>
+                </label>
+                <label>Chave PIX
+                  <input type="text" id="favPixKey" placeholder="Ex.: (44) 99999-9999">
+                </label>
+                <label class="span2">Cidade do recebedor
+                  <input type="text" id="favPixCity" maxlength="15" placeholder="Ex.: ASTORGA">
+                </label>
+              </div>
+            </div>
+
+            <div class="span2 sectionBox">
+              <div><b>Conta para pagamento</b></div>
+              <div class="muted">Opcional quando houver chave PIX ou link de acesso.</div>
+              <div class="formGrid nestedGrid">
+                <label>Banco
+                  <input type="text" id="favBankName" placeholder="Ex.: Banco Inter">
+                </label>
+                <label>Tipo da conta
+                  <select id="favBankAccountType">
+                    <option value="CORRENTE">Conta corrente</option>
+                    <option value="POUPANCA">Poupança</option>
+                    <option value="PAGAMENTO">Conta de pagamento</option>
+                    <option value="OUTRA">Outra</option>
+                  </select>
+                </label>
+                <label>Agência
+                  <input type="text" id="favBankAgency" placeholder="Ex.: 0001">
+                </label>
+                <label>Número da conta
+                  <input type="text" id="favBankAccount" placeholder="Ex.: 123456-7">
+                </label>
+              </div>
+            </div>
+          </div>
+          <div class="row end gap wrap">
+            <button class="btn" id="btnCancelarFavorecido">Cancelar</button>
+            <button class="btn primary" id="btnSalvarFavorecido">Salvar favorecido</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- IMPORTAR EXTRATO -->
     <section class="view hidden" id="view-importar">
       <div class="card">
         <div class="cardhead">
-          <h2>Importar OFX</h2>
+          <h2>Importar extrato bancário</h2>
           <div class="muted">
-            Selecione uma conta e importe o arquivo OFX do banco. As transações importadas vão para a Conciliação.
+            Selecione uma conta e importe OFX ou PDF. As transações importadas vão para a Conciliação.
           </div>
         </div>
 
         <div class="row gap wrap">
           <select id="ofxConta"></select>
-          <input type="file" id="ofxFile" accept=".ofx,.txt,.qfx,.xml" />
-          <button class="btn primary" id="btnImportarOFX">Importar</button>
+          <input type="file" id="ofxFile" accept=".ofx,.txt,.qfx,.xml,.pdf,application/pdf" />
+          <button class="btn primary" id="btnImportarOFX">Importar extrato</button>
         </div>
+        <div class="muted" style="margin-top:10px">PDF disponível: Caixa — Extrato por período. Outros bancos serão adicionados conforme os modelos enviados.</div>
 
         <div class="divider"></div>
 
@@ -307,6 +430,16 @@
           </table>
         </div>
       </div>
+
+      <div class="card importHistoryCard">
+        <div class="cardhead">
+          <div>
+            <h2>Importações realizadas</h2>
+            <div class="muted">Corrija a conta do lote ou exclua somente as transações trazidas por uma importação.</div>
+          </div>
+        </div>
+        <div id="listaImportsImportar" class="list"></div>
+      </div>
     </section>
 
     <!-- CONCILIAÇÃO -->
@@ -317,38 +450,51 @@
           <div class="row gap wrap">
             <select id="concConta"></select>
             <select id="concImport"></select>
-            <button class="btn" id="btnSugerir">Sugerir matches</button>
-            <button class="btn" id="btnCriarLancDoBanco">Criar lançamentos p/ itens não conciliados</button>
+            <button class="btn" id="btnSugerir">Encontrar matches</button>
+            <button class="btn" id="btnSelecionarMatches" disabled>Selecionar todos os matches</button>
+            <button class="btn primary" id="btnVincularMatches" disabled>Vincular matches selecionados (0)</button>
+            <button class="btn primary" id="btnVincularTitulo">Vincular ao Título</button>
+            <button class="btn" id="btnCriarTitulosDoOFX">Criar títulos somente para transações novas</button>
+            <button class="btn" id="btnAlternarVinculados" disabled>Mostrar vinculados (0)</button>
+            <button class="btn" id="btnCorrigirValores" disabled>Corrigir valores divergentes (0)</button>
+            <button class="btn danger" id="btnIgnorarBankTx" disabled>Excluir transação sem vínculo</button>
+            <button class="btn danger" id="btnExcluirLancConc" disabled>Excluir lançamento sem vínculo</button>
+            <button class="btn danger" id="btnExcluirTodosLancSemVinculo" disabled>Excluir lançamentos e títulos sem vínculo (0)</button>
+            <button class="btn" id="btnCriarLancDoBanco">Criar lançamentos somente sem match</button>
           </div>
+        </div>
+
+        <div class="reconciliationLegend">
+          <span><span class="badge warn">Sem vínculo</span> ainda não possui lançamento relacionado</span>
+          <span><span class="badge match">Match sugerido</span> par encontrado, aguardando sua confirmação</span>
+          <span><span class="badge ok">Vinculado</span> conciliação já confirmada</span>
         </div>
 
         <div class="grid3">
           <div>
-            <h3 class="h3">Transações do banco (importadas)</h3>
+            <h3 class="h3">1. Transações do banco</h3>
+            <div class="muted">Marque os matches que deseja confirmar ou clique em uma transação para fazer um vínculo manual.</div>
             <div id="bankList" class="list"></div>
           </div>
 
           <div>
-            <h3 class="h3">Títulos (AP/AR) em aberto</h3>
-            <div class="muted">Selecione um título e vincule com a transação do banco (vai baixar e gerar lançamento).</div>
-            <div id="titList" class="list"></div>
-            <div class="row gap wrap" style="margin-top:10px">
-              <button class="btn primary" id="btnVincularTitulo">Vincular ao Título</button>
-              <button class="btn" id="btnCriarTitulosDoOFX">Criar Títulos a partir do OFX</button>
-            </div>
+            <h3 class="h3">2. Lançamentos do sistema</h3>
+            <div class="muted">Cada match exibe exatamente qual transação e lançamento serão vinculados.</div>
+            <div id="sysList" class="list"></div>
           </div>
 
           <div>
-            <h3 class="h3">Lançamentos do sistema</h3>
-            <div id="sysList" class="list"></div>
+            <h3 class="h3">3. Títulos em aberto (opcional)</h3>
+            <div class="muted">Use esta coluna somente para baixar um AP/AR com a transação bancária selecionada.</div>
+            <div id="titList" class="list"></div>
           </div>
         </div>
 
         <div class="divider"></div>
 
         <div class="row gap wrap">
-          <div class="pill">Banco ↔ Lançamento: 1) clique banco 2) clique lançamento</div>
-          <button class="btn primary" id="btnVincular">Vincular (conciliar)</button>
+          <div class="pill">Vínculo manual: selecione 1 transação do banco e 1 lançamento do sistema.</div>
+          <button class="btn primary" id="btnVincular">Vincular par manual</button>
           <button class="btn" id="btnDesvincular">Desvincular</button>
         </div>
 
@@ -373,6 +519,8 @@
             <input type="date" id="apFim" />
             <input type="text" id="apBusca" placeholder="Buscar (descrição/pessoa/etiqueta)..." />
             <button class="btn" id="btnFiltrarAP">Filtrar</button>
+            <button class="btn" id="btnImprimirAP" title="Gera um PDF único e acrescenta os PDFs anexados ao final">Imprimir PDF</button>
+            <button class="btn" id="btnImportarParcelasPdf">Importar parcelas de PDF</button>
             <button class="btn primary" id="btnNovoAP">+ Novo AP</button>
           </div>
         </div>
@@ -388,12 +536,85 @@
                 <th>Descrição</th>
                 <th class="right">Valor</th>
                 <th>Status</th>
-                <th>Anexos</th>
+                <th>Pagamento / Anexos</th>
                 <th class="right">Ações</th>
               </tr>
             </thead>
             <tbody id="tbAP"></tbody>
           </table>
+        </div>
+        <div class="filteredTitlesTotal" aria-live="polite">
+          <span class="muted" id="apTotalQuantidade">0 contas apresentadas</span>
+          <div>
+            <span>Total apresentado</span>
+            <strong id="apTotalFiltrado">R$ 0,00</strong>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal hidden" id="modalImportarParcelasPdf">
+        <div class="modalBox installmentImportModal">
+          <div class="modalHead">
+            <h3>Importar parcelas de PDF</h3>
+            <button class="iconBtn" id="btnFecharImportarParcelasPdf">×</button>
+          </div>
+          <div class="formGrid">
+            <label>PDF com as parcelas
+              <input type="file" id="parcelasPdfFile" accept=".pdf,application/pdf">
+            </label>
+            <label>Conta
+              <select id="parcelasPdfConta"></select>
+            </label>
+            <label>Favorecido cadastrado
+              <select id="parcelasPdfFavorecido">
+                <option value="">Preenchimento manual</option>
+              </select>
+            </label>
+            <label>Fornecedor
+              <input type="text" id="parcelasPdfPessoa" placeholder="Fornecedor do carnê/boleto">
+            </label>
+            <label>Categoria
+              <select id="parcelasPdfCategoria"></select>
+            </label>
+            <label class="span2">Descrição base
+              <input type="text" id="parcelasPdfDesc" placeholder="Ex.: Financiamento do equipamento">
+            </label>
+          </div>
+          <div class="row gap wrap">
+            <button class="btn" id="btnLerParcelasPdf">Ler páginas do PDF</button>
+            <span class="muted" id="parcelasPdfStatus">Cada página será tratada como uma parcela.</span>
+          </div>
+          <div class="tableWrap hidden" id="parcelasPdfPreviewWrap">
+            <table class="table installmentPreviewTable">
+              <thead><tr><th>Página</th><th>Vencimento</th><th>Valor</th><th>Código reconhecido</th><th>Usar</th></tr></thead>
+              <tbody id="parcelasPdfPreview"></tbody>
+            </table>
+          </div>
+          <div class="row end gap">
+            <button class="btn" id="btnCancelarImportarParcelasPdf">Cancelar</button>
+            <button class="btn primary" id="btnCriarParcelasPdf" disabled>Criar contas a pagar</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal hidden" id="modalCodigoPagamento">
+        <div class="modalBox paymentCodeModal">
+          <div class="modalHead">
+            <h3 id="codigoPagamentoTitulo">Código para pagamento</h3>
+            <button class="iconBtn" id="btnFecharCodigoPagamento">×</button>
+          </div>
+          <div class="paymentCodeSummary" id="codigoPagamentoResumo"></div>
+          <div class="row gap wrap paymentCodeTabs">
+            <button class="btn primary" id="btnMostrarCodigoBarras">Código de barras</button>
+            <button class="btn" id="btnMostrarQrCode">QR Code</button>
+          </div>
+          <div class="paymentCodeImageBox" id="codigoPagamentoImagem">Carregando código...</div>
+          <div class="paymentCodeText hidden" id="codigoPagamentoTextoWrap">
+            <div class="muted" id="codigoPagamentoTextoLabel">Linha digitável / código</div>
+            <div id="codigoPagamentoTexto"></div>
+            <button class="btn" id="btnCopiarCodigoPagamento">Copiar código</button>
+          </div>
+          <div class="muted paymentCodeHint" id="codigoPagamentoHint">Aponte a câmera do aplicativo bancário para a imagem. O PDF completo permanece disponível somente em “Editar”.</div>
         </div>
       </div>
     </section>
@@ -415,6 +636,7 @@
             <input type="date" id="arFim" />
             <input type="text" id="arBusca" placeholder="Buscar (descrição/pessoa/etiqueta)..." />
             <button class="btn" id="btnFiltrarAR">Filtrar</button>
+            <button class="btn" id="btnImprimirAR" title="Gera um PDF único e acrescenta os PDFs anexados ao final">Imprimir PDF</button>
             <button class="btn primary" id="btnNovoAR">+ Novo AR</button>
           </div>
         </div>
@@ -436,6 +658,13 @@
             </thead>
             <tbody id="tbAR"></tbody>
           </table>
+        </div>
+        <div class="filteredTitlesTotal" aria-live="polite">
+          <span class="muted" id="arTotalQuantidade">0 contas apresentadas</span>
+          <div>
+            <span>Total apresentado</span>
+            <strong id="arTotalFiltrado">R$ 0,00</strong>
+          </div>
         </div>
       </div>
     </section>
@@ -606,6 +835,12 @@
             <select id="tConta"></select>
           </label>
 
+          <label class="span2" id="tFavorecidoWrap">Favorecido cadastrado
+            <select id="tFavorecido">
+              <option value="">Preenchimento manual</option>
+            </select>
+          </label>
+
           <label>Pessoa (Fornecedor/Cliente)
             <input type="text" id="tPessoa" placeholder="Ex.: Posto X / Cliente Y">
           </label>
@@ -621,6 +856,44 @@
           <label class="span2">Etiquetas
             <select id="tCategoria" multiple size="5"></select>
           </label>
+
+          <div class="span2 sectionBox" id="pixPaymentBox">
+            <div><b>Dados para pagamento</b></div>
+            <div class="muted">Use PIX, conta bancária ou os dois. Um favorecido cadastrado preenche estes campos automaticamente.</div>
+            <div class="formGrid nestedGrid">
+              <label>Tipo da chave
+                <select id="tPixKeyType">
+                  <option value="TELEFONE">Telefone</option>
+                  <option value="CPF_CNPJ">CPF/CNPJ</option>
+                  <option value="EMAIL">E-mail</option>
+                  <option value="ALEATORIA">Chave aleatória</option>
+                </select>
+              </label>
+              <label>Chave PIX
+                <input type="text" id="tPixKey" placeholder="Ex.: (44) 99999-9999">
+              </label>
+              <label class="span2">Cidade do recebedor (opcional)
+                <input type="text" id="tPixCity" maxlength="15" placeholder="Ex.: ASTORGA">
+              </label>
+              <label>Banco
+                <input type="text" id="tBankName" placeholder="Ex.: Banco Inter">
+              </label>
+              <label>Tipo da conta
+                <select id="tBankAccountType">
+                  <option value="CORRENTE">Conta corrente</option>
+                  <option value="POUPANCA">Poupança</option>
+                  <option value="PAGAMENTO">Conta de pagamento</option>
+                  <option value="OUTRA">Outra</option>
+                </select>
+              </label>
+              <label>Agência
+                <input type="text" id="tBankAgency" placeholder="Ex.: 0001">
+              </label>
+              <label>Número da conta
+                <input type="text" id="tBankAccount" placeholder="Ex.: 123456-7">
+              </label>
+            </div>
+          </div>
 
           <div class="span2 sectionBox" id="parcelamentoBox">
             <div class="row gap wrap" style="justify-content:space-between">
@@ -652,7 +925,7 @@
 
         <div class="row gap wrap" style="align-items:flex-start">
           <div style="flex:1">
-            <div class="muted" style="margin-bottom:6px"><b>Anexos</b> (PDF/Imagem). Ficam salvos na pasta dados/ do servidor.</div>
+            <div class="muted" style="margin-bottom:6px"><b>Anexos</b> (PDF/Imagem). Em título novo, selecione o arquivo e clique em Salvar; em título existente, também é possível usar Adicionar anexo.</div>
             <div class="row gap wrap">
               <input type="file" id="tAnexoFile" accept=".pdf,image/*" />
               <button class="btn" id="btnAddAnexo">Adicionar anexo</button>

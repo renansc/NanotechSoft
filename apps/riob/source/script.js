@@ -2197,22 +2197,25 @@ function _fecharSubmenuAposNavegacao(menu){
 }
 
 function toggleComprasSubmenu(ev){
-  toggleExclusiveSubmenu(ev, () => openComprasView(null, "importar_xml"));
+  toggleExclusiveSubmenu(ev, () => openComprasView(null, "importar_xml_bipe"));
 }
 
-function openComprasView(ev, view = "importar_xml"){
+function openComprasView(ev, view = "importar_xml_bipe"){
   if (ev) { ev.preventDefault(); ev.stopPropagation(); }
   const menu = document.querySelector('.menu-item.has-submenu[data-tab="compras"]');
+  const nextView = view === "importar_xml_auto" ? "importar_xml_auto" : "importar_xml_bipe";
   showTab("estoque", menu);
-  document.querySelectorAll("#submenuCompras .submenu-item").forEach((item) => item.classList.remove("active"));
-  document.querySelector("#submenuCompras .submenu-item")?.classList.add("active");
-  setEstoqueView("importar_xml");
+  document.querySelectorAll("#submenuCompras .submenu-item").forEach((item) => {
+    item.classList.toggle("active", item.dataset.comprasView === nextView);
+  });
+  setEstoqueView(nextView);
   carregarEstoque().catch(() => {});
   _fecharSubmenuAposNavegacao(menu);
 }
 
 function toggleEstoqueSubmenu(ev){
-  toggleExclusiveSubmenu(ev, () => openEstoqueView(null, window.__estoqueView === "importar_xml" ? "posicao" : (window.__estoqueView || "posicao")));
+  const viewAtual = String(window.__estoqueView || "");
+  toggleExclusiveSubmenu(ev, () => openEstoqueView(null, viewAtual.startsWith("importar_xml") ? "posicao" : (viewAtual || "posicao")));
 }
 
 function openEstoqueView(ev, view = "posicao"){
@@ -2313,7 +2316,7 @@ async function carregarDashboardVendasDiario(){
   const body = document.getElementById("dashVendasDiarioBody");
   if (body) body.innerHTML = sellers.length ? sellers.map((item) => `<tr>
     <td><span class="vendas-diario-status vendas-diario-status--${_escHtml(item.status || "sem_vendas")}">${_escHtml(statusLabel[item.status] || item.status)}</span></td>
-    <td><strong>Vendedor ${_escHtml(item.vendedor_codigo || "-")}</strong></td>
+    <td><strong>${_escHtml(item.vendedor_nome ? `${item.vendedor_nome} - ${item.vendedor_codigo || "-"}` : `Vendedor ${item.vendedor_codigo || "-"}`)}</strong></td>
     <td>${_escHtml(_fmtNumVendas(item.clientes))}</td><td>${_escHtml(_fmtNumVendas(item.positivos))}</td>
     <td>${_escHtml(_fmtNumVendas(item.volume_venda, 3))}</td><td>${_escHtml(_fmtNumVendas(item.volume_bonificado, 3))}</td>
     <td>${_escHtml(_fmtMoneyVendas(item.valor_bruto))}</td>
@@ -2631,14 +2634,43 @@ function toggleWorkflowSubmenu(ev){
 
 function openWorkflowView(ev, view){
   if (ev){ ev.preventDefault(); ev.stopPropagation(); }
+  const rawView = String(view || "fretes").toLowerCase();
+  if (["vendas_diario_importar", "importar_vendas_diario", "importar"].includes(rawView)) {
+    openImportView(null, "sellout");
+    return;
+  }
   const menu = document.querySelector('.menu-item.has-submenu[data-tab="workflow"]');
-  const targetView = view === "comissao" ? "comissao" : "fretes";
+  const targetView = rawView === "comissao"
+    ? "comissao"
+    : (rawView === "vendas_diario" ? "vendas_diario" : "fretes");
   window.__workflowView = targetView;
-  showTab(targetView, menu);
+  const targetTab = targetView === "vendas_diario"
+    ? "vendasDiarioWorkflow"
+    : targetView;
+  showTab(targetTab, menu);
   document.querySelectorAll("#submenuWorkflow .submenu-item").forEach((item) => {
     item.classList.toggle("active", item.dataset.workflowView === targetView);
   });
   if (targetView === "comissao") carregarComissaoLancamentos().catch(()=>{});
+  if (targetView === "vendas_diario") carregarKanbanVendasDiario().catch(()=>{});
+  const isMobile = window.matchMedia && window.matchMedia("(max-width: 768px)").matches;
+  if (isMobile && menu) menu.classList.remove("open");
+  try{ toggleMenuMobile(false); }catch{}
+}
+
+function toggleImportSubmenu(ev){
+  toggleExclusiveSubmenu(ev, () => openImportView(null, window.__importView || "sellout"));
+}
+
+function openImportView(ev, view){
+  if (ev){ ev.preventDefault(); ev.stopPropagation(); }
+  const menu = document.querySelector('.menu-item.has-submenu[data-tab="import"]');
+  window.__importView = "sellout";
+  showTab("vendasDiarioImportarWorkflow", menu);
+  document.querySelectorAll("#submenuImport .submenu-item").forEach((item) => {
+    item.classList.toggle("active", item.dataset.importView === "sellout");
+  });
+  carregarVendasDiario().catch(()=>{});
   const isMobile = window.matchMedia && window.matchMedia("(max-width: 768px)").matches;
   if (isMobile && menu) menu.classList.remove("open");
   try{ toggleMenuMobile(false); }catch{}
@@ -2858,15 +2890,23 @@ async function exportarComissaoLancamentosXlsx(){
 }
 
 function toggleVendasSubmenu(ev){
-  toggleExclusiveSubmenu(ev, () => openVendasView(null, window.__vendasView || "relatorio"));
+  toggleExclusiveSubmenu(ev, () => openVendasView(null, "relatorio"));
 }
 
 function openVendasView(ev, view){
   if (ev){ ev.preventDefault(); ev.stopPropagation(); }
+  const rawView = String(view || "relatorio").toLowerCase();
+  if (["importar", "vendas_diario_importar", "importar_vendas_diario"].includes(rawView)) {
+    openWorkflowView(null, "vendas_diario_importar");
+    return;
+  }
+  if (["diario", "vendas_diario", "kanban"].includes(rawView)) {
+    openWorkflowView(null, "vendas_diario");
+    return;
+  }
   const menu = document.querySelector('.menu-item.has-submenu[data-tab="vendas"]');
   document.querySelectorAll("#submenuVendas .submenu-item").forEach((x) => x.classList.remove("active"));
-  const items = document.querySelectorAll("#submenuVendas .submenu-item");
-  const targetView = view === "pontosvenda" ? "pontosvenda" : (view === "diario" ? "diario" : "relatorio");
+  const targetView = rawView === "pontosvenda" ? "pontosvenda" : "relatorio";
   const itemAtivo = document.querySelector(`#submenuVendas .submenu-item[data-vendas-view="${targetView}"]`);
 
   if (targetView === "pontosvenda") {
@@ -2887,7 +2927,15 @@ function openVendasView(ev, view){
 
 function setVendasView(view){
   const raw = String(view || "relatorio").toLowerCase();
-  const target = raw === "diario" ? "diario" : (raw === "pontosvenda" ? "pontosvenda" : "relatorio");
+  if (["importar", "vendas_diario_importar", "importar_vendas_diario"].includes(raw)) {
+    openWorkflowView(null, "vendas_diario_importar");
+    return;
+  }
+  if (["diario", "vendas_diario", "kanban"].includes(raw)) {
+    openWorkflowView(null, "vendas_diario");
+    return;
+  }
+  const target = raw === "pontosvenda" ? "pontosvenda" : "relatorio";
   window.__vendasView = target;
   vendasState.view = target;
   const rel = document.getElementById("vendasViewRelatorio");
@@ -2896,12 +2944,9 @@ function setVendasView(view){
     const element = document.getElementById(id);
     if (element && target !== "relatorio") element.classList.add("hidden");
   });
-  const diario = document.getElementById("vendasViewDiario");
-  if (diario) diario.classList.toggle("hidden", target !== "diario");
   if (target === "relatorio") {
     setVendasRelatorioModo(window.__vendasRelatorioModo || "bonificacoes");
   }
-  if (target === "diario") carregarVendasDiario().catch(() => {});
 }
 
 async function carregarVendasDiario(){
@@ -2927,13 +2972,17 @@ async function carregarVendasDiario(){
   const pedidos = Array.isArray(data?.pedidos) ? data.pedidos : [];
   const body = document.getElementById("vendasDiarioBody");
   if (body) body.innerHTML = pedidos.length ? pedidos.map((item) => `<tr>
-    <td>${_escHtml(item.vendedor_codigo || "-")}</td><td>${_escHtml(`${item.cliente_codigo || ""} - ${item.cliente_nome || ""}`)}</td>
+    <td>${_escHtml(item.vendedor_nome ? `${item.vendedor_nome} - ${item.vendedor_codigo || "-"}` : `Vendedor ${item.vendedor_codigo || "-"}`)}</td><td>${_escHtml(`${item.cliente_codigo || ""} - ${item.cliente_nome || ""}`)}</td>
     <td>${_escHtml(item.fantasia || "-")}</td><td>${_escHtml(item.cidade || "-")}</td><td>${_escHtml(item.status || "-")}</td>
     <td>${_escHtml(item.motivo || "-")}</td><td>${_escHtml(_fmtNumVendas(item.itens))}</td>
     <td>${_escHtml(_fmtMoneyVendas(item.valor_total))}</td><td>${_escHtml(_fmtMoneyVendas(item.valor_bonificacao))}</td>
     <td><strong>${_escHtml(_fmtMoneyVendas(item.valor_liquido))}</strong></td><td>${_escHtml(`${_fmtNumVendas(item.peso_bruto, 3)} kg`)}</td>
   </tr>`).join("") : '<tr><td colspan="11">Nenhum pedido importado para a data.</td></tr>';
-  await carregarKanbanVendasDiario();
+  carregarReferenciasVendasDiario().catch(() => {});
+}
+
+function _normalizarVendasDiarioTexto(valor){
+  return String(valor || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^A-Za-z0-9]+/g, " ").trim().toUpperCase();
 }
 
 function _renderCardKanbanVendasDiario(card){
@@ -2942,23 +2991,41 @@ function _renderCardKanbanVendasDiario(card){
   const sugestoes = Array.isArray(card?.sugestao_baixa_estoque) ? card.sugestao_baixa_estoque : [];
   const fontes = Array.isArray(card?.fontes) ? card.fontes : [];
   const sugestoesUniao = Array.isArray(card?.sugestoes_uniao) ? card.sugestoes_uniao : [];
+  const conciliacao = card?.conciliacao || {};
+  const final = conciliacao?.final || {};
+  const cidadeResolvida = card.cidade_resolvida || card.cidade || final.cidades || "";
+  const rotaResolvida = card.rota_resolvida || card.rota || final.rotas || "";
+  const mapasResolvidos = card.mapas_resolvidos || card.mapas_numeros || final.mapas || "";
+  const caminhaoResolvido = card.caminhao_resolvido || final.caminhoes_cadastro || final.caminhoes || "";
+  const motoristaResolvido = card.motorista_resolvido || final.motoristas || "";
+  const divergencias = Array.isArray(conciliacao?.divergencias) ? conciliacao.divergencias : [];
   const statusOptions = [
     ["importado", "Importado"], ["conferir_estoque", "Conferir estoque"], ["conferido", "Conferido"],
   ];
+  const vendedorLabel = card.vendedor_nome
+    ? `${card.vendedor_nome} - ${card.vendedor_codigo || "-"}`
+    : `Vendedor ${card.vendedor_codigo || "-"}`;
   const tituloCard = fontes.length > 1 && card.rota
     ? `Rota ${card.rota}`
-    : (card.mapa_numero ? `Carga ${card.mapa_numero}` : `Vendedor ${card.vendedor_codigo || "-"}`);
+    : (card.mapa_numero ? `Carga ${card.mapa_numero}` : vendedorLabel);
   return `<article class="vendas-diario-kanban-card" onclick="abrirCardVendasDiario(${Number(card.id) || 0})">
     <header><strong>${_escHtml(tituloCard)}</strong><span>${_escHtml(_fmtMoneyVendas(card.valor_total))}</span></header>
     <div class="hint">${_escHtml(_fmtDataCurtaBr(card.data_ref) || card.data_ref || "-")} | ${_escHtml(card.arquivo_nome || "-")} | ${_escHtml(_fmtNumVendas(card.clientes))} clientes</div>
-    ${card.rota ? `<div class="hint"><strong>Rota:</strong> ${_escHtml(card.rota)} | ${_escHtml(_fmtNumVendas(card.peso_total, 3))} kg | ${_escHtml(_fmtNumVendas(card.qtd_entregas))} entregas | ${_escHtml(_fmtNumVendas(card.volumes_total, 3))} volumes</div>` : ""}
-    ${card.mapas_numeros ? `<div class="hint"><strong>Mapas:</strong> ${_escHtml(card.mapas_numeros)}</div>` : ""}
+    ${rotaResolvida ? `<div class="hint"><strong>Rota:</strong> ${_escHtml(rotaResolvida)} | ${_escHtml(_fmtNumVendas(card.peso_total, 3))} kg | ${_escHtml(_fmtNumVendas(card.qtd_entregas))} entregas | ${_escHtml(_fmtNumVendas(card.volumes_total, 3))} volumes</div>` : ""}
+    ${cidadeResolvida ? `<div class="hint"><strong>Cidades:</strong> ${_escHtml(cidadeResolvida)}</div>` : ""}
+    ${mapasResolvidos ? `<div class="hint"><strong>Mapas:</strong> ${_escHtml(mapasResolvidos)}</div>` : ""}
+    ${conciliacao.tem_sellout ? `<div class="hint"><strong>Caminhão:</strong> ${_escHtml(caminhaoResolvido || "não identificado pelo mapa")} | <strong>Motorista:</strong> ${_escHtml(motoristaResolvido || "não informado no SELLOUT")}</div>` : ""}
     <div class="hint"><strong>Origens:</strong> ${_escHtml(card.origens_tipos || card.origem_tipo || "txt")} (${fontes.length || 1} documento(s))</div>
+    <div class="vendas-diario-etapas" aria-label="Etapas da conciliação">
+      <span class="${conciliacao.tem_txt ? "is-done" : ""}">1 TXT</span>
+      <span class="${conciliacao.tem_pdf ? "is-done" : ""}">2 PDF</span>
+      <span class="${conciliacao.tem_sellout ? (divergencias.length ? "has-warning" : "is-done") : ""}">3 SELLOUT</span>
+    </div>
+    <div class="vendas-diario-conciliacao-status vendas-diario-conciliacao-status--${_escAttr(conciliacao.status || "venda_txt")}"><strong>${_escHtml(conciliacao.rotulo || "Venda TXT recebida")}</strong></div>
+    ${card.uniao_identificador ? `<div class="hint"><strong>Conciliação:</strong> ${_escHtml(card.uniao_identificador)} — união confirmada</div>` : ""}
     <div class="vendas-diario-card-indicadores"><span>${_escHtml(_fmtNumVendas(card.positivos))} clientes com venda</span><span>${_escHtml(_fmtNumVendas(produtos.length))} produtos</span></div>
     <div class="vendas-diario-card-acoes" onclick="event.stopPropagation()">
-      <button type="button" onclick="abrirCardVendasDiario(${Number(card.id) || 0}, 'visualizar')">Abrir</button>
-      <button type="button" onclick="abrirCardVendasDiario(${Number(card.id) || 0}, 'editar')">Editar</button>
-      <button type="button" class="btn-secondary" onclick="abrirCardVendasDiario(${Number(card.id) || 0}, 'enviar')">Enviar para Liberado</button>
+      <button type="button" onclick="abrirCardVendasDiario(${Number(card.id) || 0})">Abrir</button>
     </div>
     <label>Status
       <select onclick="event.stopPropagation()" onchange="event.stopPropagation(); moverCardKanbanVendasDiario(${Number(card.id) || 0}, this.value)">
@@ -2968,7 +3035,17 @@ function _renderCardKanbanVendasDiario(card){
     <details><summary>Clientes com venda (${clientes.length})</summary><div class="vendas-diario-card-lista">${clientes.map((item) => `<div><strong>${_escHtml(item.fantasia || item.cliente_nome || "-")}</strong><br><span>${_escHtml(item.cidade || "-")} | ${_escHtml(_fmtMoneyVendas(item.valor_total))}</span></div>`).join("") || "Nenhum cliente com venda."}</div></details>
     <details><summary>Produtos (${produtos.length})</summary><div class="vendas-diario-card-lista">${produtos.map((item) => `<div>${_escHtml(item.produto_codigo)} - ${_escHtml(item.descricao)}: <strong>${_escHtml(_fmtNumVendas(item.quantidade_venda, 3))} ${_escHtml(item.unidade)} | ${_escHtml(_fmtMoneyVendas(item.valor_venda))}</strong>${Number(item.quantidade_bonificada || 0) ? ` + ${_escHtml(_fmtNumVendas(item.quantidade_bonificada, 3))} bonif. (${_escHtml(_fmtMoneyVendas(item.valor_bonificado))})` : ""}</div>`).join("") || "Nenhum produto."}</div></details>
     <details class="vendas-diario-sugestao"><summary>Sugestão para baixa em estoque (${sugestoes.length})</summary><div class="vendas-diario-card-lista">${sugestoes.map((item) => `<div>${_escHtml(item.produto_codigo)} - ${_escHtml(item.descricao)}: <strong>${_escHtml(_fmtNumVendas(item.quantidade_venda, 3))} ${_escHtml(item.unidade)}</strong></div>`).join("") || "Sem sugestão de baixa."}</div><small>Somente sugestão: nenhum saldo foi alterado.</small></details>
-    ${sugestoesUniao.length ? `<details onclick="event.stopPropagation()"><summary>Possíveis cards da mesma carga (${sugestoesUniao.length})</summary><div class="vendas-diario-card-lista">${sugestoesUniao.map((item) => `<div>Card #${item.id} | ${_escHtml(item.origens_tipos || "-")} | ${_escHtml(item.rota || item.vendedor_codigo || "-")} <button type="button" onclick="unirCardVendasDiario(${item.id},${card.id})">Unir neste card</button></div>`).join("")}</div><small>A união é manual e mantém cada documento para auditoria.</small></details>` : ""}
+    ${conciliacao.tem_sellout ? `<details open class="vendas-diario-sellout"><summary>Confirmação final SELLOUT</summary><div class="vendas-diario-card-lista">
+      <div><strong>Arquivo:</strong> ${_escHtml(conciliacao?.arquivo?.nome || "-")} | vínculo por ${_escHtml(conciliacao.criterio === "mapa" ? "mapa" : "data + vendedor")}</div>
+      <div><strong>Mapas:</strong> ${_escHtml(final.mapas || card.mapas_numeros || "-")} | <strong>Rotas:</strong> ${_escHtml(final.rotas || "-")}</div>
+      <div><strong>Caminhão indicado pelo mapa:</strong> ${_escHtml(final.caminhoes_cadastro || final.caminhoes || "-")}</div>
+      <div><strong>Cidades:</strong> ${_escHtml(final.cidades || "-")}</div>
+      <div><strong>Endereços:</strong> ${_escHtml(final.enderecos || "-")}</div>
+      <div><strong>Equipe:</strong> motorista ${_escHtml(final.motoristas || "-")} | ajudante 1 ${_escHtml(final.ajudantes1 || "-")} | ajudante 2 ${_escHtml(final.ajudantes2 || "-")}</div>
+      <div><strong>Final:</strong> ${_escHtml(_fmtNumVendas(final.clientes))} clientes | ${_escHtml(_fmtNumVendas(final.notas))} NF | bruto ${_escHtml(_fmtMoneyVendas(final.valor_bruto))} | devolvido ${_escHtml(_fmtMoneyVendas(final.valor_devolvido))} | líquido ${_escHtml(_fmtMoneyVendas(final.valor_liquido))}</div>
+      ${divergencias.map((item) => `<div class="vendas-diario-divergencia"><strong>Alteração em ${_escHtml(item.campo)}:</strong> ${_escHtml(String(item.origem ?? "-"))} → ${_escHtml(String(item.sellout ?? "-"))} (diferença ${_escHtml(String(item.diferenca ?? 0))})</div>`).join("")}
+    </div><small>O SELLOUT é a fonte final; diferenças ficam registradas para conferência.</small></details>` : ""}
+    ${sugestoesUniao.length ? `<details open onclick="event.stopPropagation()"><summary>Conciliação TXT/PDF pendente (${sugestoesUniao.length})</summary><div class="vendas-diario-card-lista">${sugestoesUniao.map((item) => `<div><strong>${_escHtml(item.identificador || "Possível correspondência")}</strong><br>Card #${item.id} | ${_escHtml(item.origens_tipos || "-")} | ${_escHtml(item.rota || item.vendedor_codigo || "-")}<br>Este card: ${_escHtml(_fmtMoneyVendas(card.valor_total))} | Outra fonte: ${_escHtml(_fmtMoneyVendas(item.valor_total))} | Diferença: ${_escHtml(_fmtMoneyVendas(item.valor_divergencia))}<br><small>${_escHtml((item.criterios || []).join(" + "))}</small> <button type="button" onclick="unirCardVendasDiario(${item.id},${card.id},'${_escHtml(item.identificador || "")}')">Confirmar união</button></div>`).join("")}</div><small>A confirmação preserva os dois documentos e combina as informações complementares.</small></details>` : ""}
     ${fontes.length > 1 ? `<details onclick="event.stopPropagation()"><summary>Documentos vinculados</summary><div class="vendas-diario-card-lista">${fontes.map((item) => `<div>${_escHtml(item.origem_tipo)} | ${_escHtml(item.arquivo_nome || "-")} ${Number(item.id) !== Number(card.id) ? `<button type="button" onclick="separarFonteVendasDiario(${item.id})">Mover para card separado</button>` : ""}</div>`).join("")}</div></details>` : ""}
   </article>`;
 }
@@ -2979,16 +3056,114 @@ async function carregarKanbanVendasDiario(){
   if (!resp.ok) return;
   const cards = Array.isArray(payload?.cards) ? payload.cards : [];
   window.__vendasDiarioKanbanCards = cards;
+  const sellout = payload?.sellout_ativo || {};
+  const info = document.getElementById("vendasDiarioKanbanInfo");
+  if (info) info.textContent = sellout?.id
+    ? `SELLOUT ativo: ${sellout.source_name || sellout.id} (${_fmtNumVendas(sellout.rows_importadas || 0)} linhas). A confirmação final usa mapa ou data + vendedor.`
+    : "Nenhum SELLOUT final ativo. Importe o CSV/XLSX na tela Importar Vendas Diário.";
+  const contagens = {1: 0, 2: 0, 3: 0, divergencias: 0};
+  cards.forEach((card) => {
+    const etapa = Number(card?.conciliacao?.etapa || (card.origem_tipo === "pdf" ? 2 : 1));
+    contagens[etapa] = (contagens[etapa] || 0) + 1;
+    if ((card?.conciliacao?.divergencias || []).length) contagens.divergencias += 1;
+  });
+  const resumo = document.getElementById("vendasDiarioConciliacaoResumo");
+  if (resumo) resumo.innerHTML = _renderCardsVendasResumo([
+    ["1. TXT recebido", _fmtNumVendas(contagens[1])],
+    ["2. PDF formado", _fmtNumVendas(contagens[2])],
+    ["3. SELLOUT confirmado", _fmtNumVendas(contagens[3])],
+    ["Com alterações", _fmtNumVendas(contagens.divergencias)],
+  ]);
   const columns = {
-    importado: document.getElementById("vendasDiarioKanbanImportado"),
-    conferir_estoque: document.getElementById("vendasDiarioKanbanEstoque"),
-    conferido: document.getElementById("vendasDiarioKanbanConferido"),
+    1: document.getElementById("vendasDiarioKanbanImportado"),
+    2: document.getElementById("vendasDiarioKanbanEstoque"),
+    3: document.getElementById("vendasDiarioKanbanConferido"),
   };
-  Object.entries(columns).forEach(([status, element]) => {
+  Object.entries(columns).forEach(([etapa, element]) => {
     if (!element) return;
-    const selected = cards.filter((card) => card.status === status);
+    const selected = cards.filter((card) => Number(card?.conciliacao?.etapa || (card.origem_tipo === "pdf" ? 2 : 1)) === Number(etapa));
     element.innerHTML = selected.length ? selected.map(_renderCardKanbanVendasDiario).join("") : '<div class="hint">Nenhum card.</div>';
   });
+}
+
+function _semanaIsoVendasDiario(dataValor){
+  const match = String(dataValor || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const data = match
+    ? new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])))
+    : new Date();
+  data.setUTCHours(0, 0, 0, 0);
+  data.setUTCDate(data.getUTCDate() + 4 - (data.getUTCDay() || 7));
+  const anoIso = data.getUTCFullYear();
+  const primeiroDia = new Date(Date.UTC(anoIso, 0, 1));
+  const numero = Math.ceil((((data - primeiroDia) / 86400000) + 1) / 7);
+  return `${anoIso}-W${String(numero).padStart(2, "0")}`;
+}
+
+function abrirCargasSemanaVendasDiario(){
+  const painel = document.getElementById("vendasDiarioCargasSemana");
+  const semanaInput = document.getElementById("vendasDiarioSemana");
+  if (!painel || !semanaInput) return;
+  painel.classList.remove("hidden");
+  if (!semanaInput.value) {
+    const datas = (window.__vendasDiarioKanbanCards || [])
+      .map((item) => String(item?.data_ref || ""))
+      .filter((item) => /^\d{4}-\d{2}-\d{2}$/.test(item))
+      .sort();
+    semanaInput.value = _semanaIsoVendasDiario(datas.at(-1) || "");
+  }
+  carregarCargasSemanaVendasDiario();
+  painel.scrollIntoView({behavior: "smooth", block: "start"});
+  try { semanaInput.showPicker?.(); } catch {}
+}
+
+async function carregarCargasSemanaVendasDiario(){
+  const semanaInput = document.getElementById("vendasDiarioSemana");
+  const info = document.getElementById("vendasDiarioCargasSemanaInfo");
+  const body = document.getElementById("vendasDiarioCargasSemanaBody");
+  const botao = document.getElementById("vendasDiarioSemanaCarregar");
+  const params = new URLSearchParams();
+  if (semanaInput?.value) params.set("semana", semanaInput.value);
+  if (info) info.textContent = "Carregando as cargas da semana...";
+  if (body) body.innerHTML = '<tr><td colspan="11">Carregando...</td></tr>';
+  if (botao) botao.disabled = true;
+  try {
+    const resp = await apiFetch(`/api/vendas/diario/cargas-semana${params.toString() ? `?${params}` : ""}`);
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data?.erro || "Falha ao listar cargas da semana.");
+    if (semanaInput && data.semana) semanaInput.value = data.semana;
+    const cargas = Array.isArray(data?.cargas) ? data.cargas : [];
+    const resumo = data?.resumo || {};
+    const resumoElement = document.getElementById("vendasDiarioCargasSemanaResumo");
+    if (resumoElement) resumoElement.innerHTML = _renderCardsVendasResumo([
+      ["Cargas", _fmtNumVendas(resumo.cargas)],
+      ["Peso total", `${_fmtNumVendas(resumo.peso_total, 3)} kg`],
+      ["Entregas", _fmtNumVendas(resumo.qtd_entregas)],
+    ]);
+    if (info) info.textContent = `Semana de ${_fmtDataCurtaBr(data.semana_inicio)} a ${_fmtDataCurtaBr(data.semana_fim)} | ${data?.sellout_ativo?.id ? `SELLOUT ativo: ${data.sellout_ativo.source_name || data.sellout_ativo.id}` : "sem SELLOUT ativo"}`;
+    if (body) body.innerHTML = cargas.length ? cargas.map((item) => {
+      const vendedor = item.vendedor_nome
+        ? `${item.vendedor_nome} - ${item.vendedor_codigo || "-"}`
+        : `Vendedor ${item.vendedor_codigo || "-"}`;
+      return `<tr>
+        <td>${_escHtml(_fmtDataCurtaBr(item.data_ref) || item.data_ref || "-")}</td>
+        <td><strong>${_escHtml(item.mapa || "-")}</strong>${item.mapa_sellout && item.mapa_sellout !== item.mapa ? `<br><small>SELLOUT: ${_escHtml(item.mapa_sellout)}</small>` : ""}</td>
+        <td>${_escHtml(item.motorista || "-")}</td>
+        <td>${_escHtml(item.entregador || "-")}</td>
+        <td>${_escHtml(vendedor)}</td>
+        <td>${_escHtml(item.caminhao || "-")}</td>
+        <td>${_escHtml(item.placa || "-")}</td>
+        <td>${_escHtml(item.cidade || "-")}</td>
+        <td>${_escHtml(item.rota || "-")}</td>
+        <td>${_escHtml(`${_fmtNumVendas(item.peso, 3)} kg`)}</td>
+        <td>${_escHtml(_fmtNumVendas(item.qtd_entregas))}</td>
+      </tr>`;
+    }).join("") : '<tr><td colspan="11">Nenhuma carga PDF encontrada nessa semana.</td></tr>';
+  } catch (erro) {
+    if (info) info.textContent = erro?.message || "Falha ao listar cargas da semana.";
+    if (body) body.innerHTML = '<tr><td colspan="11">Não foi possível carregar a listagem.</td></tr>';
+  } finally {
+    if (botao) botao.disabled = false;
+  }
 }
 
 function _payloadModalCardVendasDiario(){
@@ -3010,8 +3185,12 @@ async function abrirCardVendasDiario(cardId, modo = "visualizar"){
   if (!card) return;
   await ensureCadastrosCache();
   document.getElementById("vendasDiarioModalId").value = String(card.id);
-  document.getElementById("vendasDiarioModalTitulo").textContent = card.mapa_numero ? `Carga ${card.mapa_numero} - ${card.rota || ""}` : `Vendas Diario - Vendedor ${card.vendedor_codigo || "-"}`;
-  document.getElementById("vendasDiarioModalResumo").textContent = card.mapa_numero
+  const mapasResolvidos = card.mapas_resolvidos || card.mapa_numero || "";
+  const rotaResolvida = card.rota_resolvida || card.rota || "";
+  document.getElementById("vendasDiarioModalTitulo").textContent = mapasResolvidos ? `Carga ${mapasResolvidos} - ${rotaResolvida}` : `Vendas Diario - ${card.vendedor_nome ? `${card.vendedor_nome} - ${card.vendedor_codigo || "-"}` : `Vendedor ${card.vendedor_codigo || "-"}`}`;
+  const statusMsg = document.getElementById("vendasDiarioModalStatusMsg");
+  if (statusMsg) statusMsg.textContent = "";
+  document.getElementById("vendasDiarioModalResumo").textContent = mapasResolvidos
     ? `${card.qtd_entregas || 0} entregas | ${_fmtNumVendas(card.volumes_total, 3)} volumes | ${_fmtNumVendas(card.peso_total, 3)} kg | ${_fmtMoneyVendas(card.valor_total)} | Bonificacao ${_fmtMoneyVendas(card.valor_bonificacao)}`
     : `${card.clientes || 0} clientes | ${card.positivos || 0} positivos | ${_fmtMoneyVendas(card.valor_total)}`;
   document.getElementById("vendasDiarioModalNome").value = card.nome_frete || `Vendas ${card.data_ref || ""} - Vendedor ${card.vendedor_codigo || ""}`;
@@ -3023,16 +3202,23 @@ async function abrirCardVendasDiario(cardId, modo = "visualizar"){
     window.__vendasDiarioCidadesCadastro = Array.isArray(cidadesData) ? cidadesData : [];
   }
   const cidadeSelect = document.getElementById("vendasDiarioModalCidadeCadastro");
-  cidadeSelect.innerHTML = '<option value="">Selecione no cadastro do Kanban</option>' + window.__vendasDiarioCidadesCadastro.map((item) => `<option value="${item.id}">${_escHtml(item.rota)}</option>`).join("");
-  cidadeSelect.value = card.cidade_cadastro_id ? String(card.cidade_cadastro_id) : "";
+  const cidadeResolvida = card.cidade_resolvida || card.cidade || card?.conciliacao?.final?.cidades || "";
+  cidadeSelect.innerHTML = `<option value="">${_escHtml(cidadeResolvida ? `SELLOUT: ${cidadeResolvida} — confirme a rota` : "Selecione no cadastro do Kanban")}</option>` + window.__vendasDiarioCidadesCadastro.map((item) => `<option value="${item.id}">${_escHtml(item.rota)}</option>`).join("");
+  const cidadesFinais = String(cidadeResolvida).split("|").map(_normalizarVendasDiarioTexto).filter(Boolean);
+  const cidadeExata = window.__vendasDiarioCidadesCadastro.filter((item) => cidadesFinais.includes(_normalizarVendasDiarioTexto(item.rota)));
+  cidadeSelect.value = card.cidade_cadastro_id
+    ? String(card.cidade_cadastro_id)
+    : (cidadeExata.length === 1 ? String(cidadeExata[0].id) : "");
   const veiculos = document.getElementById("vendasDiarioModalVeiculo");
   veiculos.innerHTML = '<option value="">Selecione o caminhao</option>' + (cacheCadastros.veiculos || []).map((item) => `<option value="${item.id}">${_escHtml(item.nome || item.placa || `Veiculo ${item.id}`)}</option>`).join("");
-  veiculos.value = card.veiculo_id ? String(card.veiculo_id) : "";
+  const veiculoSugerido = card?.conciliacao?.final?.veiculo_id_sugerido;
+  veiculos.value = card.veiculo_id ? String(card.veiculo_id) : (veiculoSugerido ? String(veiculoSugerido) : "");
   const motorista = document.getElementById("vendasDiarioModalMotorista");
   motorista.innerHTML = '<option value="">Selecione o motorista</option>' + _listaColaboradoresPorFuncao("motorista").map((item) => `<option value="${item.id}">${_escHtml(item.nome)}</option>`).join("");
-  motorista.value = card.colaborador_motorista_id ? String(card.colaborador_motorista_id) : "";
+  const motoristaSugerido = card?.conciliacao?.final?.colaborador_motorista_id_sugerido;
+  motorista.value = card.colaborador_motorista_id ? String(card.colaborador_motorista_id) : (motoristaSugerido ? String(motoristaSugerido) : "");
   const entregador = document.getElementById("vendasDiarioModalEntregador");
-  entregador.innerHTML = optionsFromEscalaApoio(card.colaborador_entregador_id, card.colaborador_motorista_id);
+  entregador.innerHTML = optionsFromEscalaApoio(card.colaborador_entregador_id, motorista.value);
   motorista.onchange = () => _atualizarOptionsApoioFrete(entregador, motorista.value, entregador.value);
   document.getElementById("vendasDiarioModalDetalhes").innerHTML = _renderCardKanbanVendasDiario({...card, id: 0})
     .replace(/<div class="vendas-diario-card-acoes"[\s\S]*?<\/div>/, "")
@@ -3062,10 +3248,16 @@ document.addEventListener("keydown", (event) => {
 
 async function salvarCardVendasDiario(){
   const id = Number(document.getElementById("vendasDiarioModalId")?.value || 0);
+  const statusMsg = document.getElementById("vendasDiarioModalStatusMsg");
+  if (statusMsg) statusMsg.textContent = "Salvando card...";
   const resp = await apiFetch(`/api/vendas/diario/kanban/${id}`, {method:"PUT", headers:{"Content-Type":"application/json"}, body:JSON.stringify(_payloadModalCardVendasDiario())});
   const data = await resp.json().catch(() => ({}));
-  if (!resp.ok) return alert(data?.erro || "Falha ao salvar card.");
-  fecharCardVendasDiario(); await carregarKanbanVendasDiario();
+  if (!resp.ok) {
+    if (statusMsg) statusMsg.textContent = data?.erro || "Falha ao salvar card.";
+    return alert(data?.erro || "Falha ao salvar card.");
+  }
+  await carregarKanbanVendasDiario();
+  if (statusMsg) statusMsg.textContent = "Card salvo. Você pode enviá-lo para Liberado.";
 }
 
 async function excluirCardVendasDiario(){
@@ -3213,9 +3405,91 @@ async function importarCargaPdfVendasDiario(){
   await carregarVendasDiario();
 }
 
-async function unirCardVendasDiario(cardOrigemId, cardDestinoId){
-  if (!confirm(`Unir os documentos do card #${cardOrigemId} ao card #${cardDestinoId}?`)) return;
-  const resp = await apiFetch(`/api/vendas/diario/kanban/${cardOrigemId}/unir`, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({destino_card_id:cardDestinoId})});
+async function carregarReferenciasVendasDiario(){
+  const info = document.getElementById("vendasDiarioReferenciasInfo");
+  if (!info) return;
+  const resp = await apiFetch("/api/vendas/diario/referencias");
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    info.textContent = data?.erro || "Não foi possível consultar clientes e rotas.";
+    return;
+  }
+  const clientesArquivo = data?.ultimas_importacoes?.clientes?.arquivo_nome || "não importado";
+  const rotasArquivo = data?.ultimas_importacoes?.rotas?.arquivo_nome || "não importado";
+  info.textContent = `${_fmtNumVendas(data.clientes || 0)} clientes (${clientesArquivo}) | ${_fmtNumVendas(data.rotas || 0)} rotas (${rotasArquivo})`;
+}
+
+async function importarReferenciaVendasDiario(tipo){
+  const config = tipo === "rotas"
+    ? {input: "vendasDiarioRotas", endpoint: "/api/vendas/diario/importar-rotas", label: "tabela de rotas"}
+    : {input: "vendasDiarioClientes", endpoint: "/api/vendas/diario/importar-clientes", label: "cadastro de clientes"};
+  const input = document.getElementById(config.input);
+  const arquivo = input?.files?.[0];
+  if (!arquivo) return;
+  const info = document.getElementById("vendasDiarioReferenciasInfo");
+  if (info) info.textContent = `Importando ${config.label}: ${arquivo.name}...`;
+  const form = new FormData();
+  form.append("arquivo", arquivo);
+  const resp = await apiFetch(config.endpoint, {method: "POST", body: form});
+  const data = await resp.json().catch(() => ({}));
+  if (input) input.value = "";
+  if (!resp.ok) {
+    if (info) info.textContent = data?.erro || `Falha ao importar ${config.label}.`;
+    return alert(data?.erro || `Falha ao importar ${config.label}.`);
+  }
+  await carregarReferenciasVendasDiario();
+  await carregarKanbanVendasDiario();
+}
+
+async function _aguardarSelloutVendasDiario(cacheId, tentativas = 90){
+  const info = document.getElementById("vendasDiarioReferenciasInfo");
+  for (let tentativa = 0; tentativa < tentativas; tentativa += 1) {
+    const resp = await apiFetch("/api/vendas/config");
+    const data = await resp.json().catch(() => ({}));
+    const item = (data?.imports || []).find((row) => String(row.id || "") === String(cacheId || ""));
+    if (item?.status === "pronto") {
+      if (info) info.textContent = `SELLOUT ${item.source_name || cacheId} pronto: ${_fmtNumVendas(item.rows_importadas || 0)} linhas. Atualizando conciliação...`;
+      const conciliarResp = await apiFetch("/api/vendas/diario/kanban/conciliar", {method: "POST"});
+      const conciliarData = await conciliarResp.json().catch(() => ({}));
+      if (!conciliarResp.ok) throw new Error(conciliarData?.erro || "Falha ao conciliar TXT, PDF e SELLOUT.");
+      const unificados = Number(conciliarData?.conciliacao?.cards_unificados || 0);
+      await carregarKanbanVendasDiario();
+      if (info) info.textContent = `SELLOUT ${item.source_name || cacheId} pronto: ${_fmtNumVendas(item.rows_importadas || 0)} linhas. Conciliação atualizada${unificados ? `: ${_fmtNumVendas(unificados)} card(s) TXT/PDF unidos automaticamente` : ""}.`;
+      return;
+    }
+    if (item?.status === "erro") throw new Error("A importação do SELLOUT terminou com erro.");
+    if (info) info.textContent = `Processando SELLOUT ${item?.source_name || cacheId || ""}...`;
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+  }
+  if (info) info.textContent = "O SELLOUT continua sendo processado. A conciliação será atualizada ao recarregar a tela.";
+}
+
+async function importarSelloutVendasDiario(){
+  const input = document.getElementById("vendasDiarioSellout");
+  const arquivo = input?.files?.[0];
+  if (!arquivo) return;
+  const info = document.getElementById("vendasDiarioReferenciasInfo");
+  if (info) info.textContent = `Enviando SELLOUT final ${arquivo.name}...`;
+  const form = new FormData();
+  form.append("arquivo", arquivo);
+  const resp = await apiFetch("/api/vendas/cache/importar", {method: "POST", body: form});
+  const data = await resp.json().catch(() => ({}));
+  if (input) input.value = "";
+  if (!resp.ok) {
+    if (info) info.textContent = data?.erro || "Falha ao importar SELLOUT final.";
+    return alert(data?.erro || "Falha ao importar SELLOUT final.");
+  }
+  try {
+    await _aguardarSelloutVendasDiario(data?.cache?.id || "");
+  } catch (erro) {
+    if (info) info.textContent = erro?.message || "Falha ao processar SELLOUT final.";
+    alert(erro?.message || "Falha ao processar SELLOUT final.");
+  }
+}
+
+async function unirCardVendasDiario(cardOrigemId, cardDestinoId, identificador = ""){
+  if (!confirm(`Confirmar a união TXT/PDF ${identificador || ""}?\n\nOs documentos serão preservados e as divergências continuarão auditáveis.`)) return;
+  const resp = await apiFetch(`/api/vendas/diario/kanban/${cardOrigemId}/unir`, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({destino_card_id:cardDestinoId, identificador})});
   const data = await resp.json().catch(() => ({}));
   if (!resp.ok) return alert(data?.erro || "Falha ao unir cards.");
   await carregarKanbanVendasDiario();
@@ -5778,10 +6052,8 @@ function showTab(tabId, el) {
     setComissaoView(window.__comissaoView);
   }
   if (tabId === "vendas") {
-    if (!window.__vendasView || !["dashboard", "relatorio", "diario"].includes(window.__vendasView)) {
-      window.__vendasView = "relatorio";
-    }
-    setVendasView(window.__vendasView);
+    window.__vendasView = "relatorio";
+    setVendasView("relatorio");
   }
   if (tabId === "monitor") {
     if (!MONITOR_APPS[window.__monitorView]) {
@@ -5806,7 +6078,7 @@ function showTab(tabId, el) {
     setPontosVendaView(window.__pontosVendaView);
   }
   if (tabId === "estoque") {
-    if (!window.__estoqueView || !["importar_xml", "movimentar", "posicao", "acerto", "cadastrar", "rastreio"].includes(window.__estoqueView)) {
+    if (!window.__estoqueView || !["importar_xml", "importar_xml_bipe", "importar_xml_auto", "movimentar", "posicao", "acerto", "cadastrar", "rastreio"].includes(window.__estoqueView)) {
       window.__estoqueView = "posicao";
     }
     setEstoqueView(window.__estoqueView);
@@ -15696,7 +15968,9 @@ async function carregarFretesImportacaoXml(force = false){
 }
 
 function renderEstoqueImportPreview(){
+  const layer = document.getElementById("estoqueImportPreviewLayer");
   const card = document.getElementById("estoqueImportPreviewCard");
+  const title = document.getElementById("estoqueImportPreviewTitle");
   const fonte = document.getElementById("estoqueImportPreviewFonte");
   const status = document.getElementById("estoqueImportPreviewStatus");
   const body = document.getElementById("estoqueImportPreviewItemsBody");
@@ -15709,16 +15983,21 @@ function renderEstoqueImportPreview(){
   const freteVinculo = document.getElementById("estoqueXmlFreteVinculo");
   const destinoSelect = document.getElementById("estoquePreviewDestinoNota");
   const confirmarBtn = document.getElementById("estoqueImportConfirmBtn");
-  if (!card || !fonte || !status || !body) return;
+  if (!layer || !card || !fonte || !status || !body) return;
 
-  if (estoqueState.view !== "importar_xml") {
-    card.classList.add("hidden");
+  const importView = ["importar_xml_bipe", "importar_xml_auto"].includes(estoqueState.view);
+  if (!importView) {
+    layer.classList.add("hidden");
+    layer.classList.remove("is-modal");
+    document.body.classList.remove("estoque-import-modal-open");
     return;
   }
 
   const draft = estoqueState.importDraft ? _normalizarDraftImportacaoEstoque(estoqueState.importDraft) : null;
   if (!draft) {
-    card.classList.add("hidden");
+    layer.classList.add("hidden");
+    layer.classList.remove("is-modal");
+    document.body.classList.remove("estoque-import-modal-open");
     body.innerHTML = `<tr><td colspan="10">Nenhum item carregado.</td></tr>`;
     if (fotoPanel) fotoPanel.classList.add("hidden");
     if (fretePanel) fretePanel.classList.add("hidden");
@@ -15729,9 +16008,27 @@ function renderEstoqueImportPreview(){
     return;
   }
 
+  const draftAutomatico = draft.source_type === "importar_xml";
+  const draftPertenceView = estoqueState.view === "importar_xml_auto"
+    ? draftAutomatico
+    : !draftAutomatico;
+  if (!draftPertenceView) {
+    layer.classList.add("hidden");
+    layer.classList.remove("is-modal");
+    document.body.classList.remove("estoque-import-modal-open");
+    return;
+  }
+
   estoqueState.importDraft = draft;
-  card.classList.remove("hidden");
+  const modalAuto = estoqueState.view === "importar_xml_auto";
+  layer.classList.remove("hidden");
+  layer.classList.toggle("is-modal", modalAuto);
+  layer.setAttribute("aria-modal", modalAuto ? "true" : "false");
+  document.body.classList.toggle("estoque-import-modal-open", modalAuto);
   const destinoManutencao = draft.destino_importacao === "manutencao";
+  if (title) {
+    title.textContent = modalAuto ? "Editar e confirmar XML automatico" : "Confirmacao da Importacao";
+  }
   const movimentoLabel = draft.source_type === "importar_xml"
     ? ` | Movimento reconhecido: ${draft.tipo_movimento === "saida" ? "SAIDA" : "ENTRADA"}`
     : "";
@@ -15742,7 +16039,13 @@ function renderEstoqueImportPreview(){
     ? draft.warnings.join(" | ")
     : "Revise os dados abaixo e confirme a importacao quando estiver tudo certo.";
   if (destinoSelect) destinoSelect.value = draft.destino_importacao || "estoque";
-  if (confirmarBtn) confirmarBtn.textContent = destinoManutencao ? "Enviar para Manutencao" : "Lancar NF-e no Estoque";
+  if (confirmarBtn) {
+    confirmarBtn.textContent = destinoManutencao
+      ? "Salvar e enviar para Manutencao"
+      : modalAuto
+      ? "Salvar e contabilizar no Estoque"
+      : "Lancar NF-e no Estoque";
+  }
   document.querySelectorAll(".estoque-import-add-btn").forEach((button) => {
     button.classList.toggle("hidden", draft.source_type === "importar_xml");
   });
@@ -16093,8 +16396,8 @@ function renderImportacoesXmlEstoque(){
         </td>
         <td>${_escHtml(String(row.itens_pendentes || 0))}</td>
         <td>${_escHtml(String(duplicatas))}</td>
-        <td>
-          <button type="button" onclick="abrirImportacaoXmlEstoque('${_escJsString(notaKey)}')">Abrir</button>
+        <td class="estoque-xml-row-actions">
+          <button type="button" onclick="abrirImportacaoXmlEstoque('${_escJsString(notaKey)}')">Confirmar</button>
           <button type="button" class="btn-danger" onclick="excluirImportacaoXmlEstoque('${_escJsString(notaKey)}', '${_escJsString(row.numero_nota || row.chave_nfe || notaKey)}')">Excluir da fila</button>
         </td>
       </tr>
@@ -16844,11 +17147,31 @@ async function abrirImportacaoXmlEstoque(notaKey){
     }
   }
   estoqueState.importDraftDirty = false;
-  setEstoqueView("importar_xml");
+  setEstoqueView("importar_xml_auto");
   renderEstoqueImportPreview();
-  document.getElementById("estoqueImportPreviewCard")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  window.setTimeout(() => document.getElementById("estoquePreviewNumeroNota")?.focus(), 0);
   renderImportacoesXmlEstoque();
 }
+
+function fecharEdicaoImportacaoEstoque(){
+  const modalAberto = document.getElementById("estoqueImportPreviewLayer")?.classList.contains("is-modal");
+  if (modalAberto && estoqueState.importDraft) {
+    if (!confirm("Fechar a edicao sem salvar as alteracoes desta nota?")) return;
+  }
+  cancelarImportacaoNfeEstoque();
+}
+
+function fecharModalImportacaoEstoqueBackdrop(event){
+  if (event?.target !== event?.currentTarget) return;
+  fecharEdicaoImportacaoEstoque();
+}
+
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape") return;
+  const layer = document.getElementById("estoqueImportPreviewLayer");
+  if (!layer || layer.classList.contains("hidden") || !layer.classList.contains("is-modal")) return;
+  fecharEdicaoImportacaoEstoque();
+});
 
 function cancelarImportacaoNfeEstoque(){
   estoqueState.importDraft = null;
@@ -17074,7 +17397,7 @@ async function confirmarImportacaoNfeEstoque(){
 
 function setEstoqueView(view){
   const admin = String(usuarioLogado?.perfil || "").toLowerCase() === "admin";
-  const requestedView = view === "lancar" ? "importar_xml" : view;
+  const requestedView = view === "lancar" || view === "importar_xml" ? "importar_xml_bipe" : view;
   const aguardandoIdentidade = requestedView === "acerto" && usuarioLogado === null;
   if (aguardandoIdentidade) {
     window.__estoqueViewPendente = "acerto";
@@ -17093,7 +17416,9 @@ function setEstoqueView(view){
     ? "rastreio"
     : requestedView === "movimentar"
     ? "movimentar"
-    : "importar_xml";
+    : requestedView === "importar_xml_auto"
+    ? "importar_xml_auto"
+    : "importar_xml_bipe";
   estoqueState.view = nextView;
   window.__estoqueView = nextView;
 
@@ -17108,18 +17433,19 @@ function setEstoqueView(view){
   const menuAcerto = document.getElementById("estoqueMenuAcerto");
   const titulo = document.getElementById("estoqueTitulo");
 
-  if (viewLancar) viewLancar.classList.toggle("hidden", !["importar_xml", "movimentar"].includes(nextView));
+  if (viewLancar) viewLancar.classList.toggle("hidden", !["importar_xml_bipe", "importar_xml_auto", "movimentar"].includes(nextView));
   if (viewConferir) viewConferir.classList.toggle("hidden", nextView !== "posicao");
   if (viewAcerto) viewAcerto.classList.toggle("hidden", nextView !== "acerto");
   if (viewCadastrar) viewCadastrar.classList.toggle("hidden", nextView !== "cadastrar");
   if (viewRastreio) viewRastreio.classList.toggle("hidden", nextView !== "rastreio");
-  if (importacoesBox) importacoesBox.classList.toggle("hidden", nextView !== "importar_xml");
+  if (importacoesBox) importacoesBox.classList.toggle("hidden", nextView !== "importar_xml_auto");
   if (movimentoManualBox) movimentoManualBox.classList.toggle("hidden", nextView !== "movimentar");
-  if (nfeManualBox) nfeManualBox.classList.toggle("hidden", nextView !== "importar_xml");
+  if (nfeManualBox) nfeManualBox.classList.toggle("hidden", nextView !== "importar_xml_bipe");
   if (menuAcerto) menuAcerto.classList.toggle("hidden", !admin);
   if (titulo) {
     const titulos = {
-      importar_xml: "Compras / Importar XML",
+      importar_xml_bipe: "Compras / Importar XML (Bipe)",
+      importar_xml_auto: "Compras / Importar XML Auto",
       movimentar: "Estoque / Movimentar",
       posicao: "Estoque / Posicao atual",
       acerto: "Estoque / Acerto",
@@ -17130,6 +17456,9 @@ function setEstoqueView(view){
   }
   document.querySelectorAll("#submenuEstoque .submenu-item").forEach((item) => {
     item.classList.toggle("active", item.dataset.estoqueView === nextView);
+  });
+  document.querySelectorAll("#submenuCompras .submenu-item").forEach((item) => {
+    item.classList.toggle("active", item.dataset.comprasView === nextView);
   });
 
   renderEstoqueImportPreview();
