@@ -453,7 +453,15 @@ def ensure_database():
         ("Notebook Renan", "NOTEBOOK", "192.168.200.122", None, "ICMP", "Rede principal", "Notebook Windows 11 informado; nome NetBIOS NOTEBOOK-RENAN confirmado na varredura.", 0, 30, 5),
         ("Notebook WHITEVENDAS", "NOTEBOOK", "192.168.200.197", None, "ICMP", "Rede principal", "Notebook Windows 10 informado; nome NetBIOS WHITEVENDAS confirmado na varredura.", 0, 30, 5),
     ):
-        cur.execute("SELECT id FROM tecnologia_dispositivos WHERE host=%s LIMIT 1", (seed[2],))
+        cur.execute(
+            """
+            SELECT id FROM tecnologia_dispositivos
+            WHERE host=%s
+               OR JSON_SEARCH(enderecos_adicionais, 'one', %s, NULL, '$[*].host') IS NOT NULL
+            LIMIT 1
+            """,
+            (seed[2], seed[2]),
+        )
         if not cur.fetchone():
             cur.execute(
                 """
@@ -4896,12 +4904,58 @@ def technology_public_device(row):
     }
 
 
-def technology_registered_device_hosts(rows):
-    registered = {}
+def technology_device_identity_key(value):
+    text = unicodedata.normalize("NFKD", str(value or ""))
+    return re.sub(r"[^A-Z0-9]+", "", text.encode("ascii", "ignore").decode("ascii").upper())
+
+
+def technology_registered_device_index(rows, exclude_device_id=None):
+    by_host = {}
+    by_name = {}
     for row in rows:
-        for address in device_network_addresses(row):
-            registered[address["host"]] = row.get("nome") or row.get("host") or "Equipamento"
-    return registered
+        if exclude_device_id is not None and int(row.get("id") or 0) == int(exclude_device_id):
+            continue
+        try:
+            addresses = device_network_addresses(row)
+        except (TypeError, ValueError):
+            addresses = [{"host": str(row.get("host") or "").strip()}]
+        for address in addresses:
+            if address.get("host"):
+                by_host.setdefault(address["host"], row)
+
+        details = technology_json_value(row.get("ultima_detalhes"))
+        telemetry = details.get("telemetry") if isinstance(details.get("telemetry"), dict) else {}
+        netbios = details.get("netbios") if isinstance(details.get("netbios"), dict) else {}
+        identity_names = [row.get("nome"), telemetry.get("systemName"), netbios.get("name")]
+        for name in identity_names:
+            identity_key = technology_device_identity_key(name)
+            if identity_key:
+                by_name.setdefault(identity_key, row)
+    return {"hosts": by_host, "names": by_name}
+
+
+def technology_registered_device_hosts(rows):
+    return {
+        host: row.get("nome") or row.get("host") or "Equipamento"
+        for host, row in technology_registered_device_index(rows)["hosts"].items()
+    }
+
+
+def technology_registered_device_match(index, host="", identity_name=""):
+    registered = (index.get("hosts") or {}).get(str(host or "").strip())
+    if registered:
+        return registered
+    identity_key = technology_device_identity_key(identity_name)
+    return (index.get("names") or {}).get(identity_key) if identity_key else None
+
+
+def technology_device_address_conflict(device, rows, exclude_device_id=None):
+    index = technology_registered_device_index(rows, exclude_device_id=exclude_device_id)
+    for address in device_network_addresses(device):
+        registered = technology_registered_device_match(index, host=address.get("host"))
+        if registered:
+            return address.get("host"), registered
+    return None
 
 
 def technology_riob_smtp_config():
@@ -5615,6 +5669,22 @@ def tecnologia_create_device_api():
         data = normalize_device_payload(payload)
     except (TypeError, ValueError) as exc:
         return jsonify({"erro": str(exc)}), 400
+    existing_rows = get_technology_devices()
+    conflict = technology_device_address_conflict(data, existing_rows)
+    if conflict:
+        host, registered = conflict
+        return jsonify({
+            "erro": f"o endereço {host} já pertence a {registered.get('nome') or registered.get('host')}"
+        }), 409
+    identity_name = str(payload.get("identityName") or "").strip()
+    if identity_name:
+        registered = technology_registered_device_match(
+            technology_registered_device_index(existing_rows), identity_name=identity_name
+        )
+        if registered:
+            return jsonify({
+                "erro": f"a identidade {identity_name} já pertence a {registered.get('nome') or registered.get('host')}"
+            }), 409
     conn = get_conn()
     cur = conn.cursor()
     try:
@@ -5682,6 +5752,16 @@ def tecnologia_device_api(device_id):
     if not data.get("snmp_community") and existing_community:
         data["snmp_community"] = existing_community
     data["id"] = device_id
+    conflict = technology_device_address_conflict(
+        data, get_technology_devices(), exclude_device_id=device_id
+    )
+    if conflict:
+        host, registered = conflict
+        cur.close()
+        conn.close()
+        return jsonify({
+            "erro": f"o endereço {host} já pertence a {registered.get('nome') or registered.get('host')}"
+        }), 409
     try:
         cur.execute(
             """
@@ -5754,9 +5834,11 @@ def tecnologia_discover_computers_api():
         discovered = discover_computers(payload.get("subnet") or "192.168.200.0/24")
     except ValueError as exc:
         return jsonify({"erro": str(exc)}), 400
-    existing = {row["host"]: row for row in get_technology_devices()}
+    existing = technology_registered_device_index(get_technology_devices())
     for item in discovered:
-        registered = existing.get(item["host"])
+        registered = technology_registered_device_match(
+            existing, host=item.get("host"), identity_name=item.get("name")
+        )
         item["registered"] = bool(registered)
         item["registeredName"] = registered.get("nome") if registered else ""
         item["registeredType"] = registered.get("tipo") if registered else ""

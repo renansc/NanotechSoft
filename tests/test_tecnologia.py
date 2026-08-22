@@ -417,18 +417,67 @@ class TecnologiaMonitorTests(unittest.TestCase):
 
 class TecnologiaIntegrationTests(unittest.TestCase):
     def test_registered_device_hosts_include_additional_interfaces(self):
-        registered = portal.technology_registered_device_hosts([{
+        rows = [{
+            "id": 13,
             "nome": "Notebook Renan",
             "host": "192.168.200.10",
             "enderecos_adicionais": json.dumps([
                 {"label": "Wi-Fi", "host": "192.168.200.122"},
                 {"label": "Tailscale", "host": "100.66.72.69"},
             ]),
-        }])
+            "ultima_detalhes": json.dumps({
+                "telemetry": {"systemName": "Renan-Note"},
+                "netbios": {"name": "RENAN-NOTE"},
+            }),
+        }, {
+            "id": 23,
+            "nome": "Notebook Renan",
+            "host": "192.168.200.122",
+            "enderecos_adicionais": "[]",
+            "ultima_detalhes": "{}",
+        }]
+        registered = portal.technology_registered_device_hosts(rows)
 
         self.assertEqual("Notebook Renan", registered["192.168.200.10"])
         self.assertEqual("Notebook Renan", registered["192.168.200.122"])
         self.assertEqual("Notebook Renan", registered["100.66.72.69"])
+
+        index = portal.technology_registered_device_index(rows)
+        self.assertEqual(13, portal.technology_registered_device_match(
+            index, host="192.168.200.122",
+        )["id"])
+        self.assertEqual(13, portal.technology_registered_device_match(
+            index, identity_name="RENAN-NOTE",
+        )["id"])
+
+    def test_device_address_conflict_checks_secondary_addresses(self):
+        rows = [{
+            "id": 13,
+            "nome": "Notebook Renan",
+            "host": "192.168.200.10",
+            "enderecos_adicionais": json.dumps([
+                {"label": "Wi-Fi", "host": "192.168.200.122"},
+            ]),
+        }]
+
+        conflict = portal.technology_device_address_conflict({
+            "host": "192.168.200.122", "enderecos_adicionais": "[]",
+        }, rows)
+        own_update = portal.technology_device_address_conflict({
+            "host": "192.168.200.122", "enderecos_adicionais": "[]",
+        }, rows, exclude_device_id=13)
+
+        self.assertEqual("192.168.200.122", conflict[0])
+        self.assertEqual(13, conflict[1]["id"])
+        self.assertIsNone(own_update)
+
+    def test_initial_devices_consider_secondary_addresses(self):
+        source = (PROJECT_DIR / "app.py").read_text(encoding="utf-8")
+
+        self.assertIn(
+            "JSON_SEARCH(enderecos_adicionais, 'one', %s, NULL, '$[*].host')",
+            source,
+        )
 
     def test_technology_database_timestamp_is_serialized_as_utc(self):
         checked_at = dt.datetime(2026, 8, 22, 10, 23, 6, 123000)
@@ -638,6 +687,7 @@ class TecnologiaIntegrationTests(unittest.TestCase):
         self.assertIn("Alertas por e-mail", html)
         self.assertIn("Enviar e-mail de teste", html)
         self.assertIn("Remetente:", javascript)
+        self.assertIn("identityName: button.dataset.computerName", javascript)
         self.assertIn('const API = "/apps/tecnologia/api"', javascript)
 
     def test_javascript_has_valid_syntax_in_chrome(self):

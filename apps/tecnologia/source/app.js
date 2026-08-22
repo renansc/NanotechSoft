@@ -540,6 +540,7 @@
         method: "POST",
         body: JSON.stringify({
           nome: button.dataset.computerName, tipo: button.dataset.computerType,
+          identityName: button.dataset.computerName,
           host: button.dataset.addComputer, porta: null, sonda: "ICMP",
           localizacao: "Rede principal", observacoes: `${button.dataset.computerOs} localizado pela descoberta da rede`,
           critico: false, ativo: true, latenciaAlertaMs: 30, perdaAlertaPct: 5,

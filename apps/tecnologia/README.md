@@ -181,6 +181,12 @@ automaticamente; o administrador confirma cada inclusão. Para computadores e
 notebooks, a resposta NetBIOS também pode confirmar que a máquina está ligada
 quando o firewall bloqueia ICMP.
 
+A varredura e as rotas de cadastro comparam o IP principal, todos os endereços
+adicionais e a identidade NetBIOS/exporter já coletada. Assim, cabo, Wi-Fi e
+Tailscale do mesmo computador permanecem em um único equipamento; tentar
+cadastrar ou atribuir a outro equipamento um endereço já vinculado retorna
+conflito em vez de criar uma duplicata.
+
 A família Windows/Linux e o nome de rede podem ser inferidos, mas Windows 10 e
 Windows 11 têm comportamento de rede muito semelhante. A versão exata deve ser
 confirmada localmente ou por inventário de um agente.
