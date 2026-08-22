@@ -211,6 +211,21 @@
 .detailResources strong, .detailIdentity strong { display: block; margin-top: 4px; font-size: .84rem; overflow-wrap: anywhere; }
 .detailIdentity { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
 .detailTableWrap { overflow-x: auto; border: 1px solid var(--tech-line); border-radius: 10px; }
+.printerUsage { border: 1px solid var(--tech-line); border-radius: 12px; padding: 14px; background: #fbfdfc; }
+.printerUsageSummary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; margin-bottom: 8px; }
+.printerUsageSummary > div { display: flex; align-items: baseline; gap: 7px; border-radius: 9px; padding: 10px 12px; background: #edf6f3; }
+.printerUsageSummary span { color: var(--tech-muted); font-size: .7rem; font-weight: 750; text-transform: uppercase; }
+.printerUsageSummary strong { color: var(--tech-primary-dark); font-size: 1.35rem; }
+.printerUsageSummary small { color: var(--tech-muted); font-size: .7rem; }
+.printerChartWrap { overflow-x: auto; }
+.printerChart { display: block; width: 100%; min-width: 420px; height: 150px; }
+.printerChart line { stroke: var(--tech-line); stroke-width: 1.5; }
+.printerChart polyline { fill: none; stroke: var(--tech-primary); stroke-linecap: round; stroke-linejoin: round; stroke-width: 3; }
+.printerChart circle { fill: #fff; stroke: var(--tech-primary); stroke-width: 3; }
+.printerChart text { fill: var(--tech-muted); font-family: inherit; text-anchor: middle; }
+.printerChartValue { font-size: 11px; font-weight: 800; }
+.printerChartLabel { font-size: 11px; font-weight: 700; text-transform: uppercase; }
+.printerUsageNote { margin: 5px 2px 0; color: var(--tech-muted); font-size: .72rem; line-height: 1.4; }
 .detailTags { display: flex; flex-wrap: wrap; gap: 7px; }
 .detailTags span { border-radius: 999px; padding: 6px 9px; color: var(--tech-primary-dark); background: #e5f2ee; font-size: .72rem; }
 .detailNotice { display: grid; gap: 7px; margin-top: 18px; border-radius: 11px; padding: 15px; }
@@ -244,5 +259,6 @@
   .detailResources, .detailIdentity { grid-template-columns: 1fr; }
   .detailStatus, .detailStatus > div { align-items: flex-start; flex-direction: column; }
   .detailEndpoint { grid-template-columns: 1fr; }
+  .printerUsageSummary { grid-template-columns: 1fr; }
   .emailAlertSummary { grid-template-columns: 1fr; }
 }

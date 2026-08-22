@@ -61,6 +61,15 @@ discos, tráfego, hostname, sistema operacional, build, arquitetura, interfaces
 e tempo ligado quando as respectivas séries estiverem habilitadas. O próprio
 card permite atualizar somente aquele equipamento.
 
+No popup de equipamentos do tipo **Impressora**, o contador acumulado do
+Printer-MIB é comparado entre coletas para mostrar as páginas impressas no dia
+e uma linha diária da semana corrente, iniciada no domingo. Reduções do contador
+após manutenção ou reinício não são contabilizadas como valores negativos. O
+comparativo aparece antes da seção de suprimentos e exige ao menos duas leituras
+SNMP com contador de páginas. Quando o monitoramento começou depois da meia-noite,
+o popup informa o horário da primeira leitura, pois páginas anteriores a ela não
+podem ser reconstruídas pelo contador acumulado.
+
 ## Wi-Fi
 
 A sonda roda no servidor Ubuntu conectado por cabo. Assim, uma falha ou aumento
@@ -199,6 +208,7 @@ confirmada localmente ou por inventário de um agente.
 - `POST /apps/tecnologia/api/speed-test`: força download/upload do link.
 - `GET /apps/tecnologia/api/speed-history`: histórico da velocidade do link.
 - `GET /apps/tecnologia/api/history`: histórico por equipamento e período.
+- `GET /apps/tecnologia/api/devices/<id>/print-usage`: páginas impressas no dia e na semana.
 - `POST /apps/tecnologia/api/devices`: cadastra um equipamento (admin).
 - `PUT|DELETE /apps/tecnologia/api/devices/<id>`: altera ou exclui (admin).
 - `POST /apps/tecnologia/api/discover-printers`: descoberta manual (admin).

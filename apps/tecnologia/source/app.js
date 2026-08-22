@@ -2,7 +2,7 @@
   "use strict";
 
   const API = "/apps/tecnologia/api";
-  const state = { devices: [], diagnosis: [], emailAlerts: null, monitorIntervalSeconds: 60, speed: null, metrics: [], speedMetrics: [] };
+  const state = { devices: [], diagnosis: [], emailAlerts: null, monitorIntervalSeconds: 60, speed: null, metrics: [], speedMetrics: [], printerUsage: {} };
   let editingId = null;
   let detailDeviceId = null;
   let toastTimer = null;
@@ -74,6 +74,50 @@
     const minutes = Math.floor((seconds % 3600) / 60);
     return [days ? `${days}d` : "", hours ? `${hours}h` : "", `${minutes}min`].filter(Boolean).join(" ");
   };
+
+  function renderPrinterUsage(usage) {
+    if (!usage || usage.loading) return '<div class="detailSection printerUsage"><h3>Impressões da semana</h3><p class="muted">Calculando páginas impressas...</p></div>';
+    if (usage.error) return `<div class="detailSection printerUsage"><h3>Impressões da semana</h3><div class="detailNotice warning"><span>${esc(usage.error)}</span></div></div>`;
+    if (!usage.hasComparisons) return '<div class="detailSection printerUsage"><h3>Impressões da semana</h3><p class="muted">Aguardando pelo menos duas leituras do contador de páginas.</p></div>';
+
+    const days = usage.days || [];
+    const chartWidth = 640;
+    const chartHeight = 150;
+    const left = 34;
+    const right = 16;
+    const top = 24;
+    const bottom = 42;
+    const plotWidth = chartWidth - left - right;
+    const plotHeight = chartHeight - top - bottom;
+    const maximum = Math.max(1, ...days.map((day) => Number(day.pages || 0)));
+    const points = days.map((day, index) => {
+      const x = days.length === 1 ? left + (plotWidth / 2) : left + ((plotWidth * index) / (days.length - 1));
+      const y = top + plotHeight - ((Number(day.pages || 0) / maximum) * plotHeight);
+      return { ...day, x, y };
+    });
+    const polyline = points.map((point) => `${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(" ");
+    const period = `${new Date(`${usage.periodStart}T12:00:00`).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })} a ${new Date(`${usage.periodEnd}T12:00:00`).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })}`;
+    const coverageNote = !usage.todayComplete && usage.coverageStartedAt
+      ? `<p class="printerUsageNote">Contagem disponível desde ${esc(dateTime(usage.coverageStartedAt))}; páginas anteriores à primeira leitura SNMP não podem ser recuperadas.</p>`
+      : "";
+    const pointMarkup = points.map((point) => `<g>
+      <circle cx="${point.x}" cy="${point.y}" r="4"></circle>
+      <text class="printerChartValue" x="${point.x}" y="${Math.max(12, point.y - 9)}">${Number(point.pages || 0).toLocaleString("pt-BR")}</text>
+      <text class="printerChartLabel" x="${point.x}" y="${chartHeight - 12}">${esc(point.label)}</text>
+    </g>`).join("");
+    return `<div class="detailSection printerUsage">
+      <div class="detailSectionHead"><h3>Impressões da semana</h3><span>${esc(period)}</span></div>
+      <div class="printerUsageSummary">
+        <div><span>Impressas hoje</span><strong>${Number(usage.todayPages || 0).toLocaleString("pt-BR")}</strong><small>páginas</small></div>
+        <div><span>Total da semana</span><strong>${Number(usage.weekPages || 0).toLocaleString("pt-BR")}</strong><small>páginas</small></div>
+      </div>
+      <div class="printerChartWrap"><svg class="printerChart" viewBox="0 0 ${chartWidth} ${chartHeight}" role="img" aria-label="Páginas impressas por dia nesta semana">
+        <line x1="${left}" y1="${top + plotHeight}" x2="${chartWidth - right}" y2="${top + plotHeight}"></line>
+        ${points.length > 1 ? `<polyline points="${polyline}"></polyline>` : ""}
+        ${pointMarkup}
+      </svg></div>${coverageNote}
+    </div>`;
+  }
 
   function renderKpis() {
     const active = state.devices.filter((device) => device.ativo);
@@ -248,6 +292,7 @@
     const disks = telemetry?.disks?.length ? `<div class="detailSection"><h3>Discos</h3><div class="detailTableWrap"><table><thead><tr><th>Volume</th><th>Uso</th><th>Livre</th><th>Total</th></tr></thead><tbody>${telemetry.disks.map((disk) => `<tr><td>${esc(disk.name)}</td><td>${number(disk.usedPct)}%</td><td>${esc(bytes(disk.freeBytes))}</td><td>${esc(bytes(disk.sizeBytes))}</td></tr>`).join("")}</tbody></table></div></div>` : "";
     const interfaces = telemetry?.interfaces?.length ? `<div class="detailSection"><h3>Interfaces monitoradas</h3><div class="detailTags">${telemetry.interfaces.map((name) => `<span>${esc(name)}</span>`).join("")}</div></div>` : "";
     const supplies = telemetry?.supplies?.length ? `<div class="detailSection"><h3>Suprimentos</h3><div class="detailTableWrap"><table><thead><tr><th>Item</th><th>Nível</th><th>Atual</th><th>Capacidade</th></tr></thead><tbody>${telemetry.supplies.map((supply) => `<tr><td>${esc(supply.name)}</td><td>${supply.pct == null ? esc(supply.status || "Não informado") : `${number(supply.pct)}%`}</td><td>${supply.level == null || supply.level < 0 ? "—" : number(supply.level, 0)}</td><td>${supply.capacity == null || supply.capacity < 0 ? "—" : number(supply.capacity, 0)}</td></tr>`).join("")}</tbody></table></div></div>` : "";
+    const printerUsage = isPrinter ? renderPrinterUsage(state.printerUsage[device.id]) : "";
     const addressRows = (metric?.addresses?.length ? metric.addresses : device.networkAddresses || []).map((address) => {
       const reachable = address.reachable;
       const stateClass = reachable === true ? "online" : reachable === false ? "offline" : "pending";
@@ -256,7 +301,7 @@
     }).join("");
     const addresses = `<div class="detailSection"><h3>Endereços e caminhos de rede</h3><div class="detailTableWrap"><table><thead><tr><th>Interface</th><th>IP ou host</th><th>Latência</th><th>Situação</th></tr></thead><tbody>${addressRows}</tbody></table></div></div>`;
     const collectionSummary = isSnmp ? `${telemetry?.interfaceCount ?? telemetry?.interfaces?.length ?? 0} interfaces consultadas` : `${number(telemetry?.series, 0)} séries coletadas`;
-    const telemetryBlock = telemetry ? `<div class="detailSection"><div class="detailSectionHead"><h3>${esc(protocol)}</h3><span>${esc(collectionSummary)}</span></div><div class="detailResources">${resourceCards}</div></div><div class="detailSection"><h3>Identificação do equipamento</h3><div class="detailIdentity">${identity}</div></div>${supplies}${disks}${interfaces}` : `<div class="detailNotice warning"><strong>Sem métricas de ${esc(protocol)} nesta coleta.</strong><span>${esc(metric?.message || "Aguardando a primeira coleta.")}</span><small>${isSnmp ? `Confirme o SNMP somente leitura na porta ${esc(device.snmpPort || 161)} e permita consultas do servidor 192.168.200.254.` : `Confirme se o exporter está iniciado e se a porta ${esc(device.agentPort || 9182)} aceita conexão do servidor 192.168.200.254.`}</small></div>`;
+    const telemetryBlock = telemetry ? `<div class="detailSection"><div class="detailSectionHead"><h3>${esc(protocol)}</h3><span>${esc(collectionSummary)}</span></div><div class="detailResources">${resourceCards}</div></div><div class="detailSection"><h3>Identificação do equipamento</h3><div class="detailIdentity">${identity}</div></div>${printerUsage}${supplies}${disks}${interfaces}` : `<div class="detailNotice warning"><strong>Sem métricas de ${esc(protocol)} nesta coleta.</strong><span>${esc(metric?.message || "Aguardando a primeira coleta.")}</span><small>${isSnmp ? `Confirme o SNMP somente leitura na porta ${esc(device.snmpPort || 161)} e permita consultas do servidor 192.168.200.254.` : `Confirme se o exporter está iniciado e se a porta ${esc(device.agentPort || 9182)} aceita conexão do servidor 192.168.200.254.`}</small></div>`;
     $("#deviceDetailsBody").innerHTML = `<div class="detailStatus"><div>${statusBadge(metric)}<span>${esc(metric?.message || "Aguardando medição")}</span></div><small>Última coleta: ${esc(dateTime(metric?.checkedAt))}</small></div><div class="detailEndpoint"><span>Coleta</span><strong>${esc(protocol)}</strong><span>Endpoint ativo</span><code>${esc(collectionEndpoint)}</code></div>${addresses}${telemetryBlock}`;
   }
 
@@ -265,11 +310,25 @@
     renderDeviceDetails();
     $("#deviceDetailsModal").classList.remove("hidden");
     $("#refreshDeviceDetails").focus();
+    const device = state.devices.find((item) => item.id === detailDeviceId);
+    if (device?.tipo === "IMPRESSORA") loadPrinterUsage(detailDeviceId);
   }
 
   function closeDeviceDetails() {
     $("#deviceDetailsModal").classList.add("hidden");
     detailDeviceId = null;
+  }
+
+  async function loadPrinterUsage(deviceId, force = false) {
+    if (!force && state.printerUsage[deviceId] && !state.printerUsage[deviceId].error) return;
+    state.printerUsage[deviceId] = { loading: true };
+    if (detailDeviceId === deviceId) renderDeviceDetails();
+    try {
+      state.printerUsage[deviceId] = await request(`/devices/${deviceId}/print-usage`);
+    } catch (error) {
+      state.printerUsage[deviceId] = { error: error.message };
+    }
+    if (detailDeviceId === deviceId) renderDeviceDetails();
   }
 
   async function refreshDeviceDetails() {
@@ -283,6 +342,8 @@
       state.diagnosis = data.diagnosis || [];
       state.speed = data.speed || state.speed;
       renderAll();
+      const refreshed = state.devices.find((item) => item.id === detailDeviceId);
+      if (refreshed?.tipo === "IMPRESSORA") await loadPrinterUsage(detailDeviceId, true);
       showToast("Informações do equipamento atualizadas.");
     } catch (error) {
       showToast(error.message, true);

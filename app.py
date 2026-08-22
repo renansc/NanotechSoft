@@ -24,6 +24,7 @@ import urllib.request
 import tempfile
 from io import BytesIO
 from email.message import EmailMessage
+from zoneinfo import ZoneInfo
 
 from flask import Flask, Response, jsonify, redirect, render_template, request, send_file, send_from_directory, session, url_for
 import mysql.connector
@@ -4851,6 +4852,80 @@ def technology_utc_cutoff(hours):
     return dt.datetime.now(dt.UTC).replace(tzinfo=None) - dt.timedelta(hours=hours)
 
 
+TECHNOLOGY_LOCAL_TIMEZONE = ZoneInfo("America/Sao_Paulo")
+
+
+def technology_printer_week_start(now=None):
+    current = now or dt.datetime.now(dt.UTC)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=dt.UTC)
+    local_now = current.astimezone(TECHNOLOGY_LOCAL_TIMEZONE)
+    week_start_date = local_now.date() - dt.timedelta(days=(local_now.weekday() + 1) % 7)
+    week_start_local = dt.datetime.combine(
+        week_start_date, dt.time.min, tzinfo=TECHNOLOGY_LOCAL_TIMEZONE
+    )
+    return local_now, week_start_local.astimezone(dt.UTC).replace(tzinfo=None)
+
+
+def technology_printer_page_usage(rows, now=None):
+    """Converte o contador acumulado do Printer-MIB em totais diários."""
+    local_now, _ = technology_printer_week_start(now)
+    today = local_now.date()
+    week_start = today - dt.timedelta(days=(today.weekday() + 1) % 7)
+    dates = [week_start + dt.timedelta(days=offset) for offset in range((today - week_start).days + 1)]
+    totals = {day: 0 for day in dates}
+    day_labels = ("Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom")
+    previous_count = None
+    comparisons = 0
+    current_count = None
+    coverage_started_at = None
+
+    for row in rows:
+        details = technology_json_value(row.get("detalhes"))
+        telemetry = details.get("telemetry") if isinstance(details.get("telemetry"), dict) else {}
+        try:
+            page_count = int(telemetry.get("pageCount"))
+        except (TypeError, ValueError):
+            continue
+        checked_at = row.get("verificado_em")
+        if page_count < 0 or not isinstance(checked_at, dt.datetime):
+            continue
+        if checked_at.tzinfo is None:
+            checked_at = checked_at.replace(tzinfo=dt.UTC)
+        else:
+            checked_at = checked_at.astimezone(dt.UTC)
+        checked_date = checked_at.astimezone(TECHNOLOGY_LOCAL_TIMEZONE).date()
+        if coverage_started_at is None:
+            coverage_started_at = checked_at
+
+        if previous_count is not None and checked_date in totals:
+            # Contadores podem reiniciar após manutenção. Nesse intervalo a
+            # diferença é desconhecida e nunca deve virar impressão negativa.
+            totals[checked_date] += max(0, page_count - previous_count)
+            comparisons += 1
+        previous_count = page_count
+        current_count = page_count
+
+    return {
+        "periodStart": week_start.isoformat(),
+        "periodEnd": today.isoformat(),
+        "todayPages": totals.get(today, 0),
+        "weekPages": sum(totals.values()),
+        "currentCounter": current_count,
+        "hasComparisons": comparisons > 0,
+        "coverageStartedAt": technology_db_timestamp_iso(coverage_started_at) if coverage_started_at else None,
+        "todayComplete": bool(
+            coverage_started_at
+            and coverage_started_at.astimezone(TECHNOLOGY_LOCAL_TIMEZONE)
+            <= dt.datetime.combine(today, dt.time.min, tzinfo=TECHNOLOGY_LOCAL_TIMEZONE)
+        ),
+        "days": [
+            {"date": day.isoformat(), "label": day_labels[day.weekday()], "pages": totals[day]}
+            for day in dates
+        ],
+    }
+
+
 def technology_public_metric(row, prefix=""):
     if not row or not row.get(f"{prefix}status"):
         return None
@@ -5655,6 +5730,59 @@ def tecnologia_history_api():
         }
         for row in rows
     ]})
+
+
+@app.route("/apps/tecnologia/api/devices/<int:device_id>/print-usage")
+@login_required
+def tecnologia_printer_usage_api(device_id):
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    cur.execute(
+        "SELECT id, nome, tipo FROM tecnologia_dispositivos WHERE id=%s LIMIT 1",
+        (device_id,),
+    )
+    device = cur.fetchone()
+    if not device:
+        cur.close()
+        conn.close()
+        return jsonify({"erro": "equipamento não encontrado"}), 404
+    if device.get("tipo") != "IMPRESSORA":
+        cur.close()
+        conn.close()
+        return jsonify({"erro": "o equipamento selecionado não é uma impressora"}), 400
+
+    local_now, week_start_utc = technology_printer_week_start()
+    cur.execute(
+        """
+        SELECT verificado_em, detalhes
+        FROM tecnologia_metricas
+        WHERE dispositivo_id=%s
+          AND verificado_em < %s
+          AND JSON_EXTRACT(detalhes, '$.telemetry.pageCount') IS NOT NULL
+        ORDER BY verificado_em DESC, id DESC
+        LIMIT 1
+        """,
+        (device_id, week_start_utc),
+    )
+    baseline = cur.fetchone()
+    cur.execute(
+        """
+        SELECT verificado_em, detalhes
+        FROM tecnologia_metricas
+        WHERE dispositivo_id=%s
+          AND verificado_em >= %s
+          AND JSON_EXTRACT(detalhes, '$.telemetry.pageCount') IS NOT NULL
+        ORDER BY verificado_em ASC, id ASC
+        LIMIT 15000
+        """,
+        (device_id, week_start_utc),
+    )
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    if baseline:
+        rows.insert(0, baseline)
+    return jsonify(technology_printer_page_usage(rows, now=local_now))
 
 
 @app.route("/apps/tecnologia/api/devices", methods=["POST"])

@@ -487,6 +487,37 @@ class TecnologiaIntegrationTests(unittest.TestCase):
             portal.technology_db_timestamp_iso(checked_at),
         )
 
+    def test_printer_page_usage_compares_daily_counter_and_ignores_reset(self):
+        def sample(checked_at, page_count):
+            return {
+                "verificado_em": checked_at,
+                "detalhes": json.dumps({"telemetry": {"pageCount": page_count}}),
+            }
+
+        usage = portal.technology_printer_page_usage([
+            sample(dt.datetime(2026, 8, 16, 2, 59), 100),   # sábado 23:59 local
+            sample(dt.datetime(2026, 8, 16, 13, 0), 105),   # domingo
+            sample(dt.datetime(2026, 8, 17, 13, 0), 112),   # segunda
+            sample(dt.datetime(2026, 8, 18, 13, 0), 3),     # contador reiniciado
+            sample(dt.datetime(2026, 8, 19, 12, 0), 8),     # quarta
+        ], now=dt.datetime(2026, 8, 19, 15, 0, tzinfo=dt.UTC))
+
+        self.assertEqual("2026-08-16", usage["periodStart"])
+        self.assertEqual("2026-08-19", usage["periodEnd"])
+        self.assertEqual([5, 7, 0, 5], [day["pages"] for day in usage["days"]])
+        self.assertEqual(5, usage["todayPages"])
+        self.assertEqual(17, usage["weekPages"])
+        self.assertTrue(usage["hasComparisons"])
+        self.assertTrue(usage["todayComplete"])
+
+        partial_today = portal.technology_printer_page_usage([
+            sample(dt.datetime(2026, 8, 22, 11, 0), 200),
+            sample(dt.datetime(2026, 8, 22, 12, 0), 206),
+        ], now=dt.datetime(2026, 8, 22, 15, 0, tzinfo=dt.UTC))
+        self.assertEqual(6, partial_today["todayPages"])
+        self.assertFalse(partial_today["todayComplete"])
+        self.assertEqual("2026-08-22T11:00:00.000Z", partial_today["coverageStartedAt"])
+
     def test_technology_public_metric_preserves_utc_timezone(self):
         metric = portal.technology_public_metric({
             "ultima_status": "ONLINE",
@@ -669,6 +700,7 @@ class TecnologiaIntegrationTests(unittest.TestCase):
         self.assertIn("POST", routes["/apps/tecnologia/api/discover-computers"])
         self.assertIn("POST", routes["/apps/tecnologia/api/devices"])
         self.assertIn("DELETE", routes["/apps/tecnologia/api/devices/<int:device_id>"])
+        self.assertIn("GET", routes["/apps/tecnologia/api/devices/<int:device_id>/print-usage"])
 
     def test_static_app_is_integrated(self):
         self.assertIn("tecnologia", portal.STATIC_APP_DIRS)
@@ -688,6 +720,8 @@ class TecnologiaIntegrationTests(unittest.TestCase):
         self.assertIn("Enviar e-mail de teste", html)
         self.assertIn("Remetente:", javascript)
         self.assertIn("identityName: button.dataset.computerName", javascript)
+        self.assertIn("Impressões da semana", javascript)
+        self.assertIn("/print-usage", javascript)
         self.assertIn('const API = "/apps/tecnologia/api"', javascript)
 
     def test_javascript_has_valid_syntax_in_chrome(self):
