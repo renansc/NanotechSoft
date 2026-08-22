@@ -1,4 +1,5 @@
 import unittest
+from pathlib import Path
 
 import server
 
@@ -88,6 +89,107 @@ class EstoqueTaxonomiaBebidasTests(unittest.TestCase):
                 {"nome_produto": "Papel A4"}
             )["estoque_area"],
         )
+
+    def test_agua_com_e_sem_gas_nao_sao_unificadas(self):
+        com_gas = server._estoque_produto_meta(
+            {"nome_produto": "Agua mineral com gas 510 ml", "grupo_estoque": "AGUA"}
+        )
+        sem_gas = server._estoque_produto_meta(
+            {"nome_produto": "AGUA SEM GAS 510ML", "grupo_estoque": "AGUA"}
+        )
+        self.assertNotEqual(com_gas["produto_base_key"], sem_gas["produto_base_key"])
+
+    def test_normaliza_codigos_por_origem(self):
+        codigos, informado = server._estoque_codigos_payload({
+            "codigos_nfe_entrada": "000123, 000123;NF-45",
+            "codigos_sellout": ["77", "00077"],
+            "codigos_nfe_saida": "900\n901",
+        })
+        self.assertTrue(informado)
+        self.assertEqual(["000123", "NF-45"], codigos["nfe_entrada"])
+        self.assertEqual(["77"], codigos["sellout"])
+        self.assertEqual(["900", "901"], codigos["nfe_saida"])
+
+    def test_amarracao_fica_restrita_a_pet_e_agua(self):
+        self.assertTrue(server._estoque_produto_eh_vendido({"grupo_estoque": "PET"}))
+        self.assertTrue(server._estoque_produto_eh_vendido({"grupo_estoque": "AGUA"}))
+        self.assertFalse(server._estoque_produto_eh_vendido({"grupo_estoque": "GFA"}))
+        self.assertFalse(server._estoque_produto_eh_vendido({"grupo_estoque": "OUTROS"}))
+
+    def test_lookup_respeita_o_tipo_de_codigo(self):
+        entrada = {"id": 1, "nome_produto": "COLA PET 2L"}
+        venda = {"id": 2, "nome_produto": "AGUA SEM GAS 510ML"}
+        lookup = {
+            "codigo_barras": {},
+            "codigo_produto_nfe": {},
+            "nome_produto": {},
+            "produto_base_key": {},
+            "codigo_origem": {
+                "nfe_entrada": {"10": entrada},
+                "sellout": {"10": venda},
+            },
+        }
+        self.assertIs(
+            entrada,
+            server._resolver_produto_lookup_estoque(
+                lookup, codigo_produto_nfe="000010", origem_codigo="nfe_entrada"
+            ),
+        )
+        self.assertIs(
+            venda,
+            server._resolver_produto_lookup_estoque(
+                lookup, codigo_produto_nfe="10", origem_codigo="sellout"
+            ),
+        )
+
+    def test_lookup_tipado_prioriza_nome_antes_do_codigo_legado(self):
+        codigo_legado = {"id": 1, "nome_produto": "COLA PET 2L"}
+        descricao_sellout = {"id": 2, "nome_produto": "AGUA SEM GAS 510ML"}
+        lookup = {
+            "codigo_barras": {},
+            "codigo_produto_nfe": {"10": codigo_legado},
+            "nome_produto": {"AGUA SEM GAS 510ML": descricao_sellout},
+            "produto_base_key": {},
+            "codigo_origem": {origem: {} for origem in server._ESTOQUE_CODIGO_ORIGENS},
+        }
+        self.assertIs(
+            descricao_sellout,
+            server._resolver_produto_lookup_estoque(
+                lookup,
+                codigo_produto_nfe="10",
+                nome_produto="Agua sem gas 510ml",
+                origem_codigo="sellout",
+            ),
+        )
+
+    def test_previsao_semanal_nao_duplica_venda_e_saida(self):
+        previsao = server._estoque_previsao_producao_semanal(
+            vendas_semana=70,
+            saidas_semana=60,
+            saldo_disponivel=20,
+            dias_decorridos=7,
+        )
+        self.assertEqual(70, previsao["demanda_semana_observada"])
+        self.assertEqual(70, previsao["previsao_demanda_semana"])
+        self.assertEqual(50, previsao["necessidade_producao_semana"])
+
+    def test_previsao_semanal_projeta_periodo_parcial(self):
+        previsao = server._estoque_previsao_producao_semanal(
+            vendas_semana=30,
+            saidas_semana=40,
+            saldo_disponivel=10,
+            dias_decorridos=2,
+        )
+        self.assertEqual(140, previsao["previsao_demanda_semana"])
+        self.assertEqual(130, previsao["necessidade_producao_semana"])
+
+    def test_interface_permite_definir_saldo_fisico(self):
+        raiz = Path(__file__).resolve().parents[1]
+        html = (raiz / "RioBranco.html").read_text(encoding="utf-8")
+        script = (raiz / "script.js").read_text(encoding="utf-8")
+        self.assertIn('id="estoqueCadastroSaldoAtual"', html)
+        self.assertIn("definirSaldoAtualProdutoEstoqueCadastro", script)
+        self.assertIn("quantidade_atual", script)
 
 
 if __name__ == "__main__":

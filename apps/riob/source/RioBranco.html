@@ -178,8 +178,26 @@
             </table>
           </div>
         </div>
+        <div class="boxFrota">
+          <h3>Previsao de Producao da Semana</h3>
+          <div class="tableWrap">
+            <table class="dash-table">
+              <thead>
+                <tr>
+                  <th>Produto</th>
+                  <th>Saldo Disponivel</th>
+                  <th>Vendas Semana</th>
+                  <th>Saidas Semana</th>
+                  <th>Demanda Projetada</th>
+                  <th>Producao Sugerida</th>
+                </tr>
+              </thead>
+              <tbody id="dashEstoqueProducaoBody"></tbody>
+            </table>
+          </div>
+        </div>
       </div>
-      <small class="hint">A previsao mostra vendas e saidas processadas no dia; o saldo mostra o estoque atual, o comprometido e o remanescente por produto.</small>
+      <small class="hint">A producao sugerida usa a maior leitura entre vendas e saidas da semana, projeta sete dias e desconta o saldo disponivel. Assim, venda e baixa do mesmo despacho nao sao contadas duas vezes.</small>
     </div>
 
     <div id="dashViewVendasDiario" class="dash-view hidden">
@@ -901,7 +919,7 @@
           <h3>Cadastro de Embalagem por Produto</h3>
           <div class="estoque-import-grid">
             <input type="text" id="estoqueCadastroCodigoBarras" placeholder="Codigo de barras">
-            <input type="text" id="estoqueCadastroCodigoNfe" placeholder="Cod. produto NF-e">
+            <input type="text" id="estoqueCadastroCodigoNfe" placeholder="Codigo principal/legado">
             <input type="text" id="estoqueCadastroNomeProduto" placeholder="Nome do produto">
             <select id="estoqueCadastroGrupo">
               <option value="">Grupo do estoque</option>
@@ -913,17 +931,23 @@
             <input type="text" id="estoqueCadastroBaseNome" placeholder="Produto base (mesmo item em codigos diferentes)">
             <input type="text" id="estoqueCadastroEmbalagem" placeholder="Embalagem (PCT, CX24, CX48, UN)">
             <input type="number" id="estoqueCadastroFator" min="1" step="1" placeholder="Unid/emb.">
+            <input type="text" id="estoqueCadastroCodigosNfeEntrada" placeholder="Codigos NF-e de entrada (separe por virgula)">
+            <input type="text" id="estoqueCadastroCodigosSellout" placeholder="Codigos venda / SELLOUT (separe por virgula)">
+            <input type="text" id="estoqueCadastroCodigosNfeSaida" placeholder="Codigos NF-e de saida (separe por virgula)">
+            <input type="text" id="estoqueCadastroCodigosManual" placeholder="Codigos de movimento manual (separe por virgula)">
           </div>
           <div id="estoqueCadastroAjusteBox" class="estoque-import-grid hidden">
+            <input type="number" id="estoqueCadastroSaldoAtual" min="0" step="0.001" placeholder="Saldo fisico contado (unidades)">
             <input type="number" id="estoqueCadastroAjusteQuantidade" step="0.001" placeholder="Ajuste de estoque (+/-)">
-            <input type="text" id="estoqueCadastroAjusteMotivo" placeholder="Motivo do ajuste">
+            <input type="text" id="estoqueCadastroAjusteMotivo" placeholder="Motivo (ex.: Estoque inicial 22/08/2026)">
           </div>
           <div class="estoque-inline-actions">
             <button type="button" onclick="salvarProdutoEstoqueCadastro()">Salvar Cadastro</button>
+            <button type="button" id="estoqueCadastroSaldoAtualBtn" class="hidden" onclick="definirSaldoAtualProdutoEstoqueCadastro()">Definir Saldo Fisico</button>
             <button type="button" id="estoqueCadastroAjusteBtn" class="hidden" onclick="aplicarAjusteProdutoEstoqueCadastro()">Aplicar Ajuste</button>
             <button type="button" onclick="limparProdutoEstoqueCadastro()">Limpar</button>
           </div>
-          <div id="estoqueCadastroStatus" class="hint">Cadastre o produto e o fator da embalagem para automatizar a conversao da NF-e. Ao editar, voce pode lancar um ajuste para corrigir a quantidade em estoque.</div>
+          <div id="estoqueCadastroStatus" class="hint">Para PET e AGUA da producao, amarre os codigos de NF-e de entrada, venda/SELLOUT, NF-e de saida e movimento manual ao mesmo produto. Agua com gas e sem gas permanecem produtos distintos.</div>
         </div>
         <div class="boxFrota">
           <h3>Produtos Cadastrados</h3>

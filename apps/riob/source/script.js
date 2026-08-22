@@ -15514,12 +15514,14 @@ function sincronizarNumeroNotaPorCodigo(){
 
 async function renderDashboardEstoque(){
   const bodyPrevisao = document.getElementById("dashEstoquePrevisaoBody");
+  const bodyProducao = document.getElementById("dashEstoqueProducaoBody");
   const bodySaldo = document.getElementById("dashEstoqueSaldoBody");
   const resumo = document.getElementById("dashEstoqueResumo");
-  if (!bodyPrevisao || !bodySaldo) return;
+  if (!bodyPrevisao || !bodyProducao || !bodySaldo) return;
   const resp = await apiFetch("/api/dashboard_estoque");
   if (!resp.ok) {
     bodyPrevisao.innerHTML = `<tr><td colspan="7">Erro ao carregar previsao do estoque.</td></tr>`;
+    bodyProducao.innerHTML = `<tr><td colspan="6">Erro ao carregar previsao de producao.</td></tr>`;
     bodySaldo.innerHTML = `<tr><td colspan="7">Erro ao carregar saldo do estoque.</td></tr>`;
     if (resumo) resumo.textContent = "Nao foi possivel carregar o saldo comprometido do estoque.";
     return;
@@ -15535,6 +15537,7 @@ async function renderDashboardEstoque(){
       `Baixadas: ${meta.cargas_baixadas || 0}`,
       `Vendas dia: ${_estoqueFormatQtd(meta.vendas_dia_total || 0)}`,
       `Saidas dia: ${_estoqueFormatQtd(meta.saidas_dia_total || 0)}`,
+      `Producao sugerida: ${_estoqueFormatQtd(meta.necessidade_producao_semana_total || 0)}`,
     ].join(" | ");
   }
   bodyPrevisao.innerHTML = dados.length ? _estoqueLinhasAgrupadas(dados, (r) => `
@@ -15559,6 +15562,19 @@ async function renderDashboardEstoque(){
       <td>${_escHtml(_fmtDateBr(r.ultima_movimentacao))}</td>
     </tr>
   `, 7) : `<tr><td colspan="7">Sem itens cadastrados no estoque.</td></tr>`;
+  const produtosVendidos = dados.filter((r) => ["PET", "AGUA"].includes(
+    _estoqueGrupoNormalizado(r.grupo_estoque)
+  ));
+  bodyProducao.innerHTML = produtosVendidos.length ? _estoqueLinhasAgrupadas(produtosVendidos, (r) => `
+    <tr>
+      <td>${_estoqueProdutoStatusHtml(r)}</td>
+      <td>${_escHtml(_estoqueFormatPallet(r, r.saldo_remanescente))}</td>
+      <td>${_escHtml(_estoqueFormatPallet(r, r.vendas_semana))}</td>
+      <td>${_escHtml(_estoqueFormatPallet(r, r.saidas_semana))}</td>
+      <td>${_escHtml(_estoqueFormatPallet(r, r.previsao_demanda_semana))}</td>
+      <td><span style="font-weight:700;color:${Number(r.necessidade_producao_semana || 0) > 0 ? "#b45309" : "#166534"};">${_escHtml(_estoqueFormatPallet(r, r.necessidade_producao_semana))}</span></td>
+    </tr>
+  `, 6) : `<tr><td colspan="6">Sem vendas ou estoque de PET e AGUA nesta semana.</td></tr>`;
 }
 
 function _estoqueResumoFluxo(item){
@@ -15621,6 +15637,10 @@ function _estoqueProdutoCadastroNormalizado(item = {}){
     id: Number(item.id || 0) || 0,
     codigo_barras: _digitsOnly(item.codigo_barras || ""),
     codigo_produto_nfe: String(item.codigo_produto_nfe || "").trim(),
+    codigos_nfe_entrada: Array.isArray(item.codigos_nfe_entrada) ? item.codigos_nfe_entrada : [],
+    codigos_sellout: Array.isArray(item.codigos_sellout) ? item.codigos_sellout : [],
+    codigos_nfe_saida: Array.isArray(item.codigos_nfe_saida) ? item.codigos_nfe_saida : [],
+    codigos_manual: Array.isArray(item.codigos_manual) ? item.codigos_manual : [],
     nome_produto: String(item.nome_produto || "").trim(),
     grupo_estoque: grupo,
     produto_base_nome: produtoBaseNome,
@@ -15650,8 +15670,13 @@ function _buscarProdutoCadastroEstoque(item = {}){
     if (porBarras) return porBarras;
   }
   if (codigoNfe) {
-    const porCodigo = lista.find((prod) => String(prod.codigo_produto_nfe || "").trim().toUpperCase() === codigoNfe);
-    if (porCodigo) return porCodigo;
+    const origemCodigos = estoqueState.importDraft?.tipo_movimento === "saida"
+      ? "codigos_nfe_saida"
+      : "codigos_nfe_entrada";
+    const porOrigem = lista.find((prod) => (prod[origemCodigos] || []).some(
+      (codigo) => _estoqueCodigoNormalizadoComparacao(codigo) === _estoqueCodigoNormalizadoComparacao(codigoNfe)
+    ));
+    if (porOrigem) return porOrigem;
   }
   if (nome) {
     const porNome = lista.find((prod) => String(prod.nome_produto || "").trim().toUpperCase() === nome);
@@ -15660,6 +15685,10 @@ function _buscarProdutoCadastroEstoque(item = {}){
   if (baseKey) {
     const porBase = lista.find((prod) => _estoqueProdutoBaseKey(prod) === baseKey);
     if (porBase) return porBase;
+  }
+  if (codigoNfe) {
+    const porCodigo = lista.find((prod) => String(prod.codigo_produto_nfe || "").trim().toUpperCase() === codigoNfe);
+    if (porCodigo) return porCodigo;
   }
   return null;
 }
@@ -17497,11 +17526,16 @@ function limparProdutoEstoqueCadastro(){
   const ids = [
     "estoqueCadastroCodigoBarras",
     "estoqueCadastroCodigoNfe",
+    "estoqueCadastroCodigosNfeEntrada",
+    "estoqueCadastroCodigosSellout",
+    "estoqueCadastroCodigosNfeSaida",
+    "estoqueCadastroCodigosManual",
     "estoqueCadastroNomeProduto",
     "estoqueCadastroGrupo",
     "estoqueCadastroBaseNome",
     "estoqueCadastroEmbalagem",
     "estoqueCadastroFator",
+    "estoqueCadastroSaldoAtual",
     "estoqueCadastroAjusteQuantidade",
     "estoqueCadastroAjusteMotivo",
   ];
@@ -17513,10 +17547,12 @@ function limparProdutoEstoqueCadastro(){
   if (fatorPadrao) fatorPadrao.value = "1";
   const ajusteBox = document.getElementById("estoqueCadastroAjusteBox");
   const ajusteBtn = document.getElementById("estoqueCadastroAjusteBtn");
+  const saldoAtualBtn = document.getElementById("estoqueCadastroSaldoAtualBtn");
   if (ajusteBox) ajusteBox.classList.add("hidden");
   if (ajusteBtn) ajusteBtn.classList.add("hidden");
+  if (saldoAtualBtn) saldoAtualBtn.classList.add("hidden");
   const status = document.getElementById("estoqueCadastroStatus");
-  if (status) status.textContent = "Cadastre o produto e o fator da embalagem para automatizar a conversao da NF-e. Ao editar, voce pode lancar um ajuste para corrigir a quantidade em estoque.";
+  if (status) status.textContent = "Para PET e AGUA da producao, amarre os codigos de NF-e de entrada, venda/SELLOUT, NF-e de saida e movimento manual ao mesmo produto. Agua com gas e sem gas permanecem produtos distintos.";
 }
 
 async function carregarProdutosEstoqueCadastro(){
@@ -17533,7 +17569,12 @@ async function carregarProdutosEstoqueCadastro(){
       <td>${_escHtml(_estoqueGrupoLabel(item.grupo_estoque))}</td>
       <td>${_escHtml(item.nome_produto || "-")}${item.cadastro_explicitado ? "" : ' <span class="estoque-pack-hint">confirmar</span>'}</td>
       <td>${_escHtml(item.produto_base_nome || "-")}</td>
-      <td>${_escHtml(item.codigo_barras || item.codigo_produto_nfe || "-")}</td>
+      <td>${_escHtml(item.codigo_barras || item.codigo_produto_nfe || "-")}${[
+        item.codigos_nfe_entrada?.length ? `NF-e ent.: ${item.codigos_nfe_entrada.join(", ")}` : "",
+        item.codigos_sellout?.length ? `SELLOUT: ${item.codigos_sellout.join(", ")}` : "",
+        item.codigos_nfe_saida?.length ? `NF-e saida: ${item.codigos_nfe_saida.join(", ")}` : "",
+        item.codigos_manual?.length ? `Manual: ${item.codigos_manual.join(", ")}` : "",
+      ].filter(Boolean).map((linha) => `<br><small>${_escHtml(linha)}</small>`).join("")}</td>
       <td>${_escHtml(_estoqueFormatQtd(_saldoProdutoCadastroAtual(item)))}</td>
       <td>${_escHtml(item.embalagem_tipo_padrao || item.unidade || "UN")}</td>
       <td>${_escHtml(_estoqueFormatQtd(item.fator_embalagem_padrao || 0))}</td>
@@ -17811,11 +17852,16 @@ function editarProdutoEstoqueCadastro(id){
   const map = {
     estoqueCadastroCodigoBarras: item.codigo_barras || "",
     estoqueCadastroCodigoNfe: item.codigo_produto_nfe || "",
+    estoqueCadastroCodigosNfeEntrada: (item.codigos_nfe_entrada || []).join(", "),
+    estoqueCadastroCodigosSellout: (item.codigos_sellout || []).join(", "),
+    estoqueCadastroCodigosNfeSaida: (item.codigos_nfe_saida || []).join(", "),
+    estoqueCadastroCodigosManual: (item.codigos_manual || []).join(", "),
     estoqueCadastroNomeProduto: item.nome_produto || "",
     estoqueCadastroGrupo: item.grupo_estoque || "",
     estoqueCadastroBaseNome: item.produto_base_nome || "",
     estoqueCadastroEmbalagem: item.embalagem_tipo_padrao || item.unidade || "",
     estoqueCadastroFator: item.fator_embalagem_padrao || "",
+    estoqueCadastroSaldoAtual: "",
     estoqueCadastroAjusteQuantidade: "",
     estoqueCadastroAjusteMotivo: "",
   };
@@ -17825,9 +17871,11 @@ function editarProdutoEstoqueCadastro(id){
   });
   const ajusteBox = document.getElementById("estoqueCadastroAjusteBox");
   const ajusteBtn = document.getElementById("estoqueCadastroAjusteBtn");
+  const saldoAtualBtn = document.getElementById("estoqueCadastroSaldoAtualBtn");
   const admin = String(usuarioLogado?.perfil || "").toLowerCase() === "admin";
   if (ajusteBox) ajusteBox.classList.toggle("hidden", !admin);
   if (ajusteBtn) ajusteBtn.classList.toggle("hidden", !admin);
+  if (saldoAtualBtn) saldoAtualBtn.classList.toggle("hidden", !admin);
   const status = document.getElementById("estoqueCadastroStatus");
   if (status) {
     status.textContent = `Editando cadastro de embalagem: ${item.nome_produto || item.codigo_barras || item.codigo_produto_nfe || item.id} | Saldo atual: ${_estoqueFormatQtd(_saldoProdutoCadastroAtual(item))}`;
@@ -17843,6 +17891,10 @@ async function salvarProdutoEstoqueCadastro(){
     produto_base_nome: (document.getElementById("estoqueCadastroBaseNome")?.value || "").trim(),
     embalagem_tipo_padrao: (document.getElementById("estoqueCadastroEmbalagem")?.value || "").trim(),
     fator_embalagem_padrao: Number((document.getElementById("estoqueCadastroFator")?.value || "").trim() || 1),
+    codigos_nfe_entrada: (document.getElementById("estoqueCadastroCodigosNfeEntrada")?.value || "").trim(),
+    codigos_sellout: (document.getElementById("estoqueCadastroCodigosSellout")?.value || "").trim(),
+    codigos_nfe_saida: (document.getElementById("estoqueCadastroCodigosNfeSaida")?.value || "").trim(),
+    codigos_manual: (document.getElementById("estoqueCadastroCodigosManual")?.value || "").trim(),
   };
   if (!(payload.fator_embalagem_padrao > 0)) {
     payload.fator_embalagem_padrao = 1;
@@ -17907,6 +17959,47 @@ async function aplicarAjusteProdutoEstoqueCadastro(){
   const qtdEl = document.getElementById("estoqueCadastroAjusteQuantidade");
   const motivoEl = document.getElementById("estoqueCadastroAjusteMotivo");
   if (qtdEl) qtdEl.value = "";
+  if (motivoEl) motivoEl.value = "";
+  await carregarEstoque();
+  if (window.__dashView === "estoque") await renderDashboardEstoque();
+  editarProdutoEstoqueCadastro(editId);
+}
+
+async function definirSaldoAtualProdutoEstoqueCadastro(){
+  const editId = Number(estoqueState.cadastroProdutoEditId || 0);
+  const saldoEl = document.getElementById("estoqueCadastroSaldoAtual");
+  const saldoRaw = String(saldoEl?.value || "").trim();
+  const quantidade_atual = Number(saldoRaw);
+  const motivoEl = document.getElementById("estoqueCadastroAjusteMotivo");
+  const motivoInformado = String(motivoEl?.value || "").trim();
+  const motivo_ajuste = motivoInformado || `Inventario fisico ${new Date().toLocaleDateString("pt-BR")}`;
+  const status = document.getElementById("estoqueCadastroStatus");
+  if (!(editId > 0)) {
+    alert("Selecione um produto cadastrado para definir o saldo fisico.");
+    return;
+  }
+  if (!saldoRaw || !Number.isFinite(quantidade_atual) || quantidade_atual < 0) {
+    alert("Informe o saldo fisico contado, igual ou maior que zero.");
+    return;
+  }
+
+  const resp = await apiFetch(`/api/estoque/produtos/${editId}/ajuste`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ quantidade_atual, motivo_ajuste }),
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    if (status) status.textContent = data?.erro || "Falha ao definir o saldo fisico.";
+    alert(data?.erro || "Falha ao definir o saldo fisico.");
+    return;
+  }
+
+  const produtoLabel = data?.produto?.nome_produto || data?.produto?.codigo_barras || data?.produto?.codigo_produto_nfe || editId;
+  if (status) {
+    status.textContent = `Saldo fisico definido em ${produtoLabel}: ${_estoqueFormatQtd(data?.saldo_antes)} -> ${_estoqueFormatQtd(data?.saldo_depois)}. Motivo: ${motivo_ajuste}.`;
+  }
+  if (saldoEl) saldoEl.value = "";
   if (motivoEl) motivoEl.value = "";
   await carregarEstoque();
   if (window.__dashView === "estoque") await renderDashboardEstoque();

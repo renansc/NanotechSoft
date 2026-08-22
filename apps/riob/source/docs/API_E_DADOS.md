@@ -478,6 +478,7 @@ por `estoque_area`, `estoque_subgrupo` e `exibir_dashboard`.
 - `GET /api/estoque`
 - `GET /api/estoque/saldo`
 - `GET /api/estoque/produtos`
+- `POST /api/estoque/produtos/<id>/ajuste`
 - `GET /api/estoque/conferencias`
 - `GET /api/estoque/conferencias/<id>`
 - `GET /api/estoque/importacoes-xml`
@@ -511,9 +512,24 @@ Regras:
 - `POST /api/estoque` cria uma movimentacao de `entrada` ou `saida`
 - produtos faltantes podem ser auto cadastrados em `estoque_produtos`
 - `GET /api/dashboard_estoque` e `GET /api/estoque/saldo` retornam o saldo atual consolidado por item
+- o inventario inicial deve usar `quantidade_atual` em
+  `POST /api/estoque/produtos/<id>/ajuste`; o backend grava apenas a diferenca
+  necessaria para que o saldo canonico consolidado passe a ser a contagem fisica
+- a previsao semanal comeca no domingo, usa a maior quantidade entre vendas e
+  saidas observadas para nao duplicar o mesmo despacho, projeta sete dias e
+  calcula `necessidade_producao_semana = max(0, previsao_demanda_semana - saldo_remanescente)`
+- a tabela de producao semanal exibe essa necessidade somente para `PET` e
+  `AGUA`; movimentos e saldos dos demais grupos continuam preservados
 - bebidas sao consolidadas pela identidade canonica
   `grupo + sabor/familia + volume`, mesmo quando existem codigos ou descricoes
   duplicadas; a resposta informa `codigos_origem` e `itens_unificados`
+- produtos acabados de producao dos grupos `PET` e `AGUA` aceitam amarracao de
+  varios codigos por origem em `estoque_produto_codigos`: `nfe_entrada`,
+  `sellout`, `nfe_saida` e `manual`. A origem participa da chave para que um
+  mesmo numero usado por sistemas diferentes nao identifique o produto errado
+- ao receber um codigo ainda sem amarracao, o backend usa como contingencia a
+  identidade canonica de bebida e registra o novo alias no produto encontrado;
+  agua com gas e agua sem gas possuem identidades distintas
 - os saldos sao somados em unidades depois da conversao: pacote padrao e agua
   usam 12, PET 2 L usa 6, caixa retornavel 600 ml usa 24 e caixa retornavel
   200 ml usa 48
@@ -1168,6 +1184,16 @@ Campos relevantes:
 - `origem_cadastro`
 - `criado_em`
 - `atualizado_em`
+
+### `estoque_produto_codigos`
+
+- `produto_id`
+- `origem_tipo` (`nfe_entrada`, `sellout`, `nfe_saida` ou `manual`)
+- `codigo`
+- `codigo_norm`
+- `nome_origem`
+- `ativo`
+- a combinacao `origem_tipo + codigo_norm` e unica
 
 ### `estoque_conferencias`
 

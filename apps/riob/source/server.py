@@ -1130,6 +1130,24 @@ def ensure_schema():
         )
         """)
         cur.execute("""
+        CREATE TABLE IF NOT EXISTS estoque_produto_codigos (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            produto_id INT NOT NULL,
+            origem_tipo VARCHAR(30) NOT NULL,
+            codigo VARCHAR(120) NOT NULL,
+            codigo_norm VARCHAR(120) NOT NULL,
+            nome_origem VARCHAR(255) DEFAULT '',
+            ativo TINYINT(1) NOT NULL DEFAULT 1,
+            criado_em DATETIME DEFAULT CURRENT_TIMESTAMP,
+            atualizado_em DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uq_estoque_produto_codigo_origem (origem_tipo, codigo_norm),
+            INDEX idx_estoque_produto_codigos_produto (produto_id, ativo),
+            CONSTRAINT fk_estoque_produto_codigos_produto
+                FOREIGN KEY (produto_id) REFERENCES estoque_produtos(id)
+                ON UPDATE CASCADE ON DELETE CASCADE
+        )
+        """)
+        cur.execute("""
         CREATE TABLE IF NOT EXISTS estoque_xml_fornecedor_regras (
             id INT AUTO_INCREMENT PRIMARY KEY,
             emitente_hash CHAR(40) NOT NULL,
@@ -3375,6 +3393,68 @@ _ESTOQUE_GRUPOS_ORDEM = {
     "OUTROS": 3,
 }
 
+_ESTOQUE_GRUPOS_PRODUTOS_VENDIDOS = {"PET", "AGUA"}
+_ESTOQUE_CODIGO_ORIGENS = ("nfe_entrada", "sellout", "nfe_saida", "manual")
+
+
+def _estoque_origem_codigo_normalizada(valor="", tipo_movimento=""):
+    bruto = _produto_nome_normalizado(valor).replace(" ", "_").lower()
+    aliases = {
+        "nfe_entrada": "nfe_entrada",
+        "entrada_nfe": "nfe_entrada",
+        "nfe_xml": "nfe_entrada",
+        "nfe_pdf": "nfe_entrada",
+        "nfe_portal": "nfe_entrada",
+        "conferencia_nfe": "nfe_entrada",
+        "nfe_saida": "nfe_saida",
+        "saida_nfe": "nfe_saida",
+        "sellout": "sellout",
+        "venda": "sellout",
+        "vendas": "sellout",
+        "carga_pdf": "sellout",
+        "vendas_diario": "sellout",
+        "manual": "manual",
+        "ajuste_cadastro": "manual",
+    }
+    if bruto == "importar_xml":
+        return "nfe_saida" if _as_str(tipo_movimento).lower() == "saida" else "nfe_entrada"
+    return aliases.get(bruto, "manual" if bruto else "")
+
+
+def _estoque_codigos_lista(valor):
+    if isinstance(valor, (list, tuple, set)):
+        valores = list(valor)
+    else:
+        valores = re.split(r"[,;\n]+", _as_str(valor))
+    resultado = []
+    vistos = set()
+    for item in valores:
+        codigo = _as_str(item).strip()[:120]
+        codigo_norm = _codigo_produto_chave(codigo)
+        if not codigo_norm or codigo_norm in vistos:
+            continue
+        vistos.add(codigo_norm)
+        resultado.append(codigo)
+    return resultado
+
+
+def _estoque_codigos_payload(data):
+    data = data if isinstance(data, dict) else {}
+    mapa = data.get("codigos_por_origem") if isinstance(data.get("codigos_por_origem"), dict) else {}
+    campos = {
+        "nfe_entrada": "codigos_nfe_entrada",
+        "sellout": "codigos_sellout",
+        "nfe_saida": "codigos_nfe_saida",
+        "manual": "codigos_manual",
+    }
+    resultado = {}
+    informado = False
+    for origem, campo in campos.items():
+        if origem in mapa or campo in data:
+            informado = True
+            resultado[origem] = _estoque_codigos_lista(mapa.get(origem, data.get(campo)))
+    return resultado, informado
+
 def _estoque_grupo_normalizado(valor):
     bruto = _as_str(valor).strip().upper()
     if not bruto:
@@ -3960,44 +4040,13 @@ def _carregar_xml_fabrica_fonte(file_storage=None):
     return _carregar_arquivo_por_extensao(CARGAS_IMPORT_XML_DIRS, [".xml"])
 
 def _buscar_produto_cadastro_por_referencias(cur, codigo_produto="", codigo_barras="", nome_produto=""):
-    codigo_barras = _normalizar_codigo_barras(codigo_barras)
-    codigo_produto = _codigo_produto_chave(codigo_produto)
-    nome_norm = _produto_nome_normalizado(nome_produto)
-    if codigo_barras:
-        cur.execute("""
-            SELECT id, codigo_barras, codigo_produto_nfe, nome_produto, grupo_estoque, produto_base_nome, unidade,
-                   embalagem_tipo_padrao, fator_embalagem_padrao, origem_cadastro, criado_em, atualizado_em
-            FROM estoque_produtos
-            WHERE codigo_barras=%s
-            ORDER BY id DESC
-            LIMIT 1
-        """, (codigo_barras,))
-        row = cur.fetchone()
-        if row:
-            return row
-    if codigo_produto:
-        cur.execute("""
-            SELECT id, codigo_barras, codigo_produto_nfe, nome_produto, unidade,
-                   embalagem_tipo_padrao, fator_embalagem_padrao, origem_cadastro, criado_em, atualizado_em
-            FROM estoque_produtos
-            WHERE TRIM(LEADING '0' FROM COALESCE(codigo_produto_nfe, ''))=%s
-            ORDER BY id DESC
-            LIMIT 1
-        """, (codigo_produto,))
-        row = cur.fetchone()
-        if row:
-            return row
-    if nome_norm:
-        cur.execute("""
-            SELECT id, codigo_barras, codigo_produto_nfe, nome_produto, unidade,
-                   embalagem_tipo_padrao, fator_embalagem_padrao, origem_cadastro, criado_em, atualizado_em
-            FROM estoque_produtos
-            ORDER BY id DESC
-        """)
-        for row in (cur.fetchall() or []):
-            if _produto_nome_normalizado(row.get("nome_produto")) == nome_norm:
-                return row
-    return None
+    return _buscar_produto_estoque(
+        cur,
+        codigo_barras=codigo_barras,
+        codigo_produto_nfe=codigo_produto,
+        nome_produto=nome_produto,
+        origem_codigo="sellout",
+    )
 
 def _saldo_atual_produto_estoque(cur, codigo_barras="", codigo_produto_nfe="", nome_produto=""):
     referencia = {
@@ -7352,6 +7401,7 @@ def _persistir_preview_nfe_estoque(preview):
                 codigo_barras=item.get("codigo_barras"),
                 codigo_produto_nfe=item.get("codigo_produto_nfe"),
                 nome_produto=item.get("nome_produto"),
+                origem_codigo="nfe_entrada",
                 unidade=item.get("unidade"),
                 origem_cadastro=origem_cadastro,
             )
@@ -7528,16 +7578,176 @@ def _importar_nfe_abastecimento_por_xml_text(abastecimento_id, xml_text, chave_a
 
     return resumo_nfe
 
-def _buscar_produto_estoque(cur, codigo_barras="", codigo_produto_nfe="", nome_produto=""):
+_ESTOQUE_PRODUTO_SELECT = """
+    SELECT id, codigo_barras, codigo_produto_nfe, nome_produto, grupo_estoque,
+           produto_base_nome, unidade, embalagem_tipo_padrao,
+           fator_embalagem_padrao, origem_cadastro, criado_em, atualizado_em
+    FROM estoque_produtos
+"""
+
+
+def _estoque_produto_eh_vendido(row):
+    return _estoque_produto_meta(row).get("grupo_estoque") in _ESTOQUE_GRUPOS_PRODUTOS_VENDIDOS
+
+
+def _estoque_produto_canonico_similar(cur, row):
+    if not row or not _estoque_produto_eh_vendido(row):
+        return row
+    chave = _as_str(_estoque_produto_meta(row).get("produto_base_key"))
+    if not chave:
+        return row
+    cur.execute(_ESTOQUE_PRODUTO_SELECT + " ORDER BY id ASC")
+    candidatos = []
+    for candidato in (cur.fetchall() or []):
+        if not _estoque_produto_eh_vendido(candidato):
+            continue
+        if _as_str(_estoque_produto_meta(candidato).get("produto_base_key")) == chave:
+            candidatos.append(candidato)
+    if not candidatos:
+        return row
+    candidatos.sort(key=lambda item: (
+        0 if _as_str(item.get("grupo_estoque")) and _as_str(item.get("produto_base_nome")) else 1,
+        _as_int(item.get("id"), 0),
+    ))
+    return candidatos[0]
+
+
+def _buscar_produto_codigo_origem(cur, codigo="", origem_tipo=""):
+    codigo_norm = _codigo_produto_chave(codigo)
+    origem = _estoque_origem_codigo_normalizada(origem_tipo)
+    if not codigo_norm:
+        return None
+    params = [codigo_norm]
+    filtro_origem = ""
+    if origem:
+        filtro_origem = " AND pc.origem_tipo=%s"
+        params.append(origem)
+    cur.execute(
+        """
+        SELECT p.id, p.codigo_barras, p.codigo_produto_nfe, p.nome_produto,
+               p.grupo_estoque, p.produto_base_nome, p.unidade,
+               p.embalagem_tipo_padrao, p.fator_embalagem_padrao,
+               p.origem_cadastro, p.criado_em, p.atualizado_em
+        FROM estoque_produtos p
+        JOIN estoque_produto_codigos pc ON pc.produto_id=p.id
+        WHERE pc.ativo=1 AND pc.codigo_norm=%s
+        """
+        + filtro_origem
+        + " ORDER BY pc.id DESC",
+        tuple(params),
+    )
+    rows = cur.fetchall() or []
+    if not rows:
+        return None
+    if not origem and len({_as_int(item.get("id"), 0) for item in rows}) > 1:
+        return None
+    return rows[0]
+
+
+def _registrar_codigo_produto_estoque(cur, produto, origem_tipo, codigo, nome_origem="", estrito=False):
+    produto_id = _as_int((produto or {}).get("id"), 0)
+    origem = _estoque_origem_codigo_normalizada(origem_tipo)
+    codigo_saida = _as_str(codigo).strip()[:120]
+    codigo_norm = _codigo_produto_chave(codigo_saida)
+    if produto_id <= 0 or origem not in _ESTOQUE_CODIGO_ORIGENS or not codigo_norm:
+        return False
+    if not _estoque_produto_eh_vendido(produto):
+        if estrito:
+            raise ValueError("a amarracao de codigos e permitida somente para PET e AGUA da producao")
+        return False
+    cur.execute(
+        """
+        SELECT pc.id, pc.produto_id, p.nome_produto
+        FROM estoque_produto_codigos pc
+        JOIN estoque_produtos p ON p.id=pc.produto_id
+        WHERE pc.origem_tipo=%s AND pc.codigo_norm=%s
+        LIMIT 1
+        """,
+        (origem, codigo_norm),
+    )
+    existente = cur.fetchone() or {}
+    if existente and _as_int(existente.get("produto_id"), 0) != produto_id:
+        if estrito:
+            raise ValueError(
+                f"o codigo {codigo_saida} de {origem} ja esta amarrado ao produto "
+                f"{_as_str(existente.get('nome_produto')) or existente.get('produto_id')}"
+            )
+        return False
+    cur.execute(
+        """
+        INSERT INTO estoque_produto_codigos
+            (produto_id, origem_tipo, codigo, codigo_norm, nome_origem, ativo)
+        VALUES (%s, %s, %s, %s, %s, 1)
+        ON DUPLICATE KEY UPDATE
+            produto_id=VALUES(produto_id), codigo=VALUES(codigo),
+            nome_origem=VALUES(nome_origem), ativo=1, atualizado_em=NOW()
+        """,
+        (produto_id, origem, codigo_saida, codigo_norm, _as_str(nome_origem)[:255]),
+    )
+    return True
+
+
+def _sincronizar_codigos_produto_estoque(cur, produto, codigos_por_origem):
+    if not isinstance(codigos_por_origem, dict):
+        return
+    produto_id = _as_int((produto or {}).get("id"), 0)
+    if produto_id <= 0:
+        return
+    if any(_estoque_codigos_lista(codigos) for codigos in codigos_por_origem.values()) and not _estoque_produto_eh_vendido(produto):
+        raise ValueError("a amarracao de codigos e permitida somente para PET e AGUA da producao")
+    for origem, codigos in codigos_por_origem.items():
+        origem_norm = _estoque_origem_codigo_normalizada(origem)
+        if origem_norm not in _ESTOQUE_CODIGO_ORIGENS:
+            continue
+        cur.execute(
+            "DELETE FROM estoque_produto_codigos WHERE produto_id=%s AND origem_tipo=%s",
+            (produto_id, origem_norm),
+        )
+        for codigo in _estoque_codigos_lista(codigos):
+            _registrar_codigo_produto_estoque(
+                cur, produto, origem_norm, codigo,
+                nome_origem=produto.get("nome_produto"), estrito=True,
+            )
+
+
+def _carregar_codigos_produtos_estoque(cur, produto_ids=None):
+    ids = sorted({_as_int(item, 0) for item in (produto_ids or []) if _as_int(item, 0) > 0})
+    where = "WHERE pc.ativo=1"
+    params = []
+    if ids:
+        where += f" AND pc.produto_id IN ({','.join(['%s'] * len(ids))})"
+        params.extend(ids)
+    cur.execute(
+        f"""
+        SELECT pc.produto_id, pc.origem_tipo, pc.codigo
+        FROM estoque_produto_codigos pc
+        {where}
+        ORDER BY pc.origem_tipo, pc.codigo_norm, pc.id
+        """,
+        tuple(params),
+    )
+    resultado = {}
+    for row in (cur.fetchall() or []):
+        produto_id = _as_int(row.get("produto_id"), 0)
+        origem = _estoque_origem_codigo_normalizada(row.get("origem_tipo"))
+        codigo = _as_str(row.get("codigo"))
+        if produto_id <= 0 or origem not in _ESTOQUE_CODIGO_ORIGENS or not codigo:
+            continue
+        resultado.setdefault(produto_id, {}).setdefault(origem, []).append(codigo)
+    return resultado
+
+
+def _buscar_produto_estoque(cur, codigo_barras="", codigo_produto_nfe="", nome_produto="", origem_codigo=""):
     codigo_barras = _normalizar_codigo_barras(codigo_barras)
     codigo_produto_nfe = _as_str(codigo_produto_nfe)
     codigo_produto_norm = _codigo_produto_chave(codigo_produto_nfe)
     nome_produto = _as_str(nome_produto)
     nome_produto_norm = _produto_nome_normalizado(nome_produto)
+    origem_codigo_norm = _estoque_origem_codigo_normalizada(origem_codigo)
 
     if codigo_barras:
         cur.execute("""
-            SELECT id, codigo_barras, codigo_produto_nfe, nome_produto, unidade,
+            SELECT id, codigo_barras, codigo_produto_nfe, nome_produto, grupo_estoque, produto_base_nome, unidade,
                    embalagem_tipo_padrao, fator_embalagem_padrao, origem_cadastro, criado_em, atualizado_em
             FROM estoque_produtos
             WHERE codigo_barras=%s
@@ -7546,9 +7756,13 @@ def _buscar_produto_estoque(cur, codigo_barras="", codigo_produto_nfe="", nome_p
         """, (codigo_barras,))
         row = cur.fetchone()
         if row:
-            return row
+            return _estoque_produto_canonico_similar(cur, row)
 
     if codigo_produto_nfe:
+        row = _buscar_produto_codigo_origem(cur, codigo_produto_nfe, origem_codigo_norm)
+        if row:
+            return row
+    if codigo_produto_nfe and not origem_codigo_norm:
         cur.execute("""
             SELECT id, codigo_barras, codigo_produto_nfe, nome_produto, grupo_estoque, produto_base_nome, unidade,
                    embalagem_tipo_padrao, fator_embalagem_padrao, origem_cadastro, criado_em, atualizado_em
@@ -7559,8 +7773,8 @@ def _buscar_produto_estoque(cur, codigo_barras="", codigo_produto_nfe="", nome_p
         """, (codigo_produto_nfe,))
         row = cur.fetchone()
         if row:
-            return row
-    if codigo_produto_norm:
+            return _estoque_produto_canonico_similar(cur, row)
+    if codigo_produto_norm and not origem_codigo_norm:
         cur.execute("""
             SELECT id, codigo_barras, codigo_produto_nfe, nome_produto, grupo_estoque, produto_base_nome, unidade,
                    embalagem_tipo_padrao, fator_embalagem_padrao, origem_cadastro, criado_em, atualizado_em
@@ -7571,7 +7785,7 @@ def _buscar_produto_estoque(cur, codigo_barras="", codigo_produto_nfe="", nome_p
         """, (codigo_produto_norm,))
         row = cur.fetchone()
         if row:
-            return row
+            return _estoque_produto_canonico_similar(cur, row)
 
     if nome_produto:
         cur.execute("""
@@ -7584,7 +7798,7 @@ def _buscar_produto_estoque(cur, codigo_barras="", codigo_produto_nfe="", nome_p
         """, (nome_produto,))
         row = cur.fetchone()
         if row:
-            return row
+            return _estoque_produto_canonico_similar(cur, row)
     if nome_produto_norm:
         cur.execute("""
             SELECT id, codigo_barras, codigo_produto_nfe, nome_produto, grupo_estoque, produto_base_nome, unidade,
@@ -7594,16 +7808,58 @@ def _buscar_produto_estoque(cur, codigo_barras="", codigo_produto_nfe="", nome_p
         """)
         for row in (cur.fetchall() or []):
             if _produto_nome_normalizado(row.get("nome_produto")) == nome_produto_norm:
-                return row
+                return _estoque_produto_canonico_similar(cur, row)
+
+        referencia = {
+            "codigo_barras": codigo_barras,
+            "codigo_produto_nfe": codigo_produto_nfe,
+            "nome_produto": nome_produto,
+        }
+        if _estoque_produto_eh_vendido(referencia):
+            chave = _as_str(_estoque_produto_meta(referencia).get("produto_base_key"))
+            cur.execute(_ESTOQUE_PRODUTO_SELECT + " ORDER BY id ASC")
+            for row in (cur.fetchall() or []):
+                if _estoque_produto_eh_vendido(row) and _as_str(_estoque_produto_meta(row).get("produto_base_key")) == chave:
+                    return _estoque_produto_canonico_similar(cur, row)
+
+    # Em fluxos tipados, a descricao deve desfazer a ambiguidade antes do
+    # codigo legado: o mesmo numero pode representar produtos distintos na
+    # NF-e e no SELLOUT. O legado permanece como ultimo recurso de compatibilidade.
+    if origem_codigo_norm and codigo_produto_nfe:
+        cur.execute("""
+            SELECT id, codigo_barras, codigo_produto_nfe, nome_produto, grupo_estoque, produto_base_nome, unidade,
+                   embalagem_tipo_padrao, fator_embalagem_padrao, origem_cadastro, criado_em, atualizado_em
+            FROM estoque_produtos
+            WHERE codigo_produto_nfe=%s
+            ORDER BY id DESC
+            LIMIT 1
+        """, (codigo_produto_nfe,))
+        row = cur.fetchone()
+        if row:
+            return _estoque_produto_canonico_similar(cur, row)
+    if origem_codigo_norm and codigo_produto_norm:
+        cur.execute("""
+            SELECT id, codigo_barras, codigo_produto_nfe, nome_produto, grupo_estoque, produto_base_nome, unidade,
+                   embalagem_tipo_padrao, fator_embalagem_padrao, origem_cadastro, criado_em, atualizado_em
+            FROM estoque_produtos
+            WHERE TRIM(LEADING '0' FROM COALESCE(codigo_produto_nfe, ''))=%s
+            ORDER BY id DESC
+            LIMIT 1
+        """, (codigo_produto_norm,))
+        row = cur.fetchone()
+        if row:
+            return _estoque_produto_canonico_similar(cur, row)
 
     return None
 
-def _obter_ou_criar_produto_estoque(cur, codigo_barras="", codigo_produto_nfe="", nome_produto="", unidade="", origem_cadastro="manual"):
+def _obter_ou_criar_produto_estoque(cur, codigo_barras="", codigo_produto_nfe="", nome_produto="", unidade="", origem_cadastro="manual", origem_codigo=""):
+    origem_codigo = _estoque_origem_codigo_normalizada(origem_codigo or origem_cadastro)
     row = _buscar_produto_estoque(
         cur,
         codigo_barras=codigo_barras,
         codigo_produto_nfe=codigo_produto_nfe,
         nome_produto=nome_produto,
+        origem_codigo=origem_codigo,
     )
     if row:
         updates = []
@@ -7639,7 +7895,20 @@ def _obter_ou_criar_produto_estoque(cur, codigo_barras="", codigo_produto_nfe=""
                 "produto_base_nome": produto_base_nome or row.get("produto_base_nome"),
                 "unidade": unidade or row.get("unidade"),
             }
+        _registrar_codigo_produto_estoque(
+            cur, row, origem_codigo, codigo_produto_nfe,
+            nome_origem=nome_produto,
+        )
         return row, False
+
+    grupo_inferido = _estoque_grupo_inferido(
+        nome_produto=nome_produto,
+        codigo_produto_nfe=codigo_produto_nfe,
+    )
+    base_inferida = _estoque_base_nome_inferido(
+        nome_produto=nome_produto,
+        grupo_estoque=grupo_inferido,
+    )
 
     cur.execute("""
         INSERT INTO estoque_produtos
@@ -7650,37 +7919,51 @@ def _obter_ou_criar_produto_estoque(cur, codigo_barras="", codigo_produto_nfe=""
         _normalizar_codigo_barras(codigo_barras),
         _codigo_produto_nfe_saida(codigo_produto_nfe),
         _as_str(nome_produto),
-        "",
-        "",
+        grupo_inferido if grupo_inferido in _ESTOQUE_GRUPOS_PRODUTOS_VENDIDOS else "",
+        base_inferida if grupo_inferido in _ESTOQUE_GRUPOS_PRODUTOS_VENDIDOS else "",
         _as_str(unidade),
         "",
         1.0,
         _as_str(origem_cadastro) or "manual",
     ))
     produto_id = cur.lastrowid
-    return {
+    produto = {
         "id": produto_id,
         "codigo_barras": _normalizar_codigo_barras(codigo_barras),
         "codigo_produto_nfe": _codigo_produto_nfe_saida(codigo_produto_nfe),
         "nome_produto": _as_str(nome_produto),
-        "grupo_estoque": "",
-        "produto_base_nome": "",
+        "grupo_estoque": grupo_inferido if grupo_inferido in _ESTOQUE_GRUPOS_PRODUTOS_VENDIDOS else "",
+        "produto_base_nome": base_inferida if grupo_inferido in _ESTOQUE_GRUPOS_PRODUTOS_VENDIDOS else "",
         "unidade": _as_str(unidade),
         "embalagem_tipo_padrao": "",
         "fator_embalagem_padrao": 1.0,
         "origem_cadastro": _as_str(origem_cadastro) or "manual",
-    }, True
+    }
+    _registrar_codigo_produto_estoque(
+        cur, produto, origem_codigo, codigo_produto_nfe,
+        nome_origem=nome_produto,
+    )
+    return produto, True
 
-def _produto_estoque_publico(row):
+def _produto_estoque_publico(row, codigos_por_origem=None):
     meta = _estoque_produto_meta(row)
     classificacao = _estoque_classificacao_operacional({**row, **meta})
     fator_padrao = _as_float(row.get("fator_embalagem_padrao"), 1.0)
     if fator_padrao <= 0:
         fator_padrao = 1.0
+    codigos_mapa = {
+        origem: _estoque_codigos_lista((codigos_por_origem or {}).get(origem))
+        for origem in _ESTOQUE_CODIGO_ORIGENS
+    }
     return {
         "id": _as_int(row.get("id"), 0),
         "codigo_barras": _normalizar_codigo_barras(row.get("codigo_barras")),
         "codigo_produto_nfe": _as_str(row.get("codigo_produto_nfe")),
+        "codigos_por_origem": codigos_mapa,
+        "codigos_nfe_entrada": codigos_mapa.get("nfe_entrada") or [],
+        "codigos_sellout": codigos_mapa.get("sellout") or [],
+        "codigos_nfe_saida": codigos_mapa.get("nfe_saida") or [],
+        "codigos_manual": codigos_mapa.get("manual") or [],
         "nome_produto": _as_str(row.get("nome_produto")),
         "grupo_estoque": meta.get("grupo_estoque"),
         "produto_base_nome": meta.get("produto_base_nome"),
@@ -7711,6 +7994,7 @@ def _aplicar_cadastro_embalagem_preview(preview):
                 codigo_barras=item.get("codigo_barras"),
                 codigo_produto_nfe=item.get("codigo_produto_nfe"),
                 nome_produto=item.get("nome_produto"),
+                origem_codigo="nfe_entrada",
             ) or {}
             unidade = _as_str(item.get("unidade"))
             if re.fullmatch(r"\d[\d.,]*", unidade or ""):
@@ -13556,31 +13840,66 @@ def _carregar_lookup_produtos_estoque(cur):
         "codigo_barras": {},
         "codigo_produto_nfe": {},
         "nome_produto": {},
+        "produto_base_key": {},
+        "codigo_origem": {origem: {} for origem in _ESTOQUE_CODIGO_ORIGENS},
     }
     for row in rows:
         codigo_barras = _normalizar_codigo_barras(row.get("codigo_barras"))
         codigo_nfe = _codigo_produto_chave(row.get("codigo_produto_nfe"))
         nome_norm = _produto_nome_normalizado(row.get("nome_produto"))
+        base_key = _as_str(_estoque_produto_meta(row).get("produto_base_key"))
         if codigo_barras and codigo_barras not in lookup["codigo_barras"]:
             lookup["codigo_barras"][codigo_barras] = row
         if codigo_nfe and codigo_nfe not in lookup["codigo_produto_nfe"]:
             lookup["codigo_produto_nfe"][codigo_nfe] = row
         if nome_norm and nome_norm not in lookup["nome_produto"]:
             lookup["nome_produto"][nome_norm] = row
+        if _estoque_produto_eh_vendido(row) and base_key and base_key not in lookup["produto_base_key"]:
+            lookup["produto_base_key"][base_key] = row
+    cur.execute("""
+        SELECT pc.origem_tipo, pc.codigo_norm, p.id, p.codigo_barras,
+               p.codigo_produto_nfe, p.nome_produto, p.grupo_estoque,
+               p.produto_base_nome, p.unidade, p.embalagem_tipo_padrao,
+               p.fator_embalagem_padrao, p.origem_cadastro,
+               p.criado_em, p.atualizado_em
+        FROM estoque_produto_codigos pc
+        JOIN estoque_produtos p ON p.id=pc.produto_id
+        WHERE pc.ativo=1
+        ORDER BY pc.id DESC
+    """)
+    for row in (cur.fetchall() or []):
+        origem = _estoque_origem_codigo_normalizada(row.get("origem_tipo"))
+        codigo_norm = _codigo_produto_chave(row.get("codigo_norm"))
+        if origem in _ESTOQUE_CODIGO_ORIGENS and codigo_norm:
+            lookup["codigo_origem"].setdefault(origem, {}).setdefault(codigo_norm, row)
     return lookup
 
-def _resolver_produto_lookup_estoque(lookup, codigo_barras="", codigo_produto_nfe="", nome_produto=""):
+def _resolver_produto_lookup_estoque(lookup, codigo_barras="", codigo_produto_nfe="", nome_produto="", origem_codigo=""):
     if not isinstance(lookup, dict):
         return None
     codigo_barras_norm = _normalizar_codigo_barras(codigo_barras)
     codigo_nfe_norm = _codigo_produto_chave(codigo_produto_nfe)
     nome_norm = _produto_nome_normalizado(nome_produto)
+    origem = _estoque_origem_codigo_normalizada(origem_codigo)
     if codigo_barras_norm and codigo_barras_norm in lookup.get("codigo_barras", {}):
         return lookup["codigo_barras"][codigo_barras_norm]
-    if codigo_nfe_norm and codigo_nfe_norm in lookup.get("codigo_produto_nfe", {}):
+    if origem and codigo_nfe_norm in lookup.get("codigo_origem", {}).get(origem, {}):
+        return lookup["codigo_origem"][origem][codigo_nfe_norm]
+    if not origem and codigo_nfe_norm and codigo_nfe_norm in lookup.get("codigo_produto_nfe", {}):
         return lookup["codigo_produto_nfe"][codigo_nfe_norm]
     if nome_norm and nome_norm in lookup.get("nome_produto", {}):
         return lookup["nome_produto"][nome_norm]
+    referencia = {
+        "codigo_barras": codigo_barras,
+        "codigo_produto_nfe": codigo_produto_nfe,
+        "nome_produto": nome_produto,
+    }
+    if _estoque_produto_eh_vendido(referencia):
+        base_key = _as_str(_estoque_produto_meta(referencia).get("produto_base_key"))
+        if base_key and base_key in lookup.get("produto_base_key", {}):
+            return lookup["produto_base_key"][base_key]
+    if origem and codigo_nfe_norm and codigo_nfe_norm in lookup.get("codigo_produto_nfe", {}):
+        return lookup["codigo_produto_nfe"][codigo_nfe_norm]
     return None
 
 def _estoque_merge_row(target, aliases, row):
@@ -13620,6 +13939,7 @@ def _estoque_merge_row(target, aliases, row):
         "entradas_total": 0.0,
         "saidas_total": 0.0,
         "saidas_dia": 0.0,
+        "saidas_semana": 0.0,
         "quantidade_atual": 0.0,
         "quantidade_comprometida": 0.0,
         "vendas_dia": 0.0,
@@ -13716,9 +14036,33 @@ def _estoque_registrar_filtro_fornecedor(meta, fornecedor):
     categoria = item.get("categoria") or "outros"
     meta.setdefault("_categorias_fornecedor", set()).add(categoria)
 
+
+def _estoque_previsao_producao_semanal(
+    vendas_semana=0,
+    saidas_semana=0,
+    saldo_disponivel=0,
+    dias_decorridos=1,
+):
+    dias = max(1, min(7, _as_int(dias_decorridos, 1)))
+    vendas = max(0.0, _as_float(vendas_semana, 0.0))
+    saidas = max(0.0, _as_float(saidas_semana, 0.0))
+    saldo = _as_float(saldo_disponivel, 0.0)
+    # Venda e baixa podem representar o mesmo despacho. Usar a maior leitura
+    # evita duplicar a demanda e ainda cobre semanas com uma fonte incompleta.
+    demanda_observada = max(vendas, saidas)
+    demanda_projetada = round(demanda_observada * 7 / dias, 3)
+    necessidade = round(max(0.0, demanda_projetada - saldo), 3)
+    return {
+        "demanda_semana_observada": round(demanda_observada, 3),
+        "previsao_demanda_semana": demanda_projetada,
+        "necessidade_producao_semana": necessidade,
+    }
+
+
 def _estoque_resumo_produtos_data():
     hoje = datetime.date.today()
-    inicio_semana = hoje - datetime.timedelta(days=hoje.weekday())
+    inicio_semana = hoje - datetime.timedelta(days=(hoje.weekday() + 1) % 7)
+    dias_semana_decorridos = max(1, min(7, (hoje - inicio_semana).days + 1))
     conn = get_conn()
     cur = conn.cursor(dictionary=True)
     linhas = {}
@@ -13726,6 +14070,8 @@ def _estoque_resumo_produtos_data():
     meta = {
         "data_referencia": _fmt_date(hoje),
         "inicio_semana": _fmt_date(inicio_semana),
+        "fim_semana": _fmt_date(inicio_semana + datetime.timedelta(days=6)),
+        "dias_semana_decorridos": dias_semana_decorridos,
         "cargas_importadas": 0,
         "cargas_pendentes": 0,
         "cargas_baixadas": 0,
@@ -13747,6 +14093,7 @@ def _estoque_resumo_produtos_data():
                 COALESCE(SUM(CASE WHEN e.tipo_movimento = 'entrada' THEN e.quantidade ELSE 0 END), 0) AS entradas_total,
                 COALESCE(SUM(CASE WHEN e.tipo_movimento = 'saida' THEN e.quantidade ELSE 0 END), 0) AS saidas_total,
                 COALESCE(SUM(CASE WHEN e.tipo_movimento = 'saida' AND DATE(e.data_registro) = CURDATE() THEN e.quantidade ELSE 0 END), 0) AS saidas_dia,
+                COALESCE(SUM(CASE WHEN e.tipo_movimento = 'saida' AND DATE(e.data_registro) BETWEEN %s AND CURDATE() THEN e.quantidade ELSE 0 END), 0) AS saidas_semana,
                 COALESCE(SUM(CASE WHEN e.tipo_movimento = 'saida' THEN -e.quantidade ELSE e.quantidade END), 0) AS quantidade_atual,
                 MAX(e.data_registro) AS ultima_movimentacao,
                 (
@@ -13774,7 +14121,7 @@ def _estoque_resumo_produtos_data():
             GROUP BY
                 e.codigo_barras, e.codigo_produto_nfe, e.nome_produto,
                 fornecedor_cnpj, fornecedor_nome, fornecedor_categoria
-        """)
+        """, (inicio_semana,))
         for row in (cur.fetchall() or []):
             _estoque_registrar_filtro_fornecedor(meta, row)
             cadastro = _resolver_produto_lookup_estoque(
@@ -13794,6 +14141,7 @@ def _estoque_resumo_produtos_data():
             item["entradas_total"] += _as_float(row.get("entradas_total"), 0.0)
             item["saidas_total"] += _as_float(row.get("saidas_total"), 0.0)
             item["saidas_dia"] += _as_float(row.get("saidas_dia"), 0.0)
+            item["saidas_semana"] += _as_float(row.get("saidas_semana"), 0.0)
             item["quantidade_atual"] += _as_float(row.get("quantidade_atual"), 0.0)
             ultima = _fmt_dt(row.get("ultima_movimentacao"))
             if ultima and ultima > _as_str(item.get("ultima_movimentacao")):
@@ -13837,6 +14185,7 @@ def _estoque_resumo_produtos_data():
                 codigo_barras=row.get("codigo_barras"),
                 codigo_produto_nfe=row.get("codigo_produto"),
                 nome_produto=row.get("nome_produto"),
+                origem_codigo="sellout",
             ) or {}
             item = _estoque_merge_row(linhas, aliases, {
                 "codigo_barras": row.get("codigo_barras"),
@@ -13878,6 +14227,7 @@ def _estoque_resumo_produtos_data():
                         cur,
                         codigo_produto_nfe=_codigo_produto_nfe_saida(codigo_produto),
                         nome_produto=nome_produto,
+                        origem_codigo="sellout",
                     ) or {}
                     fator = _as_float(cadastro.get("fator_embalagem_padrao"), 0.0)
                     if fator <= 0:
@@ -13906,13 +14256,20 @@ def _estoque_resumo_produtos_data():
         entradas_total = round(_as_float(item.get("entradas_total"), 0.0), 3)
         saidas_total = round(_as_float(item.get("saidas_total"), 0.0), 3)
         saidas_dia = round(_as_float(item.get("saidas_dia"), 0.0), 3)
+        saidas_semana = round(_as_float(item.get("saidas_semana"), 0.0), 3)
         quantidade_atual = round(_as_float(item.get("quantidade_atual"), 0.0), 3)
         quantidade_comprometida = round(_as_float(item.get("quantidade_comprometida"), 0.0), 3)
         vendas_dia = round(_as_float(item.get("vendas_dia"), 0.0), 3)
         vendas_semana = round(_as_float(item.get("vendas_semana"), 0.0), 3)
         saldo_previsto_dia = round(quantidade_atual - quantidade_comprometida - vendas_dia, 3)
         saldo_remanescente = round(quantidade_atual - quantidade_comprometida, 3)
-        if not any([quantidade_atual, quantidade_comprometida, entradas_total, saidas_total, vendas_dia, vendas_semana, saidas_dia]):
+        previsao_semana = _estoque_previsao_producao_semanal(
+            vendas_semana=vendas_semana,
+            saidas_semana=saidas_semana,
+            saldo_disponivel=saldo_remanescente,
+            dias_decorridos=dias_semana_decorridos,
+        )
+        if not any([quantidade_atual, quantidade_comprometida, entradas_total, saidas_total, vendas_dia, vendas_semana, saidas_dia, saidas_semana]):
             continue
         fornecedores = _estoque_fornecedores_lista(item)
         meta["saidas_dia_total"] += saidas_dia
@@ -13928,10 +14285,12 @@ def _estoque_resumo_produtos_data():
             "entradas_total": entradas_total,
             "saidas_total": saidas_total,
             "saidas_dia": saidas_dia,
+            "saidas_semana": saidas_semana,
             "quantidade_atual": quantidade_atual,
             "quantidade_comprometida": quantidade_comprometida,
             "vendas_dia": vendas_dia,
             "vendas_semana": vendas_semana,
+            **previsao_semana,
             "saldo_previsto_dia": saldo_previsto_dia,
             "saldo_remanescente": saldo_remanescente,
             "ultimo_valor": _as_float(item.get("ultimo_valor"), 0.0),
@@ -13979,6 +14338,16 @@ def _dashboard_estoque_data():
     )
     meta["saidas_dia_total"] = round(
         sum(_as_float(row.get("saidas_dia"), 0.0) for row in rows), 3
+    )
+    produtos_vendidos = [
+        row for row in rows
+        if _estoque_grupo_normalizado(row.get("grupo_estoque")) in _ESTOQUE_GRUPOS_PRODUTOS_VENDIDOS
+    ]
+    meta["previsao_demanda_semana_total"] = round(
+        sum(_as_float(row.get("previsao_demanda_semana"), 0.0) for row in produtos_vendidos), 3
+    )
+    meta["necessidade_producao_semana_total"] = round(
+        sum(_as_float(row.get("necessidade_producao_semana"), 0.0) for row in produtos_vendidos), 3
     )
     return {"rows": rows, "meta": meta}
 
@@ -19436,6 +19805,7 @@ def confirmar_importacao_xml_estoque():
                     nome_produto=nome_produto,
                     unidade=unidade,
                     origem_cadastro="importar_xml",
+                    origem_codigo="nfe_saida" if tipo_movimento == "saida" else "nfe_entrada",
                 )
                 if criado:
                     produtos_criados += 1
@@ -19974,11 +20344,16 @@ def listar_produtos_estoque():
         ORDER BY nome_produto ASC, id ASC
     """)
     rows = cur.fetchall() or []
+    codigos_por_produto = _carregar_codigos_produtos_estoque(
+        cur, [row.get("id") for row in rows]
+    )
     cur.close()
     conn.close()
     produtos = []
     for row in rows:
-        item = _produto_estoque_publico(row)
+        item = _produto_estoque_publico(
+            row, codigos_por_produto.get(_as_int(row.get("id"), 0), {})
+        )
         item["pallet_meta"] = _estoque_pallet_meta(item)
         produtos.append(item)
     return jsonify(produtos)
@@ -20414,6 +20789,7 @@ def consultar_lote_rastreabilidade():
 @app.route("/api/estoque/produtos", methods=["POST"])
 def criar_produto_estoque():
     data = request.json or {}
+    codigos_por_origem, codigos_informados = _estoque_codigos_payload(data)
     codigo_barras = _normalizar_codigo_barras(data.get("codigo_barras"))
     codigo_produto_nfe = _codigo_produto_nfe_saida(data.get("codigo_produto_nfe"))
     nome_produto = _as_str(data.get("nome_produto"))
@@ -20427,6 +20803,8 @@ def criar_produto_estoque():
         return jsonify({"erro": "informe ao menos codigo de barras, codigo NF-e ou nome do produto"}), 400
     if not embalagem_tipo_padrao:
         return jsonify({"erro": "embalagem padrao e obrigatoria"}), 400
+    if any(codigos_por_origem.values()) and grupo_estoque not in _ESTOQUE_GRUPOS_PRODUTOS_VENDIDOS:
+        return jsonify({"erro": "a amarracao de codigos e exclusiva para PET e AGUA da producao"}), 400
     conn = get_conn()
     cur = conn.cursor(dictionary=True)
     try:
@@ -20450,6 +20828,20 @@ def criar_produto_estoque():
             "manual",
         ))
         produto_id = cur.lastrowid
+        produto_novo = {
+            "id": produto_id,
+            "codigo_barras": codigo_barras,
+            "codigo_produto_nfe": codigo_produto_nfe,
+            "nome_produto": nome_produto,
+            "grupo_estoque": grupo_estoque,
+            "produto_base_nome": produto_base_nome,
+            "unidade": embalagem_tipo_padrao,
+            "embalagem_tipo_padrao": embalagem_tipo_padrao,
+            "fator_embalagem_padrao": fator_embalagem_padrao,
+            "origem_cadastro": "manual",
+        }
+        if codigos_informados:
+            _sincronizar_codigos_produto_estoque(cur, produto_novo, codigos_por_origem)
         conn.commit()
         cur.execute("""
             SELECT id, codigo_barras, codigo_produto_nfe, nome_produto, grupo_estoque, produto_base_nome, unidade,
@@ -20459,7 +20851,11 @@ def criar_produto_estoque():
             LIMIT 1
         """, (produto_id,))
         row = cur.fetchone()
-        return jsonify({"ok": True, "produto": _produto_estoque_publico(row)})
+        codigos_salvos = _carregar_codigos_produtos_estoque(cur, [produto_id]).get(produto_id, {})
+        return jsonify({"ok": True, "produto": _produto_estoque_publico(row, codigos_salvos)})
+    except ValueError as exc:
+        conn.rollback()
+        return jsonify({"erro": str(exc)}), 409
     finally:
         cur.close()
         conn.close()
@@ -20467,6 +20863,7 @@ def criar_produto_estoque():
 @app.route("/api/estoque/produtos/<int:produto_id>", methods=["PUT"])
 def atualizar_produto_estoque(produto_id):
     data = request.json or {}
+    codigos_por_origem, codigos_informados = _estoque_codigos_payload(data)
     conn = get_conn()
     cur = conn.cursor(dictionary=True)
     try:
@@ -20495,6 +20892,8 @@ def atualizar_produto_estoque(produto_id):
             return jsonify({"erro": "informe ao menos codigo de barras, codigo NF-e ou nome do produto"}), 400
         if not embalagem_tipo_padrao:
             return jsonify({"erro": "embalagem padrao e obrigatoria"}), 400
+        if any(codigos_por_origem.values()) and grupo_estoque not in _ESTOQUE_GRUPOS_PRODUTOS_VENDIDOS:
+            return jsonify({"erro": "a amarracao de codigos e exclusiva para PET e AGUA da producao"}), 400
 
         cur.execute("""
             UPDATE estoque_produtos
@@ -20518,6 +20917,20 @@ def atualizar_produto_estoque(produto_id):
             fator_embalagem_padrao,
             produto_id,
         ))
+        produto_atualizado = {
+            **row,
+            "id": produto_id,
+            "codigo_barras": codigo_barras,
+            "codigo_produto_nfe": codigo_produto_nfe,
+            "nome_produto": nome_produto,
+            "grupo_estoque": grupo_estoque,
+            "produto_base_nome": produto_base_nome,
+            "unidade": embalagem_tipo_padrao,
+            "embalagem_tipo_padrao": embalagem_tipo_padrao,
+            "fator_embalagem_padrao": fator_embalagem_padrao,
+        }
+        if codigos_informados:
+            _sincronizar_codigos_produto_estoque(cur, produto_atualizado, codigos_por_origem)
         conn.commit()
         cur.execute("""
             SELECT id, codigo_barras, codigo_produto_nfe, nome_produto, grupo_estoque, produto_base_nome, unidade,
@@ -20527,7 +20940,11 @@ def atualizar_produto_estoque(produto_id):
             LIMIT 1
         """, (produto_id,))
         row = cur.fetchone()
-        return jsonify({"ok": True, "produto": _produto_estoque_publico(row)})
+        codigos_salvos = _carregar_codigos_produtos_estoque(cur, [produto_id]).get(produto_id, {})
+        return jsonify({"ok": True, "produto": _produto_estoque_publico(row, codigos_salvos)})
+    except ValueError as exc:
+        conn.rollback()
+        return jsonify({"erro": str(exc)}), 409
     finally:
         cur.close()
         conn.close()

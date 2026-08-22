@@ -229,6 +229,19 @@ If you need context fast, read these files first:
   contain 24; returnable 200 ml crates contain 48; water packs contain 12.
   Explicit product codes or spelling variations must not create duplicate rows
   in the stock-status display when this canonical identity is the same.
+- Finished production products in the `PET` and `AGUA` groups map source-specific
+  codes to one stock product through `estoque_produto_codigos`. Keep NF-e input,
+  SELLOUT/sales, outgoing NF-e, and manual codes as typed aliases; never assume
+  that equal numeric codes from different sources mean the same product. Use
+  beverage taxonomy only as the fallback, and never merge still and sparkling
+  water.
+- A physical opening inventory is an absolute balance, not an additive input.
+  Submit it as `quantidade_atual` to the product adjustment endpoint, which
+  records the auditable delta against the canonical consolidated balance.
+- Weekly production guidance for PET and water uses the Sunday-to-Saturday
+  operational week. Project the larger of weekly sales and weekly stock exits
+  across seven days (the same dispatch may occur in both sources), then subtract
+  available stock; never sum sales and exits as independent demand.
 - Stock has two top-level operational areas: `PRODUCAO` and
   `ALMOXARIFADO_GERAL`. Production is split into `PRODUTOS` and
   `MATERIA_PRIMA`. Formula inputs (for example sugar, concentrate, flavoring,
