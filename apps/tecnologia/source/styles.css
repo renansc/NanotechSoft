@@ -88,6 +88,10 @@
 
 .diagnosisList { display: grid; gap: 10px; }
 .techApp .diag { display: flex; gap: 10px; align-items: flex-start; border-radius: 11px; padding: 12px 13px; font-size: .88rem; line-height: 1.45; background: #eef4f2; }
+.techApp button.diag { width: 100%; border: 0; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.techApp .diag > span { display: grid; gap: 3px; }
+.techApp .diag small { font-size: .72rem; opacity: .78; }
+.techApp button.diag:hover, .techApp button.diag:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
 .techApp .diag::before { content: "i"; flex: 0 0 22px; display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; color: #fff; background: var(--tech-info); font-weight: 900; }
 .techApp .diag.ok { color: #0f6346; background: #e5f5ef; }
 .techApp .diag.ok::before { content: "✓"; background: var(--tech-ok); }
@@ -159,6 +163,7 @@
 }
 .techApp input:focus, .techApp select:focus, .techApp textarea:focus { border-color: var(--tech-primary); box-shadow: 0 0 0 3px rgba(18, 107, 84, .11); }
 .discoveryResults { margin-top: 16px; }
+.discoveryNote { margin: 10px 0 0; color: var(--tech-muted); font-size: .76rem; }
 .discoveryItem { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 11px 12px; border: 1px solid var(--tech-line); border-radius: 10px; margin-top: 8px; }
 
 .historyHead { align-items: flex-end; }
@@ -172,8 +177,10 @@
 .chartLegend i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 4px; }
 .latencyDot { background: var(--tech-primary); }
 .lossDot { background: var(--tech-warning); }
-#historyChart { display: block; width: 100%; height: 260px; margin-top: 8px; }
+#historyChart { display: block; width: 100%; height: 275px; margin-top: 8px; }
 .chartGrid { stroke: #e1e8e5; stroke-width: 1; vector-effect: non-scaling-stroke; }
+.chartTimeGrid { stroke: #edf1ef; stroke-width: 1; stroke-dasharray: 3 5; vector-effect: non-scaling-stroke; }
+.chartTime { fill: var(--tech-muted); font-size: 13px; }
 .chartLatency, .chartLoss { fill: none; stroke-width: 2.5; vector-effect: non-scaling-stroke; }
 .chartLatency { stroke: var(--tech-primary); }
 .chartLoss { stroke: var(--tech-warning); }

@@ -204,9 +204,13 @@ ponto e impressoras. Além de ICMP/TCP, mede download/upload do link e aceita
 SNMP ou exporters Prometheus para CPU, memória, disco e rede. Mantém histórico
 de 90 dias e oferece descoberta manual de impressoras e computadores
 Windows/Linux por ICMP, NetBIOS e portas de serviço. Ao clicar em um equipamento,
-um card apresenta as métricas e a identificação recebidas do exporter. A coleta
-começa quando o módulo é aberto. CPU, memória e disco podem enviar alertas por
-SMTP ao atingirem os limites configurados. Por padrão, o remetente é uma conta
+um card apresenta as métricas e a identificação recebidas do exporter. Um mesmo
+equipamento pode ter IP principal e endereços adicionais para cabo, Wi-Fi ou
+Tailscale; a coleta escolhe automaticamente um caminho disponível. A coleta
+começa quando o módulo é aberto. Queda ou velocidade baixa da internet e uso
+acima de 90% de CPU, memória, disco ou capacidade de rede podem enviar alertas
+por SMTP. Falhas do gateway também enviam e-mail; os demais equipamentos
+internos ficam somente no painel. Por padrão, o remetente é uma conta
 de e-mail já configurada no RioB e `TECH_ALERT_EMAIL_TO` define somente o
 destinatário; a substituição opcional por `SMTP_*` fica documentada no README
 do módulo. Consulte

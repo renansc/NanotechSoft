@@ -110,8 +110,10 @@ If you need context fast, read these files first:
   SELLOUT`. Resolved city, route, and map values must appear on the final card.
   Suggest a registered truck from the map prefix, but never fabricate a driver
   or helper when the SELLOUT field is blank/`000-`.
-- The Daily Sales workflow weekly-load report is selected by ISO week and lists
-  one row per PDF load, including cards already sent to freight. Prefer current
+- The Daily Sales workflow weekly-load report uses the HTML ISO-week label but
+  its operational interval runs from Sunday through Saturday (for example,
+  `2026-W33` is 2026-08-09 through 2026-08-15). It lists one row per PDF load,
+  including cards already sent to freight. Prefer current
   card/freight assignments and fill missing truck, crew, city, and route from
   the active SELLOUT; never invent missing crew names.
 - The customer CSV/XLSX and route-table PDF are reference imports for this

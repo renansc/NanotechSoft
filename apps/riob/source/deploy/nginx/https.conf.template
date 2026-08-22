@@ -2,9 +2,11 @@ server {
     listen 80 default_server;
     listen [::]:80 default_server;
     server_name ${RB_SERVER_NAME} _;
+    resolver 127.0.0.11 valid=10s ipv6=off;
+    set $riob_backend http://riob-app:8080;
 
     location ~ ^/api/(ca/cert\.(pem|crt)|app/cert\.(pem|crt)|sip/cert\.(pem|crt)|sip/windows-install\.ps1|sip/linux-install\.sh|sip/apple\.mobileconfig|certs\.(p12|pfx))$ {
-        proxy_pass http://riob-app:8080;
+        proxy_pass $riob_backend;
         proxy_http_version 1.1;
         proxy_connect_timeout 300s;
         proxy_send_timeout 300s;
@@ -34,6 +36,8 @@ server {
     listen 443 ssl default_server;
     listen [::]:443 ssl default_server;
     server_name ${RB_SERVER_NAME} _;
+    resolver 127.0.0.11 valid=10s ipv6=off;
+    set $riob_backend http://riob-app:8080;
 
     ssl_certificate /etc/nginx/certs/fullchain.pem;
     ssl_certificate_key /etc/nginx/certs/privkey.pem;
@@ -53,7 +57,7 @@ server {
     }
 
     location / {
-        proxy_pass http://riob-app:8080;
+        proxy_pass $riob_backend;
         proxy_http_version 1.1;
         proxy_connect_timeout 300s;
         proxy_send_timeout 300s;

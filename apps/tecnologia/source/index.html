@@ -169,10 +169,10 @@
           <div id="historySummary" class="historySummary"></div>
           <div class="chartBox">
             <div class="chartLegend"><span><i class="latencyDot"></i> Latência (ms)</span><span><i class="lossDot"></i> Perda (%)</span></div>
-            <svg id="historyChart" viewBox="0 0 1000 260" preserveAspectRatio="none" aria-label="Gráfico de latência e perda"></svg>
+            <svg id="historyChart" viewBox="0 0 1000 275" preserveAspectRatio="none" aria-label="Gráfico de latência e perda ao longo do tempo"></svg>
           </div>
           <div class="tableWrap">
-            <table><thead><tr><th>Data</th><th>Status</th><th>Latência</th><th>Perda</th><th>Jitter</th><th>Serviço</th></tr></thead><tbody id="historyTable"></tbody></table>
+            <table><thead><tr><th>Data</th><th>Status</th><th>Latência</th><th>Perda</th><th>Jitter</th><th>Serviço</th><th>Motivo</th></tr></thead><tbody id="historyTable"></tbody></table>
           </div>
         </section>
       </section>
@@ -198,6 +198,7 @@
           <label>Tipo<select id="deviceType"><option>INTERNET</option><option>ROTEADOR</option><option>SERVIDOR</option><option>COMPUTADOR</option><option>NOTEBOOK</option><option>NVR</option><option value="RELOGIO_PONTO">RELÓGIO PONTO</option><option>IMPRESSORA</option><option>OUTRO</option></select></label>
           <label>IP ou host<input id="deviceHost" maxlength="253" required placeholder="192.168.200.10"></label>
           <label>Porta TCP<input id="devicePort" type="number" min="1" max="65535" placeholder="9100"></label>
+          <label class="wide">Interfaces e IPs adicionais<textarea id="deviceAddresses" rows="3" placeholder="Wi-Fi = 192.168.200.122&#10;Cabo = 192.168.200.123&#10;Tailscale = 100.x.x.x"></textarea><small>Um por linha, no formato Nome = IP. O endereço acima continua sendo o principal.</small></label>
           <label>Teste/coleta<select id="deviceProbe"><option value="ICMP">ICMP + porta</option><option value="TCP">TCP</option><option value="SNMP">SNMP v2c + ICMP</option><option value="PROMETHEUS">Prometheus exporter + ICMP</option></select></label>
           <label>Localização<input id="deviceLocation" maxlength="160"></label>
           <label>Alerta de latência (ms)<input id="deviceLatency" type="number" min="1" max="60000" value="80" required></label>

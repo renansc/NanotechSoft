@@ -143,6 +143,41 @@ if errors:
 PY
 }
 
+ensure_riob_import_sources() {
+  local py compose_json source
+  local -a sources=()
+
+  py="$(python_cmd)" || die "python nao encontrado para validar as pastas de importacao do RioB"
+  if compose_json="$(compose config --format json 2>/dev/null)"; then
+    while IFS= read -r source; do
+      [[ -n "$source" ]] && sources+=("$source")
+    done < <(
+      printf '%s' "$compose_json" | "$py" -c '
+import json, sys
+config = json.load(sys.stdin)
+targets = {"/imports/vendas-diario/txt", "/imports/vendas-diario/pdf"}
+for volume in config.get("services", {}).get("riob-app", {}).get("volumes", []):
+    if isinstance(volume, dict) and volume.get("type") == "bind" and volume.get("target") in targets:
+        print(volume.get("source") or "")
+'
+    )
+  fi
+
+  if [[ "${#sources[@]}" -eq 0 ]]; then
+    sources=(
+      "${RB_VENDAS_DIARIO_TXT_HOST_DIR:-/media/serverwin/CARGAS/CargasTxt}"
+      "${RB_VENDAS_DIARIO_PDF_HOST_DIR:-/media/serverwin/CARGAS/VendasDiarioPdfs}"
+    )
+  fi
+
+  log "validando pastas de importacao do RioB antes de operar os containers..."
+  for source in "${sources[@]}"; do
+    if [[ ! -d "$source" ]]; then
+      die "pasta de importacao indisponivel: $source. Verifique o compartilhamento do host antes de reiniciar o RioB."
+    fi
+  done
+}
+
 validate_client_contracts() {
   local py
   py="$(python_cmd)" || die "python nao encontrado para validar clientes"

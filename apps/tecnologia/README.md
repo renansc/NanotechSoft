@@ -21,6 +21,13 @@ Administradores podem alterar os equipamentos, limites, portas e status ativo
 pela aba **Equipamentos**. A exclusão do equipamento também exclui seu histórico
 de medições.
 
+Cada equipamento possui um IP/host principal e pode receber até 12 endereços
+adicionais identificados por interface, por exemplo `Wi-Fi`, `Cabo` e
+`Tailscale`. Informe um endereço por linha no formato `Nome = IP`. A coleta testa
+os caminhos em paralelo, mantém um único equipamento no painel e usa
+automaticamente um endereço disponível para alcançar o exporter. O card mostra
+o estado de cada endereço e qual deles foi usado na coleta.
+
 ## Coleta e retenção
 
 O monitor inicia quando o módulo é aberto e mede os equipamentos ativos a cada
@@ -45,8 +52,11 @@ download e upload ficam no cadastro do equipamento do tipo `INTERNET`.
 
 As métricas ficam em `tecnologia_metricas` por 90 dias. O cadastro permanece em
 `tecnologia_dispositivos`. O botão **Verificar agora** força uma nova amostra.
+As datas são armazenadas em UTC e a API informa explicitamente esse fuso; o
+navegador converte o histórico para o horário local, inclusive
+`America/Sao_Paulo`, sem o adiantamento de três horas.
 Na visão geral e na aba **Equipamentos**, clicar em um equipamento abre um card
-com a última coleta. Para exporters Prometheus, o card detalha CPU, memória,
+com a última coleta, os endereços configurados e o caminho ativo. Para exporters Prometheus, o card detalha CPU, memória,
 discos, tráfego, hostname, sistema operacional, build, arquitetura, interfaces
 e tempo ligado quando as respectivas séries estiverem habilitadas. O próprio
 card permite atualizar somente aquele equipamento.
@@ -67,7 +77,9 @@ O cadastro aceita quatro tipos de coleta:
 - `ICMP`: disponibilidade, perda, latência e porta TCP opcional;
 - `TCP`: mantém ICMP e exige uma porta de serviço;
 - `SNMP`: usa SNMP v2c somente leitura para identificação, CPU exposta pelo
-  equipamento e contadores de tráfego das interfaces;
+  equipamento e contadores de tráfego das interfaces. Em impressoras, também
+  consulta o Printer-MIB para estado, número de série, contador de páginas e
+  níveis de suprimentos disponibilizados pelo fabricante;
 - `PROMETHEUS`: consulta `/metrics` de Node Exporter (Linux) ou Windows Exporter
   e calcula CPU, memória, maior ocupação de disco e tráfego.
 
@@ -105,11 +117,25 @@ download/upload abaixo dos mínimos e CPU, memória, disco ou tráfego acima dos
 limites do equipamento. Os eventos aparecem na visão geral e as amostras ficam
 no histórico por 90 dias.
 
-CPU, memória RAM e disco também geram um e-mail consolidado quando atingem o
-limite cadastrado no equipamento (90% por padrão). O alerta não é reenviado a
-cada minuto: enquanto o problema continuar, há lembrete a cada 6 horas. A
-recuperação é avisada quando o recurso cai pelo menos 5 pontos percentuais
-abaixo do limite, evitando mensagens repetidas por pequenas oscilações.
+O e-mail é restrito aos eventos prioritários desta etapa:
+
+- queda do equipamento cadastrado como `INTERNET`;
+- gateway offline ou instável por perda, latência ou porta indisponível;
+- download ou upload abaixo do mínimo configurado no teste de velocidade;
+- CPU, memória RAM ou disco no limite cadastrado (90% por padrão);
+- uso da capacidade da interface de rede em 90% ou mais, quando SNMP ou o
+  exporter informar a velocidade da interface.
+
+Com exceção do gateway, quedas de equipamentos internos continuam visíveis no
+painel e no histórico, mas não enviam e-mail. O alerta não é reenviado a cada minuto:
+enquanto o problema continuar, há lembrete a cada 6 horas. A recuperação dos
+recursos percentuais é avisada depois de cair 5 pontos abaixo do limite,
+evitando mensagens repetidas por pequenas oscilações.
+
+Os avisos do diagnóstico identificam a causa da última amostra, informam quando
+o evento é somente interno e podem ser clicados para abrir diretamente o
+histórico do equipamento correto. A tabela histórica mantém a mensagem da
+coleta na coluna **Motivo**, como perda, latência ou porta fechada.
 
 Por padrão, o módulo reutiliza como remetente a primeira conta habilitada do
 RioB que tenha servidor SMTP, usuário e senha preenchidos em
@@ -138,7 +164,13 @@ destinatário, e a senha nunca é devolvida pela API.
 
 A descoberta é manual e restrita a uma rede IPv4 privada com até 254 hosts. Ela
 testa apenas as portas 9100, 631 e 515 e não cadastra nada automaticamente. O
-usuário administrador escolhe quais resultados deseja cadastrar.
+usuário administrador escolhe quais resultados deseja cadastrar. Como a porta
+9100 também é o padrão do Node Exporter, a varredura consulta `/metrics` e não
+classifica exporters Linux/Windows como impressoras. Endereços principais ou
+adicionais já vinculados a qualquer equipamento também ficam fora das sugestões.
+
+O gráfico do histórico exibe marcações de hora no eixo horizontal. Em períodos
+superiores a 36 horas, as marcações incluem também dia e mês.
 
 ## Descoberta de computadores
 

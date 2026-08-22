@@ -1,4 +1,5 @@
 import json
+import datetime as dt
 import shutil
 import subprocess
 import tempfile
@@ -26,12 +27,20 @@ class TecnologiaMonitorTests(unittest.TestCase):
             "ativo": True,
             "latenciaAlertaMs": 12,
             "perdaAlertaPct": 3,
+            "networkAddresses": [
+                {"label": "Wi-Fi", "host": "192.168.200.122"},
+                {"label": "Tailscale", "host": "100.80.20.10"},
+            ],
         })
 
         self.assertEqual("192.168.200.121", row["host"])
         self.assertEqual(445, row["porta"])
         self.assertEqual("SERVIDOR", row["tipo"])
         self.assertEqual(1, row["critico"])
+        self.assertEqual([
+            {"label": "Wi-Fi", "host": "192.168.200.122"},
+            {"label": "Tailscale", "host": "100.80.20.10"},
+        ], json.loads(row["enderecos_adicionais"]))
 
     def test_normalize_rejects_invalid_host_and_tcp_without_port(self):
         base = {"nome": "Teste", "tipo": "OUTRO", "sonda": "ICMP"}
@@ -39,6 +48,11 @@ class TecnologiaMonitorTests(unittest.TestCase):
             monitor.normalize_device_payload({**base, "host": "host com espaço"})
         with self.assertRaisesRegex(ValueError, "exige uma porta"):
             monitor.normalize_device_payload({**base, "host": "servidor.local", "sonda": "TCP"})
+        with self.assertRaisesRegex(ValueError, "Host"):
+            monitor.normalize_device_payload({
+                **base, "host": "192.168.200.10",
+                "networkAddresses": [{"label": "Wi-Fi", "host": "IP inválido"}],
+            })
 
     def test_normalize_supports_snmp_and_prometheus(self):
         snmp = monitor.normalize_device_payload({
@@ -70,6 +84,53 @@ class TecnologiaMonitorTests(unittest.TestCase):
         self.assertEqual(4, rates["downloadMbps"])
         self.assertEqual(2, rates["uploadMbps"])
 
+    def test_snmp_collects_printer_mib_inventory_and_supplies(self):
+        rows_by_oid = {
+            ".1.3.6.1.2.1.1": [
+                (".1.3.6.1.2.1.1.1.0", "HP Laser 408dn"),
+                (".1.3.6.1.2.1.1.3.0", "(864000) 2:24:00.00"),
+                (".1.3.6.1.2.1.1.5.0", "HP-TESTE"),
+            ],
+            ".1.3.6.1.2.1.31.1.1.1.1": [(".1.3.6.1.2.1.31.1.1.1.1.1", "eth0")],
+            ".1.3.6.1.2.1.31.1.1.1.6": [(".1.3.6.1.2.1.31.1.1.1.6.1", "1000000")],
+            ".1.3.6.1.2.1.31.1.1.1.10": [(".1.3.6.1.2.1.31.1.1.1.10.1", "500000")],
+            ".1.3.6.1.2.1.31.1.1.1.15": [(".1.3.6.1.2.1.31.1.1.1.15.1", "1000")],
+            ".1.3.6.1.2.1.25.3.3.1.2": [],
+            ".1.3.6.1.2.1.25.3.5.1.1": [(".1.3.6.1.2.1.25.3.5.1.1.1", "idle(3)")],
+            ".1.3.6.1.2.1.43.5.1.1.17": [(".1.3.6.1.2.1.43.5.1.1.17.1", "SERIAL-123")],
+            ".1.3.6.1.2.1.43.10.2.1.4": [(".1.3.6.1.2.1.43.10.2.1.4.1.1", "125571")],
+            ".1.3.6.1.2.1.43.11.1.1.6": [
+                (".1.3.6.1.2.1.43.11.1.1.6.1.1", "Toner preto"),
+                (".1.3.6.1.2.1.43.11.1.1.6.1.2", "Fusor"),
+            ],
+            ".1.3.6.1.2.1.43.11.1.1.8": [
+                (".1.3.6.1.2.1.43.11.1.1.8.1.1", "15000"),
+                (".1.3.6.1.2.1.43.11.1.1.8.1.2", "90000"),
+            ],
+            ".1.3.6.1.2.1.43.11.1.1.9": [
+                (".1.3.6.1.2.1.43.11.1.1.9.1.1", "7500"),
+                (".1.3.6.1.2.1.43.11.1.1.9.1.2", "-3"),
+            ],
+        }
+
+        with (
+            mock.patch.object(monitor, "_snmp_walk", side_effect=lambda host, community, port, oid: rows_by_oid[oid]),
+            mock.patch.object(monitor.time, "time", return_value=10000),
+        ):
+            telemetry = monitor.collect_snmp_metrics({
+                "host": "192.168.200.147", "tipo": "IMPRESSORA",
+                "snmp_community": "somente-leitura", "snmp_port": 161,
+            })
+
+        self.assertEqual("SNMPv2c", telemetry["protocol"])
+        self.assertEqual("Ociosa", telemetry["printerStatus"])
+        self.assertEqual("SERIAL-123", telemetry["serialNumber"])
+        self.assertEqual(125571, telemetry["pageCount"])
+        self.assertEqual(8640, telemetry["uptimeSeconds"])
+        self.assertEqual(["eth0"], telemetry["interfaces"])
+        self.assertEqual(50, telemetry["supplies"][0]["pct"])
+        self.assertEqual("Disponível", telemetry["supplies"][1]["status"])
+
     def test_prometheus_collects_windows_inventory_for_device_card(self):
         body = (
             'windows_cpu_time_total{core="0",mode="idle"} 90\n'
@@ -84,6 +145,7 @@ class TecnologiaMonitorTests(unittest.TestCase):
             'windows_logical_disk_free_bytes{volume="C:"} 200\n'
             'windows_net_bytes_received_total{nic="Wi-Fi"} 2000000\n'
             'windows_net_bytes_sent_total{nic="Wi-Fi"} 1000000\n'
+            'windows_net_current_bandwidth_bytes{nic="Wi-Fi"} 1000000\n'
         )
         response = mock.MagicMock()
         response.__enter__.return_value = response
@@ -108,6 +170,8 @@ class TecnologiaMonitorTests(unittest.TestCase):
         self.assertEqual(75, telemetry["memoryPct"])
         self.assertEqual(1000, telemetry["memoryTotalBytes"])
         self.assertEqual(80, telemetry["diskPct"])
+        self.assertEqual(8, telemetry["networkCapacityMbps"])
+        self.assertEqual(10, telemetry["networkPct"])
         self.assertEqual(3600, telemetry["uptimeSeconds"])
         self.assertEqual("C:", telemetry["disks"][0]["name"])
         self.assertIn("Wi-Fi", telemetry["interfaces"])
@@ -198,6 +262,45 @@ class TecnologiaMonitorTests(unittest.TestCase):
         self.assertEqual("DEGRADADO", result["status"])
         self.assertEqual("NOTEBOOK-RENAN", result["details"]["netbios"]["name"])
 
+    def test_probe_uses_alternate_address_for_prometheus_exporter(self):
+        device = {
+            "host": "192.168.200.122",
+            "enderecos_adicionais": json.dumps([
+                {"label": "Cabo", "host": "192.168.200.123"},
+                {"label": "Tailscale", "host": "100.80.20.10"},
+            ]),
+            "porta": None, "sonda": "PROMETHEUS", "tipo": "NOTEBOOK",
+            "agente_porta": 9182, "agente_path": "/metrics",
+            "latencia_alerta_ms": 80, "perda_alerta_pct": 5,
+        }
+
+        def fake_ping(host):
+            reachable = host == "192.168.200.123"
+            return {
+                "reachable": reachable,
+                "packetLossPct": 0 if reachable else 100,
+                "latencyMs": 2 if reachable else None,
+                "jitterMs": 0.2 if reachable else None,
+            }
+
+        with (
+            mock.patch.object(monitor, "ping_host", side_effect=fake_ping),
+            mock.patch.object(monitor, "tcp_host", side_effect=lambda host, _port: {
+                "reachable": host == "192.168.200.123", "latencyMs": 1,
+            }),
+            mock.patch.object(monitor, "netbios_node_status", return_value={"ok": False, "name": ""}),
+            mock.patch.object(monitor, "collect_prometheus_metrics", return_value={
+                "cpuPct": 20, "memoryPct": 30, "diskPct": 40,
+            }) as collect,
+        ):
+            result = monitor.probe_device(device)
+
+        self.assertEqual("ONLINE", result["status"])
+        self.assertEqual("192.168.200.123", result["details"]["activeAddress"])
+        self.assertIn("via Cabo", result["message"])
+        self.assertTrue(result["details"]["addresses"][1]["active"])
+        self.assertEqual("192.168.200.123", collect.call_args.args[0]["host"])
+
     def test_computer_identity_classifies_windows_and_linux(self):
         ping_result = mock.Mock(returncode=0, stdout="64 bytes ttl=128", stderr="")
         with (
@@ -239,14 +342,64 @@ class TecnologiaMonitorTests(unittest.TestCase):
             "host": "192.168.50.2", "ports": [9100, 515], "suggestedPort": 9100,
         }], result)
 
+    def test_printer_scan_excludes_node_exporter_on_port_9100(self):
+        response = mock.MagicMock()
+        response.__enter__.return_value = response
+        response.read.return_value = (
+            b'node_exporter_build_info{version="1.10.2"} 1\n'
+            b'node_cpu_seconds_total{cpu="0",mode="idle"} 10\n'
+        )
+        with (
+            mock.patch.object(monitor, "tcp_host", side_effect=lambda _host, port, timeout_seconds: {
+                "reachable": port == 9100,
+            }),
+            mock.patch.object(monitor.urllib.request, "urlopen", return_value=response),
+        ):
+            ports = monitor._open_printer_ports("192.168.200.184", 0.15)
+
+        self.assertEqual([], ports)
+
+    def test_printer_scan_keeps_raw_print_service_on_port_9100(self):
+        with (
+            mock.patch.object(monitor, "tcp_host", side_effect=lambda _host, port, timeout_seconds: {
+                "reachable": port == 9100,
+            }),
+            mock.patch.object(
+                monitor.urllib.request,
+                "urlopen",
+                side_effect=monitor.urllib.error.URLError("não é HTTP"),
+            ),
+        ):
+            ports = monitor._open_printer_ports("192.168.200.138", 0.15)
+
+        self.assertEqual([9100], ports)
+
     def test_diagnosis_reports_offline_and_scope(self):
         diagnosis = monitor.build_network_diagnosis([
-            {"ativo": True, "tipo": "INTERNET", "ultimaMetrica": {"status": "ONLINE"}},
-            {"ativo": True, "tipo": "ROTEADOR", "ultimaMetrica": {"status": "OFFLINE"}},
+            {"id": 1, "ativo": True, "tipo": "INTERNET", "ultimaMetrica": {"status": "ONLINE"}},
+            {"id": 2, "ativo": True, "tipo": "ROTEADOR", "host": "192.168.200.1", "ultimaMetrica": {"status": "OFFLINE", "message": "sem resposta"}},
         ])
 
         self.assertTrue(any(item["level"] == "critical" for item in diagnosis))
         self.assertTrue(any("Wi-Fi" in item["text"] for item in diagnosis))
+
+    def test_diagnosis_explains_gateway_degradation_and_links_history(self):
+        diagnosis = monitor.build_network_diagnosis([
+            {"id": 1, "ativo": True, "tipo": "INTERNET", "ultimaMetrica": {"status": "ONLINE"}},
+            {
+                "id": 2, "ativo": True, "tipo": "ROTEADOR", "host": "192.168.200.1",
+                "ultimaMetrica": {
+                    "status": "DEGRADADO", "message": "perda 25%",
+                    "checkedAt": "2026-08-22T10:20:41.551Z",
+                },
+            },
+        ])
+
+        gateway = next(item for item in diagnosis if item.get("deviceId") == 2)
+        self.assertEqual("warning", gateway["level"])
+        self.assertIn("perda 25%", gateway["text"])
+        self.assertIn("envia e-mail", gateway["detail"])
+        self.assertEqual("2026-08-22T10:20:41.551Z", gateway["checkedAt"])
 
     def test_diagnosis_reports_low_speed_and_resource_bottleneck(self):
         diagnosis = monitor.build_network_diagnosis([{
@@ -263,6 +416,38 @@ class TecnologiaMonitorTests(unittest.TestCase):
 
 
 class TecnologiaIntegrationTests(unittest.TestCase):
+    def test_registered_device_hosts_include_additional_interfaces(self):
+        registered = portal.technology_registered_device_hosts([{
+            "nome": "Notebook Renan",
+            "host": "192.168.200.10",
+            "enderecos_adicionais": json.dumps([
+                {"label": "Wi-Fi", "host": "192.168.200.122"},
+                {"label": "Tailscale", "host": "100.66.72.69"},
+            ]),
+        }])
+
+        self.assertEqual("Notebook Renan", registered["192.168.200.10"])
+        self.assertEqual("Notebook Renan", registered["192.168.200.122"])
+        self.assertEqual("Notebook Renan", registered["100.66.72.69"])
+
+    def test_technology_database_timestamp_is_serialized_as_utc(self):
+        checked_at = dt.datetime(2026, 8, 22, 10, 23, 6, 123000)
+
+        self.assertEqual(
+            "2026-08-22T10:23:06.123Z",
+            portal.technology_db_timestamp_iso(checked_at),
+        )
+
+    def test_technology_public_metric_preserves_utc_timezone(self):
+        metric = portal.technology_public_metric({
+            "ultima_status": "ONLINE",
+            "ultima_verificado_em": dt.datetime(2026, 8, 22, 10, 23),
+            "ultima_perda_pct": 0,
+            "ultima_mensagem": "resposta normal",
+        }, "ultima_")
+
+        self.assertEqual("2026-08-22T10:23:00.000Z", metric["checkedAt"])
+
     def test_technology_alert_uses_existing_riob_smtp_account(self):
         riob_account = {
             "host": "smtps.bol.com.br", "port": 587,
@@ -329,6 +514,52 @@ class TecnologiaIntegrationTests(unittest.TestCase):
         self.assertIn("Notebook Renan (192.168.200.122)", body)
         self.assertIn("memória RAM em 91.2%", body)
         self.assertIn("limite 90.0%", body)
+
+    def test_internal_drop_does_not_become_email_alert_but_internet_drop_does(self):
+        internal = portal.technology_alert_telemetry(
+            {"tipo": "SERVIDOR"}, {"status": "OFFLINE", "details": {}},
+        )
+        internet = portal.technology_alert_telemetry(
+            {"tipo": "INTERNET"}, {"status": "OFFLINE", "details": {}},
+        )
+
+        self.assertNotIn("internetDownState", internal)
+        self.assertEqual(100, internet["internetDownState"])
+        self.assertIn("sem resposta", internet["internetDownAlertDescription"])
+
+    def test_gateway_degradation_becomes_email_alert_and_online_is_recovery(self):
+        device = {"tipo": "ROTEADOR"}
+        degraded = portal.technology_alert_telemetry(
+            device,
+            {"status": "DEGRADADO", "message": "perda 25%", "details": {}},
+        )
+        recovered = portal.technology_alert_telemetry(
+            device,
+            {"status": "ONLINE", "message": "resposta normal", "details": {}},
+        )
+
+        self.assertEqual(100, degraded["gatewayFailureState"])
+        self.assertIn("perda 25%", degraded["gatewayFailureAlertDescription"])
+        self.assertEqual(0, recovered["gatewayFailureState"])
+        self.assertIn("voltou", recovered["gatewayFailureRecoveryDescription"])
+
+    def test_low_internet_speed_creates_only_link_speed_alert(self):
+        internet = {
+            "id": 1, "nome": "Link", "host": "1.1.1.1", "tipo": "INTERNET",
+            "download_alerta_mbps": 50, "upload_alerta_mbps": 10,
+        }
+        speed = {"status": "DEGRADADO", "downloadMbps": 20, "uploadMbps": 12}
+        with mock.patch.object(portal, "process_technology_resource_alerts", return_value=[{"type": "ALERTA"}]) as process:
+            actions = portal.process_technology_link_speed_alert(internet, speed)
+
+        self.assertEqual([{"type": "ALERTA"}], actions)
+        synthetic = process.call_args.args[1][0]["details"]["telemetry"]
+        self.assertEqual(100, synthetic["linkSlowState"])
+        self.assertIn("download baixo", synthetic["linkSlowAlertDescription"])
+        self.assertNotIn("upload baixo", synthetic["linkSlowAlertDescription"])
+
+    def test_network_resource_email_threshold_is_ninety_percent(self):
+        self.assertEqual(("networkPct", None, "uso da rede", 90), portal.TECH_ALERT_RESOURCES["REDE"])
 
     def test_technology_resource_alert_transitions_have_cooldown_and_recovery_margin(self):
         now = portal.dt.datetime(2026, 8, 21, 10, 30)

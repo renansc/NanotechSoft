@@ -1,3 +1,4 @@
+import datetime
 import os
 import unittest
 from pathlib import Path
@@ -6,11 +7,25 @@ from vendas_diario import intervalo_semana_iso, parse_report, read_report
 
 
 class VendasDiarioParserTest(unittest.TestCase):
-    def test_calcula_intervalo_da_semana_iso(self):
+    def test_calcula_intervalo_operacional_de_domingo_a_sabado(self):
         inicio, fim, semana = intervalo_semana_iso("2026-W33")
-        self.assertEqual("2026-08-10", inicio.isoformat())
-        self.assertEqual("2026-08-16", fim.isoformat())
+        self.assertEqual("2026-08-09", inicio.isoformat())
+        self.assertEqual("2026-08-15", fim.isoformat())
         self.assertEqual("2026-W33", semana)
+
+    def test_domingo_de_referencia_abre_a_proxima_semana_iso(self):
+        inicio, fim, semana = intervalo_semana_iso(
+            referencia=datetime.date(2026, 8, 9)
+        )
+        self.assertEqual("2026-08-09", inicio.isoformat())
+        self.assertEqual("2026-08-15", fim.isoformat())
+        self.assertEqual("2026-W33", semana)
+
+    def test_semana_operacional_respeita_virada_do_ano(self):
+        inicio, fim, semana = intervalo_semana_iso("2024-W01")
+        self.assertEqual("2023-12-31", inicio.isoformat())
+        self.assertEqual("2024-01-06", fim.isoformat())
+        self.assertEqual("2024-W01", semana)
 
     def test_rejeita_semana_iso_invalida(self):
         with self.assertRaisesRegex(ValueError, "Semana invalida"):

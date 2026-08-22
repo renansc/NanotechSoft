@@ -30,6 +30,8 @@ else
   log "diretorio sem repositorio Git; pulando git pull"
 fi
 
+ensure_riob_import_sources
+
 log "recriando somente portal e RioB; nenhum servico de banco sera iniciado, restaurado ou sincronizado..."
 if [[ "${NO_CACHE:-0}" == "1" ]]; then
   compose build --no-cache "${BUILD_SERVICES[@]}"

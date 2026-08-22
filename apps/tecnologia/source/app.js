@@ -38,7 +38,22 @@
     minimumFractionDigits: digits,
     maximumFractionDigits: digits,
   });
-  const target = (device) => `${device.host}${device.porta ? `:${device.porta}` : ""}`;
+  const target = (device) => {
+    const additional = Math.max(0, (device.networkAddresses?.length || 1) - 1);
+    return `${device.host}${device.porta ? `:${device.porta}` : ""}${additional ? ` +${additional} IP${additional > 1 ? "s" : ""}` : ""}`;
+  };
+  const addressesToText = (addresses = []) => addresses
+    .filter((item) => !item.primary)
+    .map((item) => `${item.label} = ${item.host}`)
+    .join("\n");
+  const addressesFromText = (value) => String(value || "").split(/\r?\n/).map((line, index) => {
+    const text = line.trim();
+    if (!text) return null;
+    const separator = text.indexOf("=");
+    return separator >= 0
+      ? { label: text.slice(0, separator).trim(), host: text.slice(separator + 1).trim() }
+      : { label: `Interface ${index + 1}`, host: text };
+  }).filter(Boolean);
   const statusKey = (metric) => ({ OK: "online", FALHA: "offline" })[metric?.status] || (metric?.status || "PENDING").toLowerCase();
   const statusLabel = (metric) => ({ ONLINE: "Online", DEGRADADO: "Instável", OFFLINE: "Offline", PENDING: "Aguardando", OK: "Normal", FALHA: "Falhou" })[metric?.status || "PENDING"] || metric?.status;
   const statusBadge = (metric) => `<span class="status ${statusKey(metric)}">${statusLabel(metric)}</span>`;
@@ -77,7 +92,13 @@
 
   function renderDiagnosis() {
     $("#diagnosisList").innerHTML = state.diagnosis.length
-      ? state.diagnosis.map((item) => `<div class="diag ${esc(item.level)}">${esc(item.text)}</div>`).join("")
+      ? state.diagnosis.map((item) => {
+        const details = [item.detail, item.checkedAt ? `Medição: ${dateTime(item.checkedAt)}` : "", item.deviceId ? "Abrir histórico deste equipamento" : ""].filter(Boolean).join(" · ");
+        const content = `<span>${esc(item.text)}${details ? `<small>${esc(details)}</small>` : ""}</span>`;
+        return item.deviceId
+          ? `<button class="diag ${esc(item.level)}" data-history-device="${Number(item.deviceId)}" type="button">${content}</button>`
+          : `<div class="diag ${esc(item.level)}">${content}</div>`;
+      }).join("")
       : '<div class="diag info">Ainda não há diagnóstico disponível.</div>';
   }
 
@@ -113,6 +134,7 @@
         <span>CPU <strong>${number(telemetry.cpuPct)}%</strong></span>
         <span>Memória <strong>${number(telemetry.memoryPct)}%</strong></span>
         <span>Disco <strong>${number(telemetry.diskPct)}%</strong></span>
+        <span>Uso rede <strong>${number(telemetry.networkPct)}%</strong></span>
         <span>Rede ↓ <strong>${number(telemetry.downloadMbps)} Mbps</strong></span>
         <span>Rede ↑ <strong>${number(telemetry.uploadMbps)} Mbps</strong></span>
       </div>` : "";
@@ -177,17 +199,34 @@
     if (!device) return closeDeviceDetails();
     const metric = device.ultimaMetrica;
     const telemetry = metric?.telemetry;
-    const prometheusEndpoint = device.agentPort ? `http://${device.host}:${device.agentPort}${device.agentPath || "/metrics"}` : "Não configurado";
+    const endpointHost = telemetry?.endpointHost || metric?.activeAddress || device.host;
+    const protocol = telemetry?.protocol || device.sonda;
+    const isSnmp = String(protocol).toUpperCase().startsWith("SNMP");
+    const isPrinter = isSnmp && device.tipo === "IMPRESSORA";
+    const collectionEndpoint = isSnmp
+      ? `udp://${endpointHost}:${device.snmpPort || 161}`
+      : device.agentPort ? `http://${endpointHost}:${device.agentPort}${device.agentPath || "/metrics"}` : "Não configurado";
     $("#deviceDetailsTitle").textContent = device.nome;
     $("#deviceDetailsSubtitle").textContent = `${device.tipo} · ${target(device)}`;
-    const resourceCards = [
+    const genericResourceCards = [
       ["CPU", telemetry?.cpuPct == null ? "—" : `${number(telemetry.cpuPct)}%`],
       ["Memória", telemetry?.memoryPct == null ? "—" : `${number(telemetry.memoryPct)}%`],
       ["Disco", telemetry?.diskPct == null ? "—" : `${number(telemetry.diskPct)}%`],
+      ["Uso da rede", telemetry?.networkPct == null ? "—" : `${number(telemetry.networkPct)}%`],
+      ["Capacidade da rede", telemetry?.networkCapacityMbps == null ? "—" : `${number(telemetry.networkCapacityMbps)} Mbps`],
       ["Rede recebida", telemetry?.downloadMbps == null ? "Aguardando 2ª coleta" : `${number(telemetry.downloadMbps, 3)} Mbps`],
       ["Rede enviada", telemetry?.uploadMbps == null ? "Aguardando 2ª coleta" : `${number(telemetry.uploadMbps, 3)} Mbps`],
-    ].map(([label, value]) => `<div><span>${esc(label)}</span><strong>${esc(value)}</strong></div>`).join("");
-    const identity = [
+    ];
+    const printerResourceCards = [
+      ["Estado", telemetry?.printerStatus || "Não informado"],
+      ["Total de páginas", telemetry?.pageCount == null ? "—" : number(telemetry.pageCount, 0)],
+      ["Uso da rede", telemetry?.networkPct == null ? "—" : `${number(telemetry.networkPct)}%`],
+      ["Rede recebida", telemetry?.downloadMbps == null ? "Aguardando 2ª coleta" : `${number(telemetry.downloadMbps, 3)} Mbps`],
+      ["Rede enviada", telemetry?.uploadMbps == null ? "Aguardando 2ª coleta" : `${number(telemetry.uploadMbps, 3)} Mbps`],
+    ];
+    const resourceCards = (isPrinter ? printerResourceCards : genericResourceCards)
+      .map(([label, value]) => `<div><span>${esc(label)}</span><strong>${esc(value)}</strong></div>`).join("");
+    const genericIdentity = [
       ["Nome do sistema", telemetry?.systemName || "—"],
       ["Sistema operacional", telemetry?.osName || "—"],
       ["Versão", telemetry?.osVersion || "—"],
@@ -196,11 +235,29 @@
       ["Processadores lógicos", telemetry?.cpuCores ?? "—"],
       ["Memória instalada", bytes(telemetry?.memoryTotalBytes)],
       ["Tempo ligado", duration(telemetry?.uptimeSeconds)],
-    ].map(([label, value]) => `<div><span>${esc(label)}</span><strong>${esc(value)}</strong></div>`).join("");
+    ];
+    const printerIdentity = [
+      ["Nome do sistema", telemetry?.systemName || "—"],
+      ["Modelo / descrição", telemetry?.description || "—"],
+      ["Número de série", telemetry?.serialNumber || "—"],
+      ["Tempo ligado", duration(telemetry?.uptimeSeconds)],
+      ["Interfaces", telemetry?.interfaceCount ?? telemetry?.interfaces?.length ?? "—"],
+    ];
+    const identity = (isPrinter ? printerIdentity : genericIdentity)
+      .map(([label, value]) => `<div><span>${esc(label)}</span><strong>${esc(value)}</strong></div>`).join("");
     const disks = telemetry?.disks?.length ? `<div class="detailSection"><h3>Discos</h3><div class="detailTableWrap"><table><thead><tr><th>Volume</th><th>Uso</th><th>Livre</th><th>Total</th></tr></thead><tbody>${telemetry.disks.map((disk) => `<tr><td>${esc(disk.name)}</td><td>${number(disk.usedPct)}%</td><td>${esc(bytes(disk.freeBytes))}</td><td>${esc(bytes(disk.sizeBytes))}</td></tr>`).join("")}</tbody></table></div></div>` : "";
     const interfaces = telemetry?.interfaces?.length ? `<div class="detailSection"><h3>Interfaces monitoradas</h3><div class="detailTags">${telemetry.interfaces.map((name) => `<span>${esc(name)}</span>`).join("")}</div></div>` : "";
-    const telemetryBlock = telemetry ? `<div class="detailSection"><div class="detailSectionHead"><h3>Prometheus</h3><span>${number(telemetry.series, 0)} séries coletadas</span></div><div class="detailResources">${resourceCards}</div></div><div class="detailSection"><h3>Identificação do equipamento</h3><div class="detailIdentity">${identity}</div></div>${disks}${interfaces}` : `<div class="detailNotice warning"><strong>Sem métricas do Prometheus nesta coleta.</strong><span>${esc(metric?.message || "Aguardando a primeira coleta do exporter.")}</span><small>Confirme se o serviço está iniciado e se a porta ${esc(device.agentPort || 9182)} aceita conexão do servidor 192.168.200.254.</small></div>`;
-    $("#deviceDetailsBody").innerHTML = `<div class="detailStatus"><div>${statusBadge(metric)}<span>${esc(metric?.message || "Aguardando medição")}</span></div><small>Última coleta: ${esc(dateTime(metric?.checkedAt))}</small></div><div class="detailEndpoint"><span>Coleta</span><strong>${esc(device.sonda)}</strong><span>Endpoint</span><code>${esc(prometheusEndpoint)}</code></div>${telemetryBlock}`;
+    const supplies = telemetry?.supplies?.length ? `<div class="detailSection"><h3>Suprimentos</h3><div class="detailTableWrap"><table><thead><tr><th>Item</th><th>Nível</th><th>Atual</th><th>Capacidade</th></tr></thead><tbody>${telemetry.supplies.map((supply) => `<tr><td>${esc(supply.name)}</td><td>${supply.pct == null ? esc(supply.status || "Não informado") : `${number(supply.pct)}%`}</td><td>${supply.level == null || supply.level < 0 ? "—" : number(supply.level, 0)}</td><td>${supply.capacity == null || supply.capacity < 0 ? "—" : number(supply.capacity, 0)}</td></tr>`).join("")}</tbody></table></div></div>` : "";
+    const addressRows = (metric?.addresses?.length ? metric.addresses : device.networkAddresses || []).map((address) => {
+      const reachable = address.reachable;
+      const stateClass = reachable === true ? "online" : reachable === false ? "offline" : "pending";
+      const stateLabel = reachable === true ? "Acessível" : reachable === false ? "Sem resposta" : "Aguardando";
+      return `<tr><td><strong>${esc(address.label)}</strong>${address.primary ? '<br><small class="muted">Principal</small>' : ""}</td><td><code>${esc(address.host)}</code></td><td>${address.latencyMs == null ? "—" : `${number(address.latencyMs)} ms`}</td><td><span class="status ${stateClass}">${stateLabel}</span>${address.active ? '<br><small class="muted">em uso</small>' : ""}</td></tr>`;
+    }).join("");
+    const addresses = `<div class="detailSection"><h3>Endereços e caminhos de rede</h3><div class="detailTableWrap"><table><thead><tr><th>Interface</th><th>IP ou host</th><th>Latência</th><th>Situação</th></tr></thead><tbody>${addressRows}</tbody></table></div></div>`;
+    const collectionSummary = isSnmp ? `${telemetry?.interfaceCount ?? telemetry?.interfaces?.length ?? 0} interfaces consultadas` : `${number(telemetry?.series, 0)} séries coletadas`;
+    const telemetryBlock = telemetry ? `<div class="detailSection"><div class="detailSectionHead"><h3>${esc(protocol)}</h3><span>${esc(collectionSummary)}</span></div><div class="detailResources">${resourceCards}</div></div><div class="detailSection"><h3>Identificação do equipamento</h3><div class="detailIdentity">${identity}</div></div>${supplies}${disks}${interfaces}` : `<div class="detailNotice warning"><strong>Sem métricas de ${esc(protocol)} nesta coleta.</strong><span>${esc(metric?.message || "Aguardando a primeira coleta.")}</span><small>${isSnmp ? `Confirme o SNMP somente leitura na porta ${esc(device.snmpPort || 161)} e permita consultas do servidor 192.168.200.254.` : `Confirme se o exporter está iniciado e se a porta ${esc(device.agentPort || 9182)} aceita conexão do servidor 192.168.200.254.`}</small></div>`;
+    $("#deviceDetailsBody").innerHTML = `<div class="detailStatus"><div>${statusBadge(metric)}<span>${esc(metric?.message || "Aguardando medição")}</span></div><small>Última coleta: ${esc(dateTime(metric?.checkedAt))}</small></div><div class="detailEndpoint"><span>Coleta</span><strong>${esc(protocol)}</strong><span>Endpoint ativo</span><code>${esc(collectionEndpoint)}</code></div>${addresses}${telemetryBlock}`;
   }
 
   function openDeviceDetails(id) {
@@ -321,6 +378,7 @@
     $("#deviceName").value = device?.nome || "";
     $("#deviceType").value = device?.tipo || "OUTRO";
     $("#deviceHost").value = device?.host || "";
+    $("#deviceAddresses").value = addressesToText(device?.networkAddresses || []);
     $("#devicePort").value = device?.porta || "";
     $("#deviceProbe").value = device?.sonda || "ICMP";
     $("#deviceLocation").value = device?.localizacao || "";
@@ -355,6 +413,7 @@
       nome: $("#deviceName").value,
       tipo: $("#deviceType").value,
       host: $("#deviceHost").value,
+      networkAddresses: addressesFromText($("#deviceAddresses").value),
       porta: $("#devicePort").value ? Number($("#devicePort").value) : null,
       sonda: $("#deviceProbe").value,
       localizacao: $("#deviceLocation").value,
@@ -413,11 +472,13 @@
         body: JSON.stringify({ subnet: $("#discoverySubnet").value }),
       });
       const found = data.devices || [];
+      const ignored = Number(data.ignoredRegistered || 0);
       results.classList.toggle("muted", !found.length);
-      results.innerHTML = found.length ? found.map((item) => `<div class="discoveryItem">
+      const ignoredText = ignored ? `<p class="discoveryNote">${ignored} endereço${ignored > 1 ? "s" : ""} já cadastrado${ignored > 1 ? "s" : ""} foi${ignored > 1 ? "ram" : ""} ignorado${ignored > 1 ? "s" : ""}.</p>` : "";
+      results.innerHTML = found.length ? `${found.map((item) => `<div class="discoveryItem">
         <div><strong>${esc(item.host)}</strong><br><small class="muted">Portas: ${item.ports.map(esc).join(", ")}</small></div>
         ${item.registered ? '<span class="status online">Cadastrada</span>' : `<button class="smallButton" data-add-printer="${esc(item.host)}" data-printer-port="${Number(item.suggestedPort)}" type="button">Cadastrar</button>`}
-      </div>`).join("") : "Nenhuma impressora respondeu nessas portas.";
+      </div>`).join("")}${ignoredText}` : `Nenhuma nova impressora foi encontrada.${ignoredText}`;
     } catch (error) {
       results.textContent = error.message;
       showToast(error.message, true);
@@ -512,7 +573,8 @@
       <td>${esc(dateTime(metric.checkedAt))}</td><td>${statusBadge(metric)}</td>
       <td>${number(metric.latencyMs)} ms</td><td>${number(metric.packetLossPct)}%</td>
       <td>${number(metric.jitterMs)} ms</td><td>${metric.serviceOk == null ? "—" : (metric.serviceOk ? "Disponível" : "Falhou")}</td>
-    </tr>`).join("") || '<tr><td colspan="6" class="muted">Ainda não há medições neste período.</td></tr>';
+      <td>${esc(metric.message || "—")}</td>
+    </tr>`).join("") || '<tr><td colspan="7" class="muted">Ainda não há medições neste período.</td></tr>';
     $("#speedHistoryTable").innerHTML = [...state.speedMetrics].reverse().slice(0, 300).map((metric) => `<tr>
       <td>${esc(dateTime(metric.checkedAt))}</td><td>${statusBadge(metric)}</td>
       <td>${number(metric.downloadMbps)} Mbps</td><td>${number(metric.uploadMbps)} Mbps</td>
@@ -527,15 +589,33 @@
       return;
     }
     const latencyMax = Math.max(10, ...metrics.map((item) => Number(item.latencyMs || 0))) * 1.1;
+    const xAt = (index) => metrics.length === 1 ? 500 : 24 + index * (952 / (metrics.length - 1));
     const point = (item, index, field, max) => {
-      const x = metrics.length === 1 ? 500 : 24 + index * (952 / (metrics.length - 1));
+      const x = xAt(index);
       const y = 235 - Math.min(max, Number(item[field] || 0)) / max * 205;
       return `${x.toFixed(1)},${y.toFixed(1)}`;
     };
     const latency = metrics.map((item, index) => point(item, index, "latencyMs", latencyMax)).join(" ");
     const loss = metrics.map((item, index) => point(item, index, "packetLossPct", 100)).join(" ");
     const grid = [30, 81, 133, 184, 235].map((y) => `<line class="chartGrid" x1="24" y1="${y}" x2="976" y2="${y}" />`).join("");
-    svg.innerHTML = `${grid}<polyline class="chartLatency" points="${latency}"/><polyline class="chartLoss" points="${loss}"/>`;
+    const firstAt = new Date(metrics[0].checkedAt);
+    const lastAt = new Date(metrics[metrics.length - 1].checkedAt);
+    const showDate = lastAt - firstAt > 36 * 60 * 60 * 1000;
+    const tickCount = Math.min(6, metrics.length);
+    const tickIndexes = tickCount === 1 ? [0] : Array.from(
+      { length: tickCount },
+      (_, index) => Math.round(index * (metrics.length - 1) / (tickCount - 1)),
+    );
+    const timeTicks = [...new Set(tickIndexes)].map((metricIndex, tickIndex, allTicks) => {
+      const x = xAt(metricIndex);
+      const at = new Date(metrics[metricIndex].checkedAt);
+      const label = at.toLocaleString("pt-BR", showDate
+        ? { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }
+        : { hour: "2-digit", minute: "2-digit" });
+      const anchor = allTicks.length === 1 ? "middle" : tickIndex === 0 ? "start" : tickIndex === allTicks.length - 1 ? "end" : "middle";
+      return `<line class="chartTimeGrid" x1="${x}" y1="30" x2="${x}" y2="235"/><text class="chartTime" x="${x}" y="260" text-anchor="${anchor}">${esc(label)}</text>`;
+    }).join("");
+    svg.innerHTML = `${grid}${timeTicks}<polyline class="chartLatency" points="${latency}"/><polyline class="chartLoss" points="${loss}"/>`;
   }
 
   async function loadHistory() {
@@ -602,6 +682,12 @@
   $("#computerDiscoveryResults").addEventListener("click", (event) => {
     const button = event.target.closest("[data-add-computer]");
     if (button) addComputer(button);
+  });
+  $("#diagnosisList").addEventListener("click", (event) => {
+    const item = event.target.closest("[data-history-device]");
+    if (!item) return;
+    $("#historyDevice").value = item.dataset.historyDevice;
+    setView("historico");
   });
   window.addEventListener("hashchange", () => setView(location.hash.slice(1) || "dashboard", false));
   window.addEventListener("keydown", (event) => { if (event.key === "Escape") { closeDevice(); closeDeviceDetails(); } });

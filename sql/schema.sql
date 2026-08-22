@@ -67,6 +67,7 @@ CREATE TABLE IF NOT EXISTS tecnologia_dispositivos (
     nome VARCHAR(120) NOT NULL,
     tipo VARCHAR(30) NOT NULL DEFAULT 'OUTRO',
     host VARCHAR(253) NOT NULL,
+    enderecos_adicionais JSON NULL,
     porta INT NULL,
     sonda VARCHAR(20) NOT NULL DEFAULT 'ICMP',
     localizacao VARCHAR(160) NOT NULL DEFAULT '',

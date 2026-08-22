@@ -11,6 +11,7 @@ validate_app_sources
 
 log "garantindo bancos locais sem apagar, restaurar ou sincronizar dados..."
 compose up -d "${DATABASE_SERVICES[@]}"
+ensure_riob_import_sources
 
 log "reconstruindo portal e RioB para teste..."
 if [[ "${NO_CACHE:-0}" == "1" ]]; then

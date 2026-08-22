@@ -3092,6 +3092,9 @@ function _semanaIsoVendasDiario(dataValor){
     ? new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])))
     : new Date();
   data.setUTCHours(0, 0, 0, 0);
+  // A semana operacional comeca no domingo. Somar um dia faz o domingo usar
+  // o numero ISO da segunda-feira seguinte e mantem segunda-sabado na mesma semana.
+  data.setUTCDate(data.getUTCDate() + 1);
   data.setUTCDate(data.getUTCDate() + 4 - (data.getUTCDay() || 7));
   const anoIso = data.getUTCFullYear();
   const primeiroDia = new Date(Date.UTC(anoIso, 0, 1));

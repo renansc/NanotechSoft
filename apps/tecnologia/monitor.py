@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import concurrent.futures
+import http.client
 import ipaddress
 import json
 import os
@@ -38,6 +39,46 @@ def normalize_host(value: Any) -> str:
     return host
 
 
+def normalize_network_addresses(value: Any, primary_host: str | None = None) -> list[dict[str, str]]:
+    if value in (None, ""):
+        return []
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("A lista de interfaces e IPs é inválida.") from exc
+    if not isinstance(value, list):
+        raise ValueError("A lista de interfaces e IPs é inválida.")
+    if len(value) > 12:
+        raise ValueError("Cadastre no máximo 12 endereços por equipamento.")
+    primary = normalize_host(primary_host) if primary_host else None
+    seen = {primary} if primary else set()
+    result = []
+    for index, item in enumerate(value, start=1):
+        if isinstance(item, str):
+            item = {"host": item}
+        if not isinstance(item, dict):
+            raise ValueError("Cada interface precisa ter um nome e um IP ou host.")
+        host = normalize_host(item.get("host"))
+        if host in seen:
+            continue
+        label = str(item.get("label") or f"Interface {index}").strip()
+        if not label or len(label) > 60:
+            raise ValueError("O nome da interface deve ter até 60 caracteres.")
+        seen.add(host)
+        result.append({"label": label, "host": host})
+    return result
+
+
+def device_network_addresses(device: dict[str, Any]) -> list[dict[str, Any]]:
+    primary = normalize_host(device.get("host"))
+    additional = normalize_network_addresses(device.get("enderecos_adicionais"), primary)
+    return [
+        {"label": "Principal", "host": primary, "primary": True},
+        *[{**item, "primary": False} for item in additional],
+    ]
+
+
 def normalize_device_payload(payload: dict[str, Any]) -> dict[str, Any]:
     device_type = str(payload.get("tipo") or "OUTRO").strip().upper()
     probe_type = str(payload.get("sonda") or "ICMP").strip().upper()
@@ -49,6 +90,7 @@ def normalize_device_payload(payload: dict[str, Any]) -> dict[str, Any]:
     if not name or len(name) > 120:
         raise ValueError("Informe um nome com até 120 caracteres.")
     host = normalize_host(payload.get("host"))
+    network_addresses = normalize_network_addresses(payload.get("networkAddresses"), host)
     port_value = payload.get("porta")
     port = int(port_value or 0)
     if probe_type == "TCP" and not (1 <= port <= 65535):
@@ -97,6 +139,7 @@ def normalize_device_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "nome": name,
         "tipo": device_type,
         "host": host,
+        "enderecos_adicionais": json.dumps(network_addresses, ensure_ascii=False),
         "porta": port or None,
         "sonda": probe_type,
         "localizacao": str(payload.get("localizacao") or "").strip()[:160],
@@ -297,6 +340,14 @@ def _snmp_walk(host: str, community: str, port: int, oid: str) -> list[tuple[str
     return rows
 
 
+def _snmp_walk_optional(host: str, community: str, port: int, oid: str) -> list[tuple[str, str]]:
+    """Read an optional MIB branch without failing the whole device probe."""
+    try:
+        return _snmp_walk(host, community, port, oid)
+    except RuntimeError:
+        return []
+
+
 def _snmp_number(value: Any) -> float | None:
     match = re.search(r"\((-?[0-9]+(?:\.[0-9]+)?)\)|(-?[0-9]+(?:\.[0-9]+)?)", str(value or ""))
     if not match:
@@ -311,10 +362,11 @@ def collect_snmp_metrics(device: dict[str, Any]) -> dict[str, Any]:
         raise RuntimeError("comunidade SNMP não configurada")
     port = int(device.get("snmp_port") or 161)
     system_rows = _snmp_walk(host, community, port, ".1.3.6.1.2.1.1")
-    name_rows = _snmp_walk(host, community, port, ".1.3.6.1.2.1.31.1.1.1.1")
-    rx_rows = _snmp_walk(host, community, port, ".1.3.6.1.2.1.31.1.1.1.6")
-    tx_rows = _snmp_walk(host, community, port, ".1.3.6.1.2.1.31.1.1.1.10")
-    cpu_rows = _snmp_walk(host, community, port, ".1.3.6.1.2.1.25.3.3.1.2")
+    name_rows = _snmp_walk_optional(host, community, port, ".1.3.6.1.2.1.31.1.1.1.1")
+    rx_rows = _snmp_walk_optional(host, community, port, ".1.3.6.1.2.1.31.1.1.1.6")
+    tx_rows = _snmp_walk_optional(host, community, port, ".1.3.6.1.2.1.31.1.1.1.10")
+    speed_rows = _snmp_walk_optional(host, community, port, ".1.3.6.1.2.1.31.1.1.1.15")
+    cpu_rows = _snmp_walk_optional(host, community, port, ".1.3.6.1.2.1.25.3.3.1.2")
 
     def indexed(rows: list[tuple[str, str]]) -> dict[str, Any]:
         return {oid.rsplit(".", 1)[-1]: value for oid, value in rows}
@@ -322,32 +374,100 @@ def collect_snmp_metrics(device: dict[str, Any]) -> dict[str, Any]:
     names = indexed(name_rows)
     rx = indexed(rx_rows)
     tx = indexed(tx_rows)
+    speeds = indexed(speed_rows)
     ignored = {"lo", "loopback", "null0"}
     rx_total = sum(_snmp_number(value) or 0 for index, value in rx.items() if names.get(index, "").lower() not in ignored)
     tx_total = sum(_snmp_number(value) or 0 for index, value in tx.items() if names.get(index, "").lower() not in ignored)
     checked_at = time.time()
     counters = {"rxBytes": rx_total, "txBytes": tx_total}
     rates = _counter_rates(counters, _previous_telemetry(device), checked_at)
+    capacity_mbps = sum(
+        _snmp_number(value) or 0
+        for index, value in speeds.items()
+        if names.get(index, "").lower() not in ignored and (_snmp_number(value) or 0) > 0
+    )
+    traffic_mbps = max(float(rates["downloadMbps"] or 0), float(rates["uploadMbps"] or 0))
+    has_rate = rates["downloadMbps"] is not None or rates["uploadMbps"] is not None
+    network_pct = round(traffic_mbps / capacity_mbps * 100, 1) if capacity_mbps and has_rate else None
     cpu_values = [number for _, value in cpu_rows if (number := _snmp_number(value)) is not None]
     system_values = {oid: value for oid, value in system_rows}
     system_name = next((value for oid, value in system_values.items() if oid.endswith(".1.5.0")), "")
     description = next((value for oid, value in system_values.items() if oid.endswith(".1.1.0")), "")
     uptime_raw = next((value for oid, value in system_values.items() if oid.endswith(".1.3.0")), "")
-    return {
+    uptime_ticks = _snmp_number(uptime_raw)
+    telemetry = {
         "ok": True,
         "protocol": "SNMPv2c",
         "checkedEpoch": checked_at,
         "systemName": system_name,
         "description": description[:240],
-        "uptimeTicks": _snmp_number(uptime_raw),
+        "uptimeTicks": uptime_ticks,
+        "uptimeSeconds": round(uptime_ticks / 100, 2) if uptime_ticks is not None else None,
         "cpuPct": round(sum(cpu_values) / len(cpu_values), 1) if cpu_values else None,
         "memoryPct": None,
         "diskPct": None,
         "downloadMbps": rates["downloadMbps"],
         "uploadMbps": rates["uploadMbps"],
+        "networkCapacityMbps": round(capacity_mbps, 1) if capacity_mbps else None,
+        "networkPct": network_pct,
         "counters": counters,
-        "interfaces": len(names),
+        "interfaces": [name for _, name in sorted(names.items()) if name],
+        "interfaceCount": len(names),
     }
+
+    if str(device.get("tipo") or "").upper() != "IMPRESSORA":
+        return telemetry
+
+    printer_status_rows = _snmp_walk_optional(host, community, port, ".1.3.6.1.2.1.25.3.5.1.1")
+    serial_rows = _snmp_walk_optional(host, community, port, ".1.3.6.1.2.1.43.5.1.1.17")
+    page_rows = _snmp_walk_optional(host, community, port, ".1.3.6.1.2.1.43.10.2.1.4")
+    supply_name_rows = _snmp_walk_optional(host, community, port, ".1.3.6.1.2.1.43.11.1.1.6")
+    supply_capacity_rows = _snmp_walk_optional(host, community, port, ".1.3.6.1.2.1.43.11.1.1.8")
+    supply_level_rows = _snmp_walk_optional(host, community, port, ".1.3.6.1.2.1.43.11.1.1.9")
+
+    printer_status_code = next(
+        (int(number) for _, value in printer_status_rows if (number := _snmp_number(value)) is not None),
+        None,
+    )
+    printer_statuses = {
+        1: "Outro", 2: "Desconhecido", 3: "Ociosa", 4: "Imprimindo", 5: "Aquecendo",
+    }
+
+    def mib_index(rows: list[tuple[str, str]], base_oid: str) -> dict[str, Any]:
+        prefix = f"{base_oid}."
+        return {oid[len(prefix):]: value for oid, value in rows if oid.startswith(prefix)}
+
+    supply_base = ".1.3.6.1.2.1.43.11.1.1"
+    supply_names = mib_index(supply_name_rows, f"{supply_base}.6")
+    supply_capacities = mib_index(supply_capacity_rows, f"{supply_base}.8")
+    supply_levels = mib_index(supply_level_rows, f"{supply_base}.9")
+    supply_special_states = {-1: "Outro", -2: "Desconhecido", -3: "Disponível"}
+    supplies = []
+    for index, supply_name in supply_names.items():
+        capacity = _snmp_number(supply_capacities.get(index))
+        level = _snmp_number(supply_levels.get(index))
+        percentage = None
+        if capacity is not None and capacity > 0 and level is not None and level >= 0:
+            percentage = round(max(0, min(100, level / capacity * 100)), 1)
+        supplies.append({
+            "name": str(supply_name or f"Suprimento {index}")[:240],
+            "level": level,
+            "capacity": capacity,
+            "pct": percentage,
+            "status": supply_special_states.get(int(level)) if level is not None and level < 0 else "Medido",
+        })
+
+    telemetry.update({
+        "printerStatusCode": printer_status_code,
+        "printerStatus": printer_statuses.get(printer_status_code, "Não informado"),
+        "serialNumber": next((value for _, value in serial_rows if value), ""),
+        "pageCount": next(
+            (int(number) for _, value in page_rows if (number := _snmp_number(value)) is not None),
+            None,
+        ),
+        "supplies": supplies,
+    })
+    return telemetry
 
 
 def _prometheus_labels(raw: str) -> dict[str, str]:
@@ -387,6 +507,18 @@ def _metric_sum(metrics: dict[str, list[tuple[dict[str, str], float]]], names: t
         values = [
             value for labels, value in rows
             if not exclude_loopback or labels.get("device", labels.get("nic", "")).lower() not in {"lo", "loopback", "software loopback interface 1"}
+        ]
+        if values:
+            return sum(values)
+    return None
+
+
+def _metric_positive_sum(metrics: dict[str, list[tuple[dict[str, str], float]]], names: tuple[str, ...]) -> float | None:
+    ignored = {"lo", "loopback", "software loopback interface 1"}
+    for name in names:
+        values = [
+            value for labels, value in (metrics.get(name) or [])
+            if value > 0 and labels.get("device", labels.get("nic", "")).lower() not in ignored
         ]
         if values:
             return sum(values)
@@ -458,6 +590,14 @@ def collect_prometheus_metrics(device: dict[str, Any]) -> dict[str, Any]:
     if cpu_delta > 0 and 0 <= idle_delta <= cpu_delta:
         cpu_pct = round((1 - idle_delta / cpu_delta) * 100, 1)
     rates = _counter_rates(counters, previous, checked_at)
+    capacity_bytes_per_second = _metric_positive_sum(metrics, (
+        "node_network_speed_bytes",
+        "windows_net_current_bandwidth_bytes",
+    ))
+    capacity_mbps = capacity_bytes_per_second * 8 / 1_000_000 if capacity_bytes_per_second else None
+    traffic_mbps = max(float(rates["downloadMbps"] or 0), float(rates["uploadMbps"] or 0))
+    has_rate = rates["downloadMbps"] is not None or rates["uploadMbps"] is not None
+    network_pct = round(traffic_mbps / capacity_mbps * 100, 1) if capacity_mbps and has_rate else None
 
     disk_usages = []
     disks = []
@@ -547,9 +687,12 @@ def collect_prometheus_metrics(device: dict[str, Any]) -> dict[str, Any]:
         "disks": disks[:20],
         "downloadMbps": rates["downloadMbps"],
         "uploadMbps": rates["uploadMbps"],
+        "networkCapacityMbps": round(capacity_mbps, 1) if capacity_mbps else None,
+        "networkPct": network_pct,
         "load1": (_metric_sum(metrics, ("node_load1",))),
         "uptimeSeconds": round(uptime_seconds) if uptime_seconds is not None else None,
         "interfaces": interfaces[:30],
+        "endpointHost": host,
         "counters": counters,
         "series": sum(len(rows) for rows in metrics.values()),
     }
@@ -644,35 +787,79 @@ def measure_internet_speed(
 
 
 def probe_device(device: dict[str, Any]) -> dict[str, Any]:
-    host = normalize_host(device.get("host"))
     probe_type = str(device.get("sonda") or "ICMP").upper()
     port = int(device.get("porta") or 0)
-    ping_result = ping_host(host)
-    tcp_result = tcp_host(host, port) if port else None
-    dns_result = dns_probe() if str(device.get("tipo") or "").upper() == "INTERNET" else None
-    netbios_result = None
-    if str(device.get("tipo") or "").upper() in {"COMPUTADOR", "NOTEBOOK"}:
-        netbios_result = netbios_node_status(host)
+    agent_port = int(device.get("agente_porta") or 0)
+    addresses = device_network_addresses(device)
+    device_type = str(device.get("tipo") or "").upper()
 
-    reachable = (
-        ping_result["reachable"]
-        or bool(tcp_result and tcp_result["reachable"])
-        or bool(netbios_result and netbios_result["ok"])
-    )
+    def probe_address(address: dict[str, Any]) -> dict[str, Any]:
+        address_host = address["host"]
+        ping = ping_host(address_host)
+        tcp = tcp_host(address_host, port) if port else None
+        exporter = tcp_host(address_host, agent_port) if probe_type == "PROMETHEUS" and agent_port and agent_port != port else tcp
+        netbios = netbios_node_status(address_host) if device_type in {"COMPUTADOR", "NOTEBOOK"} else None
+        reachable = (
+            ping["reachable"]
+            or bool(tcp and tcp["reachable"])
+            or bool(exporter and exporter["reachable"])
+            or bool(netbios and netbios["ok"])
+        )
+        return {
+            **address,
+            "reachable": reachable,
+            "icmp": ping,
+            "tcp": tcp,
+            "exporter": exporter if probe_type == "PROMETHEUS" else None,
+            "netbios": netbios,
+        }
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, len(addresses))) as executor:
+        address_results = list(executor.map(probe_address, addresses))
+    active_address = next((item for item in address_results if item["reachable"]), address_results[0])
+    ping_result = active_address["icmp"]
+    tcp_result = active_address["tcp"]
+    dns_result = dns_probe() if str(device.get("tipo") or "").upper() == "INTERNET" else None
+    netbios_result = active_address["netbios"]
+
+    reachable = any(item["reachable"] for item in address_results)
     latency = ping_result.get("latencyMs")
     if latency is None and tcp_result:
         latency = tcp_result.get("latencyMs")
     loss = float(ping_result.get("packetLossPct") or 0)
     jitter = ping_result.get("jitterMs")
-    service_failed = bool(port and tcp_result and not tcp_result["reachable"])
+    service_ok = any(bool(item["tcp"] and item["tcp"]["reachable"]) for item in address_results) if port else None
+    service_failed = bool(port and not service_ok)
     dns_failed = bool(dns_result and not dns_result["ok"])
     telemetry = None
     telemetry_error = ""
     if probe_type in {"SNMP", "PROMETHEUS"} and reachable:
-        try:
-            telemetry = collect_snmp_metrics(device) if probe_type == "SNMP" else collect_prometheus_metrics(device)
-        except RuntimeError as exc:
-            telemetry_error = str(exc)
+        candidates = [item for item in address_results if item["reachable"]]
+        if probe_type == "PROMETHEUS":
+            candidates.sort(key=lambda item: not bool(item.get("exporter") and item["exporter"].get("reachable")))
+        errors = []
+        for candidate in candidates:
+            endpoint_device = {**device, "host": candidate["host"]}
+            try:
+                telemetry = collect_snmp_metrics(endpoint_device) if probe_type == "SNMP" else collect_prometheus_metrics(endpoint_device)
+                telemetry["endpointLabel"] = candidate["label"]
+                active_address = candidate
+                break
+            except RuntimeError as exc:
+                errors.append(str(exc))
+        if telemetry is None and errors:
+            telemetry_error = errors[-1]
+
+    # Quando o exporter responde por um endereço alternativo, a qualidade e a
+    # identificação da coleta devem refletir esse mesmo caminho.
+    ping_result = active_address["icmp"]
+    tcp_result = active_address["tcp"]
+    netbios_result = active_address["netbios"]
+    latency = ping_result.get("latencyMs")
+    if latency is None and tcp_result:
+        latency = tcp_result.get("latencyMs")
+    loss = float(ping_result.get("packetLossPct") or 0)
+    jitter = ping_result.get("jitterMs")
 
     resource_reasons = []
     if telemetry:
@@ -685,6 +872,9 @@ def probe_device(device: dict[str, Any]) -> dict[str, Any]:
             threshold = float(device.get(threshold_field) or 90)
             if value is not None and float(value) >= threshold:
                 resource_reasons.append(f"{label} {float(value):.0f}%")
+        network_pct = telemetry.get("networkPct")
+        if network_pct is not None and float(network_pct) >= 90:
+            resource_reasons.append(f"rede {float(network_pct):.0f}%")
         traffic_threshold = float(device.get("trafego_alerta_mbps") or 100)
         traffic = max(float(telemetry.get("downloadMbps") or 0), float(telemetry.get("uploadMbps") or 0))
         if traffic >= traffic_threshold:
@@ -712,13 +902,29 @@ def probe_device(device: dict[str, Any]) -> dict[str, Any]:
         reasons.append(f"perda {loss:.0f}%")
     if latency is not None and latency >= float(device.get("latencia_alerta_ms") or 80):
         reasons.append(f"latência {latency:.1f} ms")
-    message = ", ".join(reasons) if reasons else "resposta normal"
+    if reasons:
+        message = ", ".join(reasons)
+    elif not active_address.get("primary"):
+        message = f"resposta normal via {active_address['label']} ({active_address['host']})"
+    else:
+        message = "resposta normal"
+    public_addresses = [{
+        "label": item["label"],
+        "host": item["host"],
+        "primary": bool(item["primary"]),
+        "reachable": bool(item["reachable"]),
+        "latencyMs": item["icmp"].get("latencyMs") if item.get("icmp") else None,
+        "packetLossPct": float((item.get("icmp") or {}).get("packetLossPct") or 0),
+        "serviceOk": None if not port else bool(item.get("tcp") and item["tcp"].get("reachable")),
+        "exporterOk": None if probe_type != "PROMETHEUS" else bool(item.get("exporter") and item["exporter"].get("reachable")),
+        "active": item["host"] == active_address["host"],
+    } for item in address_results]
     return {
         "status": status,
         "latencyMs": latency,
         "packetLossPct": loss,
         "jitterMs": jitter,
-        "serviceOk": None if not port else bool(tcp_result and tcp_result["reachable"]),
+        "serviceOk": service_ok,
         "message": message,
         "details": {
             "icmp": ping_result,
@@ -726,9 +932,25 @@ def probe_device(device: dict[str, Any]) -> dict[str, Any]:
             "dns": dns_result,
             "netbios": netbios_result,
             "probeType": probe_type,
+            "addresses": public_addresses,
+            "activeAddress": active_address["host"],
             "telemetry": telemetry,
         },
     }
+
+
+def _port_is_machine_exporter(host: str, port: int, timeout_seconds: float) -> bool:
+    url = f"http://{host}:{int(port)}/metrics"
+    try:
+        with urllib.request.urlopen(url, timeout=max(1.0, timeout_seconds)) as response:
+            body = response.read(256 * 1024).decode("utf-8", errors="replace")
+    except (OSError, ValueError, urllib.error.URLError, http.client.HTTPException):
+        return False
+    return bool(re.search(
+        r"(?m)^(?:node_exporter_build_info|node_uname_info|node_cpu_seconds_total|"
+        r"windows_exporter_build_info|windows_os_info)(?:\{|\s)",
+        body,
+    ))
 
 
 def _open_printer_ports(host: str, timeout_seconds: float) -> list[int]:
@@ -737,6 +959,8 @@ def _open_printer_ports(host: str, timeout_seconds: float) -> list[int]:
         result = tcp_host(host, port, timeout_seconds=timeout_seconds)
         if result["reachable"]:
             open_ports.append(port)
+    if 9100 in open_ports and _port_is_machine_exporter(host, 9100, timeout_seconds):
+        open_ports.remove(9100)
     return open_ports
 
 
@@ -814,21 +1038,40 @@ def discover_computers(subnet: str, timeout_seconds: float = 0.2) -> list[dict[s
     return sorted(rows, key=lambda row: ipaddress.ip_address(row["host"]))
 
 
-def build_network_diagnosis(devices: list[dict[str, Any]], speed: dict[str, Any] | None = None) -> list[dict[str, str]]:
+def build_network_diagnosis(devices: list[dict[str, Any]], speed: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     active = [item for item in devices if item.get("ativo", True)]
     offline = [item for item in active if (item.get("ultimaMetrica") or {}).get("status") == "OFFLINE"]
     degraded = [item for item in active if (item.get("ultimaMetrica") or {}).get("status") == "DEGRADADO"]
     internet = next((item for item in active if item.get("tipo") == "INTERNET"), None)
     router = next((item for item in active if item.get("tipo") == "ROTEADOR"), None)
-    notes: list[dict[str, str]] = []
+    notes: list[dict[str, Any]] = []
+    detailed_device_ids = set()
     if internet and (internet.get("ultimaMetrica") or {}).get("status") == "OFFLINE":
-        notes.append({"level": "critical", "text": "O destino externo está indisponível: verifique o link da operadora e o gateway."})
-    if router and (router.get("ultimaMetrica") or {}).get("status") in {"OFFLINE", "DEGRADADO"}:
-        notes.append({"level": "critical", "text": "O gateway 192.168.200.1 apresenta falha ou instabilidade na rede local."})
-    if offline:
-        notes.append({"level": "critical", "text": f"{len(offline)} equipamento(s) estão sem resposta."})
-    if degraded:
-        notes.append({"level": "warning", "text": f"{len(degraded)} equipamento(s) ultrapassaram os limites de perda, latência ou serviço."})
+        notes.append({
+            "level": "critical",
+            "text": "O destino externo está indisponível: verifique o link da operadora e o gateway.",
+            "deviceId": internet.get("id"),
+            "checkedAt": (internet.get("ultimaMetrica") or {}).get("checkedAt"),
+        })
+        detailed_device_ids.add(internet.get("id"))
+    router_metric = (router or {}).get("ultimaMetrica") or {}
+    if router and router_metric.get("status") in {"OFFLINE", "DEGRADADO"}:
+        reason = str(router_metric.get("message") or "sem resposta").strip()
+        verb = "está sem resposta" if router_metric.get("status") == "OFFLINE" else f"apresentou {reason} na última amostra"
+        notes.append({
+            "level": "critical" if router_metric.get("status") == "OFFLINE" else "warning",
+            "text": f"O gateway {router.get('host') or '192.168.200.1'} {verb}.",
+            "detail": "Alerta do gateway: envia e-mail e avisa novamente após 6 horas se persistir.",
+            "deviceId": router.get("id"),
+            "checkedAt": router_metric.get("checkedAt"),
+        })
+        detailed_device_ids.add(router.get("id"))
+    remaining_offline = [item for item in offline if item.get("id") not in detailed_device_ids]
+    remaining_degraded = [item for item in degraded if item.get("id") not in detailed_device_ids]
+    if remaining_offline:
+        notes.append({"level": "critical", "text": f"{len(remaining_offline)} equipamento(s) estão sem resposta."})
+    if remaining_degraded:
+        notes.append({"level": "warning", "text": f"{len(remaining_degraded)} equipamento(s) ultrapassaram os limites de perda, latência ou serviço."})
     if speed:
         if speed.get("status") == "FALHA":
             notes.append({"level": "warning", "text": "Não foi possível concluir o último teste de velocidade do link."})
@@ -852,6 +1095,9 @@ def build_network_diagnosis(devices: list[dict[str, Any]], speed: dict[str, Any]
             }[field]
             if value is not None and threshold is not None and float(value) >= float(threshold):
                 notes.append({"level": "warning", "text": f"{device.get('nome')}: {label} em {float(value):.0f}%."})
+        network_pct = telemetry.get("networkPct")
+        if network_pct is not None and float(network_pct) >= 90:
+            notes.append({"level": "warning", "text": f"{device.get('nome')}: uso da rede em {float(network_pct):.0f}%."})
         traffic = max(float(telemetry.get("downloadMbps") or 0), float(telemetry.get("uploadMbps") or 0))
         if traffic and traffic >= float(device.get("trafficAlertMbps") or 100):
             notes.append({"level": "warning", "text": f"{device.get('nome')}: tráfego alto, {traffic:.1f} Mbps na interface monitorada."})

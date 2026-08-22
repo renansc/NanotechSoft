@@ -10,6 +10,7 @@ require_compose
 
 log "garantindo bancos antes do restart..."
 compose up -d "$DB_SERVICE" "$PACS_DB_SERVICE"
+ensure_riob_import_sources
 
 log "reiniciando portal e RioB..."
 compose restart "$APP_SERVICE" "$RIOB_APP_SERVICE"

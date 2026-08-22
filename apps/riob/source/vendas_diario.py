@@ -25,17 +25,21 @@ def intervalo_semana_iso(semana="", referencia=None):
         if not match:
             raise ValueError("Semana invalida. Use o formato AAAA-WNN.")
         try:
-            inicio = datetime.date.fromisocalendar(int(match.group(1)), int(match.group(2)), 1)
+            segunda_iso = datetime.date.fromisocalendar(int(match.group(1)), int(match.group(2)), 1)
         except ValueError as exc:
             raise ValueError("Semana invalida. Selecione uma semana valida no calendario.") from exc
+        inicio = segunda_iso - datetime.timedelta(days=1)
     else:
         if isinstance(referencia, datetime.datetime):
             referencia = referencia.date()
         if not isinstance(referencia, datetime.date):
             referencia = datetime.date.today()
-        inicio = referencia - datetime.timedelta(days=referencia.weekday())
+        dias_desde_domingo = (referencia.weekday() + 1) % 7
+        inicio = referencia - datetime.timedelta(days=dias_desde_domingo)
     fim = inicio + datetime.timedelta(days=6)
-    ano_iso, numero_iso, _ = inicio.isocalendar()
+    # O seletor HTML usa o numero ISO da segunda-feira, mas a operacao da
+    # empresa considera a linha semanal de domingo a sabado.
+    ano_iso, numero_iso, _ = (inicio + datetime.timedelta(days=1)).isocalendar()
     return inicio, fim, f"{ano_iso:04d}-W{numero_iso:02d}"
 
 
