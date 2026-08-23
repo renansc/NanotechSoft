@@ -17472,6 +17472,7 @@ function setEstoqueView(view){
   const movimentoManualBox = document.getElementById("estoqueMovimentoManualBox");
   const nfeManualBox = document.getElementById("estoqueNfeManualBox");
   const menuAcerto = document.getElementById("estoqueMenuAcerto");
+  const cadastroAjusteBox = document.getElementById("estoqueCadastroAjusteBox");
   const titulo = document.getElementById("estoqueTitulo");
 
   if (viewLancar) viewLancar.classList.toggle("hidden", !["importar_xml_bipe", "importar_xml_auto", "movimentar"].includes(nextView));
@@ -17483,6 +17484,7 @@ function setEstoqueView(view){
   if (movimentoManualBox) movimentoManualBox.classList.toggle("hidden", nextView !== "movimentar");
   if (nfeManualBox) nfeManualBox.classList.toggle("hidden", nextView !== "importar_xml_bipe");
   if (menuAcerto) menuAcerto.classList.toggle("hidden", !admin);
+  if (cadastroAjusteBox && nextView === "cadastrar") cadastroAjusteBox.classList.toggle("hidden", !admin);
   if (titulo) {
     const titulos = {
       importar_xml_bipe: "Compras / Importar XML (Bipe)",
@@ -17557,7 +17559,8 @@ function limparProdutoEstoqueCadastro(){
   const ajusteBox = document.getElementById("estoqueCadastroAjusteBox");
   const ajusteBtn = document.getElementById("estoqueCadastroAjusteBtn");
   const saldoAtualBtn = document.getElementById("estoqueCadastroSaldoAtualBtn");
-  if (ajusteBox) ajusteBox.classList.add("hidden");
+  const admin = String(usuarioLogado?.perfil || "").toLowerCase() === "admin";
+  if (ajusteBox) ajusteBox.classList.toggle("hidden", !admin);
   if (ajusteBtn) ajusteBtn.classList.add("hidden");
   if (saldoAtualBtn) saldoAtualBtn.classList.add("hidden");
   const status = document.getElementById("estoqueCadastroStatus");
@@ -17916,22 +17919,85 @@ async function salvarProdutoEstoqueCadastro(){
     alert("Informe o tipo da embalagem.");
     return;
   }
+  const saldoEl = document.getElementById("estoqueCadastroSaldoAtual");
+  const ajusteEl = document.getElementById("estoqueCadastroAjusteQuantidade");
+  const motivoEl = document.getElementById("estoqueCadastroAjusteMotivo");
+  const saldoRaw = String(saldoEl?.value || "").trim();
+  const ajusteRaw = String(ajusteEl?.value || "").trim();
+  const motivoInformado = String(motivoEl?.value || "").trim();
+  if (saldoRaw && ajusteRaw) {
+    alert("Preencha somente o saldo fisico ou o ajuste (+/-), nao os dois.");
+    return;
+  }
+  let ajustePayload = null;
+  if (saldoRaw) {
+    const quantidade_atual = Number(saldoRaw);
+    if (!Number.isFinite(quantidade_atual) || quantidade_atual < 0) {
+      alert("Informe o saldo fisico contado, igual ou maior que zero.");
+      return;
+    }
+    ajustePayload = {
+      quantidade_atual,
+      motivo_ajuste: motivoInformado || `Inventario fisico ${new Date().toLocaleDateString("pt-BR")}`,
+    };
+  } else if (ajusteRaw) {
+    const quantidade_ajuste = Number(ajusteRaw);
+    if (!Number.isFinite(quantidade_ajuste) || quantidade_ajuste === 0) {
+      alert("Informe uma quantidade de ajuste diferente de zero.");
+      return;
+    }
+    if (!motivoInformado) {
+      alert("Informe o motivo do ajuste de estoque.");
+      return;
+    }
+    ajustePayload = { quantidade_ajuste, motivo_ajuste: motivoInformado };
+  }
   const editId = Number(estoqueState.cadastroProdutoEditId || 0);
+  const status = document.getElementById("estoqueCadastroStatus");
+  if (status) status.textContent = ajustePayload
+    ? "Salvando cadastro e aplicando acerto de estoque..."
+    : "Salvando cadastro...";
   const resp = await apiFetch(editId > 0 ? `/api/estoque/produtos/${editId}` : "/api/estoque/produtos", {
     method: editId > 0 ? "PUT" : "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
   const data = await resp.json().catch(() => ({}));
-  const status = document.getElementById("estoqueCadastroStatus");
   if (!resp.ok) {
     if (status) status.textContent = data?.erro || "Falha ao salvar cadastro de embalagem.";
     alert(data?.erro || "Falha ao salvar cadastro de embalagem.");
     return;
   }
-  limparProdutoEstoqueCadastro();
-  if (status) status.textContent = "Cadastro de embalagem salvo com sucesso.";
+  const produtoIdSalvo = Number(data?.produto?.id || editId || 0);
+  let dataAjuste = null;
+  if (ajustePayload) {
+    const respAjuste = await apiFetch(`/api/estoque/produtos/${produtoIdSalvo}/ajuste`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(ajustePayload),
+    });
+    dataAjuste = await respAjuste.json().catch(() => ({}));
+    if (!respAjuste.ok) {
+      await ensureProdutosEstoqueCache(true).catch(() => {});
+      await carregarEstoque();
+      editarProdutoEstoqueCadastro(produtoIdSalvo);
+      if (saldoEl) saldoEl.value = saldoRaw;
+      if (ajusteEl) ajusteEl.value = ajusteRaw;
+      if (motivoEl) motivoEl.value = motivoInformado;
+      const erro = dataAjuste?.erro || "Falha ao aplicar o acerto de estoque.";
+      if (status) status.textContent = `Cadastro salvo, mas o acerto nao foi aplicado: ${erro}`;
+      alert(`Cadastro salvo, mas o acerto nao foi aplicado: ${erro}`);
+      return;
+    }
+  }
+  await ensureProdutosEstoqueCache(true);
   await carregarEstoque();
+  limparProdutoEstoqueCadastro();
+  if (status) {
+    status.textContent = dataAjuste
+      ? `Cadastro e acerto salvos. Saldo: ${_estoqueFormatQtd(dataAjuste?.saldo_antes)} -> ${_estoqueFormatQtd(dataAjuste?.saldo_depois)}.`
+      : "Cadastro de embalagem salvo com sucesso.";
+  }
   if (window.__dashView === "estoque") await renderDashboardEstoque();
 }
 

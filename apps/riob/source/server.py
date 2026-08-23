@@ -21017,7 +21017,15 @@ def ajustar_produto_estoque(produto_id):
             quantidade_ajuste = round(_as_float(data.get("quantidade_ajuste"), 0.0), 3)
             quantidade_desejada = round(saldo_antes + quantidade_ajuste, 3)
         if abs(quantidade_ajuste) <= 0:
-            return jsonify({"erro": "a quantidade informada ja corresponde ao saldo atual"}), 400
+            return jsonify({
+                "ok": True,
+                "produto": _produto_estoque_publico(produto),
+                "quantidade_ajuste": 0.0,
+                "saldo_antes": round(saldo_antes, 3),
+                "saldo_depois": round(saldo_antes, 3),
+                "motivo_ajuste": motivo,
+                "sem_alteracao": True,
+            })
         tipo_movimento = "entrada" if quantidade_ajuste > 0 else "saida"
         quantidade_movimento = abs(round(quantidade_ajuste, 3))
         numero_nota = f"AJUSTE-{produto_id}"

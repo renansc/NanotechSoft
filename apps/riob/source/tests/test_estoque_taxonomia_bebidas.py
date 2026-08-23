@@ -239,6 +239,15 @@ class EstoqueTaxonomiaBebidasTests(unittest.TestCase):
         self.assertIn("definirSaldoAtualProdutoEstoqueCadastro", script)
         self.assertIn("quantidade_atual", script)
 
+    def test_interface_salva_cadastro_e_acerto_na_mesma_acao(self):
+        raiz = Path(__file__).resolve().parents[1]
+        html = (raiz / "RioBranco.html").read_text(encoding="utf-8")
+        script = (raiz / "script.js").read_text(encoding="utf-8")
+        self.assertIn("Salvar Cadastro e Acerto", html)
+        self.assertIn("let ajustePayload = null", script)
+        self.assertIn("body: JSON.stringify(ajustePayload)", script)
+        self.assertIn("ensureProdutosEstoqueCache(true)", script)
+
     def test_acerto_repetido_nao_reutiliza_referencia_unica_do_produto(self):
         class Cursor:
             def __init__(self):
@@ -299,6 +308,61 @@ class EstoqueTaxonomiaBebidasTests(unittest.TestCase):
         self.assertEqual(200, segunda.status_code)
         self.assertEqual(2, connection.commits)
         self.assertEqual([None, None], [params[9] for params in connection.cursor_instance.inserts])
+
+    def test_acerto_com_saldo_ja_correto_retorna_sucesso_sem_movimento(self):
+        class Cursor:
+            def __init__(self):
+                self.inserts = []
+
+            def execute(self, sql, params=None):
+                if "INSERT INTO estoque_movimentos" in sql:
+                    self.inserts.append(params)
+
+            def close(self):
+                pass
+
+        class Connection:
+            def __init__(self):
+                self.cursor_instance = Cursor()
+                self.commits = 0
+
+            def cursor(self, dictionary=False):
+                return self.cursor_instance
+
+            def commit(self):
+                self.commits += 1
+
+            def close(self):
+                pass
+
+        connection = Connection()
+        produto = {
+            "id": 128,
+            "codigo_barras": "",
+            "codigo_produto_nfe": "000222",
+            "nome_produto": "SACO PP BIG BAG 4 ALCAS 1200 KG AGUA BONITA UN",
+            "grupo_estoque": "OUTROS",
+            "produto_base_nome": "SACO PP BIG BAG 4 ALCAS 1200 KG AGUA BONITA UN",
+            "unidade": "UN",
+            "embalagem_tipo_padrao": "UN",
+            "fator_embalagem_padrao": 1,
+        }
+        with (
+            mock.patch.object(server, "get_conn", return_value=connection),
+            mock.patch.object(server, "_carregar_produto_estoque_por_id", return_value=produto),
+            mock.patch.object(server, "_saldo_atual_produto_estoque", return_value=365),
+            server.app.test_client() as client,
+        ):
+            resp = client.post(
+                "/api/estoque/produtos/128/ajuste",
+                json={"quantidade_atual": 365, "motivo_ajuste": "Conferencia"},
+                headers={"X-Usuario-Perfil": "admin"},
+            )
+
+        self.assertEqual(200, resp.status_code)
+        self.assertTrue(resp.get_json()["sem_alteracao"])
+        self.assertEqual([], connection.cursor_instance.inserts)
+        self.assertEqual(0, connection.commits)
 
     def test_interface_usa_fator_cadastrado_para_caixas_do_almoxarifado(self):
         raiz = Path(__file__).resolve().parents[1]

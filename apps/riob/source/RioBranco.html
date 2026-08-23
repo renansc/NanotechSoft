@@ -941,8 +941,9 @@
             <input type="number" id="estoqueCadastroAjusteQuantidade" step="0.001" placeholder="Ajuste de estoque (+/-)">
             <input type="text" id="estoqueCadastroAjusteMotivo" placeholder="Motivo (ex.: Estoque inicial 22/08/2026)">
           </div>
+          <div class="hint">Administrador: preencha o saldo fisico ou o ajuste (+/-) para salvar o cadastro e o acerto na mesma acao.</div>
           <div class="estoque-inline-actions">
-            <button type="button" onclick="salvarProdutoEstoqueCadastro()">Salvar Cadastro</button>
+            <button type="button" onclick="salvarProdutoEstoqueCadastro()">Salvar Cadastro e Acerto</button>
             <button type="button" id="estoqueCadastroSaldoAtualBtn" class="hidden" onclick="definirSaldoAtualProdutoEstoqueCadastro()">Definir Saldo Fisico</button>
             <button type="button" id="estoqueCadastroAjusteBtn" class="hidden" onclick="aplicarAjusteProdutoEstoqueCadastro()">Aplicar Ajuste</button>
             <button type="button" onclick="limparProdutoEstoqueCadastro()">Limpar</button>
