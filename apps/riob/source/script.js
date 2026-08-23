@@ -15152,11 +15152,20 @@ function _estoqueGrupoNormalizado(valor = ""){
   return aliases[raw] || (Object.prototype.hasOwnProperty.call(ESTOQUE_GRUPOS_ORDEM, raw) ? raw : "");
 }
 
+function _estoqueNomeIndicaAguaProduto(nomeProduto = ""){
+  const texto = _estoqueTextoChave(nomeProduto);
+  if (!/\bAGUA\b/.test(texto)) return false;
+  if (texto === "AGUA") return true;
+  return /\bAGUA\s+MINERAL\b/.test(texto)
+    || /\bAGUA\b.*\b(?:COM|SEM|C|S)\s*\/?\s*GAS\b/.test(texto)
+    || /\bAGUA\b.*\b\d+(?:[.,]\d+)?\s*(?:ML|L|LT|LITRO|LITROS)\b/.test(texto);
+}
+
 function _estoqueGrupoInferido(item = {}){
   const explicito = _estoqueGrupoNormalizado(item.grupo_estoque || item.grupo || "");
   if (explicito) return explicito;
   const texto = `${item.nome_produto || ""} ${item.codigo_produto_nfe || ""} ${item.codigo_barras || ""}`.toUpperCase();
-  if (/\bAGUA\b/.test(texto)) return "AGUA";
+  if (_estoqueNomeIndicaAguaProduto(item.nome_produto || "")) return "AGUA";
   if (/\bPREFORMA\b/.test(texto) || /\bPRE\s*-?\s*FORMA\b/.test(texto)) return "OUTROS";
   if (/\bPET\b/.test(texto) || /\bDESCART/.test(texto) || /\bRECICLAV/.test(texto)) return "PET";
   if (/\bGFA\b/.test(texto) || /\bGRF\b/.test(texto) || /\bGARRAFA\b/.test(texto) || /\bVIDRO\b/.test(texto)) return "GFA";
@@ -15220,7 +15229,7 @@ function _estoqueBaseNomeInferido(item = {}){
   const grupo = _estoqueGrupoInferido(item);
   const texto = String(item.nome_produto || explicito || "").toUpperCase();
   const textoNorm = _estoqueTextoChave(texto);
-  if (grupo === "AGUA" || /\bAGUA\b/.test(textoNorm)) {
+  if (grupo === "AGUA") {
     const gas = /\bSEM GAS\b/.test(textoNorm) ? "SEM GAS" : (/\b(?:COM GAS|C GAS)\b/.test(textoNorm) ? "COM GAS" : "");
     const volume = /\b2\s*L(?:T)?\b|\b2L\b/.test(textoNorm) ? "2L"
       : /\b600\s*ML\b/.test(textoNorm) ? "600ML"

@@ -3486,6 +3486,22 @@ def _estoque_grupo_normalizado(valor):
 def _estoque_grupo_ordem(valor):
     return _ESTOQUE_GRUPOS_ORDEM.get(_estoque_grupo_normalizado(valor), 99)
 
+def _estoque_nome_indica_agua_produto(nome_produto=""):
+    """Distingue agua mineral de nomes empresariais como ``Agua Bonita``."""
+    texto = _produto_nome_normalizado(nome_produto)
+    if not re.search(r"\bAGUA\b", texto):
+        return False
+    if texto == "AGUA":
+        return True
+    return bool(
+        re.search(r"\bAGUA\s+MINERAL\b", texto)
+        or re.search(r"\bAGUA\b.*\b(?:COM|SEM|C|S)\s*/?\s*GAS\b", texto)
+        or re.search(
+            r"\bAGUA\b.*\b\d+(?:[.,]\d+)?\s*(?:ML|L|LT|LITRO|LITROS)\b",
+            texto,
+        )
+    )
+
 def _estoque_classificacao_operacional(item):
     item = item or {}
     grupo = _estoque_grupo_normalizado(item.get("grupo_estoque")) or _estoque_grupo_inferido(
@@ -3534,13 +3550,13 @@ def _estoque_grupo_inferido(nome_produto="", codigo_produto_nfe="", grupo_estoqu
     grupo_exp = _estoque_grupo_normalizado(grupo_estoque)
     if grupo_exp:
         return grupo_exp
-    texto = " ".join([
-        _as_str(nome_produto).upper(),
-        _as_str(codigo_produto_nfe).upper(),
-    ]).strip()
+    texto = _produto_nome_normalizado(" ".join([
+        _as_str(nome_produto),
+        _as_str(codigo_produto_nfe),
+    ]))
     if not texto:
         return "OUTROS"
-    if re.search(r"\bAGUA\b", texto):
+    if _estoque_nome_indica_agua_produto(nome_produto):
         return "AGUA"
     if re.search(r"\bPREFORMA\b", texto) or re.search(r"\bPRE\s*-?\s*FORMA\b", texto):
         return "OUTROS"
@@ -3592,7 +3608,7 @@ def _estoque_base_nome_inferido(nome_produto="", grupo_estoque="", produto_base_
     grupo = _estoque_grupo_inferido(nome_produto=nome, grupo_estoque=grupo_estoque)
     texto = nome.upper()
     texto_norm = _produto_nome_normalizado(nome)
-    if grupo == "AGUA" or re.search(r"\bAGUA\b", texto_norm):
+    if grupo == "AGUA":
         gas = "SEM GAS" if re.search(r"\bSEM GAS\b", texto_norm) else (
             "COM GAS" if re.search(r"\b(?:COM GAS|C GAS)\b", texto_norm) else ""
         )
@@ -4058,16 +4074,35 @@ def _saldo_atual_produto_estoque(cur, codigo_barras="", codigo_produto_nfe="", n
         return 0.0
 
     meta_ref = _estoque_produto_meta(referencia)
-    payload = _estoque_resumo_produtos_data()
-    for item in (payload.get("rows") or []):
-        if _as_str(item.get("produto_base_key")) and _as_str(item.get("produto_base_key")) == _as_str(meta_ref.get("produto_base_key")):
-            return _as_float(item.get("quantidade_atual"), 0.0)
-        if referencia["codigo_barras"] and _normalizar_codigo_barras(item.get("codigo_barras")) == referencia["codigo_barras"]:
-            return _as_float(item.get("quantidade_atual"), 0.0)
-        if referencia["codigo_produto_nfe"] and _codigo_produto_chave(item.get("codigo_produto_nfe")) == _codigo_produto_chave(referencia["codigo_produto_nfe"]):
-            return _as_float(item.get("quantidade_atual"), 0.0)
-        if referencia["nome_produto"] and _produto_nome_normalizado(item.get("produto_base_nome") or item.get("nome_produto")) == _produto_nome_normalizado(referencia["nome_produto"]):
-            return _as_float(item.get("quantidade_atual"), 0.0)
+    rows = (_estoque_resumo_produtos_data().get("rows") or [])
+    comparacoes = []
+    if referencia["codigo_barras"]:
+        comparacoes.append(
+            lambda item: _normalizar_codigo_barras(item.get("codigo_barras")) == referencia["codigo_barras"]
+        )
+    if referencia["codigo_produto_nfe"]:
+        codigo_ref = _codigo_produto_chave(referencia["codigo_produto_nfe"])
+        comparacoes.append(
+            lambda item: _codigo_produto_chave(item.get("codigo_produto_nfe")) == codigo_ref
+        )
+    if referencia["nome_produto"]:
+        nome_ref = _produto_nome_normalizado(referencia["nome_produto"])
+        comparacoes.append(
+            lambda item: _produto_nome_normalizado(item.get("produto_base_nome") or item.get("nome_produto")) == nome_ref
+        )
+    base_key_ref = _as_str(meta_ref.get("produto_base_key"))
+    if base_key_ref:
+        comparacoes.append(
+            lambda item: _as_str(item.get("produto_base_key")) == base_key_ref
+        )
+
+    # Identificadores exatos precisam vencer a familia canonica. A busca antiga
+    # comparava tudo na mesma passada e podia devolver a primeira agua mineral
+    # para um insumo cujo fornecedor se chamava "Agua Bonita".
+    for combina in comparacoes:
+        for item in rows:
+            if combina(item):
+                return _as_float(item.get("quantidade_atual"), 0.0)
     return 0.0
 
 def _listar_itens_carga_estoque(cur, carga_id):

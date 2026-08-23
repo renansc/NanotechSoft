@@ -36,6 +36,53 @@ class EstoqueTaxonomiaBebidasTests(unittest.TestCase):
             ),
         )
 
+    def test_agua_bonita_no_fornecedor_nao_vira_agua_mineral(self):
+        saco = "SACO PP BIG BAG 4 ALCAS 1200 KG AGUA BONITA UN"
+        acucar = "ACUCAR CRISTAL A GRANEL AGUA BONITA GRANEL"
+        self.assertEqual("OUTROS", server._estoque_grupo_inferido(saco))
+        self.assertEqual("OUTROS", server._estoque_grupo_inferido(acucar))
+        self.assertEqual(
+            "SACO PP BIG BAG 4 ALCAS 1200 KG AGUA BONITA",
+            server._estoque_base_nome_inferido(saco),
+        )
+        self.assertEqual(
+            "SACO PP BIG BAG 4 ALCAS 1200 KG AGUA BONITA UN",
+            server._estoque_base_nome_inferido(
+                saco,
+                grupo_estoque="OUTROS",
+                produto_base_nome=saco,
+            ),
+        )
+        self.assertEqual(
+            "AGUA",
+            server._estoque_grupo_inferido("Agua mineral sem gas 510 ml"),
+        )
+
+    def test_saldo_prioriza_codigo_exato_antes_da_familia(self):
+        rows = [
+            {
+                "codigo_produto_nfe": "005900",
+                "produto_base_key": "AGUA:AGUA SEM GAS 510ML",
+                "quantidade_atual": 800,
+            },
+            {
+                "codigo_produto_nfe": "000222",
+                "produto_base_key": "OUTROS:SACO PP BIG BAG 4 ALCAS 1200 KG AGUA BONITA",
+                "quantidade_atual": 365,
+            },
+        ]
+        with mock.patch.object(
+            server,
+            "_estoque_resumo_produtos_data",
+            return_value={"rows": rows},
+        ):
+            saldo = server._saldo_atual_produto_estoque(
+                None,
+                codigo_produto_nfe="000222",
+                nome_produto="AGUA SEM GAS 510ML",
+            )
+        self.assertEqual(365, saldo)
+
     def test_fatores_padrao_das_embalagens(self):
         self.assertEqual(
             6,
