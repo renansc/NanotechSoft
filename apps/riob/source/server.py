@@ -21009,7 +21009,11 @@ def ajustar_produto_estoque(produto_id):
                 tipo_movimento,
                 "Ajuste Manual",
                 "Almoxarifado",
-                produto_id,
+                # O ajuste e um evento novo, nao uma referencia externa
+                # idempotente ao cadastro do produto. Manter o produto_id aqui
+                # impediria qualquer segundo acerto por causa do indice unico
+                # (referencia_tipo, referencia_id).
+                None,
                 usuario,
             )
         )

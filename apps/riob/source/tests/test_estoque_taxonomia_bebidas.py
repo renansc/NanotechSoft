@@ -1,5 +1,6 @@
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import server
 
@@ -190,6 +191,73 @@ class EstoqueTaxonomiaBebidasTests(unittest.TestCase):
         self.assertIn('id="estoqueCadastroSaldoAtual"', html)
         self.assertIn("definirSaldoAtualProdutoEstoqueCadastro", script)
         self.assertIn("quantidade_atual", script)
+
+    def test_acerto_repetido_nao_reutiliza_referencia_unica_do_produto(self):
+        class Cursor:
+            def __init__(self):
+                self.inserts = []
+
+            def execute(self, sql, params=None):
+                if "INSERT INTO estoque_movimentos" in sql:
+                    self.inserts.append(params)
+
+            def close(self):
+                pass
+
+        class Connection:
+            def __init__(self):
+                self.cursor_instance = Cursor()
+                self.commits = 0
+
+            def cursor(self, dictionary=False):
+                return self.cursor_instance
+
+            def commit(self):
+                self.commits += 1
+
+            def close(self):
+                pass
+
+        connection = Connection()
+        produto = {
+            "id": 112,
+            "codigo_barras": "",
+            "codigo_produto_nfe": "18810327",
+            "nome_produto": "TAMPA BAIXA VERMELHA",
+            "grupo_estoque": "OUTROS",
+            "produto_base_nome": "TAMPA BAIXA VERMELHA",
+            "unidade": "CX",
+            "embalagem_tipo_padrao": "CX",
+            "fator_embalagem_padrao": 7000,
+        }
+        with (
+            mock.patch.object(server, "get_conn", return_value=connection),
+            mock.patch.object(server, "_carregar_produto_estoque_por_id", return_value=produto),
+            mock.patch.object(server, "_saldo_atual_produto_estoque", side_effect=[140150, 910000]),
+            server.app.test_client() as client,
+        ):
+            headers = {"X-Usuario-Perfil": "admin"}
+            primeira = client.post(
+                "/api/estoque/produtos/112/ajuste",
+                json={"quantidade_atual": 910000, "motivo_ajuste": "Inventario fisico"},
+                headers=headers,
+            )
+            segunda = client.post(
+                "/api/estoque/produtos/112/ajuste",
+                json={"quantidade_atual": 900000, "motivo_ajuste": "Recontagem"},
+                headers=headers,
+            )
+
+        self.assertEqual(200, primeira.status_code)
+        self.assertEqual(200, segunda.status_code)
+        self.assertEqual(2, connection.commits)
+        self.assertEqual([None, None], [params[9] for params in connection.cursor_instance.inserts])
+
+    def test_interface_usa_fator_cadastrado_para_caixas_do_almoxarifado(self):
+        raiz = Path(__file__).resolve().parents[1]
+        script = (raiz / "script.js").read_text(encoding="utf-8")
+        self.assertIn("fatorCadastro > 1 ? fatorCadastro : 0", script)
+        self.assertIn('if (embalagem.startsWith("CX")) return "caixas";', script)
 
 
 if __name__ == "__main__":

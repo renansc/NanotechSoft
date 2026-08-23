@@ -19164,7 +19164,8 @@ function _acertoEstoqueValores(produto = {}){
   const meta = produto.pallet_meta || {};
   const saldo = Math.max(0, Number(_saldoProdutoCadastroAtual(produto) || 0));
   const porPallet = Number(meta.unidades_por_pallet || 0);
-  const porVolume = Number(meta.unidades_por_volume || 0);
+  const fatorCadastro = Number(produto.fator_embalagem_padrao || 0);
+  const porVolume = Number(meta.unidades_por_volume || 0) || (fatorCadastro > 1 ? fatorCadastro : 0);
   const pallets = porPallet > 0 ? Math.floor(saldo / porPallet) : 0;
   const resto = saldo - (pallets * porPallet);
   const volumes = porVolume > 0 ? Math.floor(resto / porVolume) : 0;
@@ -19172,14 +19173,23 @@ function _acertoEstoqueValores(produto = {}){
   return { saldo, pallets, volumes, unidades, porPallet, porVolume };
 }
 
+function _acertoEstoqueVolumeLabel(produto = {}){
+  const meta = produto.pallet_meta || {};
+  if (meta.rotulo_volume) return meta.rotulo_volume;
+  const embalagem = String(produto.embalagem_tipo_padrao || produto.unidade || "").trim().toUpperCase();
+  if (embalagem.startsWith("CX")) return "caixas";
+  if (["PCT", "FD", "FARDO"].includes(embalagem)) return "pacotes";
+  return embalagem ? embalagem.toLowerCase() : "embalagens";
+}
+
 function _acertoEstoqueTotalLinha(produtoId){
   const row = document.querySelector(`#estoqueAcertoBody tr[data-produto-id="${Number(produtoId || 0)}"]`);
   const produto = (estoqueState.cadastroProdutos || []).find((item) => Number(item.id || 0) === Number(produtoId || 0));
   if (!row || !produto) return 0;
-  const meta = produto.pallet_meta || {};
+  const valores = _acertoEstoqueValores(produto);
   const numero = (campo) => Math.max(0, Number(row.querySelector(`[data-field="${campo}"]`)?.value || 0));
-  const total = (numero("pallets") * Number(meta.unidades_por_pallet || 0))
-    + (numero("volumes") * Number(meta.unidades_por_volume || 0))
+  const total = (numero("pallets") * valores.porPallet)
+    + (numero("volumes") * valores.porVolume)
     + numero("unidades");
   const output = row.querySelector("[data-field='total']");
   if (output) output.textContent = _estoqueFormatQtd(total);
@@ -19197,13 +19207,14 @@ function renderAcertoEstoque(){
   body.innerHTML = produtos.length ? produtos.map((produto) => {
     const v = _acertoEstoqueValores(produto);
     const meta = produto.pallet_meta || {};
-    const identificado = !!meta.identificado;
-    const disabled = identificado ? "" : " disabled";
+    const palletDisabled = v.porPallet > 0 ? "" : " disabled";
+    const volumeDisabled = v.porVolume > 0 ? "" : " disabled";
+    const volumeLabel = _acertoEstoqueVolumeLabel(produto);
     return `<tr data-produto-id="${Number(produto.id || 0)}">
       <td><strong>${_escHtml(produto.produto_base_nome || produto.nome_produto || "-")}</strong><br><small>${_escHtml(produto.codigo_barras || produto.codigo_produto_nfe || "Sem codigo")}</small></td>
       <td>${_escHtml(_estoqueFormatPallet({ ...produto, pallet_meta: meta }, v.saldo))}</td>
-      <td><input type="number" min="0" step="1" data-field="pallets" value="${v.pallets}" oninput="_acertoEstoqueTotalLinha(${produto.id})"${disabled}></td>
-      <td><input type="number" min="0" step="1" data-field="volumes" value="${v.volumes}" title="${_escAttr(meta.rotulo_volume || "pacotes/caixas")}" oninput="_acertoEstoqueTotalLinha(${produto.id})"${disabled}><small>${_escHtml(meta.rotulo_volume || "regra não identificada")}</small></td>
+      <td><input type="number" min="0" step="1" data-field="pallets" value="${v.pallets}" oninput="_acertoEstoqueTotalLinha(${produto.id})"${palletDisabled}></td>
+      <td><input type="number" min="0" step="1" data-field="volumes" value="${v.volumes}" title="${_escAttr(volumeLabel)}" oninput="_acertoEstoqueTotalLinha(${produto.id})"${volumeDisabled}><small>${_escHtml(volumeLabel)}${v.porVolume > 0 ? ` x ${_escHtml(_estoqueFormatQtd(v.porVolume))}` : ""}</small></td>
       <td><input type="number" min="0" step="0.001" data-field="unidades" value="${v.unidades}" oninput="_acertoEstoqueTotalLinha(${produto.id})"></td>
       <td><strong data-field="total">${_escHtml(_estoqueFormatQtd(v.saldo))}</strong></td>
       <td><input type="text" data-field="motivo" placeholder="Motivo obrigatório"></td>
