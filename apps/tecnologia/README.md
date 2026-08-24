@@ -88,7 +88,9 @@ O cadastro aceita quatro tipos de coleta:
 - `SNMP`: usa SNMP v2c somente leitura para identificação, CPU exposta pelo
   equipamento e contadores de tráfego das interfaces. Em impressoras, também
   consulta o Printer-MIB para estado, número de série, contador de páginas e
-  níveis de suprimentos disponibilizados pelo fabricante;
+  níveis de suprimentos disponibilizados pelo fabricante. Em NVRs compatíveis,
+  consulta também o ramo empresarial anunciado pelo próprio agente para mostrar
+  modelo, família, número de série, firmware, sistema e capacidade de canais;
 - `PROMETHEUS`: consulta `/metrics` de Node Exporter (Linux) ou Windows Exporter
   e calcula CPU, memória, maior ocupação de disco e tráfego.
 
@@ -118,6 +120,11 @@ SNMP e exporters mostram tráfego total por interface. A identificação do IP
 local ou externo que causa o consumo exige que o roteador exporte NetFlow,
 sFlow, IPFIX ou ofereça uma API equivalente; isso não pode ser inferido apenas
 pelos contadores SNMP.
+
+Alguns NVRs não implementam a tabela moderna `ifXTable`, embora respondam
+normalmente ao SNMP. Nesses casos, a coleta usa automaticamente a `ifTable`
+clássica para nomes, velocidade e contadores de rede e ignora respostas
+`No Such Object` em vez de apresentá-las como interfaces.
 
 ## Alertas
 

@@ -174,14 +174,21 @@
     $("#deviceCards").innerHTML = active.length ? active.map((device) => {
       const metric = device.ultimaMetrica;
       const telemetry = metric?.telemetry;
-      const resourceLine = telemetry ? `<div class="resourceLine">
+      const isSnmpNvr = device.tipo === "NVR" && String(telemetry?.protocol || device.sonda || "").toUpperCase().startsWith("SNMP");
+      const resourceLine = telemetry ? (isSnmpNvr ? `<div class="resourceLine">
+        <span>Modelo <strong>${esc(telemetry.model || "—")}</strong></span>
+        <span>Canais <strong>${telemetry.channelCapacity == null ? "—" : number(telemetry.channelCapacity, 0)}</strong></span>
+        <span>Interfaces <strong>${number(telemetry.interfaceCount ?? telemetry.interfaces?.length, 0)}</strong></span>
+        <span>Rede ↓ <strong>${telemetry.downloadMbps == null ? "Aguardando" : `${number(telemetry.downloadMbps, 3)} Mbps`}</strong></span>
+        <span>Rede ↑ <strong>${telemetry.uploadMbps == null ? "Aguardando" : `${number(telemetry.uploadMbps, 3)} Mbps`}</strong></span>
+      </div>` : `<div class="resourceLine">
         <span>CPU <strong>${number(telemetry.cpuPct)}%</strong></span>
         <span>Memória <strong>${number(telemetry.memoryPct)}%</strong></span>
         <span>Disco <strong>${number(telemetry.diskPct)}%</strong></span>
         <span>Uso rede <strong>${number(telemetry.networkPct)}%</strong></span>
         <span>Rede ↓ <strong>${number(telemetry.downloadMbps)} Mbps</strong></span>
         <span>Rede ↑ <strong>${number(telemetry.uploadMbps)} Mbps</strong></span>
-      </div>` : "";
+      </div>`) : "";
       return `<article class="deviceCard clickableDevice" data-details="${device.id}" tabindex="0" role="button" aria-label="Abrir detalhes de ${esc(device.nome)}">
         <div class="deviceCardHead">
           <div><h3>${esc(device.nome)}</h3><span class="target">${esc(target(device))}</span></div>
@@ -247,6 +254,7 @@
     const protocol = telemetry?.protocol || device.sonda;
     const isSnmp = String(protocol).toUpperCase().startsWith("SNMP");
     const isPrinter = isSnmp && device.tipo === "IMPRESSORA";
+    const isNvr = isSnmp && device.tipo === "NVR";
     const collectionEndpoint = isSnmp
       ? `udp://${endpointHost}:${device.snmpPort || 161}`
       : device.agentPort ? `http://${endpointHost}:${device.agentPort}${device.agentPath || "/metrics"}` : "Não configurado";
@@ -268,7 +276,15 @@
       ["Rede recebida", telemetry?.downloadMbps == null ? "Aguardando 2ª coleta" : `${number(telemetry.downloadMbps, 3)} Mbps`],
       ["Rede enviada", telemetry?.uploadMbps == null ? "Aguardando 2ª coleta" : `${number(telemetry.uploadMbps, 3)} Mbps`],
     ];
-    const resourceCards = (isPrinter ? printerResourceCards : genericResourceCards)
+    const nvrResourceCards = [
+      ["Modelo", telemetry?.model || "—"],
+      ["Capacidade de canais", telemetry?.channelCapacity == null ? "—" : number(telemetry.channelCapacity, 0)],
+      ["Interfaces", telemetry?.interfaceCount ?? telemetry?.interfaces?.length ?? "—"],
+      ["Capacidade da rede", telemetry?.networkCapacityMbps == null ? "—" : `${number(telemetry.networkCapacityMbps)} Mbps`],
+      ["Rede recebida", telemetry?.downloadMbps == null ? "Aguardando 2ª coleta" : `${number(telemetry.downloadMbps, 3)} Mbps`],
+      ["Rede enviada", telemetry?.uploadMbps == null ? "Aguardando 2ª coleta" : `${number(telemetry.uploadMbps, 3)} Mbps`],
+    ];
+    const resourceCards = (isPrinter ? printerResourceCards : isNvr ? nvrResourceCards : genericResourceCards)
       .map(([label, value]) => `<div><span>${esc(label)}</span><strong>${esc(value)}</strong></div>`).join("");
     const genericIdentity = [
       ["Nome do sistema", telemetry?.systemName || "—"],
@@ -287,7 +303,16 @@
       ["Tempo ligado", duration(telemetry?.uptimeSeconds)],
       ["Interfaces", telemetry?.interfaceCount ?? telemetry?.interfaces?.length ?? "—"],
     ];
-    const identity = (isPrinter ? printerIdentity : genericIdentity)
+    const nvrIdentity = [
+      ["Modelo", telemetry?.model || "—"],
+      ["Família", telemetry?.productFamily || "—"],
+      ["Padrão de vídeo", telemetry?.videoStandard || "—"],
+      ["Número de série", telemetry?.serialNumber || "—"],
+      ["Firmware", telemetry?.firmwareVersion || "—"],
+      ["Sistema operacional", [telemetry?.osName, telemetry?.osVersion].filter(Boolean).join(" ") || "—"],
+      ["Tempo ligado", duration(telemetry?.uptimeSeconds)],
+    ];
+    const identity = (isPrinter ? printerIdentity : isNvr ? nvrIdentity : genericIdentity)
       .map(([label, value]) => `<div><span>${esc(label)}</span><strong>${esc(value)}</strong></div>`).join("");
     const disks = telemetry?.disks?.length ? `<div class="detailSection"><h3>Discos</h3><div class="detailTableWrap"><table><thead><tr><th>Volume</th><th>Uso</th><th>Livre</th><th>Total</th></tr></thead><tbody>${telemetry.disks.map((disk) => `<tr><td>${esc(disk.name)}</td><td>${number(disk.usedPct)}%</td><td>${esc(bytes(disk.freeBytes))}</td><td>${esc(bytes(disk.sizeBytes))}</td></tr>`).join("")}</tbody></table></div></div>` : "";
     const interfaces = telemetry?.interfaces?.length ? `<div class="detailSection"><h3>Interfaces monitoradas</h3><div class="detailTags">${telemetry.interfaces.map((name) => `<span>${esc(name)}</span>`).join("")}</div></div>` : "";

@@ -131,6 +131,85 @@ class TecnologiaMonitorTests(unittest.TestCase):
         self.assertEqual(50, telemetry["supplies"][0]["pct"])
         self.assertEqual("Disponível", telemetry["supplies"][1]["status"])
 
+    def test_snmp_nvr_falls_back_to_if_table_and_reads_enterprise_inventory(self):
+        rows_by_oid = {
+            ".1.3.6.1.2.1.1": [
+                (".1.3.6.1.2.1.1.1.0", "none"),
+                (".1.3.6.1.2.1.1.2.0", ".1.3.6.1.4.1.1004849.3.2.10"),
+                (".1.3.6.1.2.1.1.3.0", "(172000) 0:28:40.00"),
+                (".1.3.6.1.2.1.1.5.0", "(none)"),
+            ],
+            ".1.3.6.1.2.1.31.1.1.1.1": [],
+            ".1.3.6.1.2.1.31.1.1.1.6": [],
+            ".1.3.6.1.2.1.31.1.1.1.10": [],
+            ".1.3.6.1.2.1.31.1.1.1.15": [],
+            ".1.3.6.1.2.1.2.2.1.2": [
+                (".1.3.6.1.2.1.2.2.1.2.1", "lo"),
+                (".1.3.6.1.2.1.2.2.1.2.3", "eth0"),
+            ],
+            ".1.3.6.1.2.1.2.2.1.10": [
+                (".1.3.6.1.2.1.2.2.1.10.1", "100"),
+                (".1.3.6.1.2.1.2.2.1.10.3", "3000000"),
+            ],
+            ".1.3.6.1.2.1.2.2.1.16": [
+                (".1.3.6.1.2.1.2.2.1.16.1", "100"),
+                (".1.3.6.1.2.1.2.2.1.16.3", "1500000"),
+            ],
+            ".1.3.6.1.2.1.2.2.1.5": [
+                (".1.3.6.1.2.1.2.2.1.5.1", "10000000"),
+                (".1.3.6.1.2.1.2.2.1.5.3", "1000000000"),
+            ],
+            ".1.3.6.1.2.1.25.3.3.1.2": [],
+            ".1.3.6.1.4.1.1004849.2.1.1": [
+                (".1.3.6.1.4.1.1004849.2.1.1.1.0", "4.000.00IB003.0"),
+            ],
+            ".1.3.6.1.4.1.1004849.2.1.2": [
+                (".1.3.6.1.4.1.1004849.2.1.2.4.0", "SERIAL-NVR"),
+                (".1.3.6.1.4.1.1004849.2.1.2.5.0", "4.0.0003.0"),
+                (".1.3.6.1.4.1.1004849.2.1.2.6.0", "MHDX 3116"),
+                (".1.3.6.1.4.1.1004849.2.1.2.7.0", "HDCVI"),
+                (".1.3.6.1.4.1.1004849.2.1.2.9.0", "MHDX"),
+            ],
+            ".1.3.6.1.4.1.1004849.2.1.10": [
+                (".1.3.6.1.4.1.1004849.2.1.10.1.0", "Linux"),
+                (".1.3.6.1.4.1.1004849.2.1.10.2.0", "3.18.20"),
+            ],
+            ".1.3.6.1.4.1.1004849.2.10.2.1": [
+                (".1.3.6.1.4.1.1004849.2.10.2.1.0", "16"),
+            ],
+        }
+        previous = {"telemetry": {
+            "checkedEpoch": 9990,
+            "counters": {"source": "ifTable32", "rxBytes": 2000000, "txBytes": 1000000},
+        }}
+        with (
+            mock.patch.object(monitor, "_snmp_walk", side_effect=lambda host, community, port, oid: rows_by_oid[oid]),
+            mock.patch.object(monitor.time, "time", return_value=10000),
+        ):
+            telemetry = monitor.collect_snmp_metrics({
+                "host": "192.168.200.210", "tipo": "NVR",
+                "snmp_community": "somente-leitura", "snmp_port": 161,
+                "ultima_detalhes": json.dumps(previous),
+            })
+
+        self.assertEqual("MHDX 3116", telemetry["model"])
+        self.assertEqual("SERIAL-NVR", telemetry["serialNumber"])
+        self.assertEqual("Linux", telemetry["osName"])
+        self.assertEqual(16, telemetry["channelCapacity"])
+        self.assertEqual(["lo", "eth0"], telemetry["interfaces"])
+        self.assertEqual(1000, telemetry["networkCapacityMbps"])
+        self.assertEqual(0.8, telemetry["downloadMbps"])
+        self.assertEqual(0.4, telemetry["uploadMbps"])
+        self.assertEqual("", telemetry["systemName"])
+
+    def test_snmp_walk_ignores_unsupported_oid_as_data(self):
+        result = mock.Mock(
+            returncode=0,
+            stdout=".1.3.6.1.2.1.31 = No Such Object available on this agent at this OID\n",
+        )
+        with mock.patch.object(monitor.subprocess, "run", return_value=result):
+            self.assertEqual([], monitor._snmp_walk("192.168.200.210", "read-only", 161, ".1.3.6.1.2.1.31"))
+
     def test_prometheus_collects_windows_inventory_for_device_card(self):
         body = (
             'windows_cpu_time_total{core="0",mode="idle"} 90\n'

@@ -297,12 +297,16 @@ def _previous_telemetry(device: dict[str, Any]) -> dict[str, Any]:
     return telemetry if isinstance(telemetry, dict) else {}
 
 
-def _counter_rates(current: dict[str, float], previous: dict[str, Any], checked_at: float) -> dict[str, float | None]:
+def _counter_rates(current: dict[str, Any], previous: dict[str, Any], checked_at: float) -> dict[str, float | None]:
     previous_counters = previous.get("counters") if isinstance(previous.get("counters"), dict) else {}
     previous_at = float(previous.get("checkedEpoch") or 0)
     elapsed = checked_at - previous_at
     rates: dict[str, float | None] = {"downloadMbps": None, "uploadMbps": None}
     if elapsed <= 0 or elapsed > 86400:
+        return rates
+    current_source = str(current.get("source") or "")
+    previous_source = str(previous_counters.get("source") or "")
+    if current_source and current_source != previous_source:
         return rates
     for source, target in (("rxBytes", "downloadMbps"), ("txBytes", "uploadMbps")):
         old = previous_counters.get(source)
@@ -336,7 +340,13 @@ def _snmp_walk(host: str, community: str, port: int, oid: str) -> list[tuple[str
         item_oid, value = raw_line.split(" = ", 1)
         if ": " in value:
             value = value.split(": ", 1)[1]
-        rows.append((item_oid.strip(), value.strip().strip('"')))
+        value = value.strip().strip('"')
+        unsupported = value.lower()
+        if any(marker in unsupported for marker in (
+            "no such object", "no such instance", "end of mib", "unknown object identifier",
+        )):
+            continue
+        rows.append((item_oid.strip(), value))
     return rows
 
 
@@ -355,6 +365,42 @@ def _snmp_number(value: Any) -> float | None:
     return float(match.group(1) or match.group(2))
 
 
+def _snmp_clean_text(value: Any) -> str:
+    text = str(value or "").strip().strip('"')
+    return "" if text.lower() in {"", "none", "(none)", "unknown", "n/a", "null"} else text
+
+
+def _snmp_rows_map(rows: list[tuple[str, str]]) -> dict[str, str]:
+    return {oid: value for oid, value in rows}
+
+
+def _snmp_enterprise_nvr_metrics(host: str, community: str, port: int, system_object_id: str) -> dict[str, Any]:
+    if not system_object_id.startswith(".1.3.6.1.4.1.1004849."):
+        return {}
+    version = _snmp_rows_map(_snmp_walk_optional(host, community, port, ".1.3.6.1.4.1.1004849.2.1.1"))
+    product = _snmp_rows_map(_snmp_walk_optional(host, community, port, ".1.3.6.1.4.1.1004849.2.1.2"))
+    operating_system = _snmp_rows_map(_snmp_walk_optional(host, community, port, ".1.3.6.1.4.1.1004849.2.1.10"))
+    channels = _snmp_rows_map(_snmp_walk_optional(host, community, port, ".1.3.6.1.4.1.1004849.2.10.2.1"))
+
+    def text(rows: dict[str, str], oid: str) -> str:
+        return _snmp_clean_text(rows.get(oid))
+
+    channel_capacity = _snmp_number(channels.get(".1.3.6.1.4.1.1004849.2.10.2.1.0"))
+    return {
+        "model": text(product, ".1.3.6.1.4.1.1004849.2.1.2.6.0"),
+        "serialNumber": text(product, ".1.3.6.1.4.1.1004849.2.1.2.4.0"),
+        "firmwareVersion": (
+            text(product, ".1.3.6.1.4.1.1004849.2.1.2.5.0")
+            or text(version, ".1.3.6.1.4.1.1004849.2.1.1.1.0")
+        ),
+        "productFamily": text(product, ".1.3.6.1.4.1.1004849.2.1.2.9.0"),
+        "videoStandard": text(product, ".1.3.6.1.4.1.1004849.2.1.2.7.0"),
+        "osName": text(operating_system, ".1.3.6.1.4.1.1004849.2.1.10.1.0"),
+        "osVersion": text(operating_system, ".1.3.6.1.4.1.1004849.2.1.10.2.0"),
+        "channelCapacity": int(channel_capacity) if channel_capacity is not None else None,
+    }
+
+
 def collect_snmp_metrics(device: dict[str, Any]) -> dict[str, Any]:
     host = normalize_host(device.get("host"))
     community = str(device.get("snmp_community") or "").strip()
@@ -366,6 +412,19 @@ def collect_snmp_metrics(device: dict[str, Any]) -> dict[str, Any]:
     rx_rows = _snmp_walk_optional(host, community, port, ".1.3.6.1.2.1.31.1.1.1.6")
     tx_rows = _snmp_walk_optional(host, community, port, ".1.3.6.1.2.1.31.1.1.1.10")
     speed_rows = _snmp_walk_optional(host, community, port, ".1.3.6.1.2.1.31.1.1.1.15")
+    counter_source = "ifXTable64"
+    legacy_speed = False
+    if not name_rows:
+        name_rows = _snmp_walk_optional(host, community, port, ".1.3.6.1.2.1.2.2.1.2")
+    if not rx_rows:
+        rx_rows = _snmp_walk_optional(host, community, port, ".1.3.6.1.2.1.2.2.1.10")
+        counter_source = "ifTable32"
+    if not tx_rows:
+        tx_rows = _snmp_walk_optional(host, community, port, ".1.3.6.1.2.1.2.2.1.16")
+        counter_source = "ifTable32"
+    if not speed_rows:
+        speed_rows = _snmp_walk_optional(host, community, port, ".1.3.6.1.2.1.2.2.1.5")
+        legacy_speed = True
     cpu_rows = _snmp_walk_optional(host, community, port, ".1.3.6.1.2.1.25.3.3.1.2")
 
     def indexed(rows: list[tuple[str, str]]) -> dict[str, Any]:
@@ -379,10 +438,10 @@ def collect_snmp_metrics(device: dict[str, Any]) -> dict[str, Any]:
     rx_total = sum(_snmp_number(value) or 0 for index, value in rx.items() if names.get(index, "").lower() not in ignored)
     tx_total = sum(_snmp_number(value) or 0 for index, value in tx.items() if names.get(index, "").lower() not in ignored)
     checked_at = time.time()
-    counters = {"rxBytes": rx_total, "txBytes": tx_total}
+    counters = {"rxBytes": rx_total, "txBytes": tx_total, "source": counter_source}
     rates = _counter_rates(counters, _previous_telemetry(device), checked_at)
     capacity_mbps = sum(
-        _snmp_number(value) or 0
+        ((_snmp_number(value) or 0) / 1_000_000 if legacy_speed else (_snmp_number(value) or 0))
         for index, value in speeds.items()
         if names.get(index, "").lower() not in ignored and (_snmp_number(value) or 0) > 0
     )
@@ -391,8 +450,9 @@ def collect_snmp_metrics(device: dict[str, Any]) -> dict[str, Any]:
     network_pct = round(traffic_mbps / capacity_mbps * 100, 1) if capacity_mbps and has_rate else None
     cpu_values = [number for _, value in cpu_rows if (number := _snmp_number(value)) is not None]
     system_values = {oid: value for oid, value in system_rows}
-    system_name = next((value for oid, value in system_values.items() if oid.endswith(".1.5.0")), "")
-    description = next((value for oid, value in system_values.items() if oid.endswith(".1.1.0")), "")
+    system_name = _snmp_clean_text(next((value for oid, value in system_values.items() if oid.endswith(".1.5.0")), ""))
+    description = _snmp_clean_text(next((value for oid, value in system_values.items() if oid.endswith(".1.1.0")), ""))
+    system_object_id = _snmp_clean_text(next((value for oid, value in system_values.items() if oid.endswith(".1.2.0")), ""))
     uptime_raw = next((value for oid, value in system_values.items() if oid.endswith(".1.3.0")), "")
     uptime_ticks = _snmp_number(uptime_raw)
     telemetry = {
@@ -401,6 +461,7 @@ def collect_snmp_metrics(device: dict[str, Any]) -> dict[str, Any]:
         "checkedEpoch": checked_at,
         "systemName": system_name,
         "description": description[:240],
+        "systemObjectId": system_object_id,
         "uptimeTicks": uptime_ticks,
         "uptimeSeconds": round(uptime_ticks / 100, 2) if uptime_ticks is not None else None,
         "cpuPct": round(sum(cpu_values) / len(cpu_values), 1) if cpu_values else None,
@@ -414,6 +475,9 @@ def collect_snmp_metrics(device: dict[str, Any]) -> dict[str, Any]:
         "interfaces": [name for _, name in sorted(names.items()) if name],
         "interfaceCount": len(names),
     }
+
+    if str(device.get("tipo") or "").upper() == "NVR":
+        telemetry.update(_snmp_enterprise_nvr_metrics(host, community, port, system_object_id))
 
     if str(device.get("tipo") or "").upper() != "IMPRESSORA":
         return telemetry
