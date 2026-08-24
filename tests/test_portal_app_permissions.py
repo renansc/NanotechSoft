@@ -97,6 +97,8 @@ class PortalAppPermissionsTests(unittest.TestCase):
         )
         groups = manifest["menu_groups"]
         workflow_urls = {item["url"] for item in groups["workflow"]}
+        cadastro_urls = {item["url"] for item in groups["cadastros"]}
+        estoque_urls = {item["url"] for item in groups["estoque"]}
         import_items = {
             item["nome"]: item["url"] for item in groups["import_export"]
         }
@@ -114,6 +116,9 @@ class PortalAppPermissionsTests(unittest.TestCase):
             {"nome": "Estoque Comprometido RioB", "url": "/apps/riob#relatorios:estoque_comprometido"},
             groups["relatorios"],
         )
+        self.assertIn("/apps/riob#cadastros:estoque_produtos", cadastro_urls)
+        self.assertIn("/apps/riob#cadastros:estoque_grupos", cadastro_urls)
+        self.assertNotIn("/apps/riob#estoque:cadastrar", estoque_urls)
 
     def test_hash_bridge_redireciona_vendas_diario_para_workflow(self):
         bridge = portal.riob_hash_bridge_script()

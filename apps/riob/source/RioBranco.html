@@ -76,7 +76,6 @@
       <div class="submenu" id="submenuEstoque">
         <div class="submenu-item active" data-estoque-view="posicao" onclick="openEstoqueView(event,'posicao')">Posicao atual</div>
         <div class="submenu-item" data-estoque-view="movimentar" onclick="openEstoqueView(event,'movimentar')">Movimentar estoque</div>
-        <div class="submenu-item" data-estoque-view="cadastrar" onclick="openEstoqueView(event,'cadastrar')">Cadastrar produtos</div>
         <div class="submenu-item" data-estoque-view="rastreio" onclick="openEstoqueView(event,'rastreio')">Rastreio de lotes</div>
         <div class="submenu-item" id="estoqueMenuAcerto" data-estoque-view="acerto" onclick="openEstoqueView(event,'acerto')">Acerto de estoque</div>
       </div>
@@ -84,9 +83,11 @@
     <div class="menu-item has-submenu" data-tab="cadastros" onclick="toggleCadastrosSubmenu(event)">
       Cadastros <span class="submenu-caret">&#9662;</span>
       <div class="submenu" id="submenuCadastros">
-        <div class="submenu-item active" onclick="openCadastrosView(event,'colaboradores')">Colaboradores</div>
-        <div class="submenu-item" onclick="openCadastrosView(event,'veiculos')">Veiculos</div>
-        <div class="submenu-item" onclick="openCadastrosView(event,'comissao')">Comissao</div>
+        <div class="submenu-item active" data-cadastros-view="colaboradores" onclick="openCadastrosView(event,'colaboradores')">Colaboradores</div>
+        <div class="submenu-item" data-cadastros-view="veiculos" onclick="openCadastrosView(event,'veiculos')">Veiculos</div>
+        <div class="submenu-item" data-cadastros-view="comissao" onclick="openCadastrosView(event,'comissao')">Comissao</div>
+        <div class="submenu-item" data-cadastros-view="estoque_produtos" onclick="openCadastrosView(event,'estoque_produtos')">Produtos de estoque</div>
+        <div class="submenu-item" data-cadastros-view="estoque_grupos" onclick="openCadastrosView(event,'estoque_grupos')">Grupos de estoque</div>
       </div>
     </div>
     <div class="menu-item has-submenu" data-tab="relatorios" onclick="toggleRelatoriosSubmenu(event)">
@@ -575,6 +576,11 @@
   ====================================================== -->
   <section id="estoque" class="section">
     <h2 id="estoqueTitulo">Estoque</h2>
+    <div class="estoque-cadastro-shortcuts" aria-label="Atalhos para cadastros de estoque">
+      <span>Cadastros relacionados</span>
+      <button type="button" class="btn-secondary" onclick="openCadastrosView(null,'estoque_produtos')">Cadastrar produtos</button>
+      <button type="button" class="btn-secondary" onclick="openCadastrosView(null,'estoque_grupos')">Grupos de estoque</button>
+    </div>
 
     <div id="estoqueViewLancar">
     <div class="boxFrota" id="estoqueImportacoesXmlBox">
@@ -1441,6 +1447,16 @@
         </div>
       </div>
     </div>
+    </div>
+
+    <div id="cadastrosViewEstoqueProdutos" class="cadastro-view hidden">
+      <h3>Produtos de Estoque</h3>
+      <div id="cadastrosEstoqueProdutosMount" class="frotaGrid estoque-cadastro-layout"></div>
+    </div>
+
+    <div id="cadastrosViewEstoqueGrupos" class="cadastro-view hidden">
+      <h3>Grupos de Estoque</h3>
+      <div id="cadastrosEstoqueGruposMount" class="frotaGrid estoque-cadastro-layout"></div>
     </div>
   </section>
 

@@ -1470,6 +1470,29 @@ button:hover{ background:#e68900; }
   margin-bottom:10px;
 }
 
+.estoque-cadastro-shortcuts{
+  display:flex;
+  flex-wrap:wrap;
+  gap:10px;
+  align-items:center;
+  margin:0 0 16px;
+  padding:12px 14px;
+  border:1px solid #dbe3ee;
+  border-radius:10px;
+  background:#f8fafc;
+}
+
+.estoque-cadastro-shortcuts span{
+  margin-right:auto;
+  font-weight:700;
+  color:#334155;
+}
+
+.estoque-cadastro-shortcuts button{
+  width:auto;
+  margin:0;
+}
+
 #estoqueImportacoesXmlBox .estoque-import-header > div:first-child{
   flex:1 0 100%;
 }
@@ -2245,6 +2268,16 @@ body.estoque-import-modal-open{
 }
 
 @media (max-width:768px){
+  .estoque-cadastro-shortcuts{
+    align-items:stretch;
+  }
+
+  .estoque-cadastro-shortcuts span,
+  .estoque-cadastro-shortcuts button{
+    flex:1 0 100%;
+    width:100%;
+  }
+
   .estoque-cadastro-filtros{
     grid-template-columns:1fr;
   }

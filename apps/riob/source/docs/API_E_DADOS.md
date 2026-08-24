@@ -470,7 +470,7 @@ Os grupos sao cadastrados em `estoque_grupos`, com area, subgrupo, ordem e a
 opcao `exibir_dashboard`. Os grupos padrao visiveis sao refrigerante descartavel
 (`PET`), refrigerante retornavel (`GFA`), agua (`AGUA`), tampas (`TAMPAS`) e
 pre-forma (`PREFORMA`); `OUTROS` inicia oculto. O dashboard aceita tambem novos
-grupos configurados em Cadastros > Estoque e exibe somente produtos ativos e
+grupos configurados em `Cadastros > Grupos de estoque` e exibe somente produtos ativos e
 cadastrados. Posicao e cadastro identificam os itens por `estoque_area`,
 `estoque_subgrupo`, `grupo_nome`, `grupo_ordem` e `exibir_dashboard`.
 
@@ -545,7 +545,7 @@ Regras:
 - excluir um produto e uma operacao logica: `estoque_produtos.ativo` e os aliases
   em `estoque_produto_codigos` sao desativados, mas os movimentos permanecem
   preservados para auditoria
-- grupos podem ser criados e ordenados pela tela Cadastros > Estoque; grupos
+- grupos podem ser criados e ordenados pela tela `Cadastros > Grupos de estoque`; grupos
   padrao podem ser editados, mas nao excluidos, e grupos em uso precisam ter os
   produtos movidos antes da exclusao
 - o inventario inicial deve usar `quantidade_atual` em

@@ -2225,6 +2225,10 @@ function toggleEstoqueSubmenu(ev){
 
 function openEstoqueView(ev, view = "posicao"){
   if (ev) { ev.preventDefault(); ev.stopPropagation(); }
+  if (view === "cadastrar") {
+    openCadastrosView(null, "estoque_produtos");
+    return;
+  }
   const menu = document.querySelector('.menu-item.has-submenu[data-tab="estoque"]');
   showTab("estoque", menu);
   document.querySelectorAll("#submenuEstoque .submenu-item").forEach((item) => {
@@ -2709,18 +2713,37 @@ function toggleCadastrosSubmenu(ev){
   toggleExclusiveSubmenu(ev, () => openCadastrosView(null, window.__cadastrosView || "colaboradores"));
 }
 
+function _normalizarCadastrosView(view){
+  const aliasesColaboradores = ["motoristas", "conferentes", "usuarios"];
+  if (aliasesColaboradores.includes(view)) return "colaboradores";
+  const viewsPermitidas = ["colaboradores", "veiculos", "comissao", "estoque_produtos", "estoque_grupos"];
+  return viewsPermitidas.includes(view) ? view : "colaboradores";
+}
+
+function _montarCadastrosEstoque(){
+  const origem = document.getElementById("estoqueViewCadastrar");
+  if (!origem) return;
+  const produtosMount = document.getElementById("cadastrosEstoqueProdutosMount");
+  const gruposMount = document.getElementById("cadastrosEstoqueGruposMount");
+  const formulario = origem.querySelector("#estoqueCadastroFormulario");
+  const lista = origem.querySelector(".estoque-cadastro-lista");
+  const grupos = origem.querySelector(".estoque-cadastro-grupos");
+  if (produtosMount && formulario) produtosMount.appendChild(formulario);
+  if (produtosMount && lista) produtosMount.appendChild(lista);
+  if (gruposMount && grupos) gruposMount.appendChild(grupos);
+  origem.remove();
+}
+
 function openCadastrosView(ev, view){
   if (ev){ ev.preventDefault(); ev.stopPropagation(); }
   const menu = document.querySelector('.menu-item.has-submenu[data-tab="cadastros"]');
-  const normalizedView = view === "motoristas" || view === "conferentes" || view === "usuarios" ? "colaboradores" : view;
+  const normalizedView = _normalizarCadastrosView(view);
   window.__cadastrosView = normalizedView;
   showTab("cadastros", menu);
 
-  document.querySelectorAll("#submenuCadastros .submenu-item").forEach((x) => x.classList.remove("active"));
-  const map = { colaboradores: 0, veiculos: 1, comissao: 2 };
-  const target = map[normalizedView] ?? 0;
-  const items = document.querySelectorAll("#submenuCadastros .submenu-item");
-  if (items && items[target]) items[target].classList.add("active");
+  document.querySelectorAll("#submenuCadastros .submenu-item").forEach((item) => {
+    item.classList.toggle("active", item.dataset.cadastrosView === normalizedView);
+  });
 
   const isMobile = window.matchMedia && window.matchMedia("(max-width: 768px)").matches;
   if (isMobile && menu) menu.classList.remove("open");
@@ -2728,23 +2751,43 @@ function openCadastrosView(ev, view){
 }
 
 function setCadastrosView(view){
-  const normalizedView = view === "motoristas" || view === "conferentes" || view === "usuarios" ? "colaboradores" : view;
+  _montarCadastrosEstoque();
+  const normalizedView = _normalizarCadastrosView(view);
   window.__cadastrosView = normalizedView;
   const views = {
     colaboradores: document.getElementById("cadastrosViewMotoristas"),
     veiculos: document.getElementById("cadastrosViewVeiculos"),
     comissao: document.getElementById("cadastrosViewComissao"),
+    estoque_produtos: document.getElementById("cadastrosViewEstoqueProdutos"),
+    estoque_grupos: document.getElementById("cadastrosViewEstoqueGrupos"),
   };
   Object.entries(views).forEach(([key, el]) => {
     if (el) el.classList.toggle("hidden", key !== normalizedView);
   });
-  document.querySelectorAll("#submenuCadastros .submenu-item").forEach((item) => item.classList.remove("active"));
-  const map = { colaboradores: 0, veiculos: 1, comissao: 2 };
-  const items = document.querySelectorAll("#submenuCadastros .submenu-item");
-  const target = map[normalizedView] ?? 0;
-  if (items && items[target]) items[target].classList.add("active");
+  document.querySelectorAll("#submenuCadastros .submenu-item").forEach((item) => {
+    item.classList.toggle("active", item.dataset.cadastrosView === normalizedView);
+  });
   if (normalizedView === "comissao") {
     carregarComissaoCadastros().catch(() => {});
+  } else if (normalizedView === "estoque_produtos") {
+    limparProdutoEstoqueCadastro();
+    Promise.all([
+      carregarSaldoEstoque(),
+      carregarGruposEstoque(true),
+      ensureProdutosEstoqueCache(true),
+    ]).then(() => carregarProdutosEstoqueCadastro()).catch((erro) => {
+      console.warn("cadastro de produtos do estoque erro:", erro);
+    });
+  } else if (normalizedView === "estoque_grupos") {
+    Promise.all([
+      carregarGruposEstoque(true),
+      ensureProdutosEstoqueCache(true),
+    ]).then(() => {
+      renderGruposEstoque();
+      _renderSelectGruposEstoque();
+    }).catch((erro) => {
+      console.warn("cadastro de grupos do estoque erro:", erro);
+    });
   }
 }
 
@@ -6110,7 +6153,7 @@ function showTab(tabId, el) {
     setPontosVendaView(window.__pontosVendaView);
   }
   if (tabId === "estoque") {
-    if (!window.__estoqueView || !["importar_xml", "importar_xml_bipe", "importar_xml_auto", "movimentar", "posicao", "acerto", "cadastrar", "rastreio"].includes(window.__estoqueView)) {
+    if (!window.__estoqueView || !["importar_xml", "importar_xml_bipe", "importar_xml_auto", "movimentar", "posicao", "acerto", "rastreio"].includes(window.__estoqueView)) {
       window.__estoqueView = "posicao";
     }
     setEstoqueView(window.__estoqueView);
@@ -17586,8 +17629,11 @@ async function confirmarImportacaoNfeEstoque(){
 }
 
 function setEstoqueView(view){
+  if (view === "cadastrar") {
+    openCadastrosView(null, "estoque_produtos");
+    return;
+  }
   const admin = String(usuarioLogado?.perfil || "").toLowerCase() === "admin";
-  const viewAnterior = estoqueState.view;
   const requestedView = view === "lancar" || view === "importar_xml" ? "importar_xml_bipe" : view;
   const aguardandoIdentidade = requestedView === "acerto" && usuarioLogado === null;
   if (aguardandoIdentidade) {
@@ -17601,8 +17647,6 @@ function setEstoqueView(view){
     ? "acerto"
     : requestedView === "posicao"
     ? "posicao"
-    : requestedView === "cadastrar"
-    ? "cadastrar"
     : requestedView === "rastreio"
     ? "rastreio"
     : requestedView === "movimentar"
@@ -17616,25 +17660,21 @@ function setEstoqueView(view){
   const viewLancar = document.getElementById("estoqueViewLancar");
   const viewConferir = document.getElementById("estoqueViewConferir");
   const viewAcerto = document.getElementById("estoqueViewAcerto");
-  const viewCadastrar = document.getElementById("estoqueViewCadastrar");
   const viewRastreio = document.getElementById("estoqueViewRastreio");
   const importacoesBox = document.getElementById("estoqueImportacoesXmlBox");
   const movimentoManualBox = document.getElementById("estoqueMovimentoManualBox");
   const nfeManualBox = document.getElementById("estoqueNfeManualBox");
   const menuAcerto = document.getElementById("estoqueMenuAcerto");
-  const cadastroAjusteBox = document.getElementById("estoqueCadastroAjusteBox");
   const titulo = document.getElementById("estoqueTitulo");
 
   if (viewLancar) viewLancar.classList.toggle("hidden", !["importar_xml_bipe", "importar_xml_auto", "movimentar"].includes(nextView));
   if (viewConferir) viewConferir.classList.toggle("hidden", nextView !== "posicao");
   if (viewAcerto) viewAcerto.classList.toggle("hidden", nextView !== "acerto");
-  if (viewCadastrar) viewCadastrar.classList.toggle("hidden", nextView !== "cadastrar");
   if (viewRastreio) viewRastreio.classList.toggle("hidden", nextView !== "rastreio");
   if (importacoesBox) importacoesBox.classList.toggle("hidden", nextView !== "importar_xml_auto");
   if (movimentoManualBox) movimentoManualBox.classList.toggle("hidden", nextView !== "movimentar");
   if (nfeManualBox) nfeManualBox.classList.toggle("hidden", nextView !== "importar_xml_bipe");
   if (menuAcerto) menuAcerto.classList.toggle("hidden", !admin);
-  if (cadastroAjusteBox && nextView === "cadastrar") cadastroAjusteBox.classList.toggle("hidden", !admin);
   if (titulo) {
     const titulos = {
       importar_xml_bipe: "Compras / Importar XML (Bipe)",
@@ -17642,7 +17682,6 @@ function setEstoqueView(view){
       movimentar: "Estoque / Movimentar",
       posicao: "Estoque / Posicao atual",
       acerto: "Estoque / Acerto",
-      cadastrar: "Estoque / Cadastrar produtos",
       rastreio: "Estoque / Rastreio de lotes",
     };
     titulo.textContent = titulos[nextView] || "Estoque";
@@ -17658,15 +17697,6 @@ function setEstoqueView(view){
   atualizarStatusCodbarSistema();
   if (nextView === "acerto") {
     carregarAcertoEstoque().catch((e) => console.warn("acerto estoque erro:", e));
-  } else if (nextView === "cadastrar") {
-    if (viewAnterior !== "cadastrar") limparProdutoEstoqueCadastro();
-    Promise.all([
-      carregarSaldoEstoque(),
-      carregarGruposEstoque(true),
-      ensureProdutosEstoqueCache(true),
-    ]).then(() => carregarProdutosEstoqueCadastro()).catch((e) => {
-      console.warn("cadastro estoque erro:", e);
-    });
   } else if (nextView === "posicao") {
     carregarSaldoEstoque().catch((e) => {
       console.warn("posicao estoque erro:", e);

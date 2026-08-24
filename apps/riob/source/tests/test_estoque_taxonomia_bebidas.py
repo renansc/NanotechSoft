@@ -306,6 +306,20 @@ class EstoqueTaxonomiaBebidasTests(unittest.TestCase):
         self.assertIn("function renderProdutosEstoqueCadastro()", script)
         self.assertIn("conteudo.includes(busca)", script)
 
+    def test_produtos_e_grupos_de_estoque_ficam_em_cadastros_com_atalhos(self):
+        raiz = Path(__file__).resolve().parents[1]
+        html = (raiz / "RioBranco.html").read_text(encoding="utf-8")
+        script = (raiz / "script.js").read_text(encoding="utf-8")
+        self.assertNotIn('data-estoque-view="cadastrar"', html)
+        self.assertIn('data-cadastros-view="estoque_produtos"', html)
+        self.assertIn('data-cadastros-view="estoque_grupos"', html)
+        self.assertIn('id="cadastrosViewEstoqueProdutos"', html)
+        self.assertIn('id="cadastrosViewEstoqueGrupos"', html)
+        self.assertIn("openCadastrosView(null,'estoque_produtos')", html)
+        self.assertIn("openCadastrosView(null,'estoque_grupos')", html)
+        self.assertIn("function _montarCadastrosEstoque()", script)
+        self.assertIn('if (view === "cadastrar")', script)
+
     def test_acerto_repetido_nao_reutiliza_referencia_unica_do_produto(self):
         class Cursor:
             def __init__(self):

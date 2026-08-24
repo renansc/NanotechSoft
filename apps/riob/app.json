@@ -93,6 +93,16 @@
         "grupo": "RioB"
       },
       {
+        "nome": "Cadastrar produtos RioB",
+        "url": "/apps/riob#cadastros:estoque_produtos",
+        "grupo": "RioB"
+      },
+      {
+        "nome": "Grupos de estoque RioB",
+        "url": "/apps/riob#cadastros:estoque_grupos",
+        "grupo": "RioB"
+      },
+      {
         "nome": "Cargas RioB",
         "url": "/apps/riob#gestaofrota:cargas",
         "grupo": "RioB"
@@ -121,10 +131,6 @@
       {
         "nome": "Movimentar estoque RioB",
         "url": "/apps/riob#estoque:movimentar"
-      },
-      {
-        "nome": "Cadastrar produtos RioB",
-        "url": "/apps/riob#estoque:cadastrar"
       },
       {
         "nome": "Rastreio de lotes RioB",
