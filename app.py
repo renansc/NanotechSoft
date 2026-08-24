@@ -1955,6 +1955,14 @@ def riob_hash_bridge_script():
         window.openCadastrosView(null, view);
         return;
       }
+      if (section === "processos" && typeof window.openProcessosInternos === "function") {
+        window.openProcessosInternos(null);
+        return;
+      }
+      if (section === "compras" && typeof window.openComprasView === "function") {
+        window.openComprasView(null, view || "kanban");
+        return;
+      }
       if (section === "comissao" && ["relatorios", "exportar"].includes(view) && typeof window.openComissaoView === "function") {
         window.openComissaoView(null, view);
         return;

@@ -24,6 +24,14 @@
         "url": "/apps/riob#dashboard:estoque"
       },
       {
+        "nome": "Processos Internos RioB",
+        "url": "/apps/riob#dashboard:processos"
+      },
+      {
+        "nome": "Compras RioB",
+        "url": "/apps/riob#dashboard:compras"
+      },
+      {
         "nome": "Vendas Diaria RioB",
         "url": "/apps/riob#dashboard:vendas_diario"
       },
@@ -72,6 +80,10 @@
         "url": "/apps/riob#comunicacao"
       },
       {
+        "nome": "Processos Internos RioB",
+        "url": "/apps/riob#processos"
+      },
+      {
         "nome": "Monitor Cameras RioB",
         "url": "/apps/riob#monitor:cameras"
       }
@@ -103,6 +115,16 @@
         "grupo": "RioB"
       },
       {
+        "nome": "Tipos de processos RioB",
+        "url": "/apps/riob#cadastros:processos_tipos",
+        "grupo": "RioB"
+      },
+      {
+        "nome": "Fornecedores e compras RioB",
+        "url": "/apps/riob#cadastros:compras_fornecedores",
+        "grupo": "RioB"
+      },
+      {
         "nome": "Cargas RioB",
         "url": "/apps/riob#gestaofrota:cargas",
         "grupo": "RioB"
@@ -114,6 +136,14 @@
       }
     ],
     "compras": [
+      {
+        "nome": "Kanban de compras RioB",
+        "url": "/apps/riob#compras:kanban"
+      },
+      {
+        "nome": "Previsao de compras RioB",
+        "url": "/apps/riob#compras:previsao"
+      },
       {
         "nome": "Importar XML (Bipe) RioB",
         "url": "/apps/riob#estoque:importar_xml_bipe"
@@ -145,6 +175,14 @@
       {
         "nome": "Estoque Comprometido RioB",
         "url": "/apps/riob#relatorios:estoque_comprometido"
+      },
+      {
+        "nome": "Processos Internos RioB",
+        "url": "/apps/riob#relatorios:processos"
+      },
+      {
+        "nome": "Compras RioB",
+        "url": "/apps/riob#relatorios:compras"
       },
       {
         "nome": "Vendas RioB",

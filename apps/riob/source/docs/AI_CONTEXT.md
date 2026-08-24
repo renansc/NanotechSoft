@@ -281,6 +281,27 @@ If you need context fast, read these files first:
   uncached stock projection every five seconds; historical monthly sales may be
   held in a short in-memory cache because imported sales sources are immutable
   and a newly activated import changes the cache key.
+- Internal process management is task-oriented: `Processos` contains only the
+  operational Kanban; `Dashboard > Processos internos` contains indicators;
+  `Relatorios > Processos internos` contains filters and printable PDF; and
+  `Cadastros > Tipos de processos` owns classification, color, and default SLA.
+  Process status changes must be auditable in `processos_historico`; deletion is
+  logical and preserves the record history.
+- Purchase management uses `Compras > Kanban de compras` for the request,
+  quotation, approval, order, delivery, and receipt flow. `Compras > Previsao
+  de compras` reuses canonical stock products and groups. Its forecast uses the
+  greater consumption reference between the same month in the prior year and
+  the average of up to three complete recent months; when neither exists it
+  uses current-week pace. The purchase suggestion covers consumption during
+  supplier lead time plus safety stock, then deducts current stock and open
+  purchases and applies minimum lot and purchase multiple. Finished GFA, PET,
+  and water products remain production suggestions, not purchase suggestions.
+  Receipt closes the purchase workflow but never creates an automatic stock
+  movement; XML/manual stock confirmation remains the source of truth.
+- `Cadastros > Fornecedores e compras` reuses
+  `gestor_email_fornecedores` and stores only purchase-specific supplier and
+  product parameters in `compras_fornecedor_config` and
+  `compras_produto_config`. Do not create a second supplier or product master.
 - When changing behavior, inspect tests and add or adjust them when practical.
 - During dead-code sweeps, a missing direct reference is not enough to remove
   Flask routes, HTML callbacks, protocol handlers, library overrides or public

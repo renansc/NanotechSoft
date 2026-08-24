@@ -129,6 +129,10 @@ class PortalAppPermissionsTests(unittest.TestCase):
         self.assertIn('["diario", "vendas_diario", "kanban"]', bridge)
         self.assertIn('section === "relatorios"', bridge)
         self.assertIn('window.openRelatoriosView(null, view || "estoque_comprometido")', bridge)
+        self.assertIn('section === "processos"', bridge)
+        self.assertIn('window.openProcessosInternos(null)', bridge)
+        self.assertIn('section === "compras"', bridge)
+        self.assertIn('window.openComprasView(null, view || "kanban")', bridge)
 
 
 if __name__ == "__main__":

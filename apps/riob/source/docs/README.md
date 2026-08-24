@@ -99,3 +99,7 @@ Esta revisao da documentacao passa a registrar explicitamente:
 - os cabecalhos `no-store/no-cache` tambem aplicados a `/`, `RioBranco.html`, `script.js` e `style.css` para reduzir problema de frontend desatualizado apos deploy
 - a padronizacao do diretorio de backup para `backupsSql/`, evitando espaco no caminho em `.env`, Compose e runbooks
 - o plano de refatoracao e pendencias em `PLANO_REFATORACAO_E_PENDENCIAS.md`, cobrindo duplicatas de frontend, modularizacao do backend, atualizacao de dependencias e criterios de conclusao
+- os modulos de Processos Internos e Gestao de Compras, com Kanban operacional,
+  dashboards, relatorios filtraveis/PDF e cadastros orientados por tarefa; a
+  previsao de compras reutiliza estoque, produtos, grupos e fornecedores
+  canonicos e considera historico de consumo, prazo, seguranca e pedidos abertos

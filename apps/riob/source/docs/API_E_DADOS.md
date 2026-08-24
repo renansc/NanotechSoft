@@ -554,6 +554,7 @@ Regras:
 - os campos mensais continuam disponiveis na API para auditoria e
   compatibilidade, mas a tela principal apresenta a previsao semanal descrita
   acima
+
 - bebidas sao consolidadas pela identidade canonica
   `grupo + sabor/familia + volume`, mesmo quando existem codigos ou descricoes
   duplicadas; a resposta informa `codigos_origem` e `itens_unificados`
@@ -688,6 +689,47 @@ Observacoes:
 - `certificado_digital` registra insumos para fluxos assistidos com certificado/DF-e
 - a regra de duplicidade impacta tanto estoque quanto abastecimentos
 - a operacao efetiva de entrada no sistema continua baseada no XML oficial da NF-e
+
+## 8.1 Processos internos e gestao de compras
+
+Processos internos usam `processos_tipos`, `processos_internos` e
+`processos_historico`. O Kanban operacional possui os estados `solicitado`,
+`analise`, `execucao`, `aguardando` e `concluido`; `cancelado` permanece no
+relatorio. Exclusoes sao logicas e cada criacao, edicao e mudanca de status e
+registrada no historico.
+
+Compras usam `compras_solicitacoes` e `compras_historico`, com os estados
+`solicitado`, `cotacao`, `aprovacao`, `pedido`, `aguardando`, `recebido` e
+`cancelado`. Produtos, grupos e colaboradores sao os cadastros canonicos do
+estoque/RioB. Fornecedores sao os mesmos de `gestor_email_fornecedores`;
+`compras_fornecedor_config` e `compras_produto_config` guardam somente prazo,
+estoque de seguranca, lote minimo, multiplo e demais parametros de compra.
+
+Endpoints:
+
+- `GET|POST /api/processos-internos`
+- `PUT|DELETE /api/processos-internos/<id>`
+- `GET|POST /api/processos-internos/tipos`
+- `PUT|DELETE /api/processos-internos/tipos/<id>`
+- `GET /api/processos-internos/relatorio`
+- `GET /api/processos-internos/relatorio/pdf`
+- `GET /api/dashboard_processos`
+- `GET|POST /api/compras/solicitacoes`
+- `PUT|DELETE /api/compras/solicitacoes/<id>`
+- `GET /api/compras/previsao`
+- `PUT /api/compras/produtos/<id>/config`
+- `GET|POST /api/compras/fornecedores`
+- `PUT|DELETE /api/compras/fornecedores/<id>`
+- `GET /api/compras/relatorio`
+- `GET /api/compras/relatorio/pdf`
+- `GET /api/dashboard_compras`
+
+A previsao de compra calcula a maior referencia entre o consumo do mesmo mes
+do ano anterior e a media dos tres meses completos anteriores. Sem historico,
+usa o ritmo observado na semana. A necessidade cobre o prazo de entrega e o
+estoque de seguranca, desconta saldo e compras abertas e aplica lote minimo e
+multiplo. Produtos acabados GFA/PET/AGUA continuam no planejamento de producao.
+Marcar uma compra como recebida nao lanca estoque automaticamente.
 
 ## 9. Frota, abastecimentos e manutencao
 

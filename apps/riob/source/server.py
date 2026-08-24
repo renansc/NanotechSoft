@@ -111,7 +111,7 @@ def _frontend_asset_version():
         return re.sub(r"[^0-9A-Za-z_.-]", "", configured) or str(int(time.time()))
 
     digest = hashlib.sha256()
-    for rel_path in ("RioBranco.html", "script.js", "style.css", "vendor/jssip.min.js"):
+    for rel_path in ("RioBranco.html", "script.js", "gestao_processos_compras.js", "style.css", "vendor/jssip.min.js"):
         path = os.path.join(BASE_DIR, rel_path)
         try:
             st = os.stat(path)
@@ -2942,6 +2942,167 @@ def ensure_schema():
             )
         except Exception:
             pass
+
+        # Gestao de processos internos e compras. Os cadastros reutilizam
+        # colaboradores, produtos/grupos do estoque e o fornecedor canonico do
+        # Gestor de E-mails; as tabelas abaixo guardam apenas o fluxo e os
+        # parametros especificos de cada dominio.
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS gestor_email_fornecedores (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            cnpj VARCHAR(32) NULL,
+            nome VARCHAR(255) DEFAULT '',
+            categoria VARCHAR(40) DEFAULT 'outros',
+            emails TEXT,
+            dominios TEXT,
+            observacoes TEXT,
+            ativo TINYINT(1) DEFAULT 1,
+            origem VARCHAR(40) DEFAULT 'manual',
+            created_at VARCHAR(40),
+            updated_at VARCHAR(40),
+            UNIQUE KEY uq_gestor_email_fornecedor_cnpj (cnpj),
+            INDEX idx_gestor_email_fornecedor_categoria (categoria),
+            INDEX idx_gestor_email_fornecedor_nome (nome)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS processos_tipos (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            nome VARCHAR(160) NOT NULL,
+            descricao VARCHAR(500) DEFAULT '',
+            sla_dias INT NOT NULL DEFAULT 7,
+            cor VARCHAR(20) DEFAULT '#2563eb',
+            ativo TINYINT(1) NOT NULL DEFAULT 1,
+            criado_em DATETIME DEFAULT CURRENT_TIMESTAMP,
+            atualizado_em DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uq_processos_tipos_nome (nome),
+            INDEX idx_processos_tipos_ativo_nome (ativo, nome)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+        cur.execute("""
+        INSERT IGNORE INTO processos_tipos (nome, descricao, sla_dias, cor, ativo)
+        VALUES ('Geral', 'Processos internos sem classificacao especifica', 7, '#2563eb', 1)
+        """)
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS processos_internos (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            titulo VARCHAR(255) NOT NULL,
+            tipo_id INT NULL,
+            solicitante VARCHAR(180) DEFAULT '',
+            responsavel_id INT NULL,
+            responsavel_nome VARCHAR(180) DEFAULT '',
+            prioridade VARCHAR(20) NOT NULL DEFAULT 'normal',
+            status VARCHAR(30) NOT NULL DEFAULT 'solicitado',
+            data_abertura DATE NULL,
+            prazo DATE NULL,
+            descricao TEXT,
+            ativo TINYINT(1) NOT NULL DEFAULT 1,
+            criado_por VARCHAR(180) DEFAULT '',
+            criado_em DATETIME DEFAULT CURRENT_TIMESTAMP,
+            atualizado_em DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            concluido_em DATETIME NULL,
+            INDEX idx_processos_status_ativo (status, ativo),
+            INDEX idx_processos_tipo (tipo_id),
+            INDEX idx_processos_responsavel (responsavel_id),
+            INDEX idx_processos_prazo (prazo),
+            CONSTRAINT fk_processos_tipo FOREIGN KEY (tipo_id) REFERENCES processos_tipos(id)
+                ON UPDATE CASCADE ON DELETE SET NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS processos_historico (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            processo_id BIGINT NOT NULL,
+            acao VARCHAR(40) NOT NULL,
+            status_anterior VARCHAR(30) DEFAULT '',
+            status_novo VARCHAR(30) DEFAULT '',
+            usuario VARCHAR(180) DEFAULT '',
+            detalhes VARCHAR(500) DEFAULT '',
+            criado_em DATETIME DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_processos_historico_processo (processo_id),
+            INDEX idx_processos_historico_data (criado_em),
+            CONSTRAINT fk_processos_historico_processo FOREIGN KEY (processo_id) REFERENCES processos_internos(id)
+                ON UPDATE CASCADE ON DELETE RESTRICT
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS compras_fornecedor_config (
+            fornecedor_id INT PRIMARY KEY,
+            prazo_entrega_dias INT NOT NULL DEFAULT 7,
+            pedido_minimo_valor DECIMAL(14,2) NOT NULL DEFAULT 0,
+            condicao_pagamento VARCHAR(180) DEFAULT '',
+            contato_compras VARCHAR(255) DEFAULT '',
+            atualizado_em DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            CONSTRAINT fk_compras_fornecedor_config FOREIGN KEY (fornecedor_id) REFERENCES gestor_email_fornecedores(id)
+                ON UPDATE CASCADE ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS compras_produto_config (
+            produto_id INT PRIMARY KEY,
+            fornecedor_id INT NULL,
+            estoque_seguranca DECIMAL(14,3) NOT NULL DEFAULT 0,
+            prazo_entrega_dias INT NOT NULL DEFAULT 7,
+            lote_minimo DECIMAL(14,3) NOT NULL DEFAULT 0,
+            multiplo_compra DECIMAL(14,3) NOT NULL DEFAULT 1,
+            ativo TINYINT(1) NOT NULL DEFAULT 1,
+            atualizado_em DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            INDEX idx_compras_produto_fornecedor (fornecedor_id),
+            CONSTRAINT fk_compras_produto_config_produto FOREIGN KEY (produto_id) REFERENCES estoque_produtos(id)
+                ON UPDATE CASCADE ON DELETE CASCADE,
+            CONSTRAINT fk_compras_produto_config_fornecedor FOREIGN KEY (fornecedor_id) REFERENCES gestor_email_fornecedores(id)
+                ON UPDATE CASCADE ON DELETE SET NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS compras_solicitacoes (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            titulo VARCHAR(255) NOT NULL,
+            produto_id INT NULL,
+            fornecedor_id INT NULL,
+            quantidade DECIMAL(14,3) NOT NULL DEFAULT 0,
+            unidade VARCHAR(30) DEFAULT 'UN',
+            valor_unitario_previsto DECIMAL(14,4) NOT NULL DEFAULT 0,
+            prioridade VARCHAR(20) NOT NULL DEFAULT 'normal',
+            status VARCHAR(30) NOT NULL DEFAULT 'solicitado',
+            solicitante VARCHAR(180) DEFAULT '',
+            responsavel_id INT NULL,
+            responsavel_nome VARCHAR(180) DEFAULT '',
+            data_necessidade DATE NULL,
+            data_previsao_entrega DATE NULL,
+            justificativa TEXT,
+            origem VARCHAR(40) DEFAULT 'manual',
+            ativo TINYINT(1) NOT NULL DEFAULT 1,
+            criado_por VARCHAR(180) DEFAULT '',
+            criado_em DATETIME DEFAULT CURRENT_TIMESTAMP,
+            atualizado_em DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            recebido_em DATETIME NULL,
+            INDEX idx_compras_status_ativo (status, ativo),
+            INDEX idx_compras_produto (produto_id),
+            INDEX idx_compras_fornecedor (fornecedor_id),
+            INDEX idx_compras_necessidade (data_necessidade),
+            CONSTRAINT fk_compras_solicitacao_produto FOREIGN KEY (produto_id) REFERENCES estoque_produtos(id)
+                ON UPDATE CASCADE ON DELETE SET NULL,
+            CONSTRAINT fk_compras_solicitacao_fornecedor FOREIGN KEY (fornecedor_id) REFERENCES gestor_email_fornecedores(id)
+                ON UPDATE CASCADE ON DELETE SET NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS compras_historico (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            compra_id BIGINT NOT NULL,
+            acao VARCHAR(40) NOT NULL,
+            status_anterior VARCHAR(30) DEFAULT '',
+            status_novo VARCHAR(30) DEFAULT '',
+            usuario VARCHAR(180) DEFAULT '',
+            detalhes VARCHAR(500) DEFAULT '',
+            criado_em DATETIME DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_compras_historico_compra (compra_id),
+            INDEX idx_compras_historico_data (criado_em),
+            CONSTRAINT fk_compras_historico_compra FOREIGN KEY (compra_id) REFERENCES compras_solicitacoes(id)
+                ON UPDATE CASCADE ON DELETE RESTRICT
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
         _importar_cadastros_comissao_modelo(cur)
         _preparar_comissao_cidades(cur)
         _importar_cidades_comissao_modelo(cur)
@@ -38849,6 +39010,31 @@ def agent_ia_chat():
             module.reset_current_request_headers(token)
     except Exception as exc:
         return jsonify({"reply": f"Erro no Agent IA: {str(exc)}"}), 500
+
+
+from gestao_processos_compras import register_gestao_processos_compras
+
+register_gestao_processos_compras(app, {
+    "get_conn": get_conn,
+    "as_int": _as_int,
+    "as_float": _as_float,
+    "as_str": _as_str,
+    "fmt_date": _fmt_date,
+    "fmt_dt": _fmt_dt,
+    "parse_date": _parse_data_br,
+    "usuario_ator": _usuario_ator_req,
+    "estoque_resumo": _estoque_resumo_produtos_data,
+    "estoque_lookup": _carregar_lookup_produtos_estoque,
+    "estoque_resolver": _resolver_produto_lookup_estoque,
+    "estoque_classificar": _estoque_classificacao_operacional,
+    "normalize_stock_group": _estoque_grupo_normalizado,
+    "month_shift": _estoque_mes_deslocar,
+    "month_end": _estoque_mes_fim,
+    "month_key": _estoque_mes_chave,
+    "report_header": _build_report_header,
+    "pdf_escape": _pdf_escape,
+    "decimal_br": _fmt_decimal_br,
+})
 
 
 @app.route("/")

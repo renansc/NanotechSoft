@@ -40,16 +40,19 @@
     <div class="menu-item has-submenu" data-tab="dashboard" onclick="toggleDashboardSubmenu(event)">
       Dashboard <span class="submenu-caret">▾</span>
       <div class="submenu" id="submenuDashboard">
-        <div class="submenu-item active" onclick="openDashboardView(event,'resumo')">Resumo</div>
-        <div class="submenu-item" onclick="openDashboardView(event,'frota')">Frota / Manutenção</div>
-        <div class="submenu-item" onclick="openDashboardView(event,'estoque')">Estoque</div>
-        <div class="submenu-item" onclick="openDashboardView(event,'vendas_diario')">Vendas diária</div>
-        <div class="submenu-item" onclick="openDashboardView(event,'bonificacoes')">Bonificações</div>
-        <div class="submenu-item" onclick="openDashboardView(event,'variacao_preco')">Variação de Preço</div>
-        <div class="submenu-item" onclick="openDashboardView(event,'grupos_embalagem')">Grupos Embalagem</div>
-        <div class="submenu-item" onclick="openDashboardView(event,'comissoes')">Comissões</div>
+        <div class="submenu-item active" data-dashboard-view="resumo" onclick="openDashboardView(event,'resumo')">Resumo</div>
+        <div class="submenu-item" data-dashboard-view="frota" onclick="openDashboardView(event,'frota')">Frota / Manutenção</div>
+        <div class="submenu-item" data-dashboard-view="estoque" onclick="openDashboardView(event,'estoque')">Estoque</div>
+        <div class="submenu-item" data-dashboard-view="processos" onclick="openDashboardView(event,'processos')">Processos internos</div>
+        <div class="submenu-item" data-dashboard-view="compras" onclick="openDashboardView(event,'compras')">Compras</div>
+        <div class="submenu-item" data-dashboard-view="vendas_diario" onclick="openDashboardView(event,'vendas_diario')">Vendas diária</div>
+        <div class="submenu-item" data-dashboard-view="bonificacoes" onclick="openDashboardView(event,'bonificacoes')">Bonificações</div>
+        <div class="submenu-item" data-dashboard-view="variacao_preco" onclick="openDashboardView(event,'variacao_preco')">Variação de Preço</div>
+        <div class="submenu-item" data-dashboard-view="grupos_embalagem" onclick="openDashboardView(event,'grupos_embalagem')">Grupos Embalagem</div>
+        <div class="submenu-item" data-dashboard-view="comissoes" onclick="openDashboardView(event,'comissoes')">Comissões</div>
       </div>
     </div>
+    <div class="menu-item" data-tab="processosInternos" onclick="openProcessosInternos(event)">Processos</div>
     <div class="menu-item has-submenu active" data-tab="workflow" onclick="toggleWorkflowSubmenu(event)">
       Workflow <span class="submenu-caret">&#9662;</span>
       <div class="submenu" id="submenuWorkflow">
@@ -67,7 +70,9 @@
     <div class="menu-item has-submenu" data-tab="compras" onclick="toggleComprasSubmenu(event)">
       Compras <span class="submenu-caret">&#9662;</span>
       <div class="submenu" id="submenuCompras">
-        <div class="submenu-item active" data-compras-view="importar_xml_bipe" onclick="openComprasView(event,'importar_xml_bipe')">Importar XML (Bipe)</div>
+        <div class="submenu-item active" data-compras-view="kanban" onclick="openComprasView(event,'kanban')">Kanban de compras</div>
+        <div class="submenu-item" data-compras-view="previsao" onclick="openComprasView(event,'previsao')">Previsão de compras</div>
+        <div class="submenu-item" data-compras-view="importar_xml_bipe" onclick="openComprasView(event,'importar_xml_bipe')">Importar XML (Bipe)</div>
         <div class="submenu-item" data-compras-view="importar_xml_auto" onclick="openComprasView(event,'importar_xml_auto')">Importar XML Auto</div>
       </div>
     </div>
@@ -88,12 +93,16 @@
         <div class="submenu-item" data-cadastros-view="comissao" onclick="openCadastrosView(event,'comissao')">Comissao</div>
         <div class="submenu-item" data-cadastros-view="estoque_produtos" onclick="openCadastrosView(event,'estoque_produtos')">Produtos de estoque</div>
         <div class="submenu-item" data-cadastros-view="estoque_grupos" onclick="openCadastrosView(event,'estoque_grupos')">Grupos de estoque</div>
+        <div class="submenu-item" data-cadastros-view="processos_tipos" onclick="openCadastrosView(event,'processos_tipos')">Tipos de processos</div>
+        <div class="submenu-item" data-cadastros-view="compras_fornecedores" onclick="openCadastrosView(event,'compras_fornecedores')">Fornecedores e compras</div>
       </div>
     </div>
     <div class="menu-item has-submenu" data-tab="relatorios" onclick="toggleRelatoriosSubmenu(event)">
       Relatórios <span class="submenu-caret">&#9662;</span>
       <div class="submenu" id="submenuRelatorios">
         <div class="submenu-item active" data-relatorios-view="estoque_comprometido" onclick="openRelatoriosView(event,'estoque_comprometido')">Estoque comprometido</div>
+        <div class="submenu-item" data-relatorios-view="processos" onclick="openRelatoriosView(event,'processos')">Processos internos</div>
+        <div class="submenu-item" data-relatorios-view="compras" onclick="openRelatoriosView(event,'compras')">Compras</div>
       </div>
     </div>
     <div class="menu-item" onclick="showTab('devolucoes',this)">Devoluções</div>
@@ -360,6 +369,30 @@
         </div>
       </div>
     </div>
+
+    <div id="dashViewProcessos" class="dash-view hidden">
+      <div class="vendas-box-head">
+        <div><h2>Dashboard de Processos Internos</h2><div id="dashProcessosInfo" class="hint">Carregando processos...</div></div>
+        <button type="button" onclick="carregarDashboardProcessos()">Atualizar</button>
+      </div>
+      <div id="dashProcessosCards" class="vendas-resumo-cards vendas-resumo-cards--wide"></div>
+      <div class="boxFrota">
+        <h3>Processos prioritários e atrasados</h3>
+        <div class="tableWrap"><table class="dash-table"><thead><tr><th>Processo</th><th>Tipo</th><th>Status</th><th>Prioridade</th><th>Responsável</th><th>Prazo</th></tr></thead><tbody id="dashProcessosBody"></tbody></table></div>
+      </div>
+    </div>
+
+    <div id="dashViewCompras" class="dash-view hidden">
+      <div class="vendas-box-head">
+        <div><h2>Dashboard de Compras</h2><div id="dashComprasInfo" class="hint">Carregando compras e previsão...</div></div>
+        <button type="button" onclick="carregarDashboardCompras()">Atualizar</button>
+      </div>
+      <div id="dashComprasCards" class="vendas-resumo-cards vendas-resumo-cards--wide"></div>
+      <div class="boxFrota">
+        <h3>Maiores necessidades previstas</h3>
+        <div class="tableWrap"><table class="dash-table"><thead><tr><th>Grupo</th><th>Produto</th><th>Estoque</th><th>Consumo previsto/semana</th><th>Compras abertas</th><th>Sugestão de compra</th></tr></thead><tbody id="dashComprasPrevisaoBody"></tbody></table></div>
+      </div>
+    </div>
 </section>
 
   <!-- =====================================================
@@ -570,6 +603,88 @@
       <!-- Cards arquivados serão renderizados aqui -->
     </div>
   </section>
+
+  <!-- =====================================================
+       (MENU) PROCESSOS INTERNOS
+  ====================================================== -->
+  <section id="processosInternos" class="section">
+    <div class="gestao-page-head">
+      <div><h2>Gestão de Processos Internos</h2><div id="processosInternosResumo" class="hint">Carregando processos...</div></div>
+      <div class="gestao-toolbar"><input type="search" id="processosInternosBusca" placeholder="Buscar processo, solicitante ou responsável" oninput="renderProcessosInternosKanban()"><select id="processosInternosTipoFiltro" onchange="renderProcessosInternosKanban()"><option value="">Todos os tipos</option></select><button type="button" onclick="abrirFormularioProcessoInterno()">Novo processo</button><button type="button" class="btn-secondary" onclick="carregarProcessosInternos()">Atualizar</button></div>
+    </div>
+    <div id="processosInternosKanban" class="gestao-kanban" aria-label="Kanban de processos internos">
+      <section class="gestao-kanban-col" data-processo-status="solicitado"><h3>Solicitado <span id="processosCountSolicitado">0</span></h3><div id="processosColSolicitado" class="gestao-kanban-cards"></div></section>
+      <section class="gestao-kanban-col" data-processo-status="analise"><h3>Em análise <span id="processosCountAnalise">0</span></h3><div id="processosColAnalise" class="gestao-kanban-cards"></div></section>
+      <section class="gestao-kanban-col" data-processo-status="execucao"><h3>Em execução <span id="processosCountExecucao">0</span></h3><div id="processosColExecucao" class="gestao-kanban-cards"></div></section>
+      <section class="gestao-kanban-col" data-processo-status="aguardando"><h3>Aguardando <span id="processosCountAguardando">0</span></h3><div id="processosColAguardando" class="gestao-kanban-cards"></div></section>
+      <section class="gestao-kanban-col" data-processo-status="concluido"><h3>Concluído <span id="processosCountConcluido">0</span></h3><div id="processosColConcluido" class="gestao-kanban-cards"></div></section>
+    </div>
+  </section>
+
+  <div id="processoInternoModal" class="gestao-modal hidden" role="dialog" aria-modal="true" aria-labelledby="processoInternoModalTitulo">
+    <div class="gestao-modal-card">
+      <div class="vendas-box-head"><h3 id="processoInternoModalTitulo">Novo processo interno</h3><button type="button" class="btn-secondary" onclick="fecharFormularioProcessoInterno()">Fechar</button></div>
+      <input type="hidden" id="processoInternoId">
+      <div class="gestao-form-grid">
+        <label>Título<input id="processoInternoTitulo" maxlength="255"></label>
+        <label>Tipo<select id="processoInternoTipo"><option value="">Geral</option></select></label>
+        <label>Solicitante<input id="processoInternoSolicitante"></label>
+        <label>Responsável<select id="processoInternoResponsavel"><option value="">Sem responsável</option></select></label>
+        <label>Prioridade<select id="processoInternoPrioridade"><option value="baixa">Baixa</option><option value="normal" selected>Normal</option><option value="alta">Alta</option><option value="urgente">Urgente</option></select></label>
+        <label>Status<select id="processoInternoStatus"><option value="solicitado">Solicitado</option><option value="analise">Em análise</option><option value="execucao">Em execução</option><option value="aguardando">Aguardando</option><option value="concluido">Concluído</option><option value="cancelado">Cancelado</option></select></label>
+        <label>Data de abertura<input type="date" id="processoInternoDataAbertura"></label>
+        <label>Prazo<input type="date" id="processoInternoPrazo"></label>
+        <label class="gestao-form-span">Descrição<textarea id="processoInternoDescricao" rows="4"></textarea></label>
+      </div>
+      <div class="estoque-inline-actions"><button type="button" onclick="salvarProcessoInterno()">Salvar processo</button><button type="button" id="processoInternoExcluirBtn" class="btn-danger hidden" onclick="excluirProcessoInterno()">Excluir</button></div>
+      <div id="processoInternoStatusMensagem" class="hint"></div>
+    </div>
+  </div>
+
+  <!-- =====================================================
+       (MENU) GESTAO DE COMPRAS
+  ====================================================== -->
+  <section id="comprasGestao" class="section">
+    <div id="comprasViewKanban" class="compras-view">
+      <div class="gestao-page-head">
+        <div><h2>Gestão de Compras</h2><div id="comprasKanbanResumo" class="hint">Carregando solicitações...</div></div>
+        <div class="gestao-toolbar"><input type="search" id="comprasKanbanBusca" placeholder="Buscar compra, produto ou fornecedor" oninput="renderComprasKanban()"><button type="button" onclick="abrirFormularioCompra()">Nova compra</button><button type="button" class="btn-secondary" onclick="carregarComprasKanban()">Atualizar</button></div>
+      </div>
+      <div id="comprasKanban" class="gestao-kanban gestao-kanban--compras" aria-label="Kanban de compras">
+        <section class="gestao-kanban-col" data-compra-status="solicitado"><h3>Solicitado <span id="comprasCountSolicitado">0</span></h3><div id="comprasColSolicitado" class="gestao-kanban-cards"></div></section>
+        <section class="gestao-kanban-col" data-compra-status="cotacao"><h3>Cotação <span id="comprasCountCotacao">0</span></h3><div id="comprasColCotacao" class="gestao-kanban-cards"></div></section>
+        <section class="gestao-kanban-col" data-compra-status="aprovacao"><h3>Aprovação <span id="comprasCountAprovacao">0</span></h3><div id="comprasColAprovacao" class="gestao-kanban-cards"></div></section>
+        <section class="gestao-kanban-col" data-compra-status="pedido"><h3>Pedido emitido <span id="comprasCountPedido">0</span></h3><div id="comprasColPedido" class="gestao-kanban-cards"></div></section>
+        <section class="gestao-kanban-col" data-compra-status="aguardando"><h3>Aguardando entrega <span id="comprasCountAguardando">0</span></h3><div id="comprasColAguardando" class="gestao-kanban-cards"></div></section>
+        <section class="gestao-kanban-col" data-compra-status="recebido"><h3>Recebido <span id="comprasCountRecebido">0</span></h3><div id="comprasColRecebido" class="gestao-kanban-cards"></div></section>
+      </div>
+      <div class="hint">Marcar como recebido encerra o fluxo de compra, mas não movimenta o estoque automaticamente. A entrada continua sendo confirmada pelo XML ou pela movimentação de estoque.</div>
+    </div>
+
+    <div id="comprasViewPrevisao" class="compras-view hidden">
+      <div class="gestao-page-head"><div><h2>Previsão de Necessidade de Compras</h2><div id="comprasPrevisaoResumo" class="hint">Carregando consumo e estoque...</div></div><button type="button" onclick="carregarPrevisaoCompras()">Atualizar previsão</button></div>
+      <div class="estoque-filtros"><label>Grupo<select id="comprasPrevisaoGrupo" onchange="filtrarPrevisaoCompras()"><option value="">Todos os grupos</option></select></label><label>Produto<select id="comprasPrevisaoProduto" onchange="renderPrevisaoCompras()"><option value="">Todos os produtos</option></select></label><label>Exibição<select id="comprasPrevisaoNecessidade" onchange="renderPrevisaoCompras()"><option value="">Todos os itens</option><option value="com_sugestao">Somente com sugestão</option></select></label></div>
+      <div class="tableWrap"><table class="dash-table"><thead><tr><th>Grupo</th><th>Produto</th><th>Fornecedor</th><th>Estoque atual</th><th>Consumo semana</th><th>Ano anterior</th><th>Média 3 meses</th><th>Previsão semana</th><th>Compras abertas</th><th>Prazo</th><th>Estoque segurança</th><th>Sugestão</th><th>Ação</th></tr></thead><tbody id="comprasPrevisaoBody"></tbody></table></div>
+      <small class="hint">A previsão usa a maior referência entre o mesmo mês do ano anterior e a média dos três meses completos. Na falta de histórico, usa o ritmo da semana. A sugestão considera o consumo durante o prazo de entrega, estoque de segurança, saldo atual, pedidos abertos, lote mínimo e múltiplo de compra.</small>
+    </div>
+  </section>
+
+  <div id="compraModal" class="gestao-modal hidden" role="dialog" aria-modal="true" aria-labelledby="compraModalTitulo">
+    <div class="gestao-modal-card">
+      <div class="vendas-box-head"><h3 id="compraModalTitulo">Nova compra</h3><button type="button" class="btn-secondary" onclick="fecharFormularioCompra()">Fechar</button></div>
+      <input type="hidden" id="compraId"><input type="hidden" id="compraOrigem" value="manual">
+      <div class="gestao-form-grid">
+        <label>Título<input id="compraTitulo"></label><label>Produto<select id="compraProduto"><option value="">Compra sem produto de estoque</option></select></label>
+        <label>Fornecedor<select id="compraFornecedor"><option value="">Fornecedor ainda não definido</option></select></label><label>Quantidade<input type="number" min="0.001" step="0.001" id="compraQuantidade"></label>
+        <label>Unidade<input id="compraUnidade" value="UN"></label><label>Valor unitário previsto<input type="number" min="0" step="0.01" id="compraValorUnitario"></label>
+        <label>Prioridade<select id="compraPrioridade"><option value="baixa">Baixa</option><option value="normal" selected>Normal</option><option value="alta">Alta</option><option value="urgente">Urgente</option></select></label><label>Status<select id="compraStatus"><option value="solicitado">Solicitado</option><option value="cotacao">Cotação</option><option value="aprovacao">Aprovação</option><option value="pedido">Pedido emitido</option><option value="aguardando">Aguardando entrega</option><option value="recebido">Recebido</option><option value="cancelado">Cancelado</option></select></label>
+        <label>Solicitante<input id="compraSolicitante"></label><label>Responsável<select id="compraResponsavel"><option value="">Sem responsável</option></select></label>
+        <label>Data da necessidade<input type="date" id="compraDataNecessidade"></label><label>Previsão de entrega<input type="date" id="compraDataPrevisaoEntrega"></label>
+        <label class="gestao-form-span">Justificativa / observação<textarea id="compraJustificativa" rows="4"></textarea></label>
+      </div>
+      <div class="estoque-inline-actions"><button type="button" onclick="salvarCompra()">Salvar compra</button><button type="button" id="compraExcluirBtn" class="btn-danger hidden" onclick="excluirCompra()">Excluir</button></div><div id="compraStatusMensagem" class="hint"></div>
+    </div>
+  </div>
 
   <!-- =====================================================
        (MENU) ESTOQUE
@@ -1278,6 +1393,22 @@
         </div>
       </div>
     </div>
+
+    <div id="relatoriosViewProcessos" class="relatorios-view hidden">
+      <div class="boxFrota">
+        <div class="vendas-box-head"><div><h2>Relatório de Processos Internos</h2><div id="relatorioProcessosResumo" class="hint">Aplique os filtros para consultar.</div></div><button type="button" onclick="abrirPdfRelatorioProcessos()">Abrir PDF / Imprimir</button></div>
+        <div class="estoque-filtros"><label>Data inicial<input type="date" id="relatorioProcessosDataInicio"></label><label>Data final<input type="date" id="relatorioProcessosDataFim"></label><label>Status<select id="relatorioProcessosStatus"><option value="">Todos</option><option value="solicitado">Solicitado</option><option value="analise">Em análise</option><option value="execucao">Em execução</option><option value="aguardando">Aguardando</option><option value="concluido">Concluído</option><option value="cancelado">Cancelado</option></select></label><label>Tipo<select id="relatorioProcessosTipo"><option value="">Todos os tipos</option></select></label><label>Responsável<select id="relatorioProcessosResponsavel"><option value="">Todos</option></select></label><label>Busca<input id="relatorioProcessosBusca" placeholder="Título, solicitante ou responsável"></label><button type="button" onclick="carregarRelatorioProcessos()">Aplicar filtros</button></div>
+        <div class="tableWrap"><table class="dash-table"><thead><tr><th>ID</th><th>Processo</th><th>Tipo</th><th>Status</th><th>Prioridade</th><th>Responsável</th><th>Prazo</th></tr></thead><tbody id="relatorioProcessosBody"></tbody></table></div>
+      </div>
+    </div>
+
+    <div id="relatoriosViewCompras" class="relatorios-view hidden">
+      <div class="boxFrota">
+        <div class="vendas-box-head"><div><h2>Relatório de Compras</h2><div id="relatorioComprasResumo" class="hint">Aplique os filtros para consultar.</div></div><button type="button" onclick="abrirPdfRelatorioCompras()">Abrir PDF / Imprimir</button></div>
+        <div class="estoque-filtros"><label>Data inicial<input type="date" id="relatorioComprasDataInicio"></label><label>Data final<input type="date" id="relatorioComprasDataFim"></label><label>Status<select id="relatorioComprasStatus"><option value="">Todos</option><option value="solicitado">Solicitado</option><option value="cotacao">Cotação</option><option value="aprovacao">Aprovação</option><option value="pedido">Pedido emitido</option><option value="aguardando">Aguardando entrega</option><option value="recebido">Recebido</option><option value="cancelado">Cancelado</option></select></label><label>Fornecedor<select id="relatorioComprasFornecedor"><option value="">Todos</option></select></label><label>Produto<select id="relatorioComprasProduto"><option value="">Todos</option></select></label><label>Busca<input id="relatorioComprasBusca" placeholder="Compra, produto ou fornecedor"></label><button type="button" onclick="carregarRelatorioCompras()">Aplicar filtros</button></div>
+        <div class="tableWrap"><table class="dash-table"><thead><tr><th>ID</th><th>Compra</th><th>Produto</th><th>Fornecedor</th><th>Status</th><th>Quantidade</th><th>Valor previsto</th><th>Necessidade</th></tr></thead><tbody id="relatorioComprasBody"></tbody></table></div>
+      </div>
+    </div>
   </section>
 
   <!-- =====================================================
@@ -1457,6 +1588,19 @@
     <div id="cadastrosViewEstoqueGrupos" class="cadastro-view hidden">
       <h3>Grupos de Estoque</h3>
       <div id="cadastrosEstoqueGruposMount" class="frotaGrid estoque-cadastro-layout"></div>
+    </div>
+
+    <div id="cadastrosViewProcessosTipos" class="cadastro-view hidden">
+      <div class="gestao-page-head"><div><h3>Tipos de Processos</h3><div class="hint">Defina a classificação, o prazo padrão (SLA) e a cor dos processos internos.</div></div><button type="button" onclick="novoTipoProcesso()">Novo tipo</button></div>
+      <div id="processoTipoFormulario" class="boxFrota hidden"><input type="hidden" id="processoTipoId"><div class="gestao-form-grid"><label>Nome<input id="processoTipoNome"></label><label>Prazo padrão em dias<input type="number" min="0" id="processoTipoSla" value="7"></label><label>Cor<input type="color" id="processoTipoCor" value="#2563eb"></label><label class="gestao-form-span">Descrição<input id="processoTipoDescricao"></label></div><div class="estoque-inline-actions"><button type="button" onclick="salvarTipoProcesso()">Salvar</button><button type="button" class="btn-secondary" onclick="fecharTipoProcesso()">Cancelar</button></div><div id="processoTipoStatus" class="hint"></div></div>
+      <div class="boxFrota"><div class="tableWrap"><table><thead><tr><th>Cor</th><th>Tipo</th><th>Descrição</th><th>SLA</th><th>Ações</th></tr></thead><tbody id="processosTiposBody"></tbody></table></div></div>
+    </div>
+
+    <div id="cadastrosViewComprasFornecedores" class="cadastro-view hidden">
+      <div class="gestao-page-head"><div><h3>Fornecedores e Parâmetros de Compra</h3><div class="hint">O fornecedor é o mesmo usado no Gestor de E-mails e nas entradas do estoque.</div></div><button type="button" onclick="novoFornecedorCompras()">Novo fornecedor</button></div>
+      <div id="comprasFornecedorFormulario" class="boxFrota hidden"><input type="hidden" id="comprasFornecedorId"><div class="gestao-form-grid"><label>Nome<input id="comprasFornecedorNome"></label><label>CNPJ<input id="comprasFornecedorCnpj"></label><label>Categoria<input id="comprasFornecedorCategoria" value="outros"></label><label>E-mails<input id="comprasFornecedorEmails"></label><label>Contato de compras<input id="comprasFornecedorContato"></label><label>Prazo padrão (dias)<input type="number" min="1" id="comprasFornecedorPrazo" value="7"></label><label>Pedido mínimo (R$)<input type="number" min="0" step="0.01" id="comprasFornecedorPedidoMinimo"></label><label>Condição de pagamento<input id="comprasFornecedorPagamento"></label><label class="gestao-form-span">Observações<input id="comprasFornecedorObservacoes"></label></div><div class="estoque-inline-actions"><button type="button" onclick="salvarFornecedorCompras()">Salvar</button><button type="button" class="btn-secondary" onclick="fecharFornecedorCompras()">Cancelar</button></div><div id="comprasFornecedorStatus" class="hint"></div></div>
+      <div class="boxFrota"><h3>Fornecedores cadastrados</h3><div class="tableWrap"><table><thead><tr><th>Fornecedor</th><th>CNPJ</th><th>Categoria</th><th>Contato</th><th>Prazo</th><th>Pagamento</th><th>Ações</th></tr></thead><tbody id="comprasFornecedoresBody"></tbody></table></div></div>
+      <div class="boxFrota"><h3>Parâmetros por produto</h3><div class="hint">Estoque de segurança, prazo, lote mínimo e múltiplo ajustam a sugestão automática.</div><div class="tableWrap"><table><thead><tr><th>Grupo</th><th>Produto</th><th>Fornecedor</th><th>Segurança</th><th>Prazo (dias)</th><th>Lote mínimo</th><th>Múltiplo</th><th>Ação</th></tr></thead><tbody id="comprasParametrosProdutosBody"></tbody></table></div></div>
     </div>
   </section>
 
@@ -3346,5 +3490,6 @@
   ====================================================== -->
   <script src="/vendor/jssip.min.js?v=__RB_ASSET_VERSION__"></script>
   <script src="/script.js?v=__RB_ASSET_VERSION__"></script>
+  <script src="/gestao_processos_compras.js?v=__RB_ASSET_VERSION__"></script>
 </body>
 </html>

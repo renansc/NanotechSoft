@@ -2202,20 +2202,33 @@ function _fecharSubmenuAposNavegacao(menu){
 }
 
 function toggleComprasSubmenu(ev){
-  toggleExclusiveSubmenu(ev, () => openComprasView(null, "importar_xml_bipe"));
+  toggleExclusiveSubmenu(ev, () => openComprasView(null, window.__comprasView || "kanban"));
 }
 
-function openComprasView(ev, view = "importar_xml_bipe"){
+function openComprasView(ev, view = "kanban"){
   if (ev) { ev.preventDefault(); ev.stopPropagation(); }
   const menu = document.querySelector('.menu-item.has-submenu[data-tab="compras"]');
-  const nextView = view === "importar_xml_auto" ? "importar_xml_auto" : "importar_xml_bipe";
-  showTab("estoque", menu);
+  const nextView = ["kanban", "previsao", "importar_xml_bipe", "importar_xml_auto"].includes(view) ? view : "kanban";
+  window.__comprasView = nextView;
   document.querySelectorAll("#submenuCompras .submenu-item").forEach((item) => {
     item.classList.toggle("active", item.dataset.comprasView === nextView);
   });
-  setEstoqueView(nextView);
-  carregarEstoque().catch(() => {});
+  if (nextView.startsWith("importar_xml")) {
+    showTab("estoque", menu);
+    setEstoqueView(nextView);
+    carregarEstoque().catch(() => {});
+  } else {
+    showTab("comprasGestao", menu);
+    setComprasGestaoView(nextView);
+  }
   _fecharSubmenuAposNavegacao(menu);
+}
+
+function openProcessosInternos(ev){
+  if (ev) { ev.preventDefault(); ev.stopPropagation(); }
+  const menu = document.querySelector('.menu-item[data-tab="processosInternos"]');
+  showTab("processosInternos", menu);
+  carregarProcessosInternos().catch((erro) => console.warn("processos internos erro:", erro));
 }
 
 function toggleEstoqueSubmenu(ev){
@@ -2246,20 +2259,26 @@ function toggleRelatoriosSubmenu(ev){
 function openRelatoriosView(ev, view = "estoque_comprometido"){
   if (ev) { ev.preventDefault(); ev.stopPropagation(); }
   const menu = document.querySelector('.menu-item.has-submenu[data-tab="relatorios"]');
-  window.__relatoriosView = view === "estoque_comprometido" ? view : "estoque_comprometido";
+  window.__relatoriosView = ["estoque_comprometido", "processos", "compras"].includes(view) ? view : "estoque_comprometido";
   showTab("relatorios", menu);
   _fecharSubmenuAposNavegacao(menu);
 }
 
 function setRelatoriosView(view = "estoque_comprometido"){
-  const nextView = view === "estoque_comprometido" ? view : "estoque_comprometido";
+  const nextView = ["estoque_comprometido", "processos", "compras"].includes(view) ? view : "estoque_comprometido";
   window.__relatoriosView = nextView;
   document.querySelectorAll("#submenuRelatorios .submenu-item").forEach((item) => {
     item.classList.toggle("active", item.dataset.relatoriosView === nextView);
   });
   document.getElementById("relatoriosViewEstoqueComprometido")?.classList.toggle("hidden", nextView !== "estoque_comprometido");
+  document.getElementById("relatoriosViewProcessos")?.classList.toggle("hidden", nextView !== "processos");
+  document.getElementById("relatoriosViewCompras")?.classList.toggle("hidden", nextView !== "compras");
   if (nextView === "estoque_comprometido") {
     carregarRelatorioEstoqueComprometido().catch((erro) => console.warn("relatorio estoque comprometido erro:", erro));
+  } else if (nextView === "processos") {
+    carregarRelatorioProcessos().catch((erro) => console.warn("relatorio processos erro:", erro));
+  } else if (nextView === "compras") {
+    carregarRelatorioCompras().catch((erro) => console.warn("relatorio compras erro:", erro));
   }
 }
 
@@ -2271,11 +2290,10 @@ function openDashboardView(ev, view){
   showTab("dashboard", dashMenu);
 
   // marca submenu ativo
-  document.querySelectorAll("#submenuDashboard .submenu-item").forEach(x=>x.classList.remove("active"));
-  const targetMap = { resumo: 0, frota: 1, estoque: 2, vendas_diario: 3, bonificacoes: 4, variacao_preco: 5, mix_embalagens: 6, grupos_embalagem: 6, comissoes: 7, vendas: 4 };
-  const target = targetMap[view] ?? 0;
-  const items = document.querySelectorAll("#submenuDashboard .submenu-item");
-  if (items && items[target]) items[target].classList.add("active");
+  const dashboardMenuView = view === "mix_embalagens" ? "grupos_embalagem" : (view === "vendas" ? "bonificacoes" : view);
+  document.querySelectorAll("#submenuDashboard .submenu-item").forEach((item) => {
+    item.classList.toggle("active", item.dataset.dashboardView === dashboardMenuView);
+  });
 
   setDashboardView(view);
 
@@ -2290,7 +2308,7 @@ function setDashboardView(view){
   const raw = String(view || "resumo").toLowerCase();
   const target = _dashboardVendasIsView(raw)
     ? _dashboardVendasNormalizeView(raw === "vendas" ? (window.__dashVendasView || dashboardVendasPainelState.view || "bonificacoes") : raw)
-    : ["resumo", "frota", "estoque", "vendas_diario", "comissoes"].includes(raw) ? raw : "resumo";
+    : ["resumo", "frota", "estoque", "processos", "compras", "vendas_diario", "comissoes"].includes(raw) ? raw : "resumo";
   const isVendasView = _dashboardVendasIsView(target);
   window.__dashView = target;
   const vResumo = document.getElementById("dashViewResumo");
@@ -2299,12 +2317,16 @@ function setDashboardView(view){
   const vVendasDiario = document.getElementById("dashViewVendasDiario");
   const vVendas = document.getElementById("dashViewVendas");
   const vComissoes = document.getElementById("dashViewComissoes");
+  const vProcessos = document.getElementById("dashViewProcessos");
+  const vCompras = document.getElementById("dashViewCompras");
   if (vResumo) vResumo.classList.toggle("hidden", target !== "resumo");
   if (vFrota) vFrota.classList.toggle("hidden", target !== "frota");
   if (vEstoque) vEstoque.classList.toggle("hidden", target !== "estoque");
   if (vVendasDiario) vVendasDiario.classList.toggle("hidden", target !== "vendas_diario");
   if (vVendas) vVendas.classList.toggle("hidden", !isVendasView);
   if (vComissoes) vComissoes.classList.toggle("hidden", target !== "comissoes");
+  if (vProcessos) vProcessos.classList.toggle("hidden", target !== "processos");
+  if (vCompras) vCompras.classList.toggle("hidden", target !== "compras");
 
   if (target === "frota") {
     renderDashboardFrota().catch(e=>console.warn("dash frota erro:", e));
@@ -2317,6 +2339,10 @@ function setDashboardView(view){
     recarregarDashboardVendaAtual().catch(e=>console.warn("dash vendas erro:", e));
   } else if (target === "comissoes") {
     carregarDashboardComissoes().catch(e=>console.warn("dashboard comissoes erro:", e));
+  } else if (target === "processos") {
+    carregarDashboardProcessos().catch(e=>console.warn("dashboard processos erro:", e));
+  } else if (target === "compras") {
+    carregarDashboardCompras().catch(e=>console.warn("dashboard compras erro:", e));
   } else {
     atualizarDash().catch(()=>{});
   }
@@ -2716,7 +2742,7 @@ function toggleCadastrosSubmenu(ev){
 function _normalizarCadastrosView(view){
   const aliasesColaboradores = ["motoristas", "conferentes", "usuarios"];
   if (aliasesColaboradores.includes(view)) return "colaboradores";
-  const viewsPermitidas = ["colaboradores", "veiculos", "comissao", "estoque_produtos", "estoque_grupos"];
+  const viewsPermitidas = ["colaboradores", "veiculos", "comissao", "estoque_produtos", "estoque_grupos", "processos_tipos", "compras_fornecedores"];
   return viewsPermitidas.includes(view) ? view : "colaboradores";
 }
 
@@ -2760,6 +2786,8 @@ function setCadastrosView(view){
     comissao: document.getElementById("cadastrosViewComissao"),
     estoque_produtos: document.getElementById("cadastrosViewEstoqueProdutos"),
     estoque_grupos: document.getElementById("cadastrosViewEstoqueGrupos"),
+    processos_tipos: document.getElementById("cadastrosViewProcessosTipos"),
+    compras_fornecedores: document.getElementById("cadastrosViewComprasFornecedores"),
   };
   Object.entries(views).forEach(([key, el]) => {
     if (el) el.classList.toggle("hidden", key !== normalizedView);
@@ -2788,6 +2816,12 @@ function setCadastrosView(view){
     }).catch((erro) => {
       console.warn("cadastro de grupos do estoque erro:", erro);
     });
+  } else if (normalizedView === "processos_tipos") {
+    fecharTipoProcesso();
+    carregarTiposProcessos().catch((erro) => console.warn("tipos de processos erro:", erro));
+  } else if (normalizedView === "compras_fornecedores") {
+    fecharFornecedorCompras();
+    carregarCadastrosCompras().catch((erro) => console.warn("cadastros de compras erro:", erro));
   }
 }
 
@@ -6157,6 +6191,12 @@ function showTab(tabId, el) {
       window.__estoqueView = "posicao";
     }
     setEstoqueView(window.__estoqueView);
+  }
+  if (tabId === "processosInternos") {
+    carregarProcessosInternos().catch((erro) => console.warn("processos internos erro:", erro));
+  }
+  if (tabId === "comprasGestao") {
+    setComprasGestaoView(window.__comprasView || "kanban");
   }
   if (tabId === "relatorios") {
     setRelatoriosView(window.__relatoriosView || "estoque_comprometido");
