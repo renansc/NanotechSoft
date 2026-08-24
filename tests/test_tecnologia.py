@@ -1,6 +1,7 @@
 import json
 import datetime as dt
 import shutil
+import smtplib
 import subprocess
 import tempfile
 import time
@@ -673,6 +674,30 @@ class TecnologiaIntegrationTests(unittest.TestCase):
         self.assertIn("Notebook Renan (192.168.200.122)", body)
         self.assertIn("memória RAM em 91.2%", body)
         self.assertIn("limite 90.0%", body)
+
+    def test_temporary_recipient_refusal_has_readable_message(self):
+        error = smtplib.SMTPRecipientsRefused({
+            "destino@example.test": (450, b"4.7.1 Recipient address rejected: SMTP-02"),
+        })
+
+        message = portal.technology_smtp_error_message(error)
+
+        self.assertIn("recusou temporariamente", message)
+        self.assertIn("destino@example.test", message)
+        self.assertIn("450", message)
+
+    def test_successful_email_clears_stale_smtp_errors(self):
+        conn = mock.MagicMock()
+        cursor = conn.cursor.return_value
+        with mock.patch.object(portal, "get_conn", return_value=conn):
+            portal.technology_clear_email_errors()
+
+        cursor.execute.assert_called_once_with(
+            "UPDATE tecnologia_alertas_recursos SET ultimo_erro='' WHERE ultimo_erro<>''"
+        )
+        conn.commit.assert_called_once_with()
+        cursor.close.assert_called_once_with()
+        conn.close.assert_called_once_with()
 
     def test_internal_drop_does_not_become_email_alert_but_internet_drop_does(self):
         internal = portal.technology_alert_telemetry(

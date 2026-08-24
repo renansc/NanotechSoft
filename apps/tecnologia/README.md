@@ -173,6 +173,10 @@ O painel **Alertas por e-mail** mostra se a configuração está pronta, a
 quantidade de alertas ativos, o último envio e eventual erro. Administradores
 podem usar **Enviar e-mail de teste**. O painel distingue remetente e
 destinatário, e a senha nunca é devolvida pela API.
+Uma recusa temporária `4xx` do provedor fica visível com o destinatário e o
+código SMTP. Depois que um alerta ou teste for entregue com sucesso, as falhas
+anteriores do mesmo canal são limpas para o painel não continuar exibindo um
+erro já resolvido.
 `TECH_ALERT_REMINDER_HOURS` altera o lembrete e
 `TECH_ALERT_RECOVERY_MARGIN_PCT` altera a margem de recuperação.
 

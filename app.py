@@ -5128,6 +5128,35 @@ def send_technology_email(subject, body):
     return config["recipient"]
 
 
+def technology_smtp_error_message(exc):
+    if isinstance(exc, smtplib.SMTPRecipientsRefused):
+        failures = []
+        temporary = False
+        for recipient, response in (exc.recipients or {}).items():
+            code, message = response if isinstance(response, tuple) and len(response) == 2 else (0, response)
+            try:
+                code = int(code or 0)
+            except (TypeError, ValueError):
+                code = 0
+            temporary = temporary or 400 <= code < 500
+            detail = message.decode("utf-8", errors="replace") if isinstance(message, bytes) else str(message or "")
+            failures.append(f"{recipient}: {code} {detail}".strip())
+        prefix = "O servidor SMTP recusou temporariamente o destinatário" if temporary else "O servidor SMTP recusou o destinatário"
+        return f"{prefix}: {'; '.join(failures)}"
+    return f"{type(exc).__name__}: {exc}"
+
+
+def technology_clear_email_errors():
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        cur.execute("UPDATE tecnologia_alertas_recursos SET ultimo_erro='' WHERE ultimo_erro<>''")
+        conn.commit()
+    finally:
+        cur.close()
+        conn.close()
+
+
 def technology_alert_email_body(actions, now=None):
     now = now or dt.datetime.now()
     lines = [
@@ -5300,7 +5329,7 @@ def process_technology_resource_alerts(devices, results, now=None):
         try:
             send_technology_email(subject, technology_alert_email_body(actions, now=now))
         except Exception as exc:
-            error = f"{type(exc).__name__}: {exc}"[:500]
+            error = technology_smtp_error_message(exc)[:500]
             for item in actions:
                 cur.execute(
                     "UPDATE tecnologia_alertas_recursos SET ultimo_erro=%s WHERE dispositivo_id=%s AND recurso=%s",
@@ -5309,6 +5338,7 @@ def process_technology_resource_alerts(devices, results, now=None):
             conn.commit()
             print(f"[tecnologia] e-mail de alerta não enviado: {error}", file=sys.stderr)
         else:
+            cur.execute("UPDATE tecnologia_alertas_recursos SET ultimo_erro='' WHERE ultimo_erro<>''")
             for item in actions:
                 cur.execute(
                     """
@@ -5633,7 +5663,11 @@ def tecnologia_alert_test_email_api():
             ]),
         )
     except Exception as exc:
-        return jsonify({"erro": f"Não foi possível enviar: {exc}"}), 400
+        return jsonify({"erro": f"Não foi possível enviar: {technology_smtp_error_message(exc)}"}), 400
+    try:
+        technology_clear_email_errors()
+    except Exception as exc:
+        print(f"[tecnologia] e-mail de teste enviado, mas a falha antiga não foi limpa: {type(exc).__name__}", file=sys.stderr)
     return jsonify({"ok": True, "recipient": recipient})
 
 
