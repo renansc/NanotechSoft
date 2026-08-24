@@ -108,6 +108,8 @@ let estoqueState = {
   gruposEstoque: [],
   grupoEstoqueEditId: 0,
   dashboardEstoqueAtualizando: false,
+  relatorioEstoqueAtualizando: false,
+  relatorioEstoqueProdutos: [],
   posicaoRows: [],
   posicaoMeta: {},
   movimentos: [],
@@ -2231,6 +2233,30 @@ function openEstoqueView(ev, view = "posicao"){
   setEstoqueView(view);
   carregarEstoque().catch(() => {});
   _fecharSubmenuAposNavegacao(menu);
+}
+
+function toggleRelatoriosSubmenu(ev){
+  toggleExclusiveSubmenu(ev, () => openRelatoriosView(null, window.__relatoriosView || "estoque_comprometido"));
+}
+
+function openRelatoriosView(ev, view = "estoque_comprometido"){
+  if (ev) { ev.preventDefault(); ev.stopPropagation(); }
+  const menu = document.querySelector('.menu-item.has-submenu[data-tab="relatorios"]');
+  window.__relatoriosView = view === "estoque_comprometido" ? view : "estoque_comprometido";
+  showTab("relatorios", menu);
+  _fecharSubmenuAposNavegacao(menu);
+}
+
+function setRelatoriosView(view = "estoque_comprometido"){
+  const nextView = view === "estoque_comprometido" ? view : "estoque_comprometido";
+  window.__relatoriosView = nextView;
+  document.querySelectorAll("#submenuRelatorios .submenu-item").forEach((item) => {
+    item.classList.toggle("active", item.dataset.relatoriosView === nextView);
+  });
+  document.getElementById("relatoriosViewEstoqueComprometido")?.classList.toggle("hidden", nextView !== "estoque_comprometido");
+  if (nextView === "estoque_comprometido") {
+    carregarRelatorioEstoqueComprometido().catch((erro) => console.warn("relatorio estoque comprometido erro:", erro));
+  }
 }
 
 function openDashboardView(ev, view){
@@ -6088,6 +6114,9 @@ function showTab(tabId, el) {
       window.__estoqueView = "posicao";
     }
     setEstoqueView(window.__estoqueView);
+  }
+  if (tabId === "relatorios") {
+    setRelatoriosView(window.__relatoriosView || "estoque_comprometido");
   }
   if (tabId === "cargas") {
     if (!window.__cargasView || !["cadastro", "escala"].includes(window.__cargasView)) {
@@ -15555,22 +15584,27 @@ function sincronizarNumeroNotaPorCodigo(){
 }
 
 async function renderDashboardEstoque(){
-  const bodySaldo = document.getElementById("dashEstoqueSaldoBody");
-  const bodyComprometido = document.getElementById("dashEstoqueComprometidoBody");
+  const bodyRetornavel = document.getElementById("dashEstoqueRetornavelBody");
+  const bodyPetAgua = document.getElementById("dashEstoquePetAguaBody");
   const resumo = document.getElementById("dashEstoqueResumo");
-  if (!bodyComprometido || !bodySaldo || estoqueState.dashboardEstoqueAtualizando) return;
+  if (!bodyRetornavel || !bodyPetAgua || estoqueState.dashboardEstoqueAtualizando) return;
   estoqueState.dashboardEstoqueAtualizando = true;
   try {
     const resp = await apiFetch(`/api/dashboard_estoque?_=${Date.now()}`);
     if (!resp.ok) {
-      bodyComprometido.innerHTML = `<tr><td colspan="6">Erro ao carregar estoque comprometido.</td></tr>`;
-      bodySaldo.innerHTML = `<tr><td colspan="10">Erro ao carregar posicao do estoque.</td></tr>`;
+      bodyRetornavel.innerHTML = `<tr><td colspan="5">Erro ao carregar produtos retornaveis.</td></tr>`;
+      bodyPetAgua.innerHTML = `<tr><td colspan="5">Erro ao carregar produtos PET e Agua.</td></tr>`;
       if (resumo) resumo.textContent = "Nao foi possivel atualizar o dashboard de estoque.";
       return;
     }
     const payload = await resp.json();
     const dados = _estoqueRowsPayload(payload);
-    const comprometidos = Array.isArray(payload?.comprometidos) ? payload.comprometidos : [];
+    const retornaveis = Array.isArray(payload?.retornaveis)
+      ? payload.retornaveis
+      : dados.filter((row) => String(row.grupo_estoque || "").toUpperCase() === "GFA");
+    const petAgua = Array.isArray(payload?.pet_agua)
+      ? payload.pet_agua
+      : dados.filter((row) => ["PET", "AGUA"].includes(String(row.grupo_estoque || "").toUpperCase()));
     const meta = _estoqueMetaPayload(payload);
     if (Array.isArray(meta.grupos_estoque)) {
       estoqueState.gruposEstoque = meta.grupos_estoque;
@@ -15582,78 +15616,123 @@ async function renderDashboardEstoque(){
         `Atualizado: ${_fmtDateBr(meta.atualizado_em || new Date().toISOString())}`,
         "Atualizacao automatica: 5 s",
         `Itens: ${meta.itens_dashboard || dados.length}`,
-        `Vendas no mes: ${_estoqueFormatQtd(meta.vendas_mes_atual_total || 0)}`,
-        `Cargas pendentes: ${meta.cargas_pendentes || 0}`,
-        `Itens comprometidos: ${meta.itens_comprometidos || 0}`,
-        `Producao sugerida: ${_estoqueFormatQtd(meta.necessidade_producao_mensal_total || 0)}`,
+        `Vendas na semana: ${_estoqueFormatQtd(meta.vendas_semana_total || 0)}`,
+        `Previsao semanal: ${_estoqueFormatQtd(meta.previsao_consumo_semana_total || 0)}`,
+        `Producao sugerida: ${_estoqueFormatQtd(meta.sugestao_producao_semana_total || 0)}`,
       ].join(" | ");
     }
-    const mesLabel = (valor) => {
-      const match = String(valor || "").match(/^(\d{4})-(\d{2})$/);
-      return match ? `${match[2]}/${match[1]}` : "Sem periodo";
-    };
-    const mesAtualHead = document.getElementById("dashEstoqueMesAtualHead");
-    const anoAnteriorHead = document.getElementById("dashEstoqueAnoAnteriorHead");
-    const mesesRecentesHead = document.getElementById("dashEstoqueMesesRecentesHead");
-    if (mesAtualHead) mesAtualHead.textContent = `Vendas ${mesLabel(meta.mes_atual)}`;
-    if (anoAnteriorHead) anoAnteriorHead.textContent = `Vendas ${mesLabel(meta.mes_ano_anterior)}`;
-    if (mesesRecentesHead) mesesRecentesHead.textContent = `Media ${Number(dados[0]?.meses_recentes_considerados || 0)} meses`;
-    const formatarReferencia = (r, valor) => valor === null || valor === undefined
-      ? '<span class="hint">Sem dados</span>'
-      : _escHtml(_estoqueFormatPallet(r, valor));
-    const historicoRecente = (r) => {
-      const meses = Array.isArray(r.vendas_meses_recentes) ? r.vendas_meses_recentes : [];
-      const detalhes = meses.map((mes) => `${mesLabel(mes.mes)}: ${mes.disponivel ? _estoqueFormatPallet(r, mes.quantidade) : "sem dados"}`);
-      return `${formatarReferencia(r, r.media_vendas_ultimos_meses)}${detalhes.length ? `<br><small>${_escHtml(detalhes.join(" | "))}</small>` : ""}`;
-    };
-    bodySaldo.innerHTML = dados.length ? _estoqueLinhasAgrupadas(dados, (r) => `
+    const renderLinhas = (rows, vazio) => rows.length ? rows.map((r) => `
       <tr>
         <td>${_estoqueProdutoStatusHtml(r)}</td>
-        <td>${_escHtml(_estoqueCodigoReferencia(r))}</td>
-        <td>${_escHtml(_estoqueFormatPallet(r, r.vendas_mes_atual))}</td>
-        <td>${formatarReferencia(r, r.vendas_mes_ano_anterior)}</td>
-        <td>${historicoRecente(r)}</td>
+        <td>${_escHtml(_estoqueFormatPallet(r, r.vendas_semana))}</td>
         <td>${_escHtml(_estoqueFormatPallet(r, r.quantidade_atual))}</td>
-        <td>${_escHtml(_estoqueFormatPallet(r, r.quantidade_comprometida))}</td>
-        <td><span style="font-weight:700;color:${Number(r.saldo_remanescente || 0) < 0 ? "#b91c1c" : "#166534"};">${_escHtml(_estoqueFormatPallet(r, r.saldo_remanescente))}</span></td>
-        <td>${r.sugestao_producao_aplicavel ? _escHtml(_estoqueFormatPallet(r, r.demanda_restante_mes)) : '<span class="hint">Nao se aplica</span>'}</td>
-        <td>${r.sugestao_producao_aplicavel
-          ? `<span style="font-weight:700;color:${Number(r.necessidade_producao_mensal || 0) > 0 ? "#b45309" : "#166534"};">${_escHtml(_estoqueFormatPallet(r, r.necessidade_producao_mensal))}</span>`
-          : '<span class="hint">Nao se aplica</span>'}</td>
+        <td>${_escHtml(_estoqueFormatPallet(r, r.previsao_consumo_semana))}</td>
+        <td><span style="font-weight:700;color:${Number(r.sugestao_producao_semana || 0) > 0 ? "#b45309" : "#166534"};">${_escHtml(_estoqueFormatPallet(r, r.sugestao_producao_semana))}</span></td>
       </tr>
-    `, 10) : `<tr><td colspan="10">Sem produtos ativos configurados para o dashboard.</td></tr>`;
-    bodyComprometido.innerHTML = comprometidos.length ? _estoqueLinhasAgrupadas(comprometidos, (r) => {
-      const cargas = (Array.isArray(r.comprometimentos) ? r.comprometimentos : []).map((item) =>
-        `${item.carga_nome || `Carga #${item.carga_id || "-"}`} (${_estoqueFormatPallet(r, item.quantidade)})`
-      );
-      const estoqueAtual = Number(r.quantidade_atual || 0);
-      const percentual = estoqueAtual > 0 ? (Number(r.quantidade_comprometida || 0) / estoqueAtual) * 100 : 100;
-      return `
-      <tr>
-        <td>${_estoqueProdutoStatusHtml(r)}</td>
-        <td>${cargas.length ? _escHtml(cargas.join(" | ")) : "Carga pendente"}</td>
-        <td>${_escHtml(_estoqueFormatPallet(r, r.quantidade_atual))}</td>
-        <td><strong>${_escHtml(_estoqueFormatPallet(r, r.quantidade_comprometida))}</strong></td>
-        <td>${_escHtml(_estoqueFormatPallet(r, r.saldo_remanescente))}</td>
-        <td>${_escHtml(`${_fmtNumber(percentual, 1)}%`)}</td>
-      </tr>
-    `;
-    }, 6) : `<tr><td colspan="6">Nao ha estoque comprometido em cargas pendentes.</td></tr>`;
+    `).join("") : `<tr><td colspan="5">${_escHtml(vazio)}</td></tr>`;
+    bodyRetornavel.innerHTML = renderLinhas(retornaveis, "Sem produtos retornaveis ativos no dashboard.");
+    bodyPetAgua.innerHTML = renderLinhas(petAgua, "Sem produtos PET ou Agua ativos no dashboard.");
   } finally {
     estoqueState.dashboardEstoqueAtualizando = false;
   }
 }
 
-function imprimirRelatorioEstoqueComprometido(){
-  const tabela = document.getElementById("dashEstoqueComprometidoTable");
-  if (!tabela) return;
-  const janela = window.open("about:blank", "_blank");
-  if (!janela) return alert("O navegador bloqueou a janela de impressao.");
-  const atualizado = document.getElementById("dashEstoqueResumo")?.textContent || "";
-  janela.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Estoque Comprometido</title><style>body{font-family:Arial,sans-serif;padding:24px;color:#111}h1{font-size:20px}p{font-size:12px;color:#555}table{width:100%;border-collapse:collapse}th,td{border:1px solid #bbb;padding:6px;text-align:left;font-size:11px}th{background:#eee}.estoque-group-row td{font-weight:700;background:#ddd}@media print{button{display:none}}</style></head><body><h1>Relatorio de Estoque Comprometido</h1><p>${_escHtml(atualizado)}</p>${tabela.outerHTML}</body></html>`);
-  janela.document.close();
-  janela.focus();
-  setTimeout(() => janela.print(), 250);
+function _paramsRelatorioEstoqueComprometido(){
+  const params = new URLSearchParams();
+  const dataInicio = document.getElementById("relatorioEstoqueDataInicio")?.value || "";
+  const dataFim = document.getElementById("relatorioEstoqueDataFim")?.value || "";
+  const grupo = document.getElementById("relatorioEstoqueGrupo")?.value || "";
+  const produto = document.getElementById("relatorioEstoqueProduto")?.value || "";
+  if (dataInicio) params.set("data_inicio", dataInicio);
+  if (dataFim) params.set("data_fim", dataFim);
+  if (grupo) params.set("grupo_estoque", grupo);
+  if (produto) params.set("produto_id", produto);
+  return params;
+}
+
+function filtrarProdutosRelatorioEstoque(){
+  const select = document.getElementById("relatorioEstoqueProduto");
+  if (!select) return;
+  const grupo = String(document.getElementById("relatorioEstoqueGrupo")?.value || "").toUpperCase();
+  const valorAtual = select.value;
+  const produtos = (estoqueState.relatorioEstoqueProdutos || []).filter((produto) =>
+    !grupo || String(produto.grupo_estoque || "").toUpperCase() === grupo
+  );
+  select.innerHTML = '<option value="">Todos os produtos</option>' + produtos.map((produto) =>
+    `<option value="${Number(produto.id || 0)}">${_escHtml(produto.nome || "-")}</option>`
+  ).join("");
+  if (produtos.some((produto) => String(produto.id) === String(valorAtual))) select.value = valorAtual;
+}
+
+async function carregarRelatorioEstoqueComprometido(){
+  const body = document.getElementById("relatorioEstoqueComprometidoBody");
+  const resumo = document.getElementById("relatorioEstoqueComprometidoResumo");
+  if (!body || estoqueState.relatorioEstoqueAtualizando) return;
+  estoqueState.relatorioEstoqueAtualizando = true;
+  try {
+    const params = _paramsRelatorioEstoqueComprometido();
+    params.set("_", Date.now());
+    const resp = await apiFetch(`/api/estoque/relatorio-comprometido?${params.toString()}`);
+    const payload = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(payload?.erro || "Falha ao carregar o relatorio.");
+    const rows = Array.isArray(payload?.rows) ? payload.rows : [];
+    const meta = payload?.meta || {};
+    const opcoes = payload?.opcoes || {};
+    estoqueState.relatorioEstoqueProdutos = Array.isArray(opcoes.produtos) ? opcoes.produtos : [];
+    const grupoSelect = document.getElementById("relatorioEstoqueGrupo");
+    if (grupoSelect) {
+      const valorAtual = grupoSelect.value;
+      grupoSelect.innerHTML = '<option value="">Todos os grupos</option>' + (Array.isArray(opcoes.grupos) ? opcoes.grupos : []).map((grupo) =>
+        `<option value="${_escHtml(grupo.codigo || "")}">${_escHtml(grupo.nome || grupo.codigo || "-")}</option>`
+      ).join("");
+      grupoSelect.value = valorAtual;
+    }
+    filtrarProdutosRelatorioEstoque();
+    if (resumo) resumo.textContent = [
+      `Atualizado: ${_fmtDateBr(meta.atualizado_em || new Date().toISOString())}`,
+      `Produtos: ${Number(meta.itens_comprometidos || rows.length)}`,
+      `Quantidade comprometida: ${_estoqueFormatQtd(meta.quantidade_comprometida_total || 0)}`,
+    ].join(" | ");
+    body.innerHTML = rows.length ? rows.map((row) => {
+      const cargas = (Array.isArray(row.comprometimentos) ? row.comprometimentos : []).map((item) => {
+        const nome = item.carga_nome || `Carga #${item.carga_id || "-"}`;
+        const data = item.data_comprometimento ? _fmtDateBr(item.data_comprometimento) : "sem data";
+        return `${nome} - ${data} (${_estoqueFormatPallet(row, item.quantidade)})`;
+      });
+      const atual = Number(row.quantidade_atual || 0);
+      const comprometido = Number(row.quantidade_comprometida || 0);
+      const percentual = atual > 0 ? (comprometido / atual) * 100 : 100;
+      return `<tr>
+        <td>${_estoqueProdutoStatusHtml(row)}</td>
+        <td>${_escHtml(row.grupo_nome || row.grupo_estoque || "-")}</td>
+        <td>${_escHtml(cargas.join(" | ") || "Carga pendente")}</td>
+        <td>${_escHtml(_estoqueFormatPallet(row, atual))}</td>
+        <td><strong>${_escHtml(_estoqueFormatPallet(row, comprometido))}</strong></td>
+        <td>${_escHtml(_estoqueFormatPallet(row, row.saldo_remanescente))}</td>
+        <td>${_escHtml(`${_fmtNumber(percentual, 1)}%`)}</td>
+      </tr>`;
+    }).join("") : '<tr><td colspan="7">Nao ha estoque comprometido para os filtros selecionados.</td></tr>';
+  } catch (erro) {
+    body.innerHTML = `<tr><td colspan="7">${_escHtml(erro?.message || "Falha ao carregar o relatorio.")}</td></tr>`;
+    if (resumo) resumo.textContent = erro?.message || "Falha ao carregar o relatorio.";
+  } finally {
+    estoqueState.relatorioEstoqueAtualizando = false;
+  }
+}
+
+function limparFiltrosRelatorioEstoque(){
+  ["relatorioEstoqueDataInicio", "relatorioEstoqueDataFim", "relatorioEstoqueGrupo", "relatorioEstoqueProduto"].forEach((id) => {
+    const campo = document.getElementById(id);
+    if (campo) campo.value = "";
+  });
+  filtrarProdutosRelatorioEstoque();
+  carregarRelatorioEstoqueComprometido().catch(() => {});
+}
+
+function abrirPdfRelatorioEstoqueComprometido(){
+  const params = _paramsRelatorioEstoqueComprometido();
+  const qs = params.toString();
+  window.open(`/api/estoque/relatorio-comprometido/pdf${qs ? `?${qs}` : ""}`, "_blank", "noopener");
 }
 
 function _estoqueResumoFluxo(item){

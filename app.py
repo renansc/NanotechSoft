@@ -2007,6 +2007,10 @@ def riob_hash_bridge_script():
         window.openEstoqueView(null, view || "posicao");
         return;
       }
+      if (section === "relatorios" && typeof window.openRelatoriosView === "function") {
+        window.openRelatoriosView(null, view || "estoque_comprometido");
+        return;
+      }
       if (section && typeof window.showTab === "function") {
         window.showTab(section, document.querySelector('[data-tab="' + section + '"]'));
       }

@@ -419,6 +419,7 @@ class EstoqueTaxonomiaBebidasTests(unittest.TestCase):
     def test_dashboard_exibe_somente_produtos_ativos_e_cadastrados(self):
         rows = [
             {"produto_id": 1, "produto_cadastrado": True, "produto_ativo": True, "exibir_dashboard": True, "grupo_estoque": "GFA", "quantidade_comprometida": 5},
+            {"produto_id": 4, "produto_cadastrado": True, "produto_ativo": True, "exibir_dashboard": True, "grupo_estoque": "TAMPAS", "quantidade_comprometida": 0},
             {"produto_id": 2, "produto_cadastrado": True, "produto_ativo": False, "exibir_dashboard": True},
             {"produto_id": 0, "produto_cadastrado": False, "produto_ativo": True, "exibir_dashboard": True},
             {"produto_id": 3, "produto_cadastrado": True, "produto_ativo": True, "exibir_dashboard": False},
@@ -430,6 +431,8 @@ class EstoqueTaxonomiaBebidasTests(unittest.TestCase):
         ) as resumo_mock:
             payload = server._dashboard_estoque_data()
         self.assertEqual([1], [row["produto_id"] for row in payload["rows"]])
+        self.assertEqual([1], [row["produto_id"] for row in payload["retornaveis"]])
+        self.assertEqual([], payload["pet_agua"])
         self.assertEqual([1], [row["produto_id"] for row in payload["comprometidos"]])
         self.assertTrue(payload["rows"][0]["sugestao_producao_aplicavel"])
         self.assertEqual(1, payload["meta"]["itens_dashboard"])
@@ -447,18 +450,66 @@ class EstoqueTaxonomiaBebidasTests(unittest.TestCase):
         self.assertIn('}, 5000);', script)
         self.assertIn('dashboardEstoqueAtualizando', script)
 
-    def test_dashboard_tem_uma_linha_principal_e_relatorio_de_comprometidos(self):
+    def test_dashboard_separa_retornavel_de_pet_agua_e_relatorio_fica_em_relatorios(self):
         raiz = Path(__file__).resolve().parents[1]
         html = (raiz / "RioBranco.html").read_text(encoding="utf-8")
         script = (raiz / "script.js").read_text(encoding="utf-8")
-        self.assertIn('id="dashEstoqueSaldoBody"', html)
-        self.assertNotIn('id="dashEstoqueProducaoBody"', html)
-        self.assertIn('id="dashEstoqueComprometidoBody"', html)
-        self.assertIn("Vendas Mes Atual", html)
-        self.assertIn("Mesmo Mes Ano Anterior", html)
-        self.assertIn("Producao Sugerida", html)
-        self.assertIn("imprimirRelatorioEstoqueComprometido", script)
-        self.assertIn("necessidade_producao_mensal", script)
+        self.assertIn('id="dashEstoqueRetornavelBody"', html)
+        self.assertIn('id="dashEstoquePetAguaBody"', html)
+        self.assertNotIn('id="dashEstoqueComprometidoBody"', html)
+        self.assertIn("Previsão de Consumo da Semana", html)
+        self.assertIn("Sugestão de Produção para Semana", html)
+        self.assertIn('id="relatorios"', html)
+        self.assertIn('id="relatorioEstoqueDataInicio"', html)
+        self.assertIn('id="relatorioEstoqueDataFim"', html)
+        self.assertIn('id="relatorioEstoqueGrupo"', html)
+        self.assertIn('id="relatorioEstoqueProduto"', html)
+        self.assertIn("abrirPdfRelatorioEstoqueComprometido", script)
+        self.assertIn("sugestao_producao_semana", script)
+
+    def test_previsao_semanal_historica_desconta_consumo_e_estoque(self):
+        previsao = server._estoque_previsao_consumo_semanal_historica(
+            demanda_referencia_mensal=310,
+            referencias_disponiveis=2,
+            vendas_semana=20,
+            saidas_semana=18,
+            saldo_disponivel=30,
+            dias_mes=31,
+        )
+        self.assertEqual(70, previsao["previsao_consumo_semana"])
+        self.assertEqual(20, previsao["consumo_semana_realizado"])
+        self.assertEqual(50, previsao["consumo_restante_semana"])
+        self.assertEqual(20, previsao["sugestao_producao_semana"])
+        self.assertEqual("historico_mensal", previsao["origem_previsao_semana"])
+
+    def test_relatorio_comprometido_filtra_data_grupo_e_produto(self):
+        rows = [{
+            "produto_id": 10,
+            "produto_cadastrado": True,
+            "produto_ativo": True,
+            "nome_produto": "COLA 2L",
+            "grupo_estoque": "PET",
+            "quantidade_atual": 100,
+            "comprometimentos": [
+                {"carga_id": 1, "carga_nome": "Carga antiga", "data_comprometimento": "2026-08-01", "quantidade": 15},
+                {"carga_id": 2, "carga_nome": "Carga atual", "data_comprometimento": "2026-08-20", "quantidade": 25},
+            ],
+        }]
+        with mock.patch.object(
+            server,
+            "_estoque_resumo_produtos_data",
+            return_value={"rows": rows, "meta": {"grupos_estoque": [{"codigo": "PET", "nome": "PET", "ativo": True}]}},
+        ):
+            relatorio = server._estoque_relatorio_comprometido_data(
+                data_inicio=server._parse_data_br("2026-08-10"),
+                data_fim=server._parse_data_br("2026-08-31"),
+                grupo_estoque="PET",
+                produto_id=10,
+            )
+        self.assertEqual(1, len(relatorio["rows"]))
+        self.assertEqual(25, relatorio["rows"][0]["quantidade_comprometida"])
+        self.assertEqual(75, relatorio["rows"][0]["saldo_remanescente"])
+        self.assertEqual(25, relatorio["meta"]["quantidade_comprometida_total"])
 
     def test_exclusao_de_produto_preserva_historico_e_desativa_cadastro(self):
         fonte = Path(server.__file__).read_text(encoding="utf-8")

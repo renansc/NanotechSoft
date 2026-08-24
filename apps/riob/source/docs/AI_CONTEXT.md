@@ -172,6 +172,18 @@ If you need context fast, read these files first:
   GFA 200 ml CX48 48x48, and GFA 200 ml CX24 60x24. Never guess the GFA
   200 ml box variant when the product registration/name does not distinguish
   CX24 from CX48; in that case retain the canonical unit display.
+- The stock dashboard has exactly two production blocks: `Retornavel` (`GFA`)
+  and `PET + Agua` (`PET`, `AGUA`). Each active product appears once with
+  current-week sales, current stock, weekly consumption forecast, and weekly
+  production suggestion. The forecast converts the greater historical monthly
+  reference (same month last year versus the average of up to three complete
+  prior months) to seven days; the production suggestion deducts consumption
+  already observed in the week and available stock. If no historical reference
+  exists, the current-week pace is the documented fallback.
+- Pending-load stock commitments are not a dashboard panel. They belong to
+  `Relatorios > Estoque comprometido`, with inclusive load-date, stock-group,
+  and product filters. The JSON and PDF must apply the same filters; the PDF is
+  opened in the browser so it can be printed.
 - A composed daily-sales card must never add TXT, PDF, and XML quantities as if
   they were independent stock issues. They are alternate evidence for the same
   load. For stock-decrement suggestion prefer official outgoing XML when linked,

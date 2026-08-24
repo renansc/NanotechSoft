@@ -14310,6 +14310,49 @@ def _estoque_previsao_producao_mensal(
     }
 
 
+def _estoque_previsao_consumo_semanal_historica(
+    demanda_referencia_mensal=0,
+    referencias_disponiveis=0,
+    vendas_semana=0,
+    saidas_semana=0,
+    saldo_disponivel=0,
+    dias_decorridos=1,
+    dias_mes=30,
+):
+    vendas = max(0.0, _as_float(vendas_semana, 0.0))
+    saidas = max(0.0, _as_float(saidas_semana, 0.0))
+    consumo_realizado = max(vendas, saidas)
+    referencias = max(0, _as_int(referencias_disponiveis, 0))
+    if referencias > 0:
+        dias_no_mes = max(28, min(31, _as_int(dias_mes, 30)))
+        previsao = round(
+            max(0.0, _as_float(demanda_referencia_mensal, 0.0)) * 7 / dias_no_mes,
+            3,
+        )
+        origem = "historico_mensal"
+    else:
+        fallback = _estoque_previsao_producao_semanal(
+            vendas_semana=vendas,
+            saidas_semana=saidas,
+            saldo_disponivel=saldo_disponivel,
+            dias_decorridos=dias_decorridos,
+        )
+        previsao = _as_float(fallback.get("previsao_demanda_semana"), 0.0)
+        origem = "ritmo_semana"
+    consumo_restante = round(max(0.0, previsao - consumo_realizado), 3)
+    sugestao = round(
+        max(0.0, consumo_restante - _as_float(saldo_disponivel, 0.0)),
+        3,
+    )
+    return {
+        "previsao_consumo_semana": round(previsao, 3),
+        "consumo_semana_realizado": round(consumo_realizado, 3),
+        "consumo_restante_semana": consumo_restante,
+        "sugestao_producao_semana": sugestao,
+        "origem_previsao_semana": origem,
+    }
+
+
 def _estoque_fontes_vendas_historicas(cur, cache_id, periodos):
     periodos = [periodo for periodo in (periodos or []) if periodo.get("inicio")]
     if not periodos:
@@ -14630,6 +14673,8 @@ def _estoque_resumo_produtos_data(incluir_fornecedores=True):
                 c.nome AS carga_nome,
                 c.tipo_importacao,
                 c.estoque_baixado_em,
+                c.data_carga,
+                c.created_at AS carga_criada_em,
                 f.status AS frete_status,
                 i.codigo_produto,
                 i.codigo_barras,
@@ -14677,6 +14722,7 @@ def _estoque_resumo_produtos_data(incluir_fornecedores=True):
                 "carga_id": carga_id,
                 "carga_nome": _as_str(row.get("carga_nome")) or f"Carga #{carga_id}",
                 "frete_status": status_frete,
+                "data_comprometimento": _fmt_date(row.get("data_carga") or row.get("carga_criada_em")),
                 "quantidade": 0.0,
             })
             compromisso["quantidade"] += quantidade_comprometida
@@ -14822,6 +14868,15 @@ def _estoque_resumo_produtos_data(incluir_fornecedores=True):
             ],
             saldo_disponivel=saldo_remanescente,
         )
+        previsao_semanal_historica = _estoque_previsao_consumo_semanal_historica(
+            demanda_referencia_mensal=previsao_mensal.get("demanda_referencia_mensal"),
+            referencias_disponiveis=previsao_mensal.get("referencias_disponiveis"),
+            vendas_semana=vendas_semana,
+            saidas_semana=saidas_semana,
+            saldo_disponivel=saldo_remanescente,
+            dias_decorridos=dias_semana_decorridos,
+            dias_mes=_estoque_mes_fim(inicio_mes).day,
+        )
         metricas_ativas = [
             quantidade_atual, quantidade_comprometida, entradas_total, saidas_total,
             vendas_dia, vendas_semana, vendas_mes_atual, saidas_dia, saidas_semana,
@@ -14865,6 +14920,7 @@ def _estoque_resumo_produtos_data(incluir_fornecedores=True):
             "vendas_meses_recentes": vendas_meses_recentes,
             **previsao_mensal,
             **previsao_semana,
+            **previsao_semanal_historica,
             "saldo_previsto_dia": saldo_previsto_dia,
             "saldo_remanescente": saldo_remanescente,
             "ultimo_valor": _as_float(item.get("ultimo_valor"), 0.0),
@@ -14922,25 +14978,33 @@ def _dashboard_estoque_data():
         and row.get("produto_cadastrado")
         and row.get("produto_ativo")
     ]
-    meta = dict(payload.get("meta") or {})
-    meta["atualizado_em"] = _fmt_dt(datetime.datetime.now())
-    meta["itens_dashboard"] = len(rows)
-    meta["vendas_dia_total"] = round(
-        sum(_as_float(row.get("vendas_dia"), 0.0) for row in rows), 3
-    )
-    meta["vendas_semana_total"] = round(
-        sum(_as_float(row.get("vendas_semana"), 0.0) for row in rows), 3
-    )
-    meta["vendas_mes_atual_total"] = round(
-        sum(_as_float(row.get("vendas_mes_atual"), 0.0) for row in rows), 3
-    )
-    meta["saidas_dia_total"] = round(
-        sum(_as_float(row.get("saidas_dia"), 0.0) for row in rows), 3
-    )
     produtos_vendidos = [
         row for row in rows
         if _estoque_grupo_normalizado(row.get("grupo_estoque")) in {"GFA", "PET", "AGUA"}
     ]
+    retornaveis = [
+        row for row in produtos_vendidos
+        if _estoque_grupo_normalizado(row.get("grupo_estoque")) == "GFA"
+    ]
+    pet_agua = [
+        row for row in produtos_vendidos
+        if _estoque_grupo_normalizado(row.get("grupo_estoque")) in {"PET", "AGUA"}
+    ]
+    meta = dict(payload.get("meta") or {})
+    meta["atualizado_em"] = _fmt_dt(datetime.datetime.now())
+    meta["itens_dashboard"] = len(produtos_vendidos)
+    meta["vendas_dia_total"] = round(
+        sum(_as_float(row.get("vendas_dia"), 0.0) for row in produtos_vendidos), 3
+    )
+    meta["vendas_semana_total"] = round(
+        sum(_as_float(row.get("vendas_semana"), 0.0) for row in produtos_vendidos), 3
+    )
+    meta["vendas_mes_atual_total"] = round(
+        sum(_as_float(row.get("vendas_mes_atual"), 0.0) for row in produtos_vendidos), 3
+    )
+    meta["saidas_dia_total"] = round(
+        sum(_as_float(row.get("saidas_dia"), 0.0) for row in produtos_vendidos), 3
+    )
     produtos_vendidos_ids = {_as_int(row.get("produto_id"), 0) for row in produtos_vendidos}
     for row in rows:
         row["sugestao_producao_aplicavel"] = _as_int(row.get("produto_id"), 0) in produtos_vendidos_ids
@@ -14949,6 +15013,12 @@ def _dashboard_estoque_data():
     )
     meta["necessidade_producao_semana_total"] = round(
         sum(_as_float(row.get("necessidade_producao_semana"), 0.0) for row in produtos_vendidos), 3
+    )
+    meta["previsao_consumo_semana_total"] = round(
+        sum(_as_float(row.get("previsao_consumo_semana"), 0.0) for row in produtos_vendidos), 3
+    )
+    meta["sugestao_producao_semana_total"] = round(
+        sum(_as_float(row.get("sugestao_producao_semana"), 0.0) for row in produtos_vendidos), 3
     )
     meta["necessidade_producao_mensal_total"] = round(
         sum(_as_float(row.get("necessidade_producao_mensal"), 0.0) for row in produtos_vendidos), 3
@@ -14961,7 +15031,168 @@ def _dashboard_estoque_data():
     meta["quantidade_comprometida_total"] = round(
         sum(_as_float(row.get("quantidade_comprometida"), 0.0) for row in comprometidos), 3
     )
-    return {"rows": rows, "comprometidos": comprometidos, "meta": meta}
+    return {
+        "rows": produtos_vendidos,
+        "retornaveis": retornaveis,
+        "pet_agua": pet_agua,
+        "comprometidos": comprometidos,
+        "meta": meta,
+    }
+
+
+def _estoque_relatorio_comprometido_data(
+    data_inicio=None,
+    data_fim=None,
+    grupo_estoque="",
+    produto_id=0,
+):
+    payload = _estoque_resumo_produtos_data(incluir_fornecedores=False)
+    grupo_filtro = _estoque_grupo_normalizado(grupo_estoque) if grupo_estoque else ""
+    produto_filtro = max(0, _as_int(produto_id, 0))
+    rows_ativos = [
+        row for row in (payload.get("rows") or [])
+        if row.get("produto_cadastrado") and row.get("produto_ativo")
+    ]
+    produtos = [{
+        "id": _as_int(row.get("produto_id"), 0),
+        "nome": _as_str(row.get("nome_produto")) or "-",
+        "grupo_estoque": _as_str(row.get("grupo_estoque")) or "OUTROS",
+    } for row in rows_ativos if _as_int(row.get("produto_id"), 0) > 0]
+    produtos.sort(key=lambda row: (
+        _estoque_grupo_ordem(row.get("grupo_estoque")),
+        _produto_nome_normalizado(row.get("nome")),
+    ))
+
+    linhas = []
+    for row in rows_ativos:
+        if grupo_filtro and _estoque_grupo_normalizado(row.get("grupo_estoque")) != grupo_filtro:
+            continue
+        if produto_filtro and _as_int(row.get("produto_id"), 0) != produto_filtro:
+            continue
+        compromissos = []
+        for compromisso in (row.get("comprometimentos") or []):
+            data_compromisso = _parse_data_br(compromisso.get("data_comprometimento"))
+            if data_inicio and (not data_compromisso or data_compromisso < data_inicio):
+                continue
+            if data_fim and (not data_compromisso or data_compromisso > data_fim):
+                continue
+            compromissos.append(compromisso)
+        quantidade_comprometida = round(
+            sum(_as_float(item.get("quantidade"), 0.0) for item in compromissos), 3
+        )
+        if quantidade_comprometida <= 0:
+            continue
+        quantidade_atual = round(_as_float(row.get("quantidade_atual"), 0.0), 3)
+        linhas.append({
+            **row,
+            "comprometimentos": compromissos,
+            "quantidade_comprometida": quantidade_comprometida,
+            "saldo_remanescente": round(quantidade_atual - quantidade_comprometida, 3),
+        })
+
+    grupos = [
+        grupo for grupo in (payload.get("meta") or {}).get("grupos_estoque", [])
+        if grupo.get("ativo", True)
+    ]
+    return {
+        "rows": linhas,
+        "filtros": {
+            "data_inicio": _fmt_date(data_inicio),
+            "data_fim": _fmt_date(data_fim),
+            "grupo_estoque": grupo_filtro,
+            "produto_id": produto_filtro,
+        },
+        "opcoes": {"grupos": grupos, "produtos": produtos},
+        "meta": {
+            "atualizado_em": _fmt_dt(datetime.datetime.now()),
+            "itens_comprometidos": len(linhas),
+            "quantidade_comprometida_total": round(
+                sum(_as_float(row.get("quantidade_comprometida"), 0.0) for row in linhas), 3
+            ),
+        },
+    }
+
+
+def _build_estoque_comprometido_pdf(relatorio):
+    stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    arquivo = os.path.join("/tmp", f"estoque_comprometido_{stamp}.pdf")
+    doc = SimpleDocTemplate(
+        arquivo,
+        pagesize=landscape(A4),
+        topMargin=24,
+        leftMargin=18,
+        rightMargin=18,
+        bottomMargin=36,
+    )
+    styles = getSampleStyleSheet()
+    body_style = styles["BodyText"].clone("EstoqueComprometidoBody")
+    body_style.fontSize = 7
+    body_style.leading = 8.2
+    filtros = relatorio.get("filtros") or {}
+    meta = relatorio.get("meta") or {}
+    filtros_txt = []
+    if filtros.get("data_inicio"):
+        filtros_txt.append(f"Data inicial: {filtros['data_inicio']}")
+    if filtros.get("data_fim"):
+        filtros_txt.append(f"Data final: {filtros['data_fim']}")
+    if filtros.get("grupo_estoque"):
+        filtros_txt.append(f"Grupo: {filtros['grupo_estoque']}")
+    if filtros.get("produto_id"):
+        filtros_txt.append(f"Produto: {filtros['produto_id']}")
+    if not filtros_txt:
+        filtros_txt.append("Todas as cargas pendentes")
+    elementos = [
+        _build_report_header(styles),
+        Spacer(1, 12),
+        Paragraph("Relatorio de Estoque Comprometido", styles["Heading2"]),
+        Paragraph(f"Gerado em {datetime.datetime.now().strftime('%d/%m/%Y %H:%M:%S')}", styles["Normal"]),
+        Paragraph(_pdf_escape("Filtros: " + " | ".join(filtros_txt)), styles["Normal"]),
+        Paragraph(_pdf_escape(
+            f"Resumo: {_as_int(meta.get('itens_comprometidos'), 0)} produtos | "
+            f"Quantidade comprometida: {_fmt_decimal_br(meta.get('quantidade_comprometida_total'), 3)}"
+        ), styles["Normal"]),
+        Spacer(1, 10),
+    ]
+    tabela = [["Produto", "Grupo", "Cargas / datas", "Estoque atual", "Comprometido", "Disponivel", "%"]]
+    for row in relatorio.get("rows") or []:
+        cargas = " | ".join(
+            f"{_as_str(item.get('carga_nome')) or ('Carga #' + str(_as_int(item.get('carga_id'), 0)))}"
+            f" ({_as_str(item.get('data_comprometimento')) or 'sem data'})"
+            for item in (row.get("comprometimentos") or [])
+        ) or "Carga pendente"
+        atual = _as_float(row.get("quantidade_atual"), 0.0)
+        comprometido = _as_float(row.get("quantidade_comprometida"), 0.0)
+        percentual = (comprometido / atual * 100) if atual > 0 else 100.0
+        tabela.append([
+            Paragraph(_pdf_escape(row.get("nome_produto")), body_style),
+            Paragraph(_pdf_escape(row.get("grupo_nome") or row.get("grupo_estoque")), body_style),
+            Paragraph(_pdf_escape(cargas), body_style),
+            _fmt_decimal_br(atual, 3),
+            _fmt_decimal_br(comprometido, 3),
+            _fmt_decimal_br(row.get("saldo_remanescente"), 3),
+            f"{_fmt_decimal_br(percentual, 1)}%",
+        ])
+    if len(tabela) == 1:
+        tabela.append([Paragraph("Nenhum estoque comprometido para os filtros selecionados.", body_style), "", "", "", "", "", ""])
+    tabela_pdf = Table(tabela, repeatRows=1, colWidths=[155, 70, 250, 72, 72, 72, 45])
+    tabela_pdf.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f59e0b")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.black),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 7),
+        ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#cbd5e1")),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f8fafc")]),
+        ("LEFTPADDING", (0, 0), (-1, -1), 4),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+    ]))
+    elementos.append(tabela_pdf)
+    doc.build(
+        elementos,
+        onFirstPage=lambda canvas_obj, doc_obj: _draw_report_footer(canvas_obj, doc_obj, "Relatorios de Estoque"),
+        onLaterPages=lambda canvas_obj, doc_obj: _draw_report_footer(canvas_obj, doc_obj, "Relatorios de Estoque"),
+    )
+    return arquivo
 
 
 _RASTREIO_SIMULACAO_ATE = datetime.date(2026, 7, 31)
@@ -18311,6 +18542,42 @@ def dashboard_estoque():
     resp = jsonify(payload)
     resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     return resp
+
+
+def _estoque_relatorio_filtros_request():
+    data_inicio = _parse_data_br(request.args.get("data_inicio")) if request.args.get("data_inicio") else None
+    data_fim = _parse_data_br(request.args.get("data_fim")) if request.args.get("data_fim") else None
+    if data_inicio and data_fim and data_inicio > data_fim:
+        raise ValueError("A data inicial nao pode ser posterior a data final.")
+    return {
+        "data_inicio": data_inicio,
+        "data_fim": data_fim,
+        "grupo_estoque": request.args.get("grupo_estoque") or "",
+        "produto_id": request.args.get("produto_id") or 0,
+    }
+
+
+@app.route("/api/estoque/relatorio-comprometido", methods=["GET"])
+def relatorio_estoque_comprometido():
+    try:
+        return jsonify(_estoque_relatorio_comprometido_data(**_estoque_relatorio_filtros_request()))
+    except ValueError as exc:
+        return jsonify({"erro": str(exc)}), 400
+
+
+@app.route("/api/estoque/relatorio-comprometido/pdf", methods=["GET"])
+def relatorio_estoque_comprometido_pdf():
+    try:
+        relatorio = _estoque_relatorio_comprometido_data(**_estoque_relatorio_filtros_request())
+    except ValueError as exc:
+        return jsonify({"erro": str(exc)}), 400
+    arquivo = _build_estoque_comprometido_pdf(relatorio)
+    return send_file(
+        arquivo,
+        as_attachment=False,
+        mimetype="application/pdf",
+        download_name=os.path.basename(arquivo),
+    )
 
 
 @app.route("/api/estoque/importacoes-xml", methods=["GET"])

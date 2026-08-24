@@ -41,6 +41,9 @@ Regras atuais:
 
 - `PUT|DELETE /api/estoque/<movimento_id>`
 - `GET /api/estoque/posicao`
+- `GET /api/dashboard_estoque`
+- `GET /api/estoque/relatorio-comprometido`
+- `GET /api/estoque/relatorio-comprometido/pdf`
 - `GET /api/estoque/lotes`
 - `GET /api/estoque/lotes/<lote_codigo>`
 - `GET /api/estoque/rastreabilidade/lotes`

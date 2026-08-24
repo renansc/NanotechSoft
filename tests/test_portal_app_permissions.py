@@ -110,6 +110,10 @@ class PortalAppPermissionsTests(unittest.TestCase):
             {"nome": "Vendas RioB", "url": "/apps/riob#vendas:relatorio"},
             groups["relatorios"],
         )
+        self.assertIn(
+            {"nome": "Estoque Comprometido RioB", "url": "/apps/riob#relatorios:estoque_comprometido"},
+            groups["relatorios"],
+        )
 
     def test_hash_bridge_redireciona_vendas_diario_para_workflow(self):
         bridge = portal.riob_hash_bridge_script()
@@ -118,6 +122,8 @@ class PortalAppPermissionsTests(unittest.TestCase):
         self.assertIn('window.openWorkflowView(null, "vendas_diario")', bridge)
         self.assertIn('window.openWorkflowView(null, "vendas_diario_importar")', bridge)
         self.assertIn('["diario", "vendas_diario", "kanban"]', bridge)
+        self.assertIn('section === "relatorios"', bridge)
+        self.assertIn('window.openRelatoriosView(null, view || "estoque_comprometido")', bridge)
 
 
 if __name__ == "__main__":

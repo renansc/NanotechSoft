@@ -137,6 +137,10 @@
     ],
     "relatorios": [
       {
+        "nome": "Estoque Comprometido RioB",
+        "url": "/apps/riob#relatorios:estoque_comprometido"
+      },
+      {
         "nome": "Vendas RioB",
         "url": "/apps/riob#vendas:relatorio"
       },

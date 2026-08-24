@@ -89,6 +89,12 @@
         <div class="submenu-item" onclick="openCadastrosView(event,'comissao')">Comissao</div>
       </div>
     </div>
+    <div class="menu-item has-submenu" data-tab="relatorios" onclick="toggleRelatoriosSubmenu(event)">
+      Relatórios <span class="submenu-caret">&#9662;</span>
+      <div class="submenu" id="submenuRelatorios">
+        <div class="submenu-item active" data-relatorios-view="estoque_comprometido" onclick="openRelatoriosView(event,'estoque_comprometido')">Estoque comprometido</div>
+      </div>
+    </div>
     <div class="menu-item" onclick="showTab('devolucoes',this)">Devoluções</div>
     <div class="menu-item has-submenu" data-tab="gestaofrota" onclick="toggleGestaoFrotaSubmenu(event)">Gestao Frota <span class="submenu-caret">&#9662;</span><div class="submenu" id="submenuGestaoFrota"><div class="submenu-item active" onclick="openGestaoFrotaView(event,'registrar')">Registrar</div><div class="submenu-item" onclick="openGestaoFrotaView(event,'lista')">Lista</div><div class="submenu-item" onclick="openGestaoFrotaView(event,'relatorios')">Relatorios</div><div class="submenu-item" onclick="openGestaoFrotaCargas(event)">Cadastro Cargas</div><div class="submenu-item" onclick="openGestaoFrotaEscala(event)">Escala</div></div></div>
     <div class="menu-item has-submenu" data-tab="vendas" onclick="toggleVendasSubmenu(event)">Vendas <span class="submenu-caret">&#9662;</span><div class="submenu" id="submenuVendas"><div class="submenu-item active" data-vendas-view="relatorio" onclick="openVendasView(event,'relatorio')">Relatório</div><div class="submenu-item" data-vendas-view="pontosvenda" onclick="openVendasView(event,'pontosvenda')">Pontos de Venda</div></div></div>
@@ -138,53 +144,44 @@
 
     <div id="dashViewEstoque" class="dash-view hidden">
       <h2>Dashboard Estoque</h2>
-      <div id="dashEstoqueResumo" class="hint">Carregando previsao e saldo do estoque por produto...</div>
+      <div id="dashEstoqueResumo" class="hint">Carregando vendas, previsao semanal e saldo do estoque...</div>
       <div class="dash-estoque-panels">
         <div class="boxFrota">
-          <h3>Estoque, Vendas e Sugestao por Produto</h3>
+          <h3>Retornável</h3>
           <div class="tableWrap">
             <table class="dash-table">
               <thead>
                 <tr>
                   <th>Produto</th>
-                  <th>Codigo</th>
-                  <th id="dashEstoqueMesAtualHead">Vendas Mes Atual</th>
-                  <th id="dashEstoqueAnoAnteriorHead">Mesmo Mes Ano Anterior</th>
-                  <th id="dashEstoqueMesesRecentesHead">Media Ultimos 3 Meses</th>
+                  <th>Vendas da Semana</th>
                   <th>Estoque Atual</th>
-                  <th>Comprometido</th>
-                  <th>Disponivel</th>
-                  <th>Demanda Restante</th>
-                  <th>Producao Sugerida</th>
+                  <th>Previsão de Consumo da Semana</th>
+                  <th>Sugestão de Produção para Semana</th>
                 </tr>
               </thead>
-              <tbody id="dashEstoqueSaldoBody"></tbody>
+              <tbody id="dashEstoqueRetornavelBody"></tbody>
             </table>
           </div>
         </div>
         <div class="boxFrota">
-          <div class="vendas-box-head">
-            <h3>Relatorio de Estoque Comprometido</h3>
-            <button type="button" onclick="imprimirRelatorioEstoqueComprometido()">Imprimir Relatorio</button>
-          </div>
+          <h3>PET + Água</h3>
           <div class="tableWrap">
-            <table id="dashEstoqueComprometidoTable" class="dash-table">
+            <table class="dash-table">
               <thead>
                 <tr>
                   <th>Produto</th>
-                  <th>Cargas Pendentes</th>
+                  <th>Vendas da Semana</th>
                   <th>Estoque Atual</th>
-                  <th>Comprometido</th>
-                  <th>Disponivel</th>
-                  <th>% Comprometido</th>
+                  <th>Previsão de Consumo da Semana</th>
+                  <th>Sugestão de Produção para Semana</th>
                 </tr>
               </thead>
-              <tbody id="dashEstoqueComprometidoBody"></tbody>
+              <tbody id="dashEstoquePetAguaBody"></tbody>
             </table>
           </div>
         </div>
       </div>
-      <small class="hint">A demanda mensal usa a maior referencia entre o mesmo mes do ano anterior e a media dos tres meses completos anteriores com dados. A producao sugerida desconta as vendas ja realizadas no mes e o estoque disponivel. A sugestao se aplica aos produtos acabados Retornavel, PET e Agua.</small>
+      <small class="hint">A previsao semanal usa a maior referencia entre o mesmo mes do ano anterior e a media dos tres meses completos anteriores, proporcionalizada para sete dias. A sugestao desconta o consumo ja realizado na semana e o estoque disponivel.</small>
     </div>
 
     <div id="dashViewVendasDiario" class="dash-view hidden">
@@ -1204,6 +1201,59 @@
       </div>
 
       <div id="escalaGrid" class="escala-grid"></div>
+    </div>
+  </section>
+
+  <!-- =====================================================
+       (MENU) RELATORIOS
+  ====================================================== -->
+  <section id="relatorios" class="section">
+    <div id="relatoriosViewEstoqueComprometido" class="relatorios-view">
+      <div class="boxFrota">
+        <div class="vendas-box-head">
+          <div>
+            <h2>Relatório de Estoque Comprometido</h2>
+            <div id="relatorioEstoqueComprometidoResumo" class="hint">Carregando cargas pendentes...</div>
+          </div>
+          <button type="button" onclick="abrirPdfRelatorioEstoqueComprometido()">Abrir PDF / Imprimir</button>
+        </div>
+        <div class="estoque-filtros" aria-label="Filtros do relatorio de estoque comprometido">
+          <label>Data inicial
+            <input type="date" id="relatorioEstoqueDataInicio">
+          </label>
+          <label>Data final
+            <input type="date" id="relatorioEstoqueDataFim">
+          </label>
+          <label>Grupo de estoque
+            <select id="relatorioEstoqueGrupo" onchange="filtrarProdutosRelatorioEstoque()">
+              <option value="">Todos os grupos</option>
+            </select>
+          </label>
+          <label>Produto
+            <select id="relatorioEstoqueProduto">
+              <option value="">Todos os produtos</option>
+            </select>
+          </label>
+          <button type="button" onclick="carregarRelatorioEstoqueComprometido()">Aplicar filtros</button>
+          <button type="button" class="btn-secondary" onclick="limparFiltrosRelatorioEstoque()">Limpar filtros</button>
+        </div>
+        <div class="tableWrap">
+          <table id="relatorioEstoqueComprometidoTable" class="dash-table">
+            <thead>
+              <tr>
+                <th>Produto</th>
+                <th>Grupo</th>
+                <th>Cargas / Datas</th>
+                <th>Estoque Atual</th>
+                <th>Comprometido</th>
+                <th>Disponível</th>
+                <th>% Comprometido</th>
+              </tr>
+            </thead>
+            <tbody id="relatorioEstoqueComprometidoBody"></tbody>
+          </table>
+        </div>
+      </div>
     </div>
   </section>
 

@@ -524,22 +524,24 @@ Regras:
 - o dashboard mostra uma linha canonica por produto e somente inclui produtos
   ativos, cadastrados e pertencentes a um grupo com `exibir_dashboard=1`; assim,
   movimentos historicos sem cadastro ativo nao recriam linhas excluidas
-- cada linha principal reune `vendas_mes_atual`, `vendas_mes_ano_anterior`,
-  `media_vendas_ultimos_meses`, `quantidade_atual`,
-  `quantidade_comprometida`, `saldo_remanescente`, `demanda_restante_mes` e
-  `necessidade_producao_mensal`; o produto nao e repetido em outra tabela de
-  previsao
-- a demanda mensal de produtos acabados `GFA`, `PET` e `AGUA` usa a maior
-  referencia disponivel entre o mesmo mes do ano anterior e a media de ate tres
-  meses completos anteriores. A sugestao desconta primeiro as vendas ja
-  realizadas no mes e depois o estoque disponivel
+- o dashboard divide os produtos acabados em `retornaveis` (`GFA`) e
+  `pet_agua` (`PET` e `AGUA`). Cada produto aparece uma vez com
+  `vendas_semana`, `quantidade_atual`, `previsao_consumo_semana` e
+  `sugestao_producao_semana`
+- a previsao semanal converte para sete dias a maior referencia mensal
+  disponivel entre o mesmo mes do ano anterior e a media de ate tres meses
+  completos anteriores. A sugestao desconta o consumo ja observado na semana e
+  o estoque disponivel; sem historico, usa o ritmo observado na semana
 - cada mes historico escolhe uma unica importacao de vendas, priorizando o cache
   ativo e depois a importacao mais recente, para evitar duplicidade entre CSVs
   sobrepostos. Arquivos mensais antigos sem `data_ref` podem fornecer o mes pelo
   nome, como `Mes_junho2026`
-- a resposta inclui `comprometidos`, um recorte dos produtos reservados por
-  cargas PDF ainda pendentes de baixa, com o detalhamento em `comprometimentos`;
-  a tela apresenta e permite imprimir esse relatorio separadamente
+- `GET /api/estoque/relatorio-comprometido` retorna os produtos reservados por
+  cargas PDF ainda pendentes de baixa e aceita `data_inicio`, `data_fim`,
+  `grupo_estoque` e `produto_id`. As datas filtram `cargas.data_carga`, com
+  `created_at` como contingencia
+- `GET /api/estoque/relatorio-comprometido/pdf` aplica os mesmos filtros e gera
+  o PDF imprimivel da aba `Relatorios > Estoque comprometido`
 - excluir um produto e uma operacao logica: `estoque_produtos.ativo` e os aliases
   em `estoque_produto_codigos` sao desativados, mas os movimentos permanecem
   preservados para auditoria
@@ -549,8 +551,9 @@ Regras:
 - o inventario inicial deve usar `quantidade_atual` em
   `POST /api/estoque/produtos/<id>/ajuste`; o backend grava apenas a diferenca
   necessaria para que o saldo canonico consolidado passe a ser a contagem fisica
-- os campos semanais antigos continuam disponiveis na API para compatibilidade,
-  mas a tela principal usa a previsao mensal sazonal descrita acima
+- os campos mensais continuam disponiveis na API para auditoria e
+  compatibilidade, mas a tela principal apresenta a previsao semanal descrita
+  acima
 - bebidas sao consolidadas pela identidade canonica
   `grupo + sabor/familia + volume`, mesmo quando existem codigos ou descricoes
   duplicadas; a resposta informa `codigos_origem` e `itens_unificados`
