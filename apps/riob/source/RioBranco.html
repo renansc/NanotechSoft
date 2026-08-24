@@ -141,7 +141,7 @@
       <div id="dashEstoqueResumo" class="hint">Carregando previsao e saldo do estoque por produto...</div>
       <div class="dash-estoque-panels">
         <div class="boxFrota">
-          <h3>Previsao de Estoque</h3>
+          <h3>Posicao Atual por Produto</h3>
           <div class="tableWrap">
             <table class="dash-table">
               <thead>
@@ -149,27 +149,9 @@
                   <th>Produto</th>
                   <th>Codigo</th>
                   <th>Qtd Atual</th>
-                  <th>Vendas Dia</th>
-                  <th>Saidas Dia</th>
                   <th>Comprometido</th>
-                  <th>Previsto do Dia</th>
-                </tr>
-              </thead>
-              <tbody id="dashEstoquePrevisaoBody"></tbody>
-            </table>
-          </div>
-        </div>
-        <div class="boxFrota">
-          <h3>Saldo de Estoque</h3>
-          <div class="tableWrap">
-            <table class="dash-table">
-              <thead>
-                <tr>
-                  <th>Produto</th>
-                  <th>Codigo</th>
-                  <th>Qtd Atual</th>
-                  <th>Qtd Comprometida</th>
-                  <th>Saldo Remanescente</th>
+                  <th>Disponivel</th>
+                  <th>Saidas Hoje</th>
                   <th>Ultimo Valor</th>
                   <th>Ultima Movimentacao</th>
                 </tr>
@@ -923,10 +905,6 @@
             <input type="text" id="estoqueCadastroNomeProduto" placeholder="Nome do produto">
             <select id="estoqueCadastroGrupo">
               <option value="">Grupo do estoque</option>
-              <option value="GFA">GFA</option>
-              <option value="PET">PET</option>
-              <option value="AGUA">AGUA</option>
-              <option value="OUTROS">OUTROS</option>
             </select>
             <input type="text" id="estoqueCadastroBaseNome" placeholder="Produto base (mesmo item em codigos diferentes)">
             <input type="text" id="estoqueCadastroEmbalagem" placeholder="Embalagem (PCT, CX24, CX48, UN)">
@@ -969,6 +947,38 @@
               <tbody id="estoqueCadastroProdutosBody">
                 <tr><td colspan="8">Carregando cadastros...</td></tr>
               </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="boxFrota">
+          <h3>Grupos de Estoque</h3>
+          <div class="hint">Cadastre os grupos usados nos produtos e escolha quais devem aparecer no dashboard.</div>
+          <div class="estoque-import-grid">
+            <input type="text" id="estoqueGrupoNome" placeholder="Nome do grupo (ex.: Tampas)">
+            <input type="text" id="estoqueGrupoCodigo" placeholder="Codigo (gerado pelo nome)">
+            <select id="estoqueGrupoArea">
+              <option value="ALMOXARIFADO_GERAL">Almoxarifado geral</option>
+              <option value="PRODUCAO">Producao</option>
+              <option value="AUTO">Classificacao automatica</option>
+            </select>
+            <select id="estoqueGrupoSubgrupo">
+              <option value="GERAL">Geral</option>
+              <option value="PRODUTOS">Produtos</option>
+              <option value="MATERIA_PRIMA">Materia-prima</option>
+              <option value="AUTO">Classificacao automatica</option>
+            </select>
+            <input type="number" id="estoqueGrupoOrdem" min="0" step="1" value="100" placeholder="Ordem">
+            <label><input type="checkbox" id="estoqueGrupoDashboard" checked> Exibir no dashboard</label>
+          </div>
+          <div class="estoque-inline-actions">
+            <button type="button" onclick="salvarGrupoEstoque()">Salvar Grupo</button>
+            <button type="button" onclick="limparGrupoEstoque()">Limpar</button>
+          </div>
+          <div id="estoqueGrupoStatus" class="hint">Tampas e Pre-forma ja estao disponiveis como grupos padrao.</div>
+          <div style="overflow:auto; max-height:320px;">
+            <table>
+              <thead><tr><th>Ordem</th><th>Grupo</th><th>Area</th><th>Dashboard</th><th>Acoes</th></tr></thead>
+              <tbody id="estoqueGruposBody"><tr><td colspan="5">Carregando grupos...</td></tr></tbody>
             </table>
           </div>
         </div>

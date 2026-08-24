@@ -246,10 +246,14 @@ If you need context fast, read these files first:
   `ALMOXARIFADO_GERAL`. Production is split into `PRODUTOS` and
   `MATERIA_PRIMA`. Formula inputs (for example sugar, concentrate, flavoring,
   acidulant, preservative, coloring and carbon dioxide) belong to raw material;
-  other non-commercial supplies belong to general warehouse. Only commercial
-  finished products — disposable soft drinks, returnable soft drinks and water
-  — may appear in the stock dashboard. Detailed stock screens must still show
-  all three sections and preserve every movement.
+  other non-commercial supplies belong to general warehouse. Dashboard groups
+  are active records in `estoque_grupos`; the defaults displayed are returnable
+  drinks, PET, water, caps, and preforms, while `OUTROS` starts hidden. Only
+  active, registered products from groups marked `exibir_dashboard` may appear.
+  Product deletion is logical: hide the registration and its aliases immediately
+  but preserve every stock movement for audit. The stock dashboard refreshes its
+  uncached API projection every five seconds; weekly production guidance remains
+  exclusive to PET and water.
 - When changing behavior, inspect tests and add or adjust them when practical.
 - During dead-code sweeps, a missing direct reference is not enough to remove
   Flask routes, HTML callbacks, protocol handlers, library overrides or public

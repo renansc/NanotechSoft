@@ -49,14 +49,18 @@ Regras atuais:
 - `GET /api/estoque/rastreabilidade/lote`
 - `PUT|DELETE /api/estoque/produtos/<produto_id>`
 - `POST /api/estoque/produtos/<produto_id>/ajuste`
+- `GET|POST /api/estoque/grupos`
+- `PUT|DELETE /api/estoque/grupos/<grupo_id>`
 - `GET /api/estoque/conferencias/<conferencia_id>`
 - `POST /api/estoque/conferencias/<conferencia_id>/confirmar`
 - `POST /api/estoque/nfe/preview_fabrica`
 - `POST /api/estoque/nfe/direcionar`
 - `POST /api/estoque/nfe/direcionar/lote`
 
-Esses endpoints cobrem ajustes auditados, posicao por produto, consulta de
-lote, rastreabilidade, conferencia e direcionamento para estoque/manutencao.
+Esses endpoints cobrem ajustes auditados, posicao por produto, grupos dinamicos
+do dashboard, consulta de lote, rastreabilidade, conferencia e direcionamento
+para estoque/manutencao. A exclusao de produto e logica e preserva seus
+movimentos; o dashboard considera somente cadastros ativos.
 
 ## OCR e leitura assistida
 

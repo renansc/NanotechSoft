@@ -466,10 +466,13 @@ sequenceDiagram
 O estoque possui as areas `Producao` e `Almoxarifado geral`. Producao e
 subdividida em `Produtos` e `Materia-prima`: insumos usados em formula ficam em
 materia-prima, enquanto materiais nao comercializados ficam no almoxarifado.
-O dashboard exibe exclusivamente produtos acabados comercializados dos grupos
-refrigerante descartavel (`PET`), refrigerante retornavel (`GFA`) e agua
-(`AGUA`). Posicao e cadastro continuam retornando todos os itens, identificados
-por `estoque_area`, `estoque_subgrupo` e `exibir_dashboard`.
+Os grupos sao cadastrados em `estoque_grupos`, com area, subgrupo, ordem e a
+opcao `exibir_dashboard`. Os grupos padrao visiveis sao refrigerante descartavel
+(`PET`), refrigerante retornavel (`GFA`), agua (`AGUA`), tampas (`TAMPAS`) e
+pre-forma (`PREFORMA`); `OUTROS` inicia oculto. O dashboard aceita tambem novos
+grupos configurados em Cadastros > Estoque e exibe somente produtos ativos e
+cadastrados. Posicao e cadastro identificam os itens por `estoque_area`,
+`estoque_subgrupo`, `grupo_nome`, `grupo_ordem` e `exibir_dashboard`.
 
 ### Endpoints
 
@@ -477,7 +480,11 @@ por `estoque_area`, `estoque_subgrupo` e `exibir_dashboard`.
 - `POST /api/estoque`
 - `GET /api/estoque`
 - `GET /api/estoque/saldo`
+- `GET|POST /api/estoque/grupos`
+- `PUT|DELETE /api/estoque/grupos/<id>`
 - `GET /api/estoque/produtos`
+- `POST /api/estoque/produtos`
+- `PUT|DELETE /api/estoque/produtos/<id>`
 - `POST /api/estoque/produtos/<id>/ajuste`
 - `GET /api/estoque/conferencias`
 - `GET /api/estoque/conferencias/<id>`
@@ -511,7 +518,18 @@ Regras:
 
 - `POST /api/estoque` cria uma movimentacao de `entrada` ou `saida`
 - produtos faltantes podem ser auto cadastrados em `estoque_produtos`
-- `GET /api/dashboard_estoque` e `GET /api/estoque/saldo` retornam o saldo atual consolidado por item
+- `GET /api/dashboard_estoque` retorna a projecao atual sem cache e a tela a
+  consulta a cada cinco segundos; `GET /api/estoque/saldo` retorna o saldo
+  consolidado por item
+- o dashboard mostra uma linha canonica por produto e somente inclui produtos
+  ativos, cadastrados e pertencentes a um grupo com `exibir_dashboard=1`; assim,
+  movimentos historicos sem cadastro ativo nao recriam linhas excluidas
+- excluir um produto e uma operacao logica: `estoque_produtos.ativo` e os aliases
+  em `estoque_produto_codigos` sao desativados, mas os movimentos permanecem
+  preservados para auditoria
+- grupos podem ser criados e ordenados pela tela Cadastros > Estoque; grupos
+  padrao podem ser editados, mas nao excluidos, e grupos em uso precisam ter os
+  produtos movidos antes da exclusao
 - o inventario inicial deve usar `quantidade_atual` em
   `POST /api/estoque/produtos/<id>/ajuste`; o backend grava apenas a diferenca
   necessaria para que o saldo canonico consolidado passe a ser a contagem fisica

@@ -1109,6 +1109,39 @@ def ensure_schema():
         )
         """)
         cur.execute("""
+        CREATE TABLE IF NOT EXISTS estoque_grupos (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            codigo VARCHAR(30) NOT NULL,
+            nome VARCHAR(100) NOT NULL,
+            estoque_area VARCHAR(40) NOT NULL DEFAULT 'AUTO',
+            estoque_subgrupo VARCHAR(40) NOT NULL DEFAULT 'AUTO',
+            exibir_dashboard TINYINT(1) NOT NULL DEFAULT 1,
+            ordem INT NOT NULL DEFAULT 100,
+            sistema TINYINT(1) NOT NULL DEFAULT 0,
+            ativo TINYINT(1) NOT NULL DEFAULT 1,
+            criado_em DATETIME DEFAULT CURRENT_TIMESTAMP,
+            atualizado_em DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uq_estoque_grupos_codigo (codigo),
+            INDEX idx_estoque_grupos_ativo_ordem (ativo, ordem)
+        )
+        """)
+        for grupo in (
+            ("GFA", "Retornavel", "PRODUCAO", "PRODUTOS", 1, 10, 1),
+            ("PET", "PET", "PRODUCAO", "PRODUTOS", 1, 20, 1),
+            ("AGUA", "Agua", "PRODUCAO", "PRODUTOS", 1, 30, 1),
+            ("TAMPAS", "Tampas", "PRODUCAO", "MATERIA_PRIMA", 1, 40, 1),
+            ("PREFORMA", "Pre-forma", "PRODUCAO", "MATERIA_PRIMA", 1, 50, 1),
+            ("OUTROS", "Outros", "AUTO", "AUTO", 0, 999, 1),
+        ):
+            cur.execute(
+                """
+                INSERT IGNORE INTO estoque_grupos
+                    (codigo, nome, estoque_area, estoque_subgrupo, exibir_dashboard, ordem, sistema, ativo)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, 1)
+                """,
+                grupo,
+            )
+        cur.execute("""
         CREATE TABLE IF NOT EXISTS estoque_produtos (
             id INT AUTO_INCREMENT PRIMARY KEY,
             codigo_barras VARCHAR(120) DEFAULT '',
@@ -1120,6 +1153,7 @@ def ensure_schema():
             embalagem_tipo_padrao VARCHAR(30) DEFAULT '',
             fator_embalagem_padrao DECIMAL(12,3) DEFAULT 1,
             origem_cadastro VARCHAR(40) DEFAULT 'manual',
+            ativo TINYINT(1) NOT NULL DEFAULT 1,
             criado_em DATETIME DEFAULT CURRENT_TIMESTAMP,
             atualizado_em DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             INDEX (codigo_barras),
@@ -2500,6 +2534,10 @@ def ensure_schema():
         except Exception:
             pass
         try:
+            cur.execute("ALTER TABLE estoque_produtos ADD COLUMN ativo TINYINT(1) NOT NULL DEFAULT 1")
+        except Exception:
+            pass
+        try:
             cur.execute("ALTER TABLE estoque_produtos ADD COLUMN criado_em DATETIME DEFAULT CURRENT_TIMESTAMP")
         except Exception:
             pass
@@ -2513,6 +2551,31 @@ def ensure_schema():
             pass
         try:
             cur.execute("ALTER TABLE estoque_produtos ADD INDEX idx_estoque_produtos_produto_base_nome (produto_base_nome)")
+        except Exception:
+            pass
+        try:
+            cur.execute("ALTER TABLE estoque_produtos ADD INDEX idx_estoque_produtos_ativo (ativo)")
+        except Exception:
+            pass
+        try:
+            cur.execute(
+                """
+                UPDATE estoque_produtos
+                SET grupo_estoque='TAMPAS'
+                WHERE ativo=1
+                  AND COALESCE(grupo_estoque, '') IN ('', 'OUTROS')
+                  AND UPPER(CONCAT(COALESCE(nome_produto, ''), ' ', COALESCE(produto_base_nome, ''))) LIKE '%TAMPA%'
+                """
+            )
+            cur.execute(
+                """
+                UPDATE estoque_produtos
+                SET grupo_estoque='PREFORMA'
+                WHERE ativo=1
+                  AND COALESCE(grupo_estoque, '') IN ('', 'OUTROS')
+                  AND REPLACE(REPLACE(UPPER(CONCAT(COALESCE(nome_produto, ''), ' ', COALESCE(produto_base_nome, ''))), '-', ''), ' ', '') LIKE '%PREFORMA%'
+                """
+            )
         except Exception:
             pass
         try:
@@ -3390,7 +3453,9 @@ _ESTOQUE_GRUPOS_ORDEM = {
     "GFA": 0,
     "PET": 1,
     "AGUA": 2,
-    "OUTROS": 3,
+    "TAMPAS": 3,
+    "PREFORMA": 4,
+    "OUTROS": 999,
 }
 
 _ESTOQUE_GRUPOS_PRODUTOS_VENDIDOS = {"PET", "AGUA"}
@@ -3456,7 +3521,7 @@ def _estoque_codigos_payload(data):
     return resultado, informado
 
 def _estoque_grupo_normalizado(valor):
-    bruto = _as_str(valor).strip().upper()
+    bruto = _produto_nome_normalizado(valor)
     if not bruto:
         return ""
     aliases = {
@@ -3480,11 +3545,69 @@ def _estoque_grupo_normalizado(valor):
         "MATERIA-PRIMA": "OUTROS",
         "MATERIA PRIMA E INSUMOS": "OUTROS",
         "EXPEDIENTE": "OUTROS",
+        "TAMPA": "TAMPAS",
+        "TAMPAS": "TAMPAS",
+        "PRE FORMA": "PREFORMA",
+        "PREFORMA": "PREFORMA",
     }
-    return aliases.get(bruto, bruto if bruto in _ESTOQUE_GRUPOS_ORDEM else "")
+    if bruto in aliases:
+        return aliases[bruto]
+    codigo = re.sub(r"[^A-Z0-9]+", "_", bruto).strip("_")[:30]
+    return codigo
 
 def _estoque_grupo_ordem(valor):
     return _ESTOQUE_GRUPOS_ORDEM.get(_estoque_grupo_normalizado(valor), 99)
+
+def _estoque_grupo_publico(row):
+    row = row or {}
+    codigo = _estoque_grupo_normalizado(row.get("codigo"))
+    return {
+        "id": _as_int(row.get("id"), 0),
+        "codigo": codigo,
+        "nome": _as_str(row.get("nome")) or codigo,
+        "estoque_area": _as_str(row.get("estoque_area")).upper() or "AUTO",
+        "estoque_subgrupo": _as_str(row.get("estoque_subgrupo")).upper() or "AUTO",
+        "exibir_dashboard": bool(_as_int(row.get("exibir_dashboard"), 0)),
+        "ordem": _as_int(row.get("ordem"), 100),
+        "sistema": bool(_as_int(row.get("sistema"), 0)),
+        "ativo": bool(_as_int(row.get("ativo"), 0)),
+    }
+
+def _carregar_grupos_estoque(cur, incluir_inativos=False):
+    where = "" if incluir_inativos else "WHERE ativo=1"
+    cur.execute(
+        f"""
+        SELECT id, codigo, nome, estoque_area, estoque_subgrupo,
+               exibir_dashboard, ordem, sistema, ativo
+        FROM estoque_grupos
+        {where}
+        ORDER BY ativo DESC, ordem ASC, nome ASC, id ASC
+        """
+    )
+    return [_estoque_grupo_publico(row) for row in (cur.fetchall() or [])]
+
+def _estoque_grupos_map(cur, incluir_inativos=False):
+    return {
+        grupo["codigo"]: grupo
+        for grupo in _carregar_grupos_estoque(cur, incluir_inativos=incluir_inativos)
+        if grupo.get("codigo")
+    }
+
+def _estoque_grupo_cadastrado(cur, codigo, incluir_inativo=False):
+    codigo = _estoque_grupo_normalizado(codigo)
+    if not codigo:
+        return None
+    cur.execute(
+        """
+        SELECT id, codigo, nome, estoque_area, estoque_subgrupo,
+               exibir_dashboard, ordem, sistema, ativo
+        FROM estoque_grupos
+        WHERE codigo=%s
+        """ + ("" if incluir_inativo else " AND ativo=1") + " LIMIT 1",
+        (codigo,),
+    )
+    row = cur.fetchone()
+    return _estoque_grupo_publico(row) if row else None
 
 def _estoque_nome_indica_agua_produto(nome_produto=""):
     """Distingue agua mineral de nomes empresariais como ``Agua Bonita``."""
@@ -3534,7 +3657,7 @@ def _estoque_classificacao_operacional(item):
         "ACIDO", "ACIDULANTE", "CONSERVANTE", "CORANTE",
         "EDULCORANTE", "ANTIOXIDANTE", "GAS CARBONICO", "CO2",
     )
-    if "materia_prima" in categorias or any(termo in texto for termo in termos_formula):
+    if grupo in {"TAMPAS", "PREFORMA"} or "materia_prima" in categorias or any(termo in texto for termo in termos_formula):
         return {
             "estoque_area": "PRODUCAO",
             "estoque_subgrupo": "MATERIA_PRIMA",
@@ -3559,7 +3682,9 @@ def _estoque_grupo_inferido(nome_produto="", codigo_produto_nfe="", grupo_estoqu
     if _estoque_nome_indica_agua_produto(nome_produto):
         return "AGUA"
     if re.search(r"\bPREFORMA\b", texto) or re.search(r"\bPRE\s*-?\s*FORMA\b", texto):
-        return "OUTROS"
+        return "PREFORMA"
+    if re.search(r"\bTAMPAS?\b", texto):
+        return "TAMPAS"
     if re.search(r"\bPET\b", texto) or re.search(r"\bDESCART", texto) or re.search(r"\bRECICLAV", texto):
         return "PET"
     if re.search(r"\bGFA\b", texto) or re.search(r"\bGRF\b", texto) or re.search(r"\bGARRAFA\b", texto) or re.search(r"\bVIDRO\b", texto):
@@ -3616,7 +3741,7 @@ def _estoque_base_nome_inferido(nome_produto="", grupo_estoque="", produto_base_
             (
                 rotulo
                 for padrao, rotulo in (
-                    (r"\b2\s*L(?:T)?\b|\b2L\b", "2L"),
+                    (r"\b2\s*L(?:T|ITRO|ITROS)?\b|\b2L\b", "2L"),
                     (r"\b600\s*ML\b", "600ML"),
                     (r"\b510\s*ML\b", "510ML"),
                     (r"\b500\s*ML\b", "500ML"),
@@ -3649,7 +3774,7 @@ def _estoque_base_nome_inferido(nome_produto="", grupo_estoque="", produto_base_
         (
             rotulo
             for padrao, rotulo in (
-                (r"\b2\s*L(?:T)?\b|\b2L\b", "2L"),
+                (r"\b2\s*L(?:T|ITRO|ITROS)?\b|\b2L\b", "2L"),
                 (r"\b600\s*ML\b", "600ML"),
                 (r"\b200\s*ML\b", "200ML"),
             )
@@ -3665,7 +3790,7 @@ def _estoque_base_nome_inferido(nome_produto="", grupo_estoque="", produto_base_
     if base_exp:
         return base_exp
     if grupo == "PET":
-        if re.search(r"\b2\s*L(T)?\b|\b2LT\b", texto):
+        if re.search(r"\b2\s*L(?:T|ITRO|ITROS)?\b|\b2LT\b", texto):
             return "PET 2L"
         if re.search(r"\b600\s*ML\b|\bPET\s*600\b", texto):
             return "PET 600ML"
@@ -3738,7 +3863,7 @@ def _fator_base_produto(nome_produto="", embalagem="", unidade_ref="", grupo_pro
         _as_str(grupo_produto).upper(),
     ]).strip()
     multiplicador = _estoque_extrair_multiplicador(texto)
-    eh_2l = bool(re.search(r"\b2\s*L(?:T)?\b|\b2L\b", texto))
+    eh_2l = bool(re.search(r"\b2\s*L(?:T|ITRO|ITROS)?\b|\b2L\b", texto))
     eh_200ml = bool(re.search(r"\b200\s*ML\b", texto))
 
     if unidade == "UN":
@@ -3807,7 +3932,7 @@ def _estoque_pallet_meta(item):
     regra = ""
     if grupo == "AGUA":
         volumes, unidades, rotulo, regra = 150, 12, "pacotes", "agua_150x12"
-    elif grupo == "PET" and re.search(r"\b2\s*L(?:T)?\b|\b2L\b", texto):
+    elif grupo == "PET" and re.search(r"\b2\s*L(?:T|ITRO|ITROS)?\b|\b2L\b", texto):
         volumes, unidades, rotulo, regra = 80, 6, "pacotes", "pet_2l_80x6"
     elif grupo == "PET" and re.search(r"\b600\s*ML\b|\bPET\s*600\b", texto):
         volumes, unidades, rotulo, regra = 132, 12, "pacotes", "pet_600_132x12"
@@ -7616,7 +7741,7 @@ def _importar_nfe_abastecimento_por_xml_text(abastecimento_id, xml_text, chave_a
 _ESTOQUE_PRODUTO_SELECT = """
     SELECT id, codigo_barras, codigo_produto_nfe, nome_produto, grupo_estoque,
            produto_base_nome, unidade, embalagem_tipo_padrao,
-           fator_embalagem_padrao, origem_cadastro, criado_em, atualizado_em
+           fator_embalagem_padrao, origem_cadastro, ativo, criado_em, atualizado_em
     FROM estoque_produtos
 """
 
@@ -7631,7 +7756,7 @@ def _estoque_produto_canonico_similar(cur, row):
     chave = _as_str(_estoque_produto_meta(row).get("produto_base_key"))
     if not chave:
         return row
-    cur.execute(_ESTOQUE_PRODUTO_SELECT + " ORDER BY id ASC")
+    cur.execute(_ESTOQUE_PRODUTO_SELECT + " WHERE ativo=1 ORDER BY id ASC")
     candidatos = []
     for candidato in (cur.fetchall() or []):
         if not _estoque_produto_eh_vendido(candidato):
@@ -7665,7 +7790,7 @@ def _buscar_produto_codigo_origem(cur, codigo="", origem_tipo=""):
                p.origem_cadastro, p.criado_em, p.atualizado_em
         FROM estoque_produtos p
         JOIN estoque_produto_codigos pc ON pc.produto_id=p.id
-        WHERE pc.ativo=1 AND pc.codigo_norm=%s
+        WHERE pc.ativo=1 AND p.ativo=1 AND pc.codigo_norm=%s
         """
         + filtro_origem
         + " ORDER BY pc.id DESC",
@@ -7695,7 +7820,8 @@ def _registrar_codigo_produto_estoque(cur, produto, origem_tipo, codigo, nome_or
         SELECT pc.id, pc.produto_id, p.nome_produto
         FROM estoque_produto_codigos pc
         JOIN estoque_produtos p ON p.id=pc.produto_id
-        WHERE pc.origem_tipo=%s AND pc.codigo_norm=%s
+        WHERE pc.ativo=1 AND p.ativo=1
+          AND pc.origem_tipo=%s AND pc.codigo_norm=%s
         LIMIT 1
         """,
         (origem, codigo_norm),
@@ -7785,7 +7911,7 @@ def _buscar_produto_estoque(cur, codigo_barras="", codigo_produto_nfe="", nome_p
             SELECT id, codigo_barras, codigo_produto_nfe, nome_produto, grupo_estoque, produto_base_nome, unidade,
                    embalagem_tipo_padrao, fator_embalagem_padrao, origem_cadastro, criado_em, atualizado_em
             FROM estoque_produtos
-            WHERE codigo_barras=%s
+            WHERE ativo=1 AND codigo_barras=%s
             ORDER BY id DESC
             LIMIT 1
         """, (codigo_barras,))
@@ -7802,7 +7928,7 @@ def _buscar_produto_estoque(cur, codigo_barras="", codigo_produto_nfe="", nome_p
             SELECT id, codigo_barras, codigo_produto_nfe, nome_produto, grupo_estoque, produto_base_nome, unidade,
                    embalagem_tipo_padrao, fator_embalagem_padrao, origem_cadastro, criado_em, atualizado_em
             FROM estoque_produtos
-            WHERE codigo_produto_nfe=%s
+            WHERE ativo=1 AND codigo_produto_nfe=%s
             ORDER BY id DESC
             LIMIT 1
         """, (codigo_produto_nfe,))
@@ -7814,7 +7940,7 @@ def _buscar_produto_estoque(cur, codigo_barras="", codigo_produto_nfe="", nome_p
             SELECT id, codigo_barras, codigo_produto_nfe, nome_produto, grupo_estoque, produto_base_nome, unidade,
                    embalagem_tipo_padrao, fator_embalagem_padrao, origem_cadastro, criado_em, atualizado_em
             FROM estoque_produtos
-            WHERE TRIM(LEADING '0' FROM COALESCE(codigo_produto_nfe, ''))=%s
+            WHERE ativo=1 AND TRIM(LEADING '0' FROM COALESCE(codigo_produto_nfe, ''))=%s
             ORDER BY id DESC
             LIMIT 1
         """, (codigo_produto_norm,))
@@ -7827,7 +7953,7 @@ def _buscar_produto_estoque(cur, codigo_barras="", codigo_produto_nfe="", nome_p
             SELECT id, codigo_barras, codigo_produto_nfe, nome_produto, grupo_estoque, produto_base_nome, unidade,
                    embalagem_tipo_padrao, fator_embalagem_padrao, origem_cadastro, criado_em, atualizado_em
             FROM estoque_produtos
-            WHERE nome_produto=%s
+            WHERE ativo=1 AND nome_produto=%s
             ORDER BY id DESC
             LIMIT 1
         """, (nome_produto,))
@@ -7839,6 +7965,7 @@ def _buscar_produto_estoque(cur, codigo_barras="", codigo_produto_nfe="", nome_p
             SELECT id, codigo_barras, codigo_produto_nfe, nome_produto, grupo_estoque, produto_base_nome, unidade,
                    embalagem_tipo_padrao, fator_embalagem_padrao, origem_cadastro, criado_em, atualizado_em
             FROM estoque_produtos
+            WHERE ativo=1
             ORDER BY id DESC
         """)
         for row in (cur.fetchall() or []):
@@ -7852,7 +7979,7 @@ def _buscar_produto_estoque(cur, codigo_barras="", codigo_produto_nfe="", nome_p
         }
         if _estoque_produto_eh_vendido(referencia):
             chave = _as_str(_estoque_produto_meta(referencia).get("produto_base_key"))
-            cur.execute(_ESTOQUE_PRODUTO_SELECT + " ORDER BY id ASC")
+            cur.execute(_ESTOQUE_PRODUTO_SELECT + " WHERE ativo=1 ORDER BY id ASC")
             for row in (cur.fetchall() or []):
                 if _estoque_produto_eh_vendido(row) and _as_str(_estoque_produto_meta(row).get("produto_base_key")) == chave:
                     return _estoque_produto_canonico_similar(cur, row)
@@ -7865,7 +7992,7 @@ def _buscar_produto_estoque(cur, codigo_barras="", codigo_produto_nfe="", nome_p
             SELECT id, codigo_barras, codigo_produto_nfe, nome_produto, grupo_estoque, produto_base_nome, unidade,
                    embalagem_tipo_padrao, fator_embalagem_padrao, origem_cadastro, criado_em, atualizado_em
             FROM estoque_produtos
-            WHERE codigo_produto_nfe=%s
+            WHERE ativo=1 AND codigo_produto_nfe=%s
             ORDER BY id DESC
             LIMIT 1
         """, (codigo_produto_nfe,))
@@ -7877,7 +8004,7 @@ def _buscar_produto_estoque(cur, codigo_barras="", codigo_produto_nfe="", nome_p
             SELECT id, codigo_barras, codigo_produto_nfe, nome_produto, grupo_estoque, produto_base_nome, unidade,
                    embalagem_tipo_padrao, fator_embalagem_padrao, origem_cadastro, criado_em, atualizado_em
             FROM estoque_produtos
-            WHERE TRIM(LEADING '0' FROM COALESCE(codigo_produto_nfe, ''))=%s
+            WHERE ativo=1 AND TRIM(LEADING '0' FROM COALESCE(codigo_produto_nfe, ''))=%s
             ORDER BY id DESC
             LIMIT 1
         """, (codigo_produto_norm,))
@@ -7944,6 +8071,8 @@ def _obter_ou_criar_produto_estoque(cur, codigo_barras="", codigo_produto_nfe=""
         nome_produto=nome_produto,
         grupo_estoque=grupo_inferido,
     )
+    if not _estoque_grupo_cadastrado(cur, grupo_inferido):
+        grupo_inferido = "OUTROS"
 
     cur.execute("""
         INSERT INTO estoque_produtos
@@ -7954,8 +8083,8 @@ def _obter_ou_criar_produto_estoque(cur, codigo_barras="", codigo_produto_nfe=""
         _normalizar_codigo_barras(codigo_barras),
         _codigo_produto_nfe_saida(codigo_produto_nfe),
         _as_str(nome_produto),
-        grupo_inferido if grupo_inferido in _ESTOQUE_GRUPOS_PRODUTOS_VENDIDOS else "",
-        base_inferida if grupo_inferido in _ESTOQUE_GRUPOS_PRODUTOS_VENDIDOS else "",
+        grupo_inferido,
+        base_inferida,
         _as_str(unidade),
         "",
         1.0,
@@ -7967,8 +8096,8 @@ def _obter_ou_criar_produto_estoque(cur, codigo_barras="", codigo_produto_nfe=""
         "codigo_barras": _normalizar_codigo_barras(codigo_barras),
         "codigo_produto_nfe": _codigo_produto_nfe_saida(codigo_produto_nfe),
         "nome_produto": _as_str(nome_produto),
-        "grupo_estoque": grupo_inferido if grupo_inferido in _ESTOQUE_GRUPOS_PRODUTOS_VENDIDOS else "",
-        "produto_base_nome": base_inferida if grupo_inferido in _ESTOQUE_GRUPOS_PRODUTOS_VENDIDOS else "",
+        "grupo_estoque": grupo_inferido,
+        "produto_base_nome": base_inferida,
         "unidade": _as_str(unidade),
         "embalagem_tipo_padrao": "",
         "fator_embalagem_padrao": 1.0,
@@ -8009,6 +8138,7 @@ def _produto_estoque_publico(row, codigos_por_origem=None):
         "embalagem_tipo_padrao": _as_str(row.get("embalagem_tipo_padrao")),
         "fator_embalagem_padrao": fator_padrao,
         "origem_cadastro": _as_str(row.get("origem_cadastro")) or "manual",
+        "ativo": bool(_as_int(row.get("ativo"), 1)),
         "criado_em": _fmt_dt(row.get("criado_em")),
         "atualizado_em": _fmt_dt(row.get("atualizado_em")),
     }
@@ -8133,10 +8263,11 @@ def _carregar_produto_estoque_por_id(cur, produto_id):
             embalagem_tipo_padrao,
             fator_embalagem_padrao,
             origem_cadastro,
+            ativo,
             criado_em,
             atualizado_em
         FROM estoque_produtos
-        WHERE id=%s
+        WHERE id=%s AND ativo=1
         LIMIT 1
     """, (produto_id,))
     return cur.fetchone()
@@ -13865,10 +13996,11 @@ def _carregar_lookup_produtos_estoque(cur):
             embalagem_tipo_padrao,
             fator_embalagem_padrao,
             origem_cadastro,
+            ativo,
             criado_em,
             atualizado_em
         FROM estoque_produtos
-        ORDER BY id DESC
+        ORDER BY ativo DESC, id DESC
     """)
     rows = cur.fetchall() or []
     lookup = {
@@ -13895,12 +14027,12 @@ def _carregar_lookup_produtos_estoque(cur):
         SELECT pc.origem_tipo, pc.codigo_norm, p.id, p.codigo_barras,
                p.codigo_produto_nfe, p.nome_produto, p.grupo_estoque,
                p.produto_base_nome, p.unidade, p.embalagem_tipo_padrao,
-               p.fator_embalagem_padrao, p.origem_cadastro,
+               p.fator_embalagem_padrao, p.origem_cadastro, p.ativo,
                p.criado_em, p.atualizado_em
         FROM estoque_produto_codigos pc
         JOIN estoque_produtos p ON p.id=pc.produto_id
         WHERE pc.ativo=1
-        ORDER BY pc.id DESC
+        ORDER BY p.ativo DESC, pc.id DESC
     """)
     for row in (cur.fetchall() or []):
         origem = _estoque_origem_codigo_normalizada(row.get("origem_tipo"))
@@ -13963,6 +14095,9 @@ def _estoque_merge_row(target, aliases, row):
 
     atual = target.setdefault(chave, {
         "produto_key": chave,
+        "produto_id": _as_int(row.get("produto_id"), 0),
+        "produto_cadastrado": bool(_as_int(row.get("produto_id"), 0)),
+        "produto_ativo": bool(_as_int(row.get("produto_ativo"), 1)),
         "grupo_estoque": grupo_estoque,
         "produto_base_nome": nome_produto or "-",
         "produto_base_key": produto_base_key,
@@ -13988,6 +14123,12 @@ def _estoque_merge_row(target, aliases, row):
     })
     for alias in chaves_candidatas:
         aliases[alias] = chave
+
+    produto_id = _as_int(row.get("produto_id"), 0)
+    if produto_id > 0:
+        atual["produto_id"] = produto_id
+        atual["produto_cadastrado"] = True
+        atual["produto_ativo"] = bool(_as_int(row.get("produto_ativo"), 1))
 
     if codigo_barras and not atual.get("codigo_barras"):
         atual["codigo_barras"] = codigo_barras
@@ -14094,7 +14235,7 @@ def _estoque_previsao_producao_semanal(
     }
 
 
-def _estoque_resumo_produtos_data():
+def _estoque_resumo_produtos_data(incluir_fornecedores=True):
     hoje = datetime.date.today()
     inicio_semana = hoje - datetime.timedelta(days=(hoje.weekday() + 1) % 7)
     dias_semana_decorridos = max(1, min(7, (hoje - inicio_semana).days + 1))
@@ -14120,7 +14261,28 @@ def _estoque_resumo_produtos_data():
     baixadas_ids = set()
     try:
         produtos_lookup = _carregar_lookup_produtos_estoque(cur)
-        cur.execute("""
+        grupos_estoque = _estoque_grupos_map(cur)
+        fornecedor_select = """
+                COALESCE(NULLIF(f.cnpj, ''), NULLIF(xi.emitente_cnpj, ''), NULLIF(c.emitente_cnpj, '')) AS fornecedor_cnpj,
+                COALESCE(NULLIF(f.nome, ''), NULLIF(xi.emitente_nome, ''), NULLIF(c.emitente_nome, '')) AS fornecedor_nome,
+                COALESCE(NULLIF(f.categoria, ''), CASE WHEN COALESCE(NULLIF(xi.emitente_cnpj, ''), NULLIF(c.emitente_cnpj, '')) IS NOT NULL THEN 'outros' ELSE '' END) AS fornecedor_categoria
+        """ if incluir_fornecedores else """
+                '' AS fornecedor_cnpj,
+                '' AS fornecedor_nome,
+                '' AS fornecedor_categoria
+        """
+        fornecedor_joins = """
+            LEFT JOIN importar_xml_estoque_itens xi
+                ON e.referencia_tipo='importar_xml'
+               AND e.referencia_id=xi.id
+            LEFT JOIN estoque_conferencias c
+                ON e.referencia_tipo='conferencia_nfe'
+               AND e.referencia_id=c.id
+            LEFT JOIN gestor_email_fornecedores f
+                ON BINARY f.cnpj = BINARY COALESCE(NULLIF(xi.emitente_cnpj, ''), NULLIF(c.emitente_cnpj, ''))
+        """ if incluir_fornecedores else ""
+        fornecedor_group = ", fornecedor_cnpj, fornecedor_nome, fornecedor_categoria" if incluir_fornecedores else ""
+        cur.execute(f"""
             SELECT
                 e.codigo_barras,
                 e.codigo_produto_nfe,
@@ -14131,33 +14293,36 @@ def _estoque_resumo_produtos_data():
                 COALESCE(SUM(CASE WHEN e.tipo_movimento = 'saida' AND DATE(e.data_registro) BETWEEN %s AND CURDATE() THEN e.quantidade ELSE 0 END), 0) AS saidas_semana,
                 COALESCE(SUM(CASE WHEN e.tipo_movimento = 'saida' THEN -e.quantidade ELSE e.quantidade END), 0) AS quantidade_atual,
                 MAX(e.data_registro) AS ultima_movimentacao,
-                (
-                    SELECT e2.valor_unitario
-                    FROM estoque_movimentos e2
-                    WHERE
-                        COALESCE(NULLIF(e2.codigo_barras, ''), '__') = COALESCE(NULLIF(e.codigo_barras, ''), '__')
-                        AND COALESCE(NULLIF(e2.codigo_produto_nfe, ''), '__') = COALESCE(NULLIF(e.codigo_produto_nfe, ''), '__')
-                        AND COALESCE(NULLIF(e2.nome_produto, ''), '__') = COALESCE(NULLIF(e.nome_produto, ''), '__')
-                    ORDER BY e2.id DESC
-                    LIMIT 1
-                ) AS ultimo_valor,
-                COALESCE(NULLIF(f.cnpj, ''), NULLIF(xi.emitente_cnpj, ''), NULLIF(c.emitente_cnpj, '')) AS fornecedor_cnpj,
-                COALESCE(NULLIF(f.nome, ''), NULLIF(xi.emitente_nome, ''), NULLIF(c.emitente_nome, '')) AS fornecedor_nome,
-                COALESCE(NULLIF(f.categoria, ''), CASE WHEN COALESCE(NULLIF(xi.emitente_cnpj, ''), NULLIF(c.emitente_cnpj, '')) IS NOT NULL THEN 'outros' ELSE '' END) AS fornecedor_categoria
+                MAX(e.id) AS ultimo_movimento_id,
+                {fornecedor_select}
             FROM estoque_movimentos e
-            LEFT JOIN importar_xml_estoque_itens xi
-                ON e.referencia_tipo='importar_xml'
-               AND e.referencia_id=xi.id
-            LEFT JOIN estoque_conferencias c
-                ON e.referencia_tipo='conferencia_nfe'
-               AND e.referencia_id=c.id
-            LEFT JOIN gestor_email_fornecedores f
-                ON BINARY f.cnpj = BINARY COALESCE(NULLIF(xi.emitente_cnpj, ''), NULLIF(c.emitente_cnpj, ''))
+            {fornecedor_joins}
             GROUP BY
-                e.codigo_barras, e.codigo_produto_nfe, e.nome_produto,
-                fornecedor_cnpj, fornecedor_nome, fornecedor_categoria
+                e.codigo_barras, e.codigo_produto_nfe, e.nome_produto
+                {fornecedor_group}
         """, (inicio_semana,))
-        for row in (cur.fetchall() or []):
+        movimentos_resumo = cur.fetchall() or []
+        ultimos_ids = sorted({
+            _as_int(row.get("ultimo_movimento_id"), 0)
+            for row in movimentos_resumo
+            if _as_int(row.get("ultimo_movimento_id"), 0) > 0
+        })
+        ultimos_valores = {}
+        if ultimos_ids:
+            placeholders = ",".join(["%s"] * len(ultimos_ids))
+            cur.execute(
+                f"SELECT id, valor_unitario FROM estoque_movimentos WHERE id IN ({placeholders})",
+                tuple(ultimos_ids),
+            )
+            ultimos_valores = {
+                _as_int(item.get("id"), 0): _as_float(item.get("valor_unitario"), 0.0)
+                for item in (cur.fetchall() or [])
+            }
+        for row in movimentos_resumo:
+            row["ultimo_valor"] = ultimos_valores.get(
+                _as_int(row.get("ultimo_movimento_id"), 0),
+                0.0,
+            )
             _estoque_registrar_filtro_fornecedor(meta, row)
             cadastro = _resolver_produto_lookup_estoque(
                 produtos_lookup,
@@ -14167,6 +14332,8 @@ def _estoque_resumo_produtos_data():
             ) or {}
             row = {
                 **row,
+                "produto_id": cadastro.get("id"),
+                "produto_ativo": cadastro.get("ativo", 1) if cadastro else 1,
                 "grupo_estoque": cadastro.get("grupo_estoque"),
                 "produto_base_nome": cadastro.get("produto_base_nome"),
                 "embalagem_tipo_padrao": cadastro.get("embalagem_tipo_padrao"),
@@ -14223,6 +14390,8 @@ def _estoque_resumo_produtos_data():
                 origem_codigo="sellout",
             ) or {}
             item = _estoque_merge_row(linhas, aliases, {
+                "produto_id": cadastro.get("id"),
+                "produto_ativo": cadastro.get("ativo", 1) if cadastro else 1,
                 "codigo_barras": row.get("codigo_barras"),
                 "codigo_produto_nfe": row.get("codigo_produto"),
                 "nome_produto": row.get("nome_produto"),
@@ -14274,6 +14443,8 @@ def _estoque_resumo_produtos_data():
                         )
                     quantidade_base = round(_as_float(row.get("quantidade"), 0.0) * (fator if fator > 0 else 1.0), 3)
                     item = _estoque_merge_row(linhas, aliases, {
+                        "produto_id": cadastro.get("id"),
+                        "produto_ativo": cadastro.get("ativo", 1) if cadastro else 1,
                         "codigo_barras": cadastro.get("codigo_barras"),
                         "codigo_produto_nfe": cadastro.get("codigo_produto_nfe") or codigo_produto,
                         "nome_produto": cadastro.get("nome_produto") or nome_produto,
@@ -14309,6 +14480,9 @@ def _estoque_resumo_produtos_data():
         fornecedores = _estoque_fornecedores_lista(item)
         meta["saidas_dia_total"] += saidas_dia
         row_publica = {
+            "produto_id": _as_int(item.get("produto_id"), 0),
+            "produto_cadastrado": bool(item.get("produto_cadastrado")),
+            "produto_ativo": bool(item.get("produto_ativo")),
             "grupo_estoque": _as_str(item.get("grupo_estoque")) or "OUTROS",
             "produto_base_nome": _as_str(item.get("produto_base_nome")) or _as_str(item.get("nome_produto")) or "-",
             "produto_base_key": _as_str(item.get("produto_base_key")),
@@ -14337,10 +14511,23 @@ def _estoque_resumo_produtos_data():
             "fatores_embalagem_origem": sorted(item.get("fatores_embalagem_origem") or []),
         }
         row_publica.update(_estoque_classificacao_operacional(row_publica))
+        grupo_config = grupos_estoque.get(_estoque_grupo_normalizado(row_publica.get("grupo_estoque"))) or {}
+        if grupo_config:
+            row_publica["grupo_nome"] = grupo_config.get("nome") or row_publica["grupo_estoque"]
+            row_publica["grupo_ordem"] = _as_int(grupo_config.get("ordem"), 100)
+            row_publica["exibir_dashboard"] = bool(grupo_config.get("exibir_dashboard"))
+            if grupo_config.get("estoque_area") != "AUTO":
+                row_publica["estoque_area"] = grupo_config.get("estoque_area")
+            if grupo_config.get("estoque_subgrupo") != "AUTO":
+                row_publica["estoque_subgrupo"] = grupo_config.get("estoque_subgrupo")
+        else:
+            row_publica["grupo_nome"] = row_publica["grupo_estoque"]
+            row_publica["grupo_ordem"] = _estoque_grupo_ordem(row_publica["grupo_estoque"])
+            row_publica["exibir_dashboard"] = False
         row_publica["pallet_meta"] = _estoque_pallet_meta(row_publica)
         rows.append(row_publica)
     rows.sort(key=lambda r: (
-        _estoque_grupo_ordem(r.get("grupo_estoque")),
+        _as_int(r.get("grupo_ordem"), _estoque_grupo_ordem(r.get("grupo_estoque"))),
         _produto_nome_normalizado(r.get("produto_base_nome") or r.get("nome_produto")),
         _as_str(r.get("codigo_produto_nfe")),
         _as_str(r.get("codigo_barras")),
@@ -14352,18 +14539,25 @@ def _estoque_resumo_produtos_data():
         key=lambda row: (_as_str(row.get("categoria")), _as_str(row.get("nome"))),
     )
     meta["categorias_fornecedor"] = sorted(meta.pop("_categorias_fornecedor", set()))
+    meta["grupos_estoque"] = sorted(
+        grupos_estoque.values(),
+        key=lambda grupo: (_as_int(grupo.get("ordem"), 100), _as_str(grupo.get("nome"))),
+    )
     return {
         "rows": rows,
         "meta": meta,
     }
 
 def _dashboard_estoque_data():
-    payload = _estoque_resumo_produtos_data()
+    payload = _estoque_resumo_produtos_data(incluir_fornecedores=False)
     rows = [
         row for row in payload.get("rows", [])
         if row.get("exibir_dashboard")
+        and row.get("produto_cadastrado")
+        and row.get("produto_ativo")
     ]
     meta = dict(payload.get("meta") or {})
+    meta["atualizado_em"] = _fmt_dt(datetime.datetime.now())
     meta["itens_dashboard"] = len(rows)
     meta["vendas_dia_total"] = round(
         sum(_as_float(row.get("vendas_dia"), 0.0) for row in rows), 3
@@ -17731,7 +17925,9 @@ def _estoque_xml_preview(cur, nota, referencias_lancadas):
 @app.route("/api/dashboard_estoque", methods=["GET"])
 def dashboard_estoque():
     payload = _dashboard_estoque_data()
-    return jsonify(payload)
+    resp = jsonify(payload)
+    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return resp
 
 
 @app.route("/api/estoque/importacoes-xml", methods=["GET"])
@@ -20357,6 +20553,158 @@ def saldo_estoque():
 def posicao_estoque():
     return jsonify(_estoque_resumo_produtos_data())
 
+@app.route("/api/estoque/grupos", methods=["GET"])
+def listar_grupos_estoque():
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    try:
+        return jsonify(_carregar_grupos_estoque(cur))
+    finally:
+        cur.close()
+        conn.close()
+
+@app.route("/api/estoque/grupos", methods=["POST"])
+def criar_grupo_estoque():
+    bloqueio = _exigir_admin_portal()
+    if bloqueio:
+        return bloqueio
+    data = request.json or {}
+    nome = _as_str(data.get("nome"))[:100]
+    codigo = _estoque_grupo_normalizado(data.get("codigo") or nome)
+    area = _as_str(data.get("estoque_area")).upper() or "ALMOXARIFADO_GERAL"
+    subgrupo = _as_str(data.get("estoque_subgrupo")).upper() or "GERAL"
+    if not nome or not codigo:
+        return jsonify({"erro": "informe o nome do grupo de estoque"}), 400
+    if area not in {"AUTO", "PRODUCAO", "ALMOXARIFADO_GERAL"}:
+        return jsonify({"erro": "area de estoque invalida"}), 400
+    if subgrupo not in {"AUTO", "PRODUTOS", "MATERIA_PRIMA", "GERAL"}:
+        return jsonify({"erro": "subgrupo de estoque invalido"}), 400
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    try:
+        existente = _estoque_grupo_cadastrado(cur, codigo, incluir_inativo=True)
+        if existente and existente.get("ativo"):
+            return jsonify({"erro": "ja existe um grupo com este codigo"}), 409
+        if existente and existente.get("sistema"):
+            return jsonify({"erro": "o grupo padrao deve ser alterado pela acao editar"}), 409
+        cur.execute(
+            """
+            INSERT INTO estoque_grupos
+                (codigo, nome, estoque_area, estoque_subgrupo, exibir_dashboard, ordem, sistema, ativo)
+            VALUES (%s, %s, %s, %s, %s, %s, 0, 1)
+            ON DUPLICATE KEY UPDATE
+                nome=VALUES(nome), estoque_area=VALUES(estoque_area),
+                estoque_subgrupo=VALUES(estoque_subgrupo),
+                exibir_dashboard=VALUES(exibir_dashboard), ordem=VALUES(ordem),
+                ativo=1, atualizado_em=NOW()
+            """,
+            (
+                codigo,
+                nome,
+                area,
+                subgrupo,
+                1 if _as_bool(data.get("exibir_dashboard"), True) else 0,
+                _as_int(data.get("ordem"), 100),
+            ),
+        )
+        conn.commit()
+        grupo = _estoque_grupo_cadastrado(cur, codigo)
+        return jsonify({"ok": True, "grupo": grupo})
+    finally:
+        cur.close()
+        conn.close()
+
+@app.route("/api/estoque/grupos/<int:grupo_id>", methods=["PUT"])
+def atualizar_grupo_estoque(grupo_id):
+    bloqueio = _exigir_admin_portal()
+    if bloqueio:
+        return bloqueio
+    data = request.json or {}
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute(
+            """
+            SELECT id, codigo, nome, estoque_area, estoque_subgrupo,
+                   exibir_dashboard, ordem, sistema, ativo
+            FROM estoque_grupos WHERE id=%s AND ativo=1 LIMIT 1
+            """,
+            (grupo_id,),
+        )
+        atual = cur.fetchone()
+        if not atual:
+            return jsonify({"erro": "grupo de estoque nao encontrado"}), 404
+        codigo = _estoque_grupo_normalizado(data.get("codigo") or atual.get("codigo"))
+        nome = _as_str(data.get("nome") if "nome" in data else atual.get("nome"))[:100]
+        area = _as_str(data.get("estoque_area") if "estoque_area" in data else atual.get("estoque_area")).upper() or "AUTO"
+        subgrupo = _as_str(data.get("estoque_subgrupo") if "estoque_subgrupo" in data else atual.get("estoque_subgrupo")).upper() or "AUTO"
+        if not nome or not codigo:
+            return jsonify({"erro": "informe o nome do grupo de estoque"}), 400
+        if area not in {"AUTO", "PRODUCAO", "ALMOXARIFADO_GERAL"}:
+            return jsonify({"erro": "area de estoque invalida"}), 400
+        if subgrupo not in {"AUTO", "PRODUTOS", "MATERIA_PRIMA", "GERAL"}:
+            return jsonify({"erro": "subgrupo de estoque invalido"}), 400
+        if _as_int(atual.get("sistema"), 0) and codigo != _estoque_grupo_normalizado(atual.get("codigo")):
+            return jsonify({"erro": "o codigo de um grupo padrao nao pode ser alterado"}), 409
+        cur.execute(
+            """
+            UPDATE estoque_grupos
+            SET codigo=%s, nome=%s, estoque_area=%s, estoque_subgrupo=%s,
+                exibir_dashboard=%s, ordem=%s
+            WHERE id=%s
+            """,
+            (
+                codigo,
+                nome,
+                area,
+                subgrupo,
+                1 if _as_bool(data.get("exibir_dashboard"), bool(atual.get("exibir_dashboard"))) else 0,
+                _as_int(data.get("ordem"), _as_int(atual.get("ordem"), 100)),
+                grupo_id,
+            ),
+        )
+        if codigo != _estoque_grupo_normalizado(atual.get("codigo")):
+            cur.execute(
+                "UPDATE estoque_produtos SET grupo_estoque=%s WHERE grupo_estoque=%s AND ativo=1",
+                (codigo, atual.get("codigo")),
+            )
+        conn.commit()
+        grupo = _estoque_grupo_cadastrado(cur, codigo)
+        return jsonify({"ok": True, "grupo": grupo})
+    except mysql.connector.IntegrityError:
+        conn.rollback()
+        return jsonify({"erro": "ja existe um grupo com este codigo"}), 409
+    finally:
+        cur.close()
+        conn.close()
+
+@app.route("/api/estoque/grupos/<int:grupo_id>", methods=["DELETE"])
+def excluir_grupo_estoque(grupo_id):
+    bloqueio = _exigir_admin_portal()
+    if bloqueio:
+        return bloqueio
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute("SELECT id, codigo, sistema FROM estoque_grupos WHERE id=%s AND ativo=1 LIMIT 1", (grupo_id,))
+        grupo = cur.fetchone()
+        if not grupo:
+            return jsonify({"erro": "grupo de estoque nao encontrado"}), 404
+        if _as_int(grupo.get("sistema"), 0):
+            return jsonify({"erro": "grupos padrao podem ser editados, mas nao excluidos"}), 409
+        cur.execute(
+            "SELECT COUNT(*) AS total FROM estoque_produtos WHERE ativo=1 AND grupo_estoque=%s",
+            (grupo.get("codigo"),),
+        )
+        if _as_int((cur.fetchone() or {}).get("total"), 0) > 0:
+            return jsonify({"erro": "mova os produtos deste grupo antes de exclui-lo"}), 409
+        cur.execute("UPDATE estoque_grupos SET ativo=0 WHERE id=%s", (grupo_id,))
+        conn.commit()
+        return jsonify({"ok": True})
+    finally:
+        cur.close()
+        conn.close()
+
 @app.route("/api/estoque/produtos", methods=["GET"])
 def listar_produtos_estoque():
     conn = get_conn()
@@ -20373,12 +20721,15 @@ def listar_produtos_estoque():
             embalagem_tipo_padrao,
             fator_embalagem_padrao,
             origem_cadastro,
+            ativo,
             criado_em,
             atualizado_em
         FROM estoque_produtos
+        WHERE ativo=1
         ORDER BY nome_produto ASC, id ASC
     """)
     rows = cur.fetchall() or []
+    grupos = _estoque_grupos_map(cur)
     codigos_por_produto = _carregar_codigos_produtos_estoque(
         cur, [row.get("id") for row in rows]
     )
@@ -20389,6 +20740,14 @@ def listar_produtos_estoque():
         item = _produto_estoque_publico(
             row, codigos_por_produto.get(_as_int(row.get("id"), 0), {})
         )
+        grupo = grupos.get(_estoque_grupo_normalizado(item.get("grupo_estoque"))) or {}
+        item["grupo_nome"] = grupo.get("nome") or item.get("grupo_estoque")
+        item["grupo_ordem"] = _as_int(grupo.get("ordem"), 100)
+        item["exibir_dashboard"] = bool(grupo.get("exibir_dashboard"))
+        if _as_str(grupo.get("estoque_area")).upper() not in {"", "AUTO"}:
+            item["estoque_area"] = grupo.get("estoque_area")
+        if _as_str(grupo.get("estoque_subgrupo")).upper() not in {"", "AUTO"}:
+            item["estoque_subgrupo"] = grupo.get("estoque_subgrupo")
         item["pallet_meta"] = _estoque_pallet_meta(item)
         produtos.append(item)
     return jsonify(produtos)
@@ -20828,7 +21187,10 @@ def criar_produto_estoque():
     codigo_barras = _normalizar_codigo_barras(data.get("codigo_barras"))
     codigo_produto_nfe = _codigo_produto_nfe_saida(data.get("codigo_produto_nfe"))
     nome_produto = _as_str(data.get("nome_produto"))
-    grupo_estoque = _estoque_grupo_normalizado(data.get("grupo_estoque"))
+    grupo_estoque = _estoque_grupo_normalizado(data.get("grupo_estoque")) or _estoque_grupo_inferido(
+        nome_produto=nome_produto,
+        codigo_produto_nfe=codigo_produto_nfe,
+    )
     produto_base_nome = _as_str(data.get("produto_base_nome") or data.get("produto_base"))
     embalagem_tipo_padrao = _as_str(data.get("embalagem_tipo_padrao") or data.get("embalagem_tipo"))
     fator_embalagem_padrao = _as_float(data.get("fator_embalagem_padrao"), _as_float(data.get("fator_embalagem"), 1.0))
@@ -20843,6 +21205,8 @@ def criar_produto_estoque():
     conn = get_conn()
     cur = conn.cursor(dictionary=True)
     try:
+        if not _estoque_grupo_cadastrado(cur, grupo_estoque):
+            return jsonify({"erro": "selecione um grupo de estoque cadastrado"}), 400
         existente = _buscar_produto_estoque(cur, codigo_barras=codigo_barras, codigo_produto_nfe=codigo_produto_nfe, nome_produto=nome_produto)
         if existente:
             return jsonify({"erro": "ja existe cadastro para este produto"}), 409
@@ -20880,7 +21244,7 @@ def criar_produto_estoque():
         conn.commit()
         cur.execute("""
             SELECT id, codigo_barras, codigo_produto_nfe, nome_produto, grupo_estoque, produto_base_nome, unidade,
-                   embalagem_tipo_padrao, fator_embalagem_padrao, origem_cadastro, criado_em, atualizado_em
+                   embalagem_tipo_padrao, fator_embalagem_padrao, origem_cadastro, ativo, criado_em, atualizado_em
             FROM estoque_produtos
             WHERE id=%s
             LIMIT 1
@@ -20904,9 +21268,9 @@ def atualizar_produto_estoque(produto_id):
     try:
         cur.execute("""
             SELECT id, codigo_barras, codigo_produto_nfe, nome_produto, grupo_estoque, produto_base_nome, unidade,
-                   embalagem_tipo_padrao, fator_embalagem_padrao, origem_cadastro, criado_em, atualizado_em
+                   embalagem_tipo_padrao, fator_embalagem_padrao, origem_cadastro, ativo, criado_em, atualizado_em
             FROM estoque_produtos
-            WHERE id=%s
+            WHERE id=%s AND ativo=1
             LIMIT 1
         """, (produto_id,))
         row = cur.fetchone()
@@ -20927,6 +21291,8 @@ def atualizar_produto_estoque(produto_id):
             return jsonify({"erro": "informe ao menos codigo de barras, codigo NF-e ou nome do produto"}), 400
         if not embalagem_tipo_padrao:
             return jsonify({"erro": "embalagem padrao e obrigatoria"}), 400
+        if not _estoque_grupo_cadastrado(cur, grupo_estoque):
+            return jsonify({"erro": "selecione um grupo de estoque cadastrado"}), 400
         if any(codigos_por_origem.values()) and grupo_estoque not in _ESTOQUE_GRUPOS_PRODUTOS_VENDIDOS:
             return jsonify({"erro": "a amarracao de codigos e exclusiva para PET e AGUA da producao"}), 400
 
@@ -20969,7 +21335,7 @@ def atualizar_produto_estoque(produto_id):
         conn.commit()
         cur.execute("""
             SELECT id, codigo_barras, codigo_produto_nfe, nome_produto, grupo_estoque, produto_base_nome, unidade,
-                   embalagem_tipo_padrao, fator_embalagem_padrao, origem_cadastro, criado_em, atualizado_em
+                   embalagem_tipo_padrao, fator_embalagem_padrao, origem_cadastro, ativo, criado_em, atualizado_em
             FROM estoque_produtos
             WHERE id=%s
             LIMIT 1
@@ -21080,11 +21446,12 @@ def excluir_produto_estoque(produto_id):
     conn = get_conn()
     cur = conn.cursor(dictionary=True)
     try:
-        cur.execute("SELECT id FROM estoque_produtos WHERE id=%s LIMIT 1", (produto_id,))
+        cur.execute("SELECT id FROM estoque_produtos WHERE id=%s AND ativo=1 LIMIT 1", (produto_id,))
         row = cur.fetchone()
         if not row:
             return jsonify({"erro": "produto nao encontrado"}), 404
-        cur.execute("DELETE FROM estoque_produtos WHERE id=%s", (produto_id,))
+        cur.execute("UPDATE estoque_produtos SET ativo=0 WHERE id=%s", (produto_id,))
+        cur.execute("UPDATE estoque_produto_codigos SET ativo=0 WHERE produto_id=%s", (produto_id,))
         conn.commit()
         return jsonify({"ok": True})
     finally:

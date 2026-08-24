@@ -58,6 +58,20 @@ class EstoqueTaxonomiaBebidasTests(unittest.TestCase):
             server._estoque_grupo_inferido("Agua mineral sem gas 510 ml"),
         )
 
+    def test_inferencia_reconhece_tampas_preforma_e_grupo_customizado(self):
+        self.assertEqual(
+            "TAMPAS",
+            server._estoque_grupo_inferido("Tampa baixa vermelha"),
+        )
+        self.assertEqual(
+            "PREFORMA",
+            server._estoque_grupo_inferido("Pré-forma PET 28 mm"),
+        )
+        self.assertEqual(
+            "MATERIAL_PROMOCIONAL",
+            server._estoque_grupo_normalizado("Material promocional"),
+        )
+
     def test_saldo_prioriza_codigo_exato_antes_da_familia(self):
         rows = [
             {
@@ -369,6 +383,46 @@ class EstoqueTaxonomiaBebidasTests(unittest.TestCase):
         script = (raiz / "script.js").read_text(encoding="utf-8")
         self.assertIn("fatorCadastro > 1 ? fatorCadastro : 0", script)
         self.assertIn('if (embalagem.startsWith("CX")) return "caixas";', script)
+        self.assertIn("fatoresEmbalagem.length === 1", script)
+
+    def test_dashboard_exibe_somente_produtos_ativos_e_cadastrados(self):
+        rows = [
+            {"produto_id": 1, "produto_cadastrado": True, "produto_ativo": True, "exibir_dashboard": True},
+            {"produto_id": 2, "produto_cadastrado": True, "produto_ativo": False, "exibir_dashboard": True},
+            {"produto_id": 0, "produto_cadastrado": False, "produto_ativo": True, "exibir_dashboard": True},
+            {"produto_id": 3, "produto_cadastrado": True, "produto_ativo": True, "exibir_dashboard": False},
+        ]
+        with mock.patch.object(
+            server,
+            "_estoque_resumo_produtos_data",
+            return_value={"rows": rows, "meta": {}},
+        ) as resumo_mock:
+            payload = server._dashboard_estoque_data()
+        self.assertEqual([1], [row["produto_id"] for row in payload["rows"]])
+        self.assertEqual(1, payload["meta"]["itens_dashboard"])
+        resumo_mock.assert_called_once_with(incluir_fornecedores=False)
+
+    def test_interface_tem_grupos_dinamicos_e_atualizacao_a_cada_cinco_segundos(self):
+        raiz = Path(__file__).resolve().parents[1]
+        html = (raiz / "RioBranco.html").read_text(encoding="utf-8")
+        script = (raiz / "script.js").read_text(encoding="utf-8")
+        self.assertIn('id="estoqueGruposBody"', html)
+        self.assertIn('id="estoqueGrupoDashboard"', html)
+        self.assertNotIn('id="dashEstoquePrevisaoBody"', html)
+        self.assertIn('/api/estoque/grupos', script)
+        self.assertIn('}, 5000);', script)
+        self.assertIn('dashboardEstoqueAtualizando', script)
+
+    def test_exclusao_de_produto_preserva_historico_e_desativa_cadastro(self):
+        fonte = Path(server.__file__).read_text(encoding="utf-8")
+        self.assertIn("UPDATE estoque_produtos SET ativo=0 WHERE id=%s", fonte)
+        self.assertIn("UPDATE estoque_produto_codigos SET ativo=0 WHERE produto_id=%s", fonte)
+
+    def test_dashboard_busca_ultimo_valor_sem_subconsulta_por_linha(self):
+        fonte = Path(server.__file__).read_text(encoding="utf-8")
+        self.assertIn("MAX(e.id) AS ultimo_movimento_id", fonte)
+        self.assertIn("SELECT id, valor_unitario FROM estoque_movimentos WHERE id IN", fonte)
+        self.assertNotIn("SELECT e2.valor_unitario", fonte)
 
 
 if __name__ == "__main__":

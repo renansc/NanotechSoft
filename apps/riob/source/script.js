@@ -105,6 +105,9 @@ let estoqueState = {
   lastPortalPreviewSignature: "",
   cadastroProdutos: [],
   cadastroProdutoEditId: 0,
+  gruposEstoque: [],
+  grupoEstoqueEditId: 0,
+  dashboardEstoqueAtualizando: false,
   posicaoRows: [],
   posicaoMeta: {},
   movimentos: [],
@@ -15110,7 +15113,7 @@ function _estoqueProdutoLancamentoCombinaFiltros(produto = {}){
   return row ? _estoqueItemCombinaFiltros(row, filtros) : false;
 }
 
-const ESTOQUE_GRUPOS_ORDEM = { GFA: 0, PET: 1, AGUA: 2, OUTROS: 3 };
+const ESTOQUE_GRUPOS_ORDEM = { GFA: 10, PET: 20, AGUA: 30, TAMPAS: 40, PREFORMA: 50, OUTROS: 999 };
 const ESTOQUE_AREAS_ORDEM = {
   "PRODUCAO:PRODUTOS": 0,
   "PRODUCAO:MATERIA_PRIMA": 1,
@@ -15131,7 +15134,7 @@ function _estoqueAreaLabel(item = {}){
 }
 
 function _estoqueGrupoNormalizado(valor = ""){
-  const raw = String(valor || "").trim().toUpperCase();
+  const raw = _estoqueTextoChave(valor);
   if (!raw) return "";
   const aliases = {
     GF: "GFA",
@@ -15148,8 +15151,12 @@ function _estoqueGrupoNormalizado(valor = ""){
     "ÁGUA": "AGUA",
     OUTRO: "OUTROS",
     OUTROS: "OUTROS",
+    TAMPA: "TAMPAS",
+    TAMPAS: "TAMPAS",
+    "PRE FORMA": "PREFORMA",
+    PREFORMA: "PREFORMA",
   };
-  return aliases[raw] || (Object.prototype.hasOwnProperty.call(ESTOQUE_GRUPOS_ORDEM, raw) ? raw : "");
+  return aliases[raw] || raw.replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 30);
 }
 
 function _estoqueNomeIndicaAguaProduto(nomeProduto = ""){
@@ -15166,7 +15173,8 @@ function _estoqueGrupoInferido(item = {}){
   if (explicito) return explicito;
   const texto = `${item.nome_produto || ""} ${item.codigo_produto_nfe || ""} ${item.codigo_barras || ""}`.toUpperCase();
   if (_estoqueNomeIndicaAguaProduto(item.nome_produto || "")) return "AGUA";
-  if (/\bPREFORMA\b/.test(texto) || /\bPRE\s*-?\s*FORMA\b/.test(texto)) return "OUTROS";
+  if (/\bPREFORMA\b/.test(texto) || /\bPRE\s*-?\s*FORMA\b/.test(texto)) return "PREFORMA";
+  if (/\bTAMPAS?\b/.test(texto)) return "TAMPAS";
   if (/\bPET\b/.test(texto) || /\bDESCART/.test(texto) || /\bRECICLAV/.test(texto)) return "PET";
   if (/\bGFA\b/.test(texto) || /\bGRF\b/.test(texto) || /\bGARRAFA\b/.test(texto) || /\bVIDRO\b/.test(texto)) return "GFA";
   return "OUTROS";
@@ -15174,12 +15182,20 @@ function _estoqueGrupoInferido(item = {}){
 
 function _estoqueGrupoLabel(valor = ""){
   const grupo = _estoqueGrupoNormalizado(valor) || "OUTROS";
-  return grupo === "OUTROS" ? "Outros" : grupo;
+  const cadastro = (estoqueState.gruposEstoque || []).find((item) => _estoqueGrupoNormalizado(item.codigo) === grupo);
+  if (cadastro?.nome) return cadastro.nome;
+  if (grupo === "GFA") return "Retornavel";
+  if (grupo === "OUTROS") return "Outros";
+  if (grupo === "PREFORMA") return "Pre-forma";
+  if (grupo === "TAMPAS") return "Tampas";
+  return grupo;
 }
 
 function _estoqueGrupoOrdem(valor = ""){
   const grupo = _estoqueGrupoNormalizado(valor) || "OUTROS";
-  return Object.prototype.hasOwnProperty.call(ESTOQUE_GRUPOS_ORDEM, grupo) ? ESTOQUE_GRUPOS_ORDEM[grupo] : 99;
+  const cadastro = (estoqueState.gruposEstoque || []).find((item) => _estoqueGrupoNormalizado(item.codigo) === grupo);
+  if (Number.isFinite(Number(cadastro?.ordem))) return Number(cadastro.ordem);
+  return Object.prototype.hasOwnProperty.call(ESTOQUE_GRUPOS_ORDEM, grupo) ? ESTOQUE_GRUPOS_ORDEM[grupo] : 100;
 }
 
 function _estoqueOrdenarPorGrupo(rows = []){
@@ -15187,8 +15203,8 @@ function _estoqueOrdenarPorGrupo(rows = []){
     const areaA = ESTOQUE_AREAS_ORDEM[_estoqueAreaKey(a)] ?? 99;
     const areaB = ESTOQUE_AREAS_ORDEM[_estoqueAreaKey(b)] ?? 99;
     if (areaA !== areaB) return areaA - areaB;
-    const grupoA = _estoqueGrupoOrdem(a?.grupo_estoque);
-    const grupoB = _estoqueGrupoOrdem(b?.grupo_estoque);
+    const grupoA = Number.isFinite(Number(a?.grupo_ordem)) ? Number(a.grupo_ordem) : _estoqueGrupoOrdem(a?.grupo_estoque);
+    const grupoB = Number.isFinite(Number(b?.grupo_ordem)) ? Number(b.grupo_ordem) : _estoqueGrupoOrdem(b?.grupo_estoque);
     if (grupoA !== grupoB) return grupoA - grupoB;
     const nomeA = String(a?.produto_base_nome || a?.nome_produto || "").toUpperCase();
     const nomeB = String(b?.produto_base_nome || b?.nome_produto || "").toUpperCase();
@@ -15217,7 +15233,7 @@ function _estoqueLinhasAgrupadas(rows = [], rowRenderer, colspan = 1){
     }
     if (grupo !== grupoAtual) {
       grupoAtual = grupo;
-      partes.push(`<tr class="estoque-group-row"><td colspan="${Number(colspan || 1)}">${_escHtml(_estoqueGrupoLabel(grupo))}</td></tr>`);
+      partes.push(`<tr class="estoque-group-row"><td colspan="${Number(colspan || 1)}">${_escHtml(row?.grupo_nome || _estoqueGrupoLabel(grupo))}</td></tr>`);
     }
     partes.push(rowRenderer(row));
     return partes.join("");
@@ -15231,7 +15247,7 @@ function _estoqueBaseNomeInferido(item = {}){
   const textoNorm = _estoqueTextoChave(texto);
   if (grupo === "AGUA") {
     const gas = /\bSEM GAS\b/.test(textoNorm) ? "SEM GAS" : (/\b(?:COM GAS|C GAS)\b/.test(textoNorm) ? "COM GAS" : "");
-    const volume = /\b2\s*L(?:T)?\b|\b2L\b/.test(textoNorm) ? "2L"
+    const volume = /\b2\s*L(?:T|ITRO|ITROS)?\b|\b2L\b/.test(textoNorm) ? "2L"
       : /\b600\s*ML\b/.test(textoNorm) ? "600ML"
       : /\b510\s*ML\b/.test(textoNorm) ? "510ML"
       : /\b500\s*ML\b/.test(textoNorm) ? "500ML"
@@ -15253,7 +15269,7 @@ function _estoqueBaseNomeInferido(item = {}){
     [/\bCOLA\b/, "COLA"],
   ];
   const sabor = sabores.find(([padrao]) => padrao.test(textoNorm))?.[1] || "";
-  const volume = /\b2\s*L(?:T)?\b|\b2L\b/.test(textoNorm) ? "2L"
+  const volume = /\b2\s*L(?:T|ITRO|ITROS)?\b|\b2L\b/.test(textoNorm) ? "2L"
     : /\b600\s*ML\b/.test(textoNorm) ? "600ML"
     : /\b200\s*ML\b/.test(textoNorm) ? "200ML"
     : "";
@@ -15263,7 +15279,7 @@ function _estoqueBaseNomeInferido(item = {}){
   }
   if (explicito) return explicito;
   if (grupo === "PET") {
-    if (/\b2\s*L(T)?\b|\b2LT\b/.test(texto)) return "PET 2L";
+    if (/\b2\s*L(?:T|ITRO|ITROS)?\b|\b2LT\b/.test(texto)) return "PET 2L";
     if (/\b600\s*ML\b|\bPET\s*600\b/.test(texto)) return "PET 600ML";
     if (/\b200\s*ML\b|\bPET\s*200\b/.test(texto)) return "PET 200ML";
   }
@@ -15359,7 +15375,7 @@ function _estoqueResolverFatorProduto(item = {}, cadastro = null){
     produtoBaseNome,
   ].map((valor) => String(valor || "").trim().toUpperCase()).filter(Boolean).join(" ");
   const multiplicador = _estoqueExtrairMultiplicador(texto);
-  const eh2l = /\b2\s*L(?:T)?\b|\b2L\b/.test(texto);
+  const eh2l = /\b2\s*L(?:T|ITRO|ITROS)?\b|\b2L\b/.test(texto);
   const eh200ml = /\b200\s*ML\b/.test(texto);
   const pacotePet = eh2l ? 6 : (/\b9\b/.test(texto) ? 9 : (/\b12\b/.test(texto) ? 12 : 0));
   let fator = fatorInformado;
@@ -15503,7 +15519,24 @@ function _estoqueFormatPallet(item = {}, valor = 0){
   const meta = item?.pallet_meta || {};
   const porPallet = Number(meta.unidades_por_pallet || 0);
   const porVolume = Number(meta.unidades_por_volume || 0);
-  if (!(porPallet > 0) || !(porVolume > 0)) return `${_estoqueFormatQtd(quantidade)} unidades`;
+  if (!(porPallet > 0) || !(porVolume > 0)) {
+    const fatoresEmbalagem = [...new Set((Array.isArray(item?.fatores_embalagem_origem)
+      ? item.fatores_embalagem_origem : [])
+      .map((fator) => Number(fator || 0))
+      .filter((fator) => fator > 1))];
+    if (fatoresEmbalagem.length === 1) {
+      const fator = fatoresEmbalagem[0];
+      const sinal = quantidade < 0 ? "-" : "";
+      const absoluta = Math.abs(quantidade);
+      const volumes = Math.floor((absoluta + 1e-9) / fator);
+      const unidades = absoluta - (volumes * fator);
+      const rotulo = _acertoEstoqueVolumeLabel(item);
+      return unidades > 1e-9
+        ? `${sinal}${volumes} ${rotulo} + ${_estoqueFormatQtd(unidades)} unidades`
+        : `${sinal}${volumes} ${rotulo}`;
+    }
+    return `${_estoqueFormatQtd(quantidade)} unidades`;
+  }
   const sinal = quantidade < 0 ? "-" : "";
   let restante = Math.abs(quantidade);
   const pallets = Math.floor((restante + 1e-9) / porPallet);
@@ -15522,68 +15555,65 @@ function sincronizarNumeroNotaPorCodigo(){
 }
 
 async function renderDashboardEstoque(){
-  const bodyPrevisao = document.getElementById("dashEstoquePrevisaoBody");
   const bodyProducao = document.getElementById("dashEstoqueProducaoBody");
   const bodySaldo = document.getElementById("dashEstoqueSaldoBody");
   const resumo = document.getElementById("dashEstoqueResumo");
-  if (!bodyPrevisao || !bodyProducao || !bodySaldo) return;
-  const resp = await apiFetch("/api/dashboard_estoque");
-  if (!resp.ok) {
-    bodyPrevisao.innerHTML = `<tr><td colspan="7">Erro ao carregar previsao do estoque.</td></tr>`;
-    bodyProducao.innerHTML = `<tr><td colspan="6">Erro ao carregar previsao de producao.</td></tr>`;
-    bodySaldo.innerHTML = `<tr><td colspan="7">Erro ao carregar saldo do estoque.</td></tr>`;
-    if (resumo) resumo.textContent = "Nao foi possivel carregar o saldo comprometido do estoque.";
-    return;
+  if (!bodyProducao || !bodySaldo || estoqueState.dashboardEstoqueAtualizando) return;
+  estoqueState.dashboardEstoqueAtualizando = true;
+  try {
+    const resp = await apiFetch(`/api/dashboard_estoque?_=${Date.now()}`);
+    if (!resp.ok) {
+      bodyProducao.innerHTML = `<tr><td colspan="6">Erro ao carregar previsao de producao.</td></tr>`;
+      bodySaldo.innerHTML = `<tr><td colspan="8">Erro ao carregar posicao do estoque.</td></tr>`;
+      if (resumo) resumo.textContent = "Nao foi possivel atualizar o dashboard de estoque.";
+      return;
+    }
+    const payload = await resp.json();
+    const dados = _estoqueRowsPayload(payload);
+    const meta = _estoqueMetaPayload(payload);
+    if (Array.isArray(meta.grupos_estoque)) {
+      estoqueState.gruposEstoque = meta.grupos_estoque;
+      _renderSelectGruposEstoque();
+      renderGruposEstoque();
+    }
+    if (resumo) {
+      resumo.textContent = [
+        `Atualizado: ${_fmtDateBr(meta.atualizado_em || new Date().toISOString())}`,
+        "Atualizacao automatica: 5 s",
+        `Itens: ${meta.itens_dashboard || dados.length}`,
+        `Pendentes: ${meta.cargas_pendentes || 0}`,
+        `Saidas hoje: ${_estoqueFormatQtd(meta.saidas_dia_total || 0)}`,
+        `Producao sugerida: ${_estoqueFormatQtd(meta.necessidade_producao_semana_total || 0)}`,
+      ].join(" | ");
+    }
+    bodySaldo.innerHTML = dados.length ? _estoqueLinhasAgrupadas(dados, (r) => `
+      <tr>
+        <td>${_estoqueProdutoStatusHtml(r)}</td>
+        <td>${_escHtml(_estoqueCodigoReferencia(r))}</td>
+        <td>${_escHtml(_estoqueFormatPallet(r, r.quantidade_atual))}</td>
+        <td>${_escHtml(_estoqueFormatPallet(r, r.quantidade_comprometida))}</td>
+        <td><span style="font-weight:700;color:${Number(r.saldo_remanescente || 0) < 0 ? "#b91c1c" : "#166534"};">${_escHtml(_estoqueFormatPallet(r, r.saldo_remanescente))}</span></td>
+        <td>${_escHtml(_estoqueFormatPallet(r, r.saidas_dia))}</td>
+        <td>R$ ${_escHtml(_fmtMoney(r.ultimo_valor))}</td>
+        <td>${_escHtml(_fmtDateBr(r.ultima_movimentacao))}</td>
+      </tr>
+    `, 8) : `<tr><td colspan="8">Sem produtos ativos configurados para o dashboard.</td></tr>`;
+    const produtosVendidos = dados.filter((r) => ["PET", "AGUA"].includes(
+      _estoqueGrupoNormalizado(r.grupo_estoque)
+    ));
+    bodyProducao.innerHTML = produtosVendidos.length ? _estoqueLinhasAgrupadas(produtosVendidos, (r) => `
+      <tr>
+        <td>${_estoqueProdutoStatusHtml(r)}</td>
+        <td>${_escHtml(_estoqueFormatPallet(r, r.saldo_remanescente))}</td>
+        <td>${_escHtml(_estoqueFormatPallet(r, r.vendas_semana))}</td>
+        <td>${_escHtml(_estoqueFormatPallet(r, r.saidas_semana))}</td>
+        <td>${_escHtml(_estoqueFormatPallet(r, r.previsao_demanda_semana))}</td>
+        <td><span style="font-weight:700;color:${Number(r.necessidade_producao_semana || 0) > 0 ? "#b45309" : "#166534"};">${_escHtml(_estoqueFormatPallet(r, r.necessidade_producao_semana))}</span></td>
+      </tr>
+    `, 6) : `<tr><td colspan="6">Sem produtos PET ou AGUA nesta semana.</td></tr>`;
+  } finally {
+    estoqueState.dashboardEstoqueAtualizando = false;
   }
-  const payload = await resp.json();
-  const dados = _estoqueRowsPayload(payload);
-  const meta = _estoqueMetaPayload(payload);
-  if (resumo) {
-    resumo.textContent = [
-      `Referencia: ${_fmtDataCurtaBr(meta.data_referencia || "")}`,
-      `Cargas importadas: ${meta.cargas_importadas || 0}`,
-      `Pendentes: ${meta.cargas_pendentes || 0}`,
-      `Baixadas: ${meta.cargas_baixadas || 0}`,
-      `Vendas dia: ${_estoqueFormatQtd(meta.vendas_dia_total || 0)}`,
-      `Saidas dia: ${_estoqueFormatQtd(meta.saidas_dia_total || 0)}`,
-      `Producao sugerida: ${_estoqueFormatQtd(meta.necessidade_producao_semana_total || 0)}`,
-    ].join(" | ");
-  }
-  bodyPrevisao.innerHTML = dados.length ? _estoqueLinhasAgrupadas(dados, (r) => `
-    <tr>
-      <td>${_estoqueProdutoStatusHtml(r)}</td>
-      <td>${_escHtml(_estoqueCodigoReferencia(r))}</td>
-      <td>${_escHtml(_estoqueFormatPallet(r, r.quantidade_atual))}</td>
-      <td>${_escHtml(_estoqueFormatPallet(r, r.vendas_dia))}</td>
-      <td>${_escHtml(_estoqueFormatPallet(r, r.saidas_dia))}</td>
-      <td>${_escHtml(_estoqueFormatPallet(r, r.quantidade_comprometida))}</td>
-      <td><span style="font-weight:700;color:${Number(r.saldo_previsto_dia || 0) < 0 ? "#b91c1c" : "#166534"};">${_escHtml(_estoqueFormatPallet(r, r.saldo_previsto_dia))}</span></td>
-    </tr>
-  `, 7) : `<tr><td colspan="7">Sem itens cadastrados no estoque.</td></tr>`;
-  bodySaldo.innerHTML = dados.length ? _estoqueLinhasAgrupadas(dados, (r) => `
-    <tr>
-      <td>${_estoqueProdutoStatusHtml(r)}</td>
-      <td>${_escHtml(_estoqueCodigoReferencia(r))}</td>
-      <td>${_escHtml(_estoqueFormatPallet(r, r.quantidade_atual))}</td>
-      <td>${_escHtml(_estoqueFormatPallet(r, r.quantidade_comprometida))}</td>
-      <td><span style="font-weight:700;color:${Number(r.saldo_remanescente || 0) < 0 ? "#b91c1c" : "#166534"};">${_escHtml(_estoqueFormatPallet(r, r.saldo_remanescente))}</span></td>
-      <td>R$ ${_escHtml(_fmtMoney(r.ultimo_valor))}</td>
-      <td>${_escHtml(_fmtDateBr(r.ultima_movimentacao))}</td>
-    </tr>
-  `, 7) : `<tr><td colspan="7">Sem itens cadastrados no estoque.</td></tr>`;
-  const produtosVendidos = dados.filter((r) => ["PET", "AGUA"].includes(
-    _estoqueGrupoNormalizado(r.grupo_estoque)
-  ));
-  bodyProducao.innerHTML = produtosVendidos.length ? _estoqueLinhasAgrupadas(produtosVendidos, (r) => `
-    <tr>
-      <td>${_estoqueProdutoStatusHtml(r)}</td>
-      <td>${_escHtml(_estoqueFormatPallet(r, r.saldo_remanescente))}</td>
-      <td>${_escHtml(_estoqueFormatPallet(r, r.vendas_semana))}</td>
-      <td>${_escHtml(_estoqueFormatPallet(r, r.saidas_semana))}</td>
-      <td>${_escHtml(_estoqueFormatPallet(r, r.previsao_demanda_semana))}</td>
-      <td><span style="font-weight:700;color:${Number(r.necessidade_producao_semana || 0) > 0 ? "#b45309" : "#166534"};">${_escHtml(_estoqueFormatPallet(r, r.necessidade_producao_semana))}</span></td>
-    </tr>
-  `, 6) : `<tr><td colspan="6">Sem vendas ou estoque de PET e AGUA nesta semana.</td></tr>`;
 }
 
 function _estoqueResumoFluxo(item){
@@ -17509,10 +17539,11 @@ function setEstoqueView(view){
   if (nextView === "acerto") {
     carregarAcertoEstoque().catch((e) => console.warn("acerto estoque erro:", e));
   } else if (nextView === "cadastrar") {
-    carregarSaldoEstoque().catch((e) => {
-      console.warn("saldo estoque erro:", e);
-    });
-    carregarProdutosEstoqueCadastro().catch((e) => {
+    Promise.all([
+      carregarSaldoEstoque(),
+      carregarGruposEstoque(true),
+      ensureProdutosEstoqueCache(true),
+    ]).then(() => carregarProdutosEstoqueCadastro()).catch((e) => {
       console.warn("cadastro estoque erro:", e);
     });
   } else if (nextView === "posicao") {
@@ -17565,6 +17596,140 @@ function limparProdutoEstoqueCadastro(){
   if (saldoAtualBtn) saldoAtualBtn.classList.add("hidden");
   const status = document.getElementById("estoqueCadastroStatus");
   if (status) status.textContent = "Para PET e AGUA da producao, amarre os codigos de NF-e de entrada, venda/SELLOUT, NF-e de saida e movimento manual ao mesmo produto. Agua com gas e sem gas permanecem produtos distintos.";
+}
+
+function _renderSelectGruposEstoque(){
+  const select = document.getElementById("estoqueCadastroGrupo");
+  if (!select) return;
+  const atual = String(select.value || "");
+  const grupos = [...(estoqueState.gruposEstoque || [])].sort((a, b) =>
+    (Number(a.ordem || 100) - Number(b.ordem || 100))
+    || String(a.nome || a.codigo || "").localeCompare(String(b.nome || b.codigo || ""), "pt-BR")
+  );
+  select.innerHTML = ['<option value="">Grupo do estoque</option>'].concat(grupos.map((grupo) =>
+    `<option value="${_escAttr(grupo.codigo || "")}">${_escHtml(grupo.nome || grupo.codigo || "Grupo")}</option>`
+  )).join("");
+  if (grupos.some((grupo) => String(grupo.codigo || "") === atual)) select.value = atual;
+}
+
+function renderGruposEstoque(){
+  const body = document.getElementById("estoqueGruposBody");
+  if (!body) return;
+  const grupos = [...(estoqueState.gruposEstoque || [])].sort((a, b) =>
+    (Number(a.ordem || 100) - Number(b.ordem || 100))
+    || String(a.nome || a.codigo || "").localeCompare(String(b.nome || b.codigo || ""), "pt-BR")
+  );
+  body.innerHTML = grupos.length ? grupos.map((grupo) => `
+    <tr${Number(estoqueState.grupoEstoqueEditId || 0) === Number(grupo.id || 0) ? ' class="is-editing"' : ""}>
+      <td>${_escHtml(String(grupo.ordem ?? 100))}</td>
+      <td><strong>${_escHtml(grupo.nome || grupo.codigo || "-")}</strong><br><small>${_escHtml(grupo.codigo || "-")}</small></td>
+      <td>${_escHtml(grupo.estoque_area === "PRODUCAO" ? "Producao" : (grupo.estoque_area === "AUTO" ? "Automatica" : "Almoxarifado geral"))}<br><small>${_escHtml(grupo.estoque_subgrupo || "GERAL")}</small></td>
+      <td>${grupo.exibir_dashboard ? "Sim" : "Nao"}</td>
+      <td>
+        <button type="button" onclick="editarGrupoEstoque(${Number(grupo.id || 0)})">Editar</button>
+        ${grupo.sistema ? '<small class="hint">Grupo padrao</small>' : `<button type="button" onclick="excluirGrupoEstoque(${Number(grupo.id || 0)})">Excluir</button>`}
+      </td>
+    </tr>
+  `).join("") : '<tr><td colspan="5">Nenhum grupo cadastrado.</td></tr>';
+}
+
+async function carregarGruposEstoque(force = false){
+  if (!force && Array.isArray(estoqueState.gruposEstoque) && estoqueState.gruposEstoque.length) {
+    _renderSelectGruposEstoque();
+    renderGruposEstoque();
+    return estoqueState.gruposEstoque;
+  }
+  const resp = await apiFetch("/api/estoque/grupos");
+  const data = await resp.json().catch(() => ([]));
+  if (!resp.ok) throw new Error(data?.erro || "Falha ao carregar grupos de estoque.");
+  estoqueState.gruposEstoque = Array.isArray(data) ? data : [];
+  _renderSelectGruposEstoque();
+  renderGruposEstoque();
+  return estoqueState.gruposEstoque;
+}
+
+function limparGrupoEstoque(){
+  estoqueState.grupoEstoqueEditId = 0;
+  const defaults = {
+    estoqueGrupoNome: "",
+    estoqueGrupoCodigo: "",
+    estoqueGrupoArea: "ALMOXARIFADO_GERAL",
+    estoqueGrupoSubgrupo: "GERAL",
+    estoqueGrupoOrdem: "100",
+  };
+  Object.entries(defaults).forEach(([id, valor]) => {
+    const el = document.getElementById(id);
+    if (el) el.value = valor;
+  });
+  const dashboard = document.getElementById("estoqueGrupoDashboard");
+  if (dashboard) dashboard.checked = true;
+  const codigo = document.getElementById("estoqueGrupoCodigo");
+  if (codigo) codigo.disabled = false;
+  const status = document.getElementById("estoqueGrupoStatus");
+  if (status) status.textContent = "Cadastre um grupo ou edite um grupo existente.";
+  renderGruposEstoque();
+}
+
+function editarGrupoEstoque(id){
+  const grupo = (estoqueState.gruposEstoque || []).find((item) => Number(item.id || 0) === Number(id || 0));
+  if (!grupo) return;
+  estoqueState.grupoEstoqueEditId = Number(grupo.id || 0);
+  const valores = {
+    estoqueGrupoNome: grupo.nome || "",
+    estoqueGrupoCodigo: grupo.codigo || "",
+    estoqueGrupoArea: grupo.estoque_area || "AUTO",
+    estoqueGrupoSubgrupo: grupo.estoque_subgrupo || "AUTO",
+    estoqueGrupoOrdem: String(grupo.ordem ?? 100),
+  };
+  Object.entries(valores).forEach(([campo, valor]) => {
+    const el = document.getElementById(campo);
+    if (el) el.value = valor;
+  });
+  const dashboard = document.getElementById("estoqueGrupoDashboard");
+  if (dashboard) dashboard.checked = !!grupo.exibir_dashboard;
+  const codigo = document.getElementById("estoqueGrupoCodigo");
+  if (codigo) codigo.disabled = !!grupo.sistema;
+  const status = document.getElementById("estoqueGrupoStatus");
+  if (status) status.textContent = `Editando grupo ${grupo.nome || grupo.codigo}.`;
+  renderGruposEstoque();
+}
+
+async function salvarGrupoEstoque(){
+  const editId = Number(estoqueState.grupoEstoqueEditId || 0);
+  const payload = {
+    nome: String(document.getElementById("estoqueGrupoNome")?.value || "").trim(),
+    codigo: String(document.getElementById("estoqueGrupoCodigo")?.value || "").trim(),
+    estoque_area: String(document.getElementById("estoqueGrupoArea")?.value || "ALMOXARIFADO_GERAL"),
+    estoque_subgrupo: String(document.getElementById("estoqueGrupoSubgrupo")?.value || "GERAL"),
+    ordem: Number(document.getElementById("estoqueGrupoOrdem")?.value || 100),
+    exibir_dashboard: !!document.getElementById("estoqueGrupoDashboard")?.checked,
+  };
+  if (!payload.nome) return alert("Informe o nome do grupo de estoque.");
+  const resp = await apiFetch(editId > 0 ? `/api/estoque/grupos/${editId}` : "/api/estoque/grupos", {
+    method: editId > 0 ? "PUT" : "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) return alert(data?.erro || "Falha ao salvar grupo de estoque.");
+  const status = document.getElementById("estoqueGrupoStatus");
+  await carregarGruposEstoque(true);
+  await ensureProdutosEstoqueCache(true);
+  limparGrupoEstoque();
+  if (status) status.textContent = "Grupo de estoque salvo com sucesso.";
+  await carregarProdutosEstoqueCadastro();
+  if (window.__dashView === "estoque") await renderDashboardEstoque();
+}
+
+async function excluirGrupoEstoque(id){
+  const grupo = (estoqueState.gruposEstoque || []).find((item) => Number(item.id || 0) === Number(id || 0));
+  if (!grupo || !confirm(`Excluir o grupo ${grupo.nome || grupo.codigo}?`)) return;
+  const resp = await apiFetch(`/api/estoque/grupos/${Number(id || 0)}`, { method: "DELETE" });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) return alert(data?.erro || "Falha ao excluir grupo de estoque.");
+  await carregarGruposEstoque(true);
+  limparGrupoEstoque();
+  if (window.__dashView === "estoque") await renderDashboardEstoque();
 }
 
 async function carregarProdutosEstoqueCadastro(){
@@ -18097,6 +18262,7 @@ async function excluirProdutoEstoqueCadastro(id){
     limparProdutoEstoqueCadastro();
   }
   if (status) status.textContent = "Cadastro excluido com sucesso.";
+  await ensureProdutosEstoqueCache(true);
   await carregarEstoque();
   if (window.__dashView === "estoque") await renderDashboardEstoque();
 }
@@ -20016,6 +20182,7 @@ async function carregarEstoque(){
   await Promise.all([
     carregarSaldoEstoque(),
     carregarMovimentosEstoque(),
+    carregarGruposEstoque(),
     ensureProdutosEstoqueCache(),
     carregarImportacoesXmlEstoque(),
   ]);
@@ -20215,8 +20382,6 @@ window.onload = async () => {
       const tarefas = [carregarFretes(), atualizarDash()];
       if (window.__dashView === "frota") {
         tarefas.push(renderDashboardFrota());
-      } else if (window.__dashView === "estoque") {
-        tarefas.push(renderDashboardEstoque());
       }
       const secEstoque = document.getElementById("estoque");
       if (secEstoque && secEstoque.classList.contains("activeSection")) {
@@ -20234,6 +20399,22 @@ window.onload = async () => {
       console.warn("Falha ao atualizar automaticamente:", e);
     }
   }, 20000);
+
+  // O dashboard de estoque acompanha operacoes feitas em outras telas/terminais.
+  // Cinco segundos mantem a visao operacional atual sem sobrepor requisicoes.
+  setInterval(() => {
+    if (document.visibilityState === "visible" && window.__dashView === "estoque") {
+      renderDashboardEstoque().catch((e) => console.warn("dash estoque tempo real:", e));
+    }
+  }, 5000);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && window.__dashView === "estoque") {
+      renderDashboardEstoque().catch(() => {});
+    }
+  });
+  window.addEventListener("focus", () => {
+    if (window.__dashView === "estoque") renderDashboardEstoque().catch(() => {});
+  });
 
   setInterval(async () => {
     try {
