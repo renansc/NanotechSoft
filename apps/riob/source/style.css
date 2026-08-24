@@ -2220,6 +2220,36 @@ body.estoque-import-modal-open{
   background:#eff6ff;
 }
 
+.estoque-cadastro-layout > .boxFrota{
+  flex:1 0 100%;
+}
+
+.estoque-cadastro-filtros{
+  display:grid;
+  grid-template-columns:minmax(260px, 2fr) minmax(180px, 1fr) auto;
+  gap:10px;
+  align-items:center;
+  margin:12px 0 4px;
+}
+
+.estoque-cadastro-filtros input,
+.estoque-cadastro-filtros select,
+.estoque-cadastro-filtros button{
+  width:100%;
+  min-width:0;
+  margin:0;
+}
+
+#estoqueCadastroListaStatus:empty{
+  display:none;
+}
+
+@media (max-width:768px){
+  .estoque-cadastro-filtros{
+    grid-template-columns:1fr;
+  }
+}
+
 /* =========================================================
    DEVOLUÇÕES (MENU: Devoluções)
 ========================================================= */

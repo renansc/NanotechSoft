@@ -293,6 +293,19 @@ class EstoqueTaxonomiaBebidasTests(unittest.TestCase):
         self.assertIn("body: JSON.stringify(ajustePayload)", script)
         self.assertIn("ensureProdutosEstoqueCache(true)", script)
 
+    def test_cadastro_de_produtos_abre_formulario_somente_em_novo_ou_editar(self):
+        raiz = Path(__file__).resolve().parents[1]
+        html = (raiz / "RioBranco.html").read_text(encoding="utf-8")
+        script = (raiz / "script.js").read_text(encoding="utf-8")
+        self.assertIn('id="estoqueCadastroFormulario" class="boxFrota hidden"', html)
+        self.assertIn('onclick="novoProdutoEstoqueCadastro()"', html)
+        self.assertIn('id="estoqueCadastroBusca"', html)
+        self.assertIn('id="estoqueCadastroFiltroGrupo"', html)
+        self.assertIn('onclick="fecharFormularioProdutoEstoqueCadastro()"', html)
+        self.assertIn('_abrirFormularioProdutoEstoqueCadastro("editar")', script)
+        self.assertIn("function renderProdutosEstoqueCadastro()", script)
+        self.assertIn("conteudo.includes(busca)", script)
+
     def test_acerto_repetido_nao_reutiliza_referencia_unica_do_produto(self):
         class Cursor:
             def __init__(self):

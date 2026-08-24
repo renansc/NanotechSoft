@@ -250,6 +250,12 @@ If you need context fast, read these files first:
 - A physical opening inventory is an absolute balance, not an additive input.
   Submit it as `quantidade_atual` to the product adjustment endpoint, which
   records the auditable delta against the canonical consolidated balance.
+- `Estoque > Cadastrar produtos` opens as a searchable product list. Keep its
+  registration form collapsed until the operator selects `Novo Produto` or
+  `Editar`; both actions expand the same form, while cancel/save returns to the
+  list. Product search must cover name, canonical base, primary/source codes,
+  packaging, and stock group, with an additional group filter. Do not split the
+  existing combined product-registration and optional stock-adjustment flow.
 - The stock dashboard has one primary row per canonical active product. It shows
   current-month sales, the same month in the previous year, the average of up to
   three prior complete months, physical stock, committed stock, available stock,

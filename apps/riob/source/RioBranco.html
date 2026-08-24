@@ -898,9 +898,12 @@
     </div>
 
     <div id="estoqueViewCadastrar" class="hidden">
-      <div class="frotaGrid">
-        <div class="boxFrota">
-          <h3>Cadastro de Embalagem por Produto</h3>
+      <div class="frotaGrid estoque-cadastro-layout">
+        <div id="estoqueCadastroFormulario" class="boxFrota hidden" tabindex="-1">
+          <div class="vendas-box-head">
+            <h3 id="estoqueCadastroFormularioTitulo">Novo Produto</h3>
+            <button type="button" class="btn-secondary" onclick="fecharFormularioProdutoEstoqueCadastro()">Cancelar</button>
+          </div>
           <div class="estoque-import-grid">
             <input type="text" id="estoqueCadastroCodigoBarras" placeholder="Codigo de barras">
             <input type="text" id="estoqueCadastroCodigoNfe" placeholder="Codigo principal/legado">
@@ -926,13 +929,27 @@
             <button type="button" onclick="salvarProdutoEstoqueCadastro()">Salvar Cadastro e Acerto</button>
             <button type="button" id="estoqueCadastroSaldoAtualBtn" class="hidden" onclick="definirSaldoAtualProdutoEstoqueCadastro()">Definir Saldo Fisico</button>
             <button type="button" id="estoqueCadastroAjusteBtn" class="hidden" onclick="aplicarAjusteProdutoEstoqueCadastro()">Aplicar Ajuste</button>
-            <button type="button" onclick="limparProdutoEstoqueCadastro()">Limpar</button>
+            <button type="button" class="btn-secondary" onclick="fecharFormularioProdutoEstoqueCadastro()">Cancelar</button>
           </div>
           <div id="estoqueCadastroStatus" class="hint">Para PET e AGUA da producao, amarre os codigos de NF-e de entrada, venda/SELLOUT, NF-e de saida e movimento manual ao mesmo produto. Agua com gas e sem gas permanecem produtos distintos.</div>
         </div>
-        <div class="boxFrota">
-          <h3>Produtos Cadastrados</h3>
-          <div style="overflow:auto; max-height:420px;">
+        <div class="boxFrota estoque-cadastro-lista">
+          <div class="vendas-box-head">
+            <div>
+              <h3>Produtos Cadastrados</h3>
+              <div id="estoqueCadastroListaResumo" class="hint">Carregando cadastros...</div>
+            </div>
+            <button type="button" onclick="novoProdutoEstoqueCadastro()">Novo Produto</button>
+          </div>
+          <div class="estoque-cadastro-filtros">
+            <input type="search" id="estoqueCadastroBusca" placeholder="Buscar por produto, base, codigo ou embalagem" oninput="renderProdutosEstoqueCadastro()">
+            <select id="estoqueCadastroFiltroGrupo" onchange="renderProdutosEstoqueCadastro()">
+              <option value="">Todos os grupos</option>
+            </select>
+            <button type="button" class="btn-secondary" onclick="limparFiltrosProdutosEstoqueCadastro()">Limpar filtros</button>
+          </div>
+          <div id="estoqueCadastroListaStatus" class="hint"></div>
+          <div style="overflow:auto; max-height:560px;">
             <table>
               <thead>
                 <tr>
@@ -952,7 +969,7 @@
             </table>
           </div>
         </div>
-        <div class="boxFrota">
+        <div class="boxFrota estoque-cadastro-grupos">
           <h3>Grupos de Estoque</h3>
           <div class="hint">Cadastre os grupos usados nos produtos e escolha quais devem aparecer no dashboard.</div>
           <div class="estoque-import-grid">

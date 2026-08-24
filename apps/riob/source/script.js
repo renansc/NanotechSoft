@@ -17587,6 +17587,7 @@ async function confirmarImportacaoNfeEstoque(){
 
 function setEstoqueView(view){
   const admin = String(usuarioLogado?.perfil || "").toLowerCase() === "admin";
+  const viewAnterior = estoqueState.view;
   const requestedView = view === "lancar" || view === "importar_xml" ? "importar_xml_bipe" : view;
   const aguardandoIdentidade = requestedView === "acerto" && usuarioLogado === null;
   if (aguardandoIdentidade) {
@@ -17658,6 +17659,7 @@ function setEstoqueView(view){
   if (nextView === "acerto") {
     carregarAcertoEstoque().catch((e) => console.warn("acerto estoque erro:", e));
   } else if (nextView === "cadastrar") {
+    if (viewAnterior !== "cadastrar") limparProdutoEstoqueCadastro();
     Promise.all([
       carregarSaldoEstoque(),
       carregarGruposEstoque(true),
@@ -17682,7 +17684,32 @@ function setEstoqueView(view){
   }
 }
 
-function limparProdutoEstoqueCadastro(){
+function _abrirFormularioProdutoEstoqueCadastro(modo = "novo"){
+  const formulario = document.getElementById("estoqueCadastroFormulario");
+  const titulo = document.getElementById("estoqueCadastroFormularioTitulo");
+  if (titulo) titulo.textContent = modo === "editar" ? "Editar Produto" : "Novo Produto";
+  if (!formulario) return;
+  formulario.classList.remove("hidden");
+  requestAnimationFrame(() => {
+    formulario.scrollIntoView({ behavior: "smooth", block: "start" });
+    document.getElementById("estoqueCadastroNomeProduto")?.focus();
+  });
+}
+
+function novoProdutoEstoqueCadastro(){
+  limparProdutoEstoqueCadastro(false);
+  const listaStatus = document.getElementById("estoqueCadastroListaStatus");
+  if (listaStatus) listaStatus.textContent = "";
+  _abrirFormularioProdutoEstoqueCadastro("novo");
+  const status = document.getElementById("estoqueCadastroStatus");
+  if (status) status.textContent = "Preencha os dados do novo produto. O administrador tambem pode informar o saldo fisico ou um ajuste na mesma acao.";
+}
+
+function fecharFormularioProdutoEstoqueCadastro(){
+  limparProdutoEstoqueCadastro(true);
+}
+
+function limparProdutoEstoqueCadastro(fecharFormulario = true){
   estoqueState.cadastroProdutoEditId = 0;
   const ids = [
     "estoqueCadastroCodigoBarras",
@@ -17713,22 +17740,32 @@ function limparProdutoEstoqueCadastro(){
   if (ajusteBox) ajusteBox.classList.toggle("hidden", !admin);
   if (ajusteBtn) ajusteBtn.classList.add("hidden");
   if (saldoAtualBtn) saldoAtualBtn.classList.add("hidden");
+  const formulario = document.getElementById("estoqueCadastroFormulario");
+  const titulo = document.getElementById("estoqueCadastroFormularioTitulo");
+  if (fecharFormulario && formulario) formulario.classList.add("hidden");
+  if (titulo) titulo.textContent = "Novo Produto";
   const status = document.getElementById("estoqueCadastroStatus");
   if (status) status.textContent = "Para PET e AGUA da producao, amarre os codigos de NF-e de entrada, venda/SELLOUT, NF-e de saida e movimento manual ao mesmo produto. Agua com gas e sem gas permanecem produtos distintos.";
+  renderProdutosEstoqueCadastro();
 }
 
 function _renderSelectGruposEstoque(){
-  const select = document.getElementById("estoqueCadastroGrupo");
-  if (!select) return;
-  const atual = String(select.value || "");
   const grupos = [...(estoqueState.gruposEstoque || [])].sort((a, b) =>
     (Number(a.ordem || 100) - Number(b.ordem || 100))
     || String(a.nome || a.codigo || "").localeCompare(String(b.nome || b.codigo || ""), "pt-BR")
   );
-  select.innerHTML = ['<option value="">Grupo do estoque</option>'].concat(grupos.map((grupo) =>
-    `<option value="${_escAttr(grupo.codigo || "")}">${_escHtml(grupo.nome || grupo.codigo || "Grupo")}</option>`
-  )).join("");
-  if (grupos.some((grupo) => String(grupo.codigo || "") === atual)) select.value = atual;
+  [
+    ["estoqueCadastroGrupo", "Grupo do estoque"],
+    ["estoqueCadastroFiltroGrupo", "Todos os grupos"],
+  ].forEach(([id, placeholder]) => {
+    const select = document.getElementById(id);
+    if (!select) return;
+    const atual = String(select.value || "");
+    select.innerHTML = [`<option value="">${_escHtml(placeholder)}</option>`].concat(grupos.map((grupo) =>
+      `<option value="${_escAttr(grupo.codigo || "")}">${_escHtml(grupo.nome || grupo.codigo || "Grupo")}</option>`
+    )).join("");
+    if (grupos.some((grupo) => String(grupo.codigo || "") === atual)) select.value = atual;
+  });
 }
 
 function renderGruposEstoque(){
@@ -17851,16 +17888,48 @@ async function excluirGrupoEstoque(id){
   if (window.__dashView === "estoque") await renderDashboardEstoque();
 }
 
-async function carregarProdutosEstoqueCadastro(){
+function limparFiltrosProdutosEstoqueCadastro(){
+  const busca = document.getElementById("estoqueCadastroBusca");
+  const grupo = document.getElementById("estoqueCadastroFiltroGrupo");
+  if (busca) busca.value = "";
+  if (grupo) grupo.value = "";
+  renderProdutosEstoqueCadastro();
+  busca?.focus();
+}
+
+function renderProdutosEstoqueCadastro(){
   const body = document.getElementById("estoqueCadastroProdutosBody");
   if (!body) return;
-  try {
-    await ensureProdutosEstoqueCache();
-  } catch (err) {
-    body.innerHTML = `<tr><td colspan="8">Falha ao carregar cadastros.</td></tr>`;
-    return;
-  }
-  body.innerHTML = estoqueState.cadastroProdutos.length ? _estoqueLinhasAgrupadas(estoqueState.cadastroProdutos, (item) => `
+  const busca = _estoqueTextoChave(document.getElementById("estoqueCadastroBusca")?.value || "");
+  const grupoFiltro = _estoqueGrupoNormalizado(document.getElementById("estoqueCadastroFiltroGrupo")?.value || "");
+  const todos = Array.isArray(estoqueState.cadastroProdutos) ? estoqueState.cadastroProdutos : [];
+  const produtos = todos.filter((item) => {
+    if (grupoFiltro && _estoqueGrupoNormalizado(item.grupo_estoque) !== grupoFiltro) return false;
+    if (!busca) return true;
+    const aliases = [
+      ...(item.codigos_nfe_entrada || []),
+      ...(item.codigos_sellout || []),
+      ...(item.codigos_nfe_saida || []),
+      ...(item.codigos_manual || []),
+    ];
+    const conteudo = _estoqueTextoChave([
+      item.nome_produto,
+      item.produto_base_nome,
+      item.codigo_barras,
+      item.codigo_produto_nfe,
+      item.grupo_estoque,
+      _estoqueGrupoLabel(item.grupo_estoque),
+      item.embalagem_tipo_padrao,
+      item.unidade,
+      ...aliases,
+    ].filter(Boolean).join(" "));
+    return conteudo.includes(busca);
+  });
+  const resumo = document.getElementById("estoqueCadastroListaResumo");
+  if (resumo) resumo.textContent = (busca || grupoFiltro)
+    ? `Exibindo ${produtos.length} de ${todos.length} produto(s).`
+    : `${todos.length} produto(s) cadastrado(s).`;
+  body.innerHTML = produtos.length ? _estoqueLinhasAgrupadas(produtos, (item) => `
     <tr class="estoque-cadastro-row${Number(estoqueState.cadastroProdutoEditId || 0) === Number(item.id || 0) ? " is-editing" : ""}">
       <td>${_escHtml(_estoqueGrupoLabel(item.grupo_estoque))}</td>
       <td>${_escHtml(item.nome_produto || "-")}${item.cadastro_explicitado ? "" : ' <span class="estoque-pack-hint">confirmar</span>'}</td>
@@ -17879,7 +17948,19 @@ async function carregarProdutosEstoqueCadastro(){
         <button type="button" onclick="excluirProdutoEstoqueCadastro(${Number(item.id || 0)})">Excluir</button>
       </td>
     </tr>
-  `, 8) : `<tr><td colspan="8">Nenhum produto cadastrado.</td></tr>`;
+  `, 8) : `<tr><td colspan="8">${todos.length ? "Nenhum produto encontrado com os filtros informados." : "Nenhum produto cadastrado."}</td></tr>`;
+}
+
+async function carregarProdutosEstoqueCadastro(){
+  const body = document.getElementById("estoqueCadastroProdutosBody");
+  if (!body) return;
+  try {
+    await ensureProdutosEstoqueCache();
+  } catch (err) {
+    body.innerHTML = `<tr><td colspan="8">Falha ao carregar cadastros.</td></tr>`;
+    return;
+  }
+  renderProdutosEstoqueCadastro();
 }
 
 async function ensureProdutosEstoqueCache(force = false){
@@ -18144,6 +18225,8 @@ function sincronizarProdutoImportacaoEstoque(index){
 function editarProdutoEstoqueCadastro(id){
   const item = (estoqueState.cadastroProdutos || []).find((prod) => Number(prod.id || 0) === Number(id || 0));
   if (!item) return;
+  const listaStatus = document.getElementById("estoqueCadastroListaStatus");
+  if (listaStatus) listaStatus.textContent = "";
   estoqueState.cadastroProdutoEditId = Number(item.id || 0);
   const map = {
     estoqueCadastroCodigoBarras: item.codigo_barras || "",
@@ -18176,6 +18259,8 @@ function editarProdutoEstoqueCadastro(id){
   if (status) {
     status.textContent = `Editando cadastro de embalagem: ${item.nome_produto || item.codigo_barras || item.codigo_produto_nfe || item.id} | Saldo atual: ${_estoqueFormatQtd(_saldoProdutoCadastroAtual(item))}`;
   }
+  _abrirFormularioProdutoEstoqueCadastro("editar");
+  renderProdutosEstoqueCadastro();
 }
 
 async function salvarProdutoEstoqueCadastro(){
@@ -18276,12 +18361,12 @@ async function salvarProdutoEstoqueCadastro(){
   }
   await ensureProdutosEstoqueCache(true);
   await carregarEstoque();
+  const mensagemSucesso = dataAjuste
+    ? `Cadastro e acerto salvos. Saldo: ${_estoqueFormatQtd(dataAjuste?.saldo_antes)} -> ${_estoqueFormatQtd(dataAjuste?.saldo_depois)}.`
+    : "Cadastro de embalagem salvo com sucesso.";
   limparProdutoEstoqueCadastro();
-  if (status) {
-    status.textContent = dataAjuste
-      ? `Cadastro e acerto salvos. Saldo: ${_estoqueFormatQtd(dataAjuste?.saldo_antes)} -> ${_estoqueFormatQtd(dataAjuste?.saldo_depois)}.`
-      : "Cadastro de embalagem salvo com sucesso.";
-  }
+  const listaStatus = document.getElementById("estoqueCadastroListaStatus");
+  if (listaStatus) listaStatus.textContent = mensagemSucesso;
   if (window.__dashView === "estoque") await renderDashboardEstoque();
 }
 
@@ -18381,6 +18466,8 @@ async function excluirProdutoEstoqueCadastro(id){
     limparProdutoEstoqueCadastro();
   }
   if (status) status.textContent = "Cadastro excluido com sucesso.";
+  const listaStatus = document.getElementById("estoqueCadastroListaStatus");
+  if (listaStatus) listaStatus.textContent = "Cadastro excluido com sucesso.";
   await ensureProdutosEstoqueCache(true);
   await carregarEstoque();
   if (window.__dashView === "estoque") await renderDashboardEstoque();
