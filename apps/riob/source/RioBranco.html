@@ -141,19 +141,21 @@
       <div id="dashEstoqueResumo" class="hint">Carregando previsao e saldo do estoque por produto...</div>
       <div class="dash-estoque-panels">
         <div class="boxFrota">
-          <h3>Posicao Atual por Produto</h3>
+          <h3>Estoque, Vendas e Sugestao por Produto</h3>
           <div class="tableWrap">
             <table class="dash-table">
               <thead>
                 <tr>
                   <th>Produto</th>
                   <th>Codigo</th>
-                  <th>Qtd Atual</th>
+                  <th id="dashEstoqueMesAtualHead">Vendas Mes Atual</th>
+                  <th id="dashEstoqueAnoAnteriorHead">Mesmo Mes Ano Anterior</th>
+                  <th id="dashEstoqueMesesRecentesHead">Media Ultimos 3 Meses</th>
+                  <th>Estoque Atual</th>
                   <th>Comprometido</th>
                   <th>Disponivel</th>
-                  <th>Saidas Hoje</th>
-                  <th>Ultimo Valor</th>
-                  <th>Ultima Movimentacao</th>
+                  <th>Demanda Restante</th>
+                  <th>Producao Sugerida</th>
                 </tr>
               </thead>
               <tbody id="dashEstoqueSaldoBody"></tbody>
@@ -161,25 +163,28 @@
           </div>
         </div>
         <div class="boxFrota">
-          <h3>Previsao de Producao da Semana</h3>
+          <div class="vendas-box-head">
+            <h3>Relatorio de Estoque Comprometido</h3>
+            <button type="button" onclick="imprimirRelatorioEstoqueComprometido()">Imprimir Relatorio</button>
+          </div>
           <div class="tableWrap">
-            <table class="dash-table">
+            <table id="dashEstoqueComprometidoTable" class="dash-table">
               <thead>
                 <tr>
                   <th>Produto</th>
-                  <th>Saldo Disponivel</th>
-                  <th>Vendas Semana</th>
-                  <th>Saidas Semana</th>
-                  <th>Demanda Projetada</th>
-                  <th>Producao Sugerida</th>
+                  <th>Cargas Pendentes</th>
+                  <th>Estoque Atual</th>
+                  <th>Comprometido</th>
+                  <th>Disponivel</th>
+                  <th>% Comprometido</th>
                 </tr>
               </thead>
-              <tbody id="dashEstoqueProducaoBody"></tbody>
+              <tbody id="dashEstoqueComprometidoBody"></tbody>
             </table>
           </div>
         </div>
       </div>
-      <small class="hint">A producao sugerida usa a maior leitura entre vendas e saidas da semana, projeta sete dias e desconta o saldo disponivel. Assim, venda e baixa do mesmo despacho nao sao contadas duas vezes.</small>
+      <small class="hint">A demanda mensal usa a maior referencia entre o mesmo mes do ano anterior e a media dos tres meses completos anteriores com dados. A producao sugerida desconta as vendas ja realizadas no mes e o estoque disponivel. A sugestao se aplica aos produtos acabados Retornavel, PET e Agua.</small>
     </div>
 
     <div id="dashViewVendasDiario" class="dash-view hidden">

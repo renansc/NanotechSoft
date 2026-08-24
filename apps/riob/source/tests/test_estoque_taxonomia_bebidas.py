@@ -245,6 +245,37 @@ class EstoqueTaxonomiaBebidasTests(unittest.TestCase):
         self.assertEqual(140, previsao["previsao_demanda_semana"])
         self.assertEqual(130, previsao["necessidade_producao_semana"])
 
+    def test_previsao_mensal_usa_sazonalidade_e_media_recente(self):
+        previsao = server._estoque_previsao_producao_mensal(
+            vendas_mes_atual=200,
+            vendas_mes_ano_anterior=1000,
+            vendas_meses_recentes=[800, 900, 1000],
+            saldo_disponivel=300,
+        )
+        self.assertEqual(900, previsao["media_vendas_ultimos_meses"])
+        self.assertEqual(1000, previsao["demanda_referencia_mensal"])
+        self.assertEqual(800, previsao["demanda_restante_mes"])
+        self.assertEqual(500, previsao["necessidade_producao_mensal"])
+
+    def test_previsao_mensal_funciona_com_historico_parcial(self):
+        previsao = server._estoque_previsao_producao_mensal(
+            vendas_mes_atual=100,
+            vendas_mes_ano_anterior=None,
+            vendas_meses_recentes=[600, 900],
+            saldo_disponivel=200,
+        )
+        self.assertIsNone(previsao["vendas_mes_ano_anterior"])
+        self.assertEqual(750, previsao["demanda_referencia_mensal"])
+        self.assertEqual(450, previsao["necessidade_producao_mensal"])
+
+    def test_identifica_mes_em_arquivo_historico_sem_data_por_linha(self):
+        self.assertEqual(
+            "2026-06",
+            server._estoque_mes_chave(
+                server._estoque_mes_nome_arquivo("20260808_SELLOUT_Mes_junho2026.CSV")
+            ),
+        )
+
     def test_interface_permite_definir_saldo_fisico(self):
         raiz = Path(__file__).resolve().parents[1]
         html = (raiz / "RioBranco.html").read_text(encoding="utf-8")
@@ -387,7 +418,7 @@ class EstoqueTaxonomiaBebidasTests(unittest.TestCase):
 
     def test_dashboard_exibe_somente_produtos_ativos_e_cadastrados(self):
         rows = [
-            {"produto_id": 1, "produto_cadastrado": True, "produto_ativo": True, "exibir_dashboard": True},
+            {"produto_id": 1, "produto_cadastrado": True, "produto_ativo": True, "exibir_dashboard": True, "grupo_estoque": "GFA", "quantidade_comprometida": 5},
             {"produto_id": 2, "produto_cadastrado": True, "produto_ativo": False, "exibir_dashboard": True},
             {"produto_id": 0, "produto_cadastrado": False, "produto_ativo": True, "exibir_dashboard": True},
             {"produto_id": 3, "produto_cadastrado": True, "produto_ativo": True, "exibir_dashboard": False},
@@ -399,7 +430,10 @@ class EstoqueTaxonomiaBebidasTests(unittest.TestCase):
         ) as resumo_mock:
             payload = server._dashboard_estoque_data()
         self.assertEqual([1], [row["produto_id"] for row in payload["rows"]])
+        self.assertEqual([1], [row["produto_id"] for row in payload["comprometidos"]])
+        self.assertTrue(payload["rows"][0]["sugestao_producao_aplicavel"])
         self.assertEqual(1, payload["meta"]["itens_dashboard"])
+        self.assertEqual(5, payload["meta"]["quantidade_comprometida_total"])
         resumo_mock.assert_called_once_with(incluir_fornecedores=False)
 
     def test_interface_tem_grupos_dinamicos_e_atualizacao_a_cada_cinco_segundos(self):
@@ -412,6 +446,19 @@ class EstoqueTaxonomiaBebidasTests(unittest.TestCase):
         self.assertIn('/api/estoque/grupos', script)
         self.assertIn('}, 5000);', script)
         self.assertIn('dashboardEstoqueAtualizando', script)
+
+    def test_dashboard_tem_uma_linha_principal_e_relatorio_de_comprometidos(self):
+        raiz = Path(__file__).resolve().parents[1]
+        html = (raiz / "RioBranco.html").read_text(encoding="utf-8")
+        script = (raiz / "script.js").read_text(encoding="utf-8")
+        self.assertIn('id="dashEstoqueSaldoBody"', html)
+        self.assertNotIn('id="dashEstoqueProducaoBody"', html)
+        self.assertIn('id="dashEstoqueComprometidoBody"', html)
+        self.assertIn("Vendas Mes Atual", html)
+        self.assertIn("Mesmo Mes Ano Anterior", html)
+        self.assertIn("Producao Sugerida", html)
+        self.assertIn("imprimirRelatorioEstoqueComprometido", script)
+        self.assertIn("necessidade_producao_mensal", script)
 
     def test_exclusao_de_produto_preserva_historico_e_desativa_cadastro(self):
         fonte = Path(server.__file__).read_text(encoding="utf-8")

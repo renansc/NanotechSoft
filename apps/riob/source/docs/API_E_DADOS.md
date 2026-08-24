@@ -524,6 +524,22 @@ Regras:
 - o dashboard mostra uma linha canonica por produto e somente inclui produtos
   ativos, cadastrados e pertencentes a um grupo com `exibir_dashboard=1`; assim,
   movimentos historicos sem cadastro ativo nao recriam linhas excluidas
+- cada linha principal reune `vendas_mes_atual`, `vendas_mes_ano_anterior`,
+  `media_vendas_ultimos_meses`, `quantidade_atual`,
+  `quantidade_comprometida`, `saldo_remanescente`, `demanda_restante_mes` e
+  `necessidade_producao_mensal`; o produto nao e repetido em outra tabela de
+  previsao
+- a demanda mensal de produtos acabados `GFA`, `PET` e `AGUA` usa a maior
+  referencia disponivel entre o mesmo mes do ano anterior e a media de ate tres
+  meses completos anteriores. A sugestao desconta primeiro as vendas ja
+  realizadas no mes e depois o estoque disponivel
+- cada mes historico escolhe uma unica importacao de vendas, priorizando o cache
+  ativo e depois a importacao mais recente, para evitar duplicidade entre CSVs
+  sobrepostos. Arquivos mensais antigos sem `data_ref` podem fornecer o mes pelo
+  nome, como `Mes_junho2026`
+- a resposta inclui `comprometidos`, um recorte dos produtos reservados por
+  cargas PDF ainda pendentes de baixa, com o detalhamento em `comprometimentos`;
+  a tela apresenta e permite imprimir esse relatorio separadamente
 - excluir um produto e uma operacao logica: `estoque_produtos.ativo` e os aliases
   em `estoque_produto_codigos` sao desativados, mas os movimentos permanecem
   preservados para auditoria
@@ -533,11 +549,8 @@ Regras:
 - o inventario inicial deve usar `quantidade_atual` em
   `POST /api/estoque/produtos/<id>/ajuste`; o backend grava apenas a diferenca
   necessaria para que o saldo canonico consolidado passe a ser a contagem fisica
-- a previsao semanal comeca no domingo, usa a maior quantidade entre vendas e
-  saidas observadas para nao duplicar o mesmo despacho, projeta sete dias e
-  calcula `necessidade_producao_semana = max(0, previsao_demanda_semana - saldo_remanescente)`
-- a tabela de producao semanal exibe essa necessidade somente para `PET` e
-  `AGUA`; movimentos e saldos dos demais grupos continuam preservados
+- os campos semanais antigos continuam disponiveis na API para compatibilidade,
+  mas a tela principal usa a previsao mensal sazonal descrita acima
 - bebidas sao consolidadas pela identidade canonica
   `grupo + sabor/familia + volume`, mesmo quando existem codigos ou descricoes
   duplicadas; a resposta informa `codigos_origem` e `itens_unificados`

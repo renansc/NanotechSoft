@@ -238,10 +238,15 @@ If you need context fast, read these files first:
 - A physical opening inventory is an absolute balance, not an additive input.
   Submit it as `quantidade_atual` to the product adjustment endpoint, which
   records the auditable delta against the canonical consolidated balance.
-- Weekly production guidance for PET and water uses the Sunday-to-Saturday
-  operational week. Project the larger of weekly sales and weekly stock exits
-  across seven days (the same dispatch may occur in both sources), then subtract
-  available stock; never sum sales and exits as independent demand.
+- The stock dashboard has one primary row per canonical active product. It shows
+  current-month sales, the same month in the previous year, the average of up to
+  three prior complete months, physical stock, committed stock, available stock,
+  remaining monthly demand, and production suggestion. For finished GFA, PET,
+  and water products, monthly reference demand is the larger available value
+  between the prior-year month and recent-month average; subtract current-month
+  sales and then available stock. Select exactly one sales import per reference
+  month so overlapping caches never duplicate volume. A separate printable
+  committed-stock report lists only products reserved by pending loads.
 - Stock has two top-level operational areas: `PRODUCAO` and
   `ALMOXARIFADO_GERAL`. Production is split into `PRODUTOS` and
   `MATERIA_PRIMA`. Formula inputs (for example sugar, concentrate, flavoring,
@@ -252,8 +257,9 @@ If you need context fast, read these files first:
   active, registered products from groups marked `exibir_dashboard` may appear.
   Product deletion is logical: hide the registration and its aliases immediately
   but preserve every stock movement for audit. The stock dashboard refreshes its
-  uncached API projection every five seconds; weekly production guidance remains
-  exclusive to PET and water.
+  uncached stock projection every five seconds; historical monthly sales may be
+  held in a short in-memory cache because imported sales sources are immutable
+  and a newly activated import changes the cache key.
 - When changing behavior, inspect tests and add or adjust them when practical.
 - During dead-code sweeps, a missing direct reference is not enough to remove
   Flask routes, HTML callbacks, protocol handlers, library overrides or public

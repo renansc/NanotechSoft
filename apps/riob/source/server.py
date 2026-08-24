@@ -14004,6 +14004,7 @@ def _carregar_lookup_produtos_estoque(cur):
     """)
     rows = cur.fetchall() or []
     lookup = {
+        "_produtos": rows,
         "codigo_barras": {},
         "codigo_produto_nfe": {},
         "nome_produto": {},
@@ -14114,6 +14115,9 @@ def _estoque_merge_row(target, aliases, row):
         "quantidade_comprometida": 0.0,
         "vendas_dia": 0.0,
         "vendas_semana": 0.0,
+        "vendas_mes_atual": 0.0,
+        "vendas_historico": {},
+        "comprometimentos": {},
         "ultimo_valor": 0.0,
         "ultima_movimentacao": "",
         "fornecedores": {},
@@ -14235,10 +14239,266 @@ def _estoque_previsao_producao_semanal(
     }
 
 
+def _estoque_mes_deslocar(referencia, deslocamento):
+    referencia = referencia if isinstance(referencia, datetime.date) else datetime.date.today()
+    indice = (referencia.year * 12) + (referencia.month - 1) + _as_int(deslocamento, 0)
+    return datetime.date(indice // 12, (indice % 12) + 1, 1)
+
+
+def _estoque_mes_fim(inicio):
+    return _estoque_mes_deslocar(inicio, 1) - datetime.timedelta(days=1)
+
+
+def _estoque_mes_chave(referencia):
+    return referencia.strftime("%Y-%m") if isinstance(referencia, datetime.date) else ""
+
+
+def _estoque_mes_nome_arquivo(nome):
+    texto = _produto_nome_normalizado(nome)
+    meses = {
+        "JANEIRO": 1,
+        "FEVEREIRO": 2,
+        "MARCO": 3,
+        "ABRIL": 4,
+        "MAIO": 5,
+        "JUNHO": 6,
+        "JULHO": 7,
+        "AGOSTO": 8,
+        "SETEMBRO": 9,
+        "OUTUBRO": 10,
+        "NOVEMBRO": 11,
+        "DEZEMBRO": 12,
+    }
+    for nome_mes, numero_mes in meses.items():
+        match = re.search(rf"\b{nome_mes}\s*(20\d{{2}})\b", texto)
+        if match:
+            return datetime.date(_as_int(match.group(1)), numero_mes, 1)
+    return None
+
+
+def _estoque_previsao_producao_mensal(
+    vendas_mes_atual=0,
+    vendas_mes_ano_anterior=None,
+    vendas_meses_recentes=None,
+    saldo_disponivel=0,
+):
+    vendas_atual = max(0.0, _as_float(vendas_mes_atual, 0.0))
+    referencias = []
+    ano_anterior = None
+    if vendas_mes_ano_anterior is not None:
+        ano_anterior = max(0.0, _as_float(vendas_mes_ano_anterior, 0.0))
+        referencias.append(ano_anterior)
+    recentes = [
+        max(0.0, _as_float(valor, 0.0))
+        for valor in (vendas_meses_recentes or [])
+        if valor is not None
+    ]
+    media_recentes = round(sum(recentes) / len(recentes), 3) if recentes else None
+    if media_recentes is not None:
+        referencias.append(media_recentes)
+    demanda_referencia = round(max(referencias), 3) if referencias else 0.0
+    demanda_restante = round(max(0.0, demanda_referencia - vendas_atual), 3)
+    necessidade = round(max(0.0, demanda_restante - _as_float(saldo_disponivel, 0.0)), 3)
+    return {
+        "vendas_mes_ano_anterior": round(ano_anterior, 3) if ano_anterior is not None else None,
+        "media_vendas_ultimos_meses": media_recentes,
+        "meses_recentes_considerados": len(recentes),
+        "demanda_referencia_mensal": demanda_referencia,
+        "demanda_restante_mes": demanda_restante,
+        "necessidade_producao_mensal": necessidade,
+        "referencias_disponiveis": len(referencias),
+    }
+
+
+def _estoque_fontes_vendas_historicas(cur, cache_id, periodos):
+    periodos = [periodo for periodo in (periodos or []) if periodo.get("inicio")]
+    if not periodos:
+        return {}
+    inicio_min = min(periodo["inicio"] for periodo in periodos)
+    fim_max = max(periodo["fim"] for periodo in periodos)
+    cur.execute(
+        """
+        SELECT
+            v.import_id,
+            YEAR(v.data_ref) AS ano,
+            MONTH(v.data_ref) AS mes,
+            COUNT(*) AS linhas,
+            MAX(i.ativo) AS ativo,
+            MAX(i.source_name) AS source_name,
+            MAX(i.importado_em) AS importado_em
+        FROM vendas_relatorio_itens v
+        JOIN vendas_relatorios_importados i ON i.id=v.import_id
+        WHERE v.data_ref BETWEEN %s AND %s
+        GROUP BY v.import_id, YEAR(v.data_ref), MONTH(v.data_ref)
+        ORDER BY (v.import_id=%s) DESC, ativo DESC, importado_em DESC, linhas DESC
+        """,
+        (inicio_min, fim_max, cache_id),
+    )
+    por_mes = {}
+    for row in (cur.fetchall() or []):
+        chave_mes = f"{_as_int(row.get('ano')):04d}-{_as_int(row.get('mes')):02d}"
+        por_mes.setdefault(chave_mes, {
+            "id": _as_str(row.get("import_id")),
+            "source_name": _as_str(row.get("source_name")),
+            "usa_data_ref": True,
+        })
+
+    faltantes = {
+        _estoque_mes_chave(periodo["inicio"]): periodo
+        for periodo in periodos
+        if _estoque_mes_chave(periodo["inicio"]) not in por_mes
+    }
+    if faltantes:
+        cur.execute(
+            """
+            SELECT id, source_name, ativo, importado_em
+            FROM vendas_relatorios_importados
+            ORDER BY (id=%s) DESC, ativo DESC, importado_em DESC
+            """,
+            (cache_id,),
+        )
+        candidatos = {}
+        for row in (cur.fetchall() or []):
+            mes_arquivo = _estoque_mes_nome_arquivo(row.get("source_name"))
+            chave_mes = _estoque_mes_chave(mes_arquivo)
+            if chave_mes in faltantes and chave_mes not in candidatos:
+                candidatos[chave_mes] = row
+        for chave_mes, row in candidatos.items():
+            cur.execute(
+                """
+                SELECT COUNT(*) AS total,
+                       COALESCE(SUM(CASE WHEN data_ref IS NOT NULL THEN 1 ELSE 0 END), 0) AS datadas
+                FROM vendas_relatorio_itens
+                WHERE import_id=%s
+                """,
+                (row.get("id"),),
+            )
+            contagem = cur.fetchone() or {}
+            if _as_int(contagem.get("total"), 0) > 0 and _as_int(contagem.get("datadas"), 0) == 0:
+                por_mes[chave_mes] = {
+                    "id": _as_str(row.get("id")),
+                    "source_name": _as_str(row.get("source_name")),
+                    "usa_data_ref": False,
+                }
+
+    return {
+        periodo["campo"]: {
+            **(por_mes.get(_estoque_mes_chave(periodo["inicio"])) or {}),
+            "inicio": periodo["inicio"],
+            "fim": periodo["fim"],
+            "mes": _estoque_mes_chave(periodo["inicio"]),
+        }
+        for periodo in periodos
+    }
+
+
+def _estoque_vendas_periodo_rows(cur, fonte):
+    fonte = fonte or {}
+    if not fonte.get("id"):
+        return []
+    filtro_data = ""
+    params = [fonte.get("id")]
+    if fonte.get("usa_data_ref"):
+        filtro_data = " AND data_ref BETWEEN %s AND %s"
+        params.extend([fonte.get("inicio"), fonte.get("fim")])
+    cur.execute(
+        f"""
+        SELECT produto, MAX(produto_codigo) AS produto_codigo,
+               COALESCE(SUM(quantidade), 0) AS quantidade
+        FROM vendas_relatorio_itens
+        WHERE import_id=%s{filtro_data}
+        GROUP BY produto
+        """,
+        tuple(params),
+    )
+    return cur.fetchall() or []
+
+
+_ESTOQUE_VENDAS_HISTORICO_CACHE = {"chave": None, "expira": 0.0, "fontes": {}, "rows": {}}
+_ESTOQUE_VENDAS_HISTORICO_LOCK = threading.Lock()
+
+
+def _estoque_vendas_historico_cache(cur, cache_id, periodos, ttl_segundos=300):
+    chave = (
+        _as_str(cache_id),
+        tuple(
+            (periodo.get("campo"), _estoque_mes_chave(periodo.get("inicio")))
+            for periodo in (periodos or [])
+        ),
+    )
+    agora = time.monotonic()
+    with _ESTOQUE_VENDAS_HISTORICO_LOCK:
+        if (
+            _ESTOQUE_VENDAS_HISTORICO_CACHE.get("chave") == chave
+            and _as_float(_ESTOQUE_VENDAS_HISTORICO_CACHE.get("expira"), 0.0) > agora
+        ):
+            return (
+                _ESTOQUE_VENDAS_HISTORICO_CACHE.get("fontes") or {},
+                _ESTOQUE_VENDAS_HISTORICO_CACHE.get("rows") or {},
+            )
+        fontes = _estoque_fontes_vendas_historicas(cur, cache_id, periodos)
+        rows = {
+            campo: _estoque_vendas_periodo_rows(cur, fonte)
+            for campo, fonte in fontes.items()
+            if fonte.get("id")
+        }
+        _ESTOQUE_VENDAS_HISTORICO_CACHE.update({
+            "chave": chave,
+            "expira": agora + max(30, _as_int(ttl_segundos, 300)),
+            "fontes": fontes,
+            "rows": rows,
+        })
+        return fontes, rows
+
+
+def _estoque_aplicar_vendas_rows(linhas, aliases, lookup, rows, campo="", historico_chave=""):
+    total = 0.0
+    for row in (rows or []):
+        produto_texto = _as_str(row.get("produto"))
+        codigo_produto = _as_str(row.get("produto_codigo")) or _extrair_codigo_produto_texto(produto_texto)
+        nome_produto = re.sub(r"^\s*0*[A-Z0-9]+\s*[-–]\s*", "", produto_texto, flags=re.I).strip() or produto_texto
+        cadastro = _resolver_produto_lookup_estoque(
+            lookup,
+            codigo_produto_nfe=_codigo_produto_nfe_saida(codigo_produto),
+            nome_produto=nome_produto,
+            origem_codigo="sellout",
+        ) or {}
+        fator = _as_float(cadastro.get("fator_embalagem_padrao"), 0.0)
+        if fator <= 0:
+            fator = _fator_base_produto(
+                nome_produto=nome_produto,
+                embalagem="",
+                unidade_ref=_as_str(cadastro.get("unidade")),
+                grupo_produto=cadastro.get("grupo_estoque"),
+            )
+        quantidade_base = round(_as_float(row.get("quantidade"), 0.0) * (fator if fator > 0 else 1.0), 3)
+        item = _estoque_merge_row(linhas, aliases, {
+            "produto_id": cadastro.get("id"),
+            "produto_ativo": cadastro.get("ativo", 1) if cadastro else 1,
+            "codigo_barras": cadastro.get("codigo_barras"),
+            "codigo_produto_nfe": cadastro.get("codigo_produto_nfe") or codigo_produto,
+            "nome_produto": cadastro.get("nome_produto") or nome_produto,
+            "grupo_estoque": cadastro.get("grupo_estoque"),
+            "produto_base_nome": cadastro.get("produto_base_nome"),
+            "embalagem_tipo_padrao": cadastro.get("embalagem_tipo_padrao"),
+            "fator_embalagem_padrao": cadastro.get("fator_embalagem_padrao"),
+        })
+        if campo:
+            item[campo] = _as_float(item.get(campo), 0.0) + quantidade_base
+        if historico_chave:
+            historico = item.setdefault("vendas_historico", {})
+            historico[historico_chave] = _as_float(historico.get(historico_chave), 0.0) + quantidade_base
+        total += quantidade_base
+    return round(total, 3)
+
+
 def _estoque_resumo_produtos_data(incluir_fornecedores=True):
     hoje = datetime.date.today()
     inicio_semana = hoje - datetime.timedelta(days=(hoje.weekday() + 1) % 7)
     dias_semana_decorridos = max(1, min(7, (hoje - inicio_semana).days + 1))
+    inicio_mes = hoje.replace(day=1)
+    inicio_mes_ano_anterior = inicio_mes.replace(year=inicio_mes.year - 1)
+    meses_recentes = [_estoque_mes_deslocar(inicio_mes, -indice) for indice in (1, 2, 3)]
     conn = get_conn()
     cur = conn.cursor(dictionary=True)
     linhas = {}
@@ -14248,6 +14508,9 @@ def _estoque_resumo_produtos_data(incluir_fornecedores=True):
         "inicio_semana": _fmt_date(inicio_semana),
         "fim_semana": _fmt_date(inicio_semana + datetime.timedelta(days=6)),
         "dias_semana_decorridos": dias_semana_decorridos,
+        "mes_atual": _estoque_mes_chave(inicio_mes),
+        "mes_ano_anterior": _estoque_mes_chave(inicio_mes_ano_anterior),
+        "meses_recentes": [_estoque_mes_chave(mes) for mes in meses_recentes],
         "cargas_importadas": 0,
         "cargas_pendentes": 0,
         "cargas_baixadas": 0,
@@ -14262,6 +14525,15 @@ def _estoque_resumo_produtos_data(incluir_fornecedores=True):
     try:
         produtos_lookup = _carregar_lookup_produtos_estoque(cur)
         grupos_estoque = _estoque_grupos_map(cur)
+        for produto in produtos_lookup.get("_produtos", []):
+            grupo = grupos_estoque.get(_estoque_grupo_normalizado(produto.get("grupo_estoque"))) or {}
+            if not bool(_as_int(produto.get("ativo"), 0)) or not grupo.get("exibir_dashboard"):
+                continue
+            _estoque_merge_row(linhas, aliases, {
+                **produto,
+                "produto_id": produto.get("id"),
+                "produto_ativo": produto.get("ativo"),
+            })
         fornecedor_select = """
                 COALESCE(NULLIF(f.cnpj, ''), NULLIF(xi.emitente_cnpj, ''), NULLIF(c.emitente_cnpj, '')) AS fornecedor_cnpj,
                 COALESCE(NULLIF(f.nome, ''), NULLIF(xi.emitente_nome, ''), NULLIF(c.emitente_nome, '')) AS fornecedor_nome,
@@ -14398,7 +14670,16 @@ def _estoque_resumo_produtos_data(incluir_fornecedores=True):
                 "grupo_estoque": cadastro.get("grupo_estoque"),
                 "produto_base_nome": cadastro.get("produto_base_nome"),
             })
-            item["quantidade_comprometida"] += _as_float(row.get("quantidade_total"), 0.0)
+            quantidade_comprometida = _as_float(row.get("quantidade_total"), 0.0)
+            item["quantidade_comprometida"] += quantidade_comprometida
+            compromisso_chave = str(carga_id or _as_str(row.get("carga_nome")) or "sem_carga")
+            compromisso = item.setdefault("comprometimentos", {}).setdefault(compromisso_chave, {
+                "carga_id": carga_id,
+                "carga_nome": _as_str(row.get("carga_nome")) or f"Carga #{carga_id}",
+                "frete_status": status_frete,
+                "quantidade": 0.0,
+            })
+            compromisso["quantidade"] += quantidade_comprometida
 
         meta["cargas_pendentes"] = len(pending_carga_ids)
         meta["cargas_baixadas"] = len(baixadas_ids)
@@ -14411,48 +14692,81 @@ def _estoque_resumo_produtos_data(incluir_fornecedores=True):
 
         cache_id = _as_str((cache_entry or {}).get("id"))
         if cache_id:
-            for chave_periodo, data_inicio, data_fim in (
-                ("vendas_dia", hoje, hoje),
-                ("vendas_semana", inicio_semana, hoje),
-            ):
-                cur.execute("""
-                    SELECT
-                        produto,
-                        COALESCE(SUM(quantidade), 0) AS quantidade
-                    FROM vendas_relatorio_itens
-                    WHERE import_id=%s AND data_ref BETWEEN %s AND %s
-                    GROUP BY produto
-                """, (cache_id, data_inicio, data_fim))
-                for row in (cur.fetchall() or []):
-                    produto_texto = _as_str(row.get("produto"))
-                    codigo_produto = _extrair_codigo_produto_texto(produto_texto)
-                    nome_produto = re.sub(r"^\s*0*[A-Z0-9]+\s*[-–]\s*", "", produto_texto, flags=re.I).strip() or produto_texto
-                    cadastro = _buscar_produto_estoque(
-                        cur,
-                        codigo_produto_nfe=_codigo_produto_nfe_saida(codigo_produto),
-                        nome_produto=nome_produto,
-                        origem_codigo="sellout",
-                    ) or {}
-                    fator = _as_float(cadastro.get("fator_embalagem_padrao"), 0.0)
-                    if fator <= 0:
-                        fator = _fator_base_produto(
-                            nome_produto=nome_produto,
-                            embalagem="",
-                            unidade_ref=_as_str(cadastro.get("unidade")),
-                            grupo_produto=cadastro.get("grupo_estoque"),
-                        )
-                    quantidade_base = round(_as_float(row.get("quantidade"), 0.0) * (fator if fator > 0 else 1.0), 3)
-                    item = _estoque_merge_row(linhas, aliases, {
-                        "produto_id": cadastro.get("id"),
-                        "produto_ativo": cadastro.get("ativo", 1) if cadastro else 1,
-                        "codigo_barras": cadastro.get("codigo_barras"),
-                        "codigo_produto_nfe": cadastro.get("codigo_produto_nfe") or codigo_produto,
-                        "nome_produto": cadastro.get("nome_produto") or nome_produto,
-                        "grupo_estoque": cadastro.get("grupo_estoque"),
-                        "produto_base_nome": cadastro.get("produto_base_nome"),
-                    })
-                    item[chave_periodo] += quantidade_base
-                    meta[f"{chave_periodo}_total"] += quantidade_base
+            cur.execute(
+                """
+                SELECT
+                    produto,
+                    MAX(produto_codigo) AS produto_codigo,
+                    COALESCE(SUM(CASE WHEN data_ref=%s THEN quantidade ELSE 0 END), 0) AS vendas_dia,
+                    COALESCE(SUM(CASE WHEN data_ref BETWEEN %s AND %s THEN quantidade ELSE 0 END), 0) AS vendas_semana,
+                    COALESCE(SUM(CASE WHEN data_ref BETWEEN %s AND %s THEN quantidade ELSE 0 END), 0) AS vendas_mes_atual
+                FROM vendas_relatorio_itens
+                WHERE import_id=%s AND data_ref BETWEEN %s AND %s
+                GROUP BY produto
+                """,
+                (hoje, inicio_semana, hoje, inicio_mes, hoje, cache_id, min(inicio_semana, inicio_mes), hoje),
+            )
+            vendas_correntes = cur.fetchall() or []
+            for campo in ("vendas_dia", "vendas_semana", "vendas_mes_atual"):
+                rows_campo = [
+                    {**row, "quantidade": row.get(campo)}
+                    for row in vendas_correntes
+                ]
+                total_periodo = _estoque_aplicar_vendas_rows(
+                    linhas,
+                    aliases,
+                    produtos_lookup,
+                    rows_campo,
+                    campo=campo,
+                )
+                meta[f"{campo}_total"] = total_periodo
+
+            periodos_historicos = [{
+                "campo": "ano_anterior",
+                "inicio": inicio_mes_ano_anterior,
+                "fim": _estoque_mes_fim(inicio_mes_ano_anterior),
+            }] + [{
+                "campo": f"recente_{indice}",
+                "inicio": mes,
+                "fim": _estoque_mes_fim(mes),
+            } for indice, mes in enumerate(meses_recentes, start=1)]
+            fontes_historicas, vendas_historicas_rows = _estoque_vendas_historico_cache(
+                cur,
+                cache_id,
+                periodos_historicos,
+            )
+            meta["fontes_vendas"] = {
+                "mes_atual": {
+                    "mes": _estoque_mes_chave(inicio_mes),
+                    "disponivel": True,
+                    "source_name": _as_str((cache_entry or {}).get("source_name")),
+                }
+            }
+            for periodo in periodos_historicos:
+                campo = periodo["campo"]
+                fonte = fontes_historicas.get(campo) or {}
+                chave_mes = _estoque_mes_chave(periodo["inicio"])
+                meta["fontes_vendas"][campo] = {
+                    "mes": chave_mes,
+                    "disponivel": bool(fonte.get("id")),
+                    "source_name": _as_str(fonte.get("source_name")),
+                }
+                if fonte.get("id"):
+                    _estoque_aplicar_vendas_rows(
+                        linhas,
+                        aliases,
+                        produtos_lookup,
+                        vendas_historicas_rows.get(campo) or [],
+                        historico_chave=chave_mes,
+                    )
+        else:
+            meta["fontes_vendas"] = {
+                "mes_atual": {
+                    "mes": _estoque_mes_chave(inicio_mes),
+                    "disponivel": False,
+                    "source_name": "",
+                }
+            }
     finally:
         cur.close()
         conn.close()
@@ -14467,6 +14781,7 @@ def _estoque_resumo_produtos_data(incluir_fornecedores=True):
         quantidade_comprometida = round(_as_float(item.get("quantidade_comprometida"), 0.0), 3)
         vendas_dia = round(_as_float(item.get("vendas_dia"), 0.0), 3)
         vendas_semana = round(_as_float(item.get("vendas_semana"), 0.0), 3)
+        vendas_mes_atual = round(_as_float(item.get("vendas_mes_atual"), 0.0), 3)
         saldo_previsto_dia = round(quantidade_atual - quantidade_comprometida - vendas_dia, 3)
         saldo_remanescente = round(quantidade_atual - quantidade_comprometida, 3)
         previsao_semana = _estoque_previsao_producao_semanal(
@@ -14475,9 +14790,56 @@ def _estoque_resumo_produtos_data(incluir_fornecedores=True):
             saldo_disponivel=saldo_remanescente,
             dias_decorridos=dias_semana_decorridos,
         )
-        if not any([quantidade_atual, quantidade_comprometida, entradas_total, saidas_total, vendas_dia, vendas_semana, saidas_dia, saidas_semana]):
+        fontes_vendas = meta.get("fontes_vendas") or {}
+        historico_vendas = item.get("vendas_historico") or {}
+        fonte_ano_anterior = fontes_vendas.get("ano_anterior") or {}
+        vendas_mes_ano_anterior = (
+            round(_as_float(historico_vendas.get(fonte_ano_anterior.get("mes")), 0.0), 3)
+            if fonte_ano_anterior.get("disponivel")
+            else None
+        )
+        vendas_meses_recentes = []
+        for indice in (1, 2, 3):
+            fonte_recente = fontes_vendas.get(f"recente_{indice}") or {}
+            if not fonte_recente.get("mes"):
+                continue
+            vendas_meses_recentes.append({
+                "mes": fonte_recente.get("mes"),
+                "disponivel": bool(fonte_recente.get("disponivel")),
+                "quantidade": (
+                    round(_as_float(historico_vendas.get(fonte_recente.get("mes")), 0.0), 3)
+                    if fonte_recente.get("disponivel")
+                    else None
+                ),
+            })
+        previsao_mensal = _estoque_previsao_producao_mensal(
+            vendas_mes_atual=vendas_mes_atual,
+            vendas_mes_ano_anterior=vendas_mes_ano_anterior,
+            vendas_meses_recentes=[
+                mes.get("quantidade")
+                for mes in vendas_meses_recentes
+                if mes.get("disponivel")
+            ],
+            saldo_disponivel=saldo_remanescente,
+        )
+        metricas_ativas = [
+            quantidade_atual, quantidade_comprometida, entradas_total, saidas_total,
+            vendas_dia, vendas_semana, vendas_mes_atual, saidas_dia, saidas_semana,
+            vendas_mes_ano_anterior or 0,
+            *[mes.get("quantidade") or 0 for mes in vendas_meses_recentes],
+        ]
+        if not any(metricas_ativas) and not (
+            item.get("produto_cadastrado") and item.get("produto_ativo")
+        ):
             continue
         fornecedores = _estoque_fornecedores_lista(item)
+        comprometimentos = []
+        for compromisso in (item.get("comprometimentos") or {}).values():
+            comprometimentos.append({
+                **compromisso,
+                "quantidade": round(_as_float(compromisso.get("quantidade"), 0.0), 3),
+            })
+        comprometimentos.sort(key=lambda row: (_as_str(row.get("carga_nome")), _as_int(row.get("carga_id"), 0)))
         meta["saidas_dia_total"] += saidas_dia
         row_publica = {
             "produto_id": _as_int(item.get("produto_id"), 0),
@@ -14499,6 +14861,9 @@ def _estoque_resumo_produtos_data(incluir_fornecedores=True):
             "quantidade_comprometida": quantidade_comprometida,
             "vendas_dia": vendas_dia,
             "vendas_semana": vendas_semana,
+            "vendas_mes_atual": vendas_mes_atual,
+            "vendas_meses_recentes": vendas_meses_recentes,
+            **previsao_mensal,
             **previsao_semana,
             "saldo_previsto_dia": saldo_previsto_dia,
             "saldo_remanescente": saldo_remanescente,
@@ -14509,6 +14874,7 @@ def _estoque_resumo_produtos_data(incluir_fornecedores=True):
             "fornecedor_categorias": sorted({f.get("categoria") or "outros" for f in fornecedores}),
             "embalagem_tipo_padrao": " ".join(sorted(item.get("embalagens_origem") or [])),
             "fatores_embalagem_origem": sorted(item.get("fatores_embalagem_origem") or []),
+            "comprometimentos": comprometimentos,
         }
         row_publica.update(_estoque_classificacao_operacional(row_publica))
         grupo_config = grupos_estoque.get(_estoque_grupo_normalizado(row_publica.get("grupo_estoque"))) or {}
@@ -14565,20 +14931,37 @@ def _dashboard_estoque_data():
     meta["vendas_semana_total"] = round(
         sum(_as_float(row.get("vendas_semana"), 0.0) for row in rows), 3
     )
+    meta["vendas_mes_atual_total"] = round(
+        sum(_as_float(row.get("vendas_mes_atual"), 0.0) for row in rows), 3
+    )
     meta["saidas_dia_total"] = round(
         sum(_as_float(row.get("saidas_dia"), 0.0) for row in rows), 3
     )
     produtos_vendidos = [
         row for row in rows
-        if _estoque_grupo_normalizado(row.get("grupo_estoque")) in _ESTOQUE_GRUPOS_PRODUTOS_VENDIDOS
+        if _estoque_grupo_normalizado(row.get("grupo_estoque")) in {"GFA", "PET", "AGUA"}
     ]
+    produtos_vendidos_ids = {_as_int(row.get("produto_id"), 0) for row in produtos_vendidos}
+    for row in rows:
+        row["sugestao_producao_aplicavel"] = _as_int(row.get("produto_id"), 0) in produtos_vendidos_ids
     meta["previsao_demanda_semana_total"] = round(
         sum(_as_float(row.get("previsao_demanda_semana"), 0.0) for row in produtos_vendidos), 3
     )
     meta["necessidade_producao_semana_total"] = round(
         sum(_as_float(row.get("necessidade_producao_semana"), 0.0) for row in produtos_vendidos), 3
     )
-    return {"rows": rows, "meta": meta}
+    meta["necessidade_producao_mensal_total"] = round(
+        sum(_as_float(row.get("necessidade_producao_mensal"), 0.0) for row in produtos_vendidos), 3
+    )
+    comprometidos = [
+        row for row in rows
+        if _as_float(row.get("quantidade_comprometida"), 0.0) > 0
+    ]
+    meta["itens_comprometidos"] = len(comprometidos)
+    meta["quantidade_comprometida_total"] = round(
+        sum(_as_float(row.get("quantidade_comprometida"), 0.0) for row in comprometidos), 3
+    )
+    return {"rows": rows, "comprometidos": comprometidos, "meta": meta}
 
 
 _RASTREIO_SIMULACAO_ATE = datetime.date(2026, 7, 31)
