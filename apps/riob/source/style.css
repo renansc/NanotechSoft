@@ -1611,6 +1611,19 @@ button:hover{ background:#e68900; }
 .gestao-form-grid label{display:grid;gap:5px;font-weight:600;color:#334155}
 .gestao-form-grid input,.gestao-form-grid select,.gestao-form-grid textarea{width:100%;margin:0;min-width:0}
 .gestao-form-span{grid-column:1/-1}
+.gestao-field-action{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:stretch}
+.gestao-field-action button{margin:0;white-space:nowrap}
+.gestao-contact-panel{margin:14px 0;padding:14px;border:1px solid #bfdbfe;border-radius:12px;background:#eff6ff}
+.gestao-contact-panel.hidden{display:none}
+.gestao-contact-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}
+.gestao-contact-head > div{display:grid;gap:2px}
+.gestao-contact-head span,.gestao-contact-grid span{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#64748b}
+.gestao-contact-head strong{font-size:17px;color:#0f172a}
+.gestao-contact-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.gestao-contact-grid > div{display:grid;gap:4px;padding:10px;border-radius:9px;background:#fff}
+.gestao-contact-grid strong,.gestao-contact-grid a{color:#1e293b;overflow-wrap:anywhere}
+.gestao-contact-grid a[href]{color:#1d4ed8;text-decoration:underline}
+.gestao-contact-address{grid-column:1/-1}
 .gestao-row-alert td{background:#fff1f2!important;color:#9f1239}
 .gestao-color-dot{display:inline-block;width:18px;height:18px;border-radius:50%;border:1px solid rgba(15,23,42,.18)}
 #comprasParametrosProdutosBody input,#comprasParametrosProdutosBody select{min-width:100px;width:100%;margin:0}
@@ -2407,6 +2420,19 @@ body.estoque-import-modal-open{
   }
 
   .gestao-form-span{
+    grid-column:auto;
+  }
+
+  .gestao-contact-head{
+    align-items:stretch;
+    flex-direction:column;
+  }
+
+  .gestao-contact-grid{
+    grid-template-columns:1fr;
+  }
+
+  .gestao-contact-address{
     grid-column:auto;
   }
 

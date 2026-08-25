@@ -150,6 +150,53 @@ function preencherOpcoesCompras(){
   gestaoSetOptions("compraResponsavel", op.colaboradores || [], "Sem responsável");
 }
 
+function fornecedorContatoCompraAtual(){
+  const fornecedorId = Number(document.getElementById("compraFornecedor")?.value || 0);
+  return (comprasGestaoState.opcoes?.fornecedores || []).find((row) => Number(row.id) === fornecedorId) || null;
+}
+
+function contatoCompraLink(id, value, prefix){
+  const link = document.getElementById(id);
+  if (!link) return;
+  const texto = String(value || "").trim();
+  link.textContent = texto || "Não informado";
+  if (!texto) {
+    link.removeAttribute("href");
+    return;
+  }
+  const destino = prefix === "tel:" ? texto.replace(/[^+\d]/g, "") : texto.split(/[;,\s]+/).find((item) => item.includes("@")) || texto;
+  link.href = `${prefix}${destino}`;
+}
+
+function renderContatoCompra(fornecedor){
+  document.getElementById("compraContatoFornecedor").textContent = gestaoFornecedorNome(fornecedor);
+  document.getElementById("compraContatoRepresentante").textContent = fornecedor.representante_nome || fornecedor.contato_compras || "Não informado";
+  document.getElementById("compraContatoEndereco").textContent = fornecedor.endereco || "Não informado";
+  contatoCompraLink("compraContatoTelefone", fornecedor.telefone, "tel:");
+  contatoCompraLink("compraContatoEmail", fornecedor.emails, "mailto:");
+}
+
+function atualizarContatoCompra(){
+  const fornecedor = fornecedorContatoCompraAtual();
+  const botao = document.getElementById("compraContatoBtn");
+  if (botao) botao.disabled = !fornecedor;
+  const painel = document.getElementById("compraContatoPainel");
+  if (!fornecedor) {
+    painel?.classList.add("hidden");
+  } else if (painel && !painel.classList.contains("hidden")) {
+    renderContatoCompra(fornecedor);
+  }
+}
+
+function abrirContatoCompra(){
+  const fornecedor = fornecedorContatoCompraAtual();
+  if (!fornecedor) return;
+  renderContatoCompra(fornecedor);
+  document.getElementById("compraContatoPainel")?.classList.remove("hidden");
+}
+
+function fecharContatoCompra(){ document.getElementById("compraContatoPainel")?.classList.add("hidden"); }
+
 function renderComprasKanban(){
   const busca = String(document.getElementById("comprasKanbanBusca")?.value || "").trim().toLowerCase();
   const rows = comprasGestaoState.rows.filter((row) => !busca || [row.titulo,row.produto_nome,row.fornecedor_nome,row.justificativa].join(" ").toLowerCase().includes(busca));
@@ -169,11 +216,11 @@ function compraCardHtml(row){
 function abrirFormularioCompra(row = null){
   preencherOpcoesCompras(); document.getElementById("compraId").value = row?.id || ""; document.getElementById("compraOrigem").value = row?.origem || "manual";
   document.getElementById("compraTitulo").value = row?.titulo || ""; document.getElementById("compraProduto").value = row?.produto_id || ""; document.getElementById("compraFornecedor").value = row?.fornecedor_id || ""; document.getElementById("compraQuantidade").value = row?.quantidade || ""; document.getElementById("compraUnidade").value = row?.unidade || "UN"; document.getElementById("compraValorUnitario").value = row?.valor_unitario_previsto || ""; document.getElementById("compraPrioridade").value = row?.prioridade || "normal"; document.getElementById("compraStatus").value = row?.status || "solicitado"; document.getElementById("compraSolicitante").value = row?.solicitante || usuarioLogado?.nome || ""; document.getElementById("compraResponsavel").value = row?.responsavel_id || ""; document.getElementById("compraDataNecessidade").value = row?.data_necessidade || ""; document.getElementById("compraDataPrevisaoEntrega").value = row?.data_previsao_entrega || ""; document.getElementById("compraJustificativa").value = row?.justificativa || "";
-  document.getElementById("compraModalTitulo").textContent = row ? "Editar compra" : "Nova compra"; document.getElementById("compraExcluirBtn").classList.toggle("hidden", !row); document.getElementById("compraStatusMensagem").textContent = ""; document.getElementById("compraModal").classList.remove("hidden"); document.getElementById("compraTitulo").focus();
+  fecharContatoCompra(); atualizarContatoCompra(); document.getElementById("compraModalTitulo").textContent = row ? "Editar compra" : "Nova compra"; document.getElementById("compraExcluirBtn").classList.toggle("hidden", !row); document.getElementById("compraStatusMensagem").textContent = ""; document.getElementById("compraModal").classList.remove("hidden"); document.getElementById("compraTitulo").focus();
 }
 
 function editarCompra(id){ const row = comprasGestaoState.rows.find((item) => Number(item.id) === Number(id)); if (row) abrirFormularioCompra(row); }
-function fecharFormularioCompra(){ document.getElementById("compraModal")?.classList.add("hidden"); }
+function fecharFormularioCompra(){ fecharContatoCompra(); document.getElementById("compraModal")?.classList.add("hidden"); }
 function compraPayload(){ return {titulo:document.getElementById("compraTitulo").value,produto_id:document.getElementById("compraProduto").value || null,fornecedor_id:document.getElementById("compraFornecedor").value || null,quantidade:document.getElementById("compraQuantidade").value,unidade:document.getElementById("compraUnidade").value,valor_unitario_previsto:document.getElementById("compraValorUnitario").value,prioridade:document.getElementById("compraPrioridade").value,status:document.getElementById("compraStatus").value,solicitante:document.getElementById("compraSolicitante").value,responsavel_id:document.getElementById("compraResponsavel").value || null,data_necessidade:document.getElementById("compraDataNecessidade").value || null,data_previsao_entrega:document.getElementById("compraDataPrevisaoEntrega").value || null,justificativa:document.getElementById("compraJustificativa").value,origem:document.getElementById("compraOrigem").value || "manual"}; }
 
 async function salvarCompra(){ const id=Number(document.getElementById("compraId").value||0); const status=document.getElementById("compraStatusMensagem"); status.textContent="Salvando..."; const resp=await apiFetch(id?`/api/compras/solicitacoes/${id}`:"/api/compras/solicitacoes",{method:id?"PUT":"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(compraPayload())}); const data=await resp.json().catch(()=>({})); if(!resp.ok){status.textContent=data.erro||"Falha ao salvar compra.";return;} fecharFormularioCompra(); await carregarComprasKanban(); }
@@ -221,11 +268,11 @@ async function salvarTipoProcesso(){ const id=Number(document.getElementById("pr
 async function excluirTipoProcesso(id){if(!confirm("Excluir este tipo? Processos existentes manterão o histórico."))return;const resp=await apiFetch(`/api/processos-internos/tipos/${id}`,{method:"DELETE"});if(resp.ok)await carregarTiposProcessos();}
 
 async function carregarCadastrosCompras(){ const [fornResp,prevResp]=await Promise.all([apiFetch("/api/compras/fornecedores"),apiFetch("/api/compras/previsao")]); comprasGestaoState.fornecedores=await fornResp.json().catch(()=>[]); const prev=await prevResp.json().catch(()=>({})); comprasGestaoState.previsao=prev.rows||[]; comprasGestaoState.previsaoOpcoes=prev.opcoes||{}; renderFornecedoresCompras();renderParametrosProdutosCompras(); }
-function renderFornecedoresCompras(){ document.getElementById("comprasFornecedoresBody").innerHTML=(comprasGestaoState.fornecedores||[]).map((row)=>`<tr><td>${gestaoEsc(gestaoFornecedorNome(row))}</td><td>${gestaoEsc(row.cnpj||"-")}</td><td>${gestaoEsc(row.categoria||"outros")}</td><td>${gestaoEsc(row.contato_compras||row.emails||"-")}</td><td>${Number(row.prazo_entrega_dias||7)} dias</td><td>${gestaoEsc(row.condicao_pagamento||"-")}</td><td><button type="button" onclick="editarFornecedorCompras(${Number(row.id)})">Editar</button><button type="button" class="btn-danger" onclick="excluirFornecedorCompras(${Number(row.id)})">Excluir</button></td></tr>`).join("")||'<tr><td colspan="7">Nenhum fornecedor.</td></tr>'; }
-function novoFornecedorCompras(){["Id","Nome","Cnpj","Emails","Contato","PedidoMinimo","Pagamento","Observacoes"].forEach((s)=>{const el=document.getElementById(`comprasFornecedor${s}`);if(el)el.value="";});document.getElementById("comprasFornecedorCategoria").value="outros";document.getElementById("comprasFornecedorPrazo").value="7";document.getElementById("comprasFornecedorFormulario").classList.remove("hidden");}
-function editarFornecedorCompras(id){const row=comprasGestaoState.fornecedores.find((item)=>Number(item.id)===Number(id));if(!row)return;novoFornecedorCompras();document.getElementById("comprasFornecedorId").value=row.id;document.getElementById("comprasFornecedorNome").value=row.nome||"";document.getElementById("comprasFornecedorCnpj").value=row.cnpj||"";document.getElementById("comprasFornecedorCategoria").value=row.categoria||"outros";document.getElementById("comprasFornecedorEmails").value=row.emails||"";document.getElementById("comprasFornecedorContato").value=row.contato_compras||"";document.getElementById("comprasFornecedorPrazo").value=row.prazo_entrega_dias||7;document.getElementById("comprasFornecedorPedidoMinimo").value=row.pedido_minimo_valor||"";document.getElementById("comprasFornecedorPagamento").value=row.condicao_pagamento||"";document.getElementById("comprasFornecedorObservacoes").value=row.observacoes||"";}
+function renderFornecedoresCompras(){ document.getElementById("comprasFornecedoresBody").innerHTML=(comprasGestaoState.fornecedores||[]).map((row)=>`<tr><td>${gestaoEsc(gestaoFornecedorNome(row))}</td><td>${gestaoEsc(row.cnpj||"-")}</td><td>${gestaoEsc(row.categoria||"outros")}</td><td>${gestaoEsc(row.representante_nome||row.contato_compras||row.telefone||row.emails||"-")}</td><td>${Number(row.prazo_entrega_dias||7)} dias</td><td>${gestaoEsc(row.condicao_pagamento||"-")}</td><td><button type="button" onclick="editarFornecedorCompras(${Number(row.id)})">Editar</button><button type="button" class="btn-danger" onclick="excluirFornecedorCompras(${Number(row.id)})">Excluir</button></td></tr>`).join("")||'<tr><td colspan="7">Nenhum fornecedor.</td></tr>'; }
+function novoFornecedorCompras(){["Id","Nome","Cnpj","Emails","Contato","Representante","Telefone","Endereco","PedidoMinimo","Pagamento","Observacoes"].forEach((s)=>{const el=document.getElementById(`comprasFornecedor${s}`);if(el)el.value="";});document.getElementById("comprasFornecedorCategoria").value="outros";document.getElementById("comprasFornecedorPrazo").value="7";document.getElementById("comprasFornecedorFormulario").classList.remove("hidden");}
+function editarFornecedorCompras(id){const row=comprasGestaoState.fornecedores.find((item)=>Number(item.id)===Number(id));if(!row)return;novoFornecedorCompras();document.getElementById("comprasFornecedorId").value=row.id;document.getElementById("comprasFornecedorNome").value=row.nome||"";document.getElementById("comprasFornecedorCnpj").value=row.cnpj||"";document.getElementById("comprasFornecedorCategoria").value=row.categoria||"outros";document.getElementById("comprasFornecedorEmails").value=row.emails||"";document.getElementById("comprasFornecedorContato").value=row.contato_compras||"";document.getElementById("comprasFornecedorRepresentante").value=row.representante_nome||"";document.getElementById("comprasFornecedorTelefone").value=row.telefone||"";document.getElementById("comprasFornecedorEndereco").value=row.endereco||"";document.getElementById("comprasFornecedorPrazo").value=row.prazo_entrega_dias||7;document.getElementById("comprasFornecedorPedidoMinimo").value=row.pedido_minimo_valor||"";document.getElementById("comprasFornecedorPagamento").value=row.condicao_pagamento||"";document.getElementById("comprasFornecedorObservacoes").value=row.observacoes||"";}
 function fecharFornecedorCompras(){document.getElementById("comprasFornecedorFormulario")?.classList.add("hidden");}
-function fornecedorComprasPayload(){return{nome:document.getElementById("comprasFornecedorNome").value,cnpj:document.getElementById("comprasFornecedorCnpj").value,categoria:document.getElementById("comprasFornecedorCategoria").value,emails:document.getElementById("comprasFornecedorEmails").value,contato_compras:document.getElementById("comprasFornecedorContato").value,prazo_entrega_dias:document.getElementById("comprasFornecedorPrazo").value,pedido_minimo_valor:document.getElementById("comprasFornecedorPedidoMinimo").value,condicao_pagamento:document.getElementById("comprasFornecedorPagamento").value,observacoes:document.getElementById("comprasFornecedorObservacoes").value};}
+function fornecedorComprasPayload(){return{nome:document.getElementById("comprasFornecedorNome").value,cnpj:document.getElementById("comprasFornecedorCnpj").value,categoria:document.getElementById("comprasFornecedorCategoria").value,emails:document.getElementById("comprasFornecedorEmails").value,contato_compras:document.getElementById("comprasFornecedorContato").value,representante_nome:document.getElementById("comprasFornecedorRepresentante").value,telefone:document.getElementById("comprasFornecedorTelefone").value,endereco:document.getElementById("comprasFornecedorEndereco").value,prazo_entrega_dias:document.getElementById("comprasFornecedorPrazo").value,pedido_minimo_valor:document.getElementById("comprasFornecedorPedidoMinimo").value,condicao_pagamento:document.getElementById("comprasFornecedorPagamento").value,observacoes:document.getElementById("comprasFornecedorObservacoes").value};}
 async function salvarFornecedorCompras(){const id=Number(document.getElementById("comprasFornecedorId").value||0);const resp=await apiFetch(id?`/api/compras/fornecedores/${id}`:"/api/compras/fornecedores",{method:id?"PUT":"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(fornecedorComprasPayload())});const data=await resp.json().catch(()=>({}));document.getElementById("comprasFornecedorStatus").textContent=resp.ok?"Fornecedor salvo.":data.erro||"Falha ao salvar.";if(resp.ok){fecharFornecedorCompras();await carregarCadastrosCompras();}}
 async function excluirFornecedorCompras(id){if(!confirm("Desativar este fornecedor?"))return;const resp=await apiFetch(`/api/compras/fornecedores/${id}`,{method:"DELETE"});if(resp.ok)await carregarCadastrosCompras();}
 function renderParametrosProdutosCompras(){const fornecedores=comprasGestaoState.fornecedores||[];document.getElementById("comprasParametrosProdutosBody").innerHTML=(comprasGestaoState.previsao||[]).map((row)=>`<tr><td>${gestaoEsc(row.grupo_nome)}</td><td>${gestaoEsc(row.nome_produto)}</td><td><select id="paramCompraFornecedor${row.produto_id}"><option value="">Não definido</option>${fornecedores.map((f)=>`<option value="${f.id}" ${Number(f.id)===Number(row.fornecedor_id)?'selected':''}>${gestaoEsc(gestaoFornecedorNome(f))}</option>`).join("")}</select></td><td><input type="number" min="0" step="0.001" id="paramCompraSeguranca${row.produto_id}" value="${Number(row.estoque_seguranca||0)}"></td><td><input type="number" min="1" id="paramCompraPrazo${row.produto_id}" value="${Number(row.prazo_entrega_dias||7)}"></td><td><input type="number" min="0" step="0.001" id="paramCompraLote${row.produto_id}" value="${Number(row.lote_minimo||0)}"></td><td><input type="number" min="0.001" step="0.001" id="paramCompraMultiplo${row.produto_id}" value="${Number(row.multiplo_compra||1)}"></td><td><button type="button" onclick="salvarParametrosProdutoCompra(${Number(row.produto_id)})">Salvar</button></td></tr>`).join("")||'<tr><td colspan="8">Nenhum insumo ou item de almoxarifado cadastrado.</td></tr>';}

@@ -3032,11 +3032,24 @@ def ensure_schema():
             pedido_minimo_valor DECIMAL(14,2) NOT NULL DEFAULT 0,
             condicao_pagamento VARCHAR(180) DEFAULT '',
             contato_compras VARCHAR(255) DEFAULT '',
+            representante_nome VARCHAR(255) DEFAULT '',
+            telefone VARCHAR(80) DEFAULT '',
+            endereco VARCHAR(500) DEFAULT '',
             atualizado_em DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             CONSTRAINT fk_compras_fornecedor_config FOREIGN KEY (fornecedor_id) REFERENCES gestor_email_fornecedores(id)
                 ON UPDATE CASCADE ON DELETE CASCADE
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """)
+        for ddl in (
+            "ALTER TABLE compras_fornecedor_config ADD COLUMN representante_nome VARCHAR(255) DEFAULT '' AFTER contato_compras",
+            "ALTER TABLE compras_fornecedor_config ADD COLUMN telefone VARCHAR(80) DEFAULT '' AFTER representante_nome",
+            "ALTER TABLE compras_fornecedor_config ADD COLUMN endereco VARCHAR(500) DEFAULT '' AFTER telefone",
+        ):
+            try:
+                cur.execute(ddl)
+            except mysql.connector.Error as exc:
+                if exc.errno != 1060:
+                    raise
         cur.execute("""
         CREATE TABLE IF NOT EXISTS compras_produto_config (
             produto_id INT PRIMARY KEY,

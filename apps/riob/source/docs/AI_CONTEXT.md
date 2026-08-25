@@ -302,6 +302,9 @@ If you need context fast, read these files first:
   `gestor_email_fornecedores` and stores only purchase-specific supplier and
   product parameters in `compras_fornecedor_config` and
   `compras_produto_config`. Do not create a second supplier or product master.
+  The purchase popup exposes a `Contato` panel for the selected supplier with
+  representative, telephone, email, and address. These purchase contact fields
+  are maintained in the same supplier registration screen.
 - When changing behavior, inspect tests and add or adjust them when practical.
 - During dead-code sweeps, a missing direct reference is not enough to remove
   Flask routes, HTML callbacks, protocol handlers, library overrides or public

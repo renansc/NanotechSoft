@@ -703,7 +703,10 @@ Compras usam `compras_solicitacoes` e `compras_historico`, com os estados
 `cancelado`. Produtos, grupos e colaboradores sao os cadastros canonicos do
 estoque/RioB. Fornecedores sao os mesmos de `gestor_email_fornecedores`;
 `compras_fornecedor_config` e `compras_produto_config` guardam somente prazo,
-estoque de seguranca, lote minimo, multiplo e demais parametros de compra.
+estoque de seguranca, lote minimo, multiplo e demais parametros de compra. A
+configuracao do fornecedor tambem guarda `representante_nome`, `telefone` e
+`endereco`; o e-mail permanece no cadastro canonico. Esses dados aparecem no
+botao `Contato` do popup da compra para o fornecedor selecionado.
 
 Endpoints:
 

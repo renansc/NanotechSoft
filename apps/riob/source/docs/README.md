@@ -102,4 +102,5 @@ Esta revisao da documentacao passa a registrar explicitamente:
 - os modulos de Processos Internos e Gestao de Compras, com Kanban operacional,
   dashboards, relatorios filtraveis/PDF e cadastros orientados por tarefa; a
   previsao de compras reutiliza estoque, produtos, grupos e fornecedores
-  canonicos e considera historico de consumo, prazo, seguranca e pedidos abertos
+  canonicos e considera historico de consumo, prazo, seguranca e pedidos abertos;
+  o popup da compra mostra representante, telefone, e-mail e endereco

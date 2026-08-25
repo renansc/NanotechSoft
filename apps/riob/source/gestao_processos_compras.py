@@ -343,9 +343,13 @@ def register_gestao_processos_compras(app, services):
                 tuple(params),
             )
             rows = cur.fetchall() or []
-            cur.execute("""SELECT id,nome,cnpj,dominios,emails,
-                COALESCE(NULLIF(nome,''),NULLIF(dominios,''),NULLIF(emails,''),CONCAT('Fornecedor #',id)) AS nome_exibicao
-                FROM gestor_email_fornecedores WHERE ativo=1 ORDER BY nome_exibicao""")
+            cur.execute("""SELECT f.id,f.nome,f.cnpj,f.dominios,f.emails,
+                COALESCE(NULLIF(f.nome,''),NULLIF(f.dominios,''),NULLIF(f.emails,''),CONCAT('Fornecedor #',f.id)) AS nome_exibicao,
+                COALESCE(cfg.contato_compras,'') AS contato_compras,
+                COALESCE(cfg.representante_nome,'') AS representante_nome,
+                COALESCE(cfg.telefone,'') AS telefone,COALESCE(cfg.endereco,'') AS endereco
+                FROM gestor_email_fornecedores f LEFT JOIN compras_fornecedor_config cfg
+                ON cfg.fornecedor_id=f.id WHERE f.ativo=1 ORDER BY nome_exibicao""")
             suppliers = cur.fetchall() or []
             cur.execute("SELECT id,nome_produto,produto_base_nome,grupo_estoque,unidade FROM estoque_produtos WHERE ativo=1 ORDER BY nome_produto")
             products = cur.fetchall() or []
@@ -529,9 +533,13 @@ def register_gestao_processos_compras(app, services):
                 FROM compras_solicitacoes WHERE ativo=1 AND status NOT IN ('recebido','cancelado')
                 AND produto_id IS NOT NULL GROUP BY produto_id""")
             open_purchases = {as_int(row.get("produto_id"), 0): as_float(row.get("quantidade_aberta"), 0) for row in (cur.fetchall() or [])}
-            cur.execute("""SELECT id,nome,cnpj,dominios,emails,
-                COALESCE(NULLIF(nome,''),NULLIF(dominios,''),NULLIF(emails,''),CONCAT('Fornecedor #',id)) AS nome_exibicao
-                FROM gestor_email_fornecedores WHERE ativo=1 ORDER BY nome_exibicao""")
+            cur.execute("""SELECT f.id,f.nome,f.cnpj,f.dominios,f.emails,
+                COALESCE(NULLIF(f.nome,''),NULLIF(f.dominios,''),NULLIF(f.emails,''),CONCAT('Fornecedor #',f.id)) AS nome_exibicao,
+                COALESCE(cfg.contato_compras,'') AS contato_compras,
+                COALESCE(cfg.representante_nome,'') AS representante_nome,
+                COALESCE(cfg.telefone,'') AS telefone,COALESCE(cfg.endereco,'') AS endereco
+                FROM gestor_email_fornecedores f LEFT JOIN compras_fornecedor_config cfg
+                ON cfg.fornecedor_id=f.id WHERE f.ativo=1 ORDER BY nome_exibicao""")
             suppliers = cur.fetchall() or []
         finally:
             cur.close()
@@ -632,14 +640,18 @@ def register_gestao_processos_compras(app, services):
     def save_supplier_config(cur, supplier_id, payload):
         cur.execute(
             """INSERT INTO compras_fornecedor_config
-            (fornecedor_id,prazo_entrega_dias,pedido_minimo_valor,condicao_pagamento,contato_compras)
-            VALUES (%s,%s,%s,%s,%s)
+            (fornecedor_id,prazo_entrega_dias,pedido_minimo_valor,condicao_pagamento,contato_compras,
+             representante_nome,telefone,endereco)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
             ON DUPLICATE KEY UPDATE prazo_entrega_dias=VALUES(prazo_entrega_dias),
             pedido_minimo_valor=VALUES(pedido_minimo_valor),condicao_pagamento=VALUES(condicao_pagamento),
-            contato_compras=VALUES(contato_compras),atualizado_em=NOW()""",
+            contato_compras=VALUES(contato_compras),representante_nome=VALUES(representante_nome),
+            telefone=VALUES(telefone),endereco=VALUES(endereco),atualizado_em=NOW()""",
             (supplier_id, max(1, as_int(payload.get("prazo_entrega_dias"), 7)),
              max(0, as_float(payload.get("pedido_minimo_valor"), 0)),
-             as_str(payload.get("condicao_pagamento"))[:180], as_str(payload.get("contato_compras"))[:255]),
+             as_str(payload.get("condicao_pagamento"))[:180], as_str(payload.get("contato_compras"))[:255],
+             as_str(payload.get("representante_nome"))[:255], as_str(payload.get("telefone"))[:80],
+             as_str(payload.get("endereco"))[:500]),
         )
 
     @bp.route("/api/compras/fornecedores", methods=["GET", "POST"])
@@ -651,7 +663,10 @@ def register_gestao_processos_compras(app, services):
                 cur.execute("""SELECT f.*,COALESCE(cfg.prazo_entrega_dias,7) AS prazo_entrega_dias,
                     COALESCE(cfg.pedido_minimo_valor,0) AS pedido_minimo_valor,
                     COALESCE(cfg.condicao_pagamento,'') AS condicao_pagamento,
-                    COALESCE(cfg.contato_compras,'') AS contato_compras
+                    COALESCE(cfg.contato_compras,'') AS contato_compras,
+                    COALESCE(cfg.representante_nome,'') AS representante_nome,
+                    COALESCE(cfg.telefone,'') AS telefone,
+                    COALESCE(cfg.endereco,'') AS endereco
                     FROM gestor_email_fornecedores f LEFT JOIN compras_fornecedor_config cfg
                     ON cfg.fornecedor_id=f.id WHERE f.ativo=1 ORDER BY f.nome""")
                 return jsonify(cur.fetchall() or [])

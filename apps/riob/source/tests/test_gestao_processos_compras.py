@@ -67,6 +67,27 @@ class GestaoProcessosComprasTests(unittest.TestCase):
         self.assertIn("function renderComprasKanban()", script)
         self.assertIn("function renderPrevisaoCompras()", script)
 
+    def test_popup_da_compra_exibe_contato_do_fornecedor(self):
+        root = Path(__file__).resolve().parents[1]
+        html = (root / "RioBranco.html").read_text(encoding="utf-8")
+        script = (root / "gestao_processos_compras.js").read_text(encoding="utf-8")
+        source = Path(server.__file__).read_text(encoding="utf-8")
+        module = (root / "gestao_processos_compras.py").read_text(encoding="utf-8")
+        for item_id in (
+            'id="compraContatoBtn"',
+            'id="compraContatoPainel"',
+            'id="compraContatoRepresentante"',
+            'id="compraContatoTelefone"',
+            'id="compraContatoEmail"',
+            'id="compraContatoEndereco"',
+        ):
+            self.assertIn(item_id, html)
+        self.assertIn("function abrirContatoCompra()", script)
+        self.assertIn("representante_nome VARCHAR(255)", source)
+        self.assertIn("COALESCE(cfg.representante_nome,'') AS representante_nome", module)
+        self.assertIn("telefone=VALUES(telefone)", module)
+        self.assertIn("endereco=VALUES(endereco)", module)
+
     def test_recebimento_de_compra_nao_movimenta_estoque_automaticamente(self):
         source = Path(server.__file__).read_text(encoding="utf-8")
         module = (Path(server.__file__).parent / "gestao_processos_compras.py").read_text(encoding="utf-8")
