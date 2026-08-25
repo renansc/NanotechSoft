@@ -26,7 +26,7 @@ from io import BytesIO
 from email.message import EmailMessage
 from zoneinfo import ZoneInfo
 
-from flask import Flask, Response, jsonify, redirect, render_template, request, send_file, send_from_directory, session, url_for
+from flask import Flask, Response, has_request_context, jsonify, redirect, render_template, request, send_file, send_from_directory, session, url_for
 import mysql.connector
 from mysql.connector import errorcode
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -95,6 +95,19 @@ def load_runtime_env():
 
 load_runtime_env()
 
+
+def env_flag(name, default=False):
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return str(value).strip().lower() in {"1", "true", "yes", "sim", "on"}
+
+
+DEPLOY_MODE = str(os.environ.get("NS_DEPLOY_MODE") or "local").strip().lower()
+CLOUD_READ_ONLY = DEPLOY_MODE == "cloud-readonly" or env_flag("NS_READ_ONLY", False)
+CACHE_PROVIDER = str(os.environ.get("NS_CACHE_PROVIDER") or "").strip().lower()
+CACHE_MAX_AGE_SECONDS = max(60, int(os.environ.get("NS_CACHE_MAX_AGE_SECONDS", "900")))
+
 APPS_DIR = BASE_DIR / "apps"
 ALLOWED_APPS_FILE = BASE_DIR / "apps_liberados.txt"
 CLIENT_CONTRACTS_FILE = Path(
@@ -123,12 +136,12 @@ FINANCEIRO_ATTACHMENTS_DIR = Path(os.environ.get(
 NANOPONTO_DIR = Path(os.environ.get("NANOPONTO_APP_DIR", str(app_source_dir("nanoponto"))))
 ZAP_DIR = Path(os.environ.get("ZAP_APP_DIR", str(app_source_dir("zap"))))
 NANOSTORE_DIR = Path(os.environ.get("NANOSTORE_APP_DIR", str(app_source_dir("nanostore"))))
-GPSMUSICAL_DIR = Path(os.environ.get("GPSMUSICAL_APP_DIR", str(app_source_dir("gpsmusical"))))
-BPA_DIR = Path(os.environ.get("BPA_APP_DIR", str(app_source_dir("bpa"))))
-TATOO_DIR = Path(os.environ.get("TATOO_APP_DIR", str(app_source_dir("tatoo"))))
 TECNOLOGIA_DIR = Path(os.environ.get("TECNOLOGIA_APP_DIR", str(app_source_dir("tecnologia"))))
-RAIOXPACS_DIR = Path(os.environ.get("RAIOXPACS_APP_DIR", str(app_source_dir("pacs"))))
-NANOTECH_SHARED_DIR = Path(os.environ.get("NANOTECH_SHARED_DIR", str(APPS_DIR / "shared")))
+CHAMADOS_DIR = Path(os.environ.get("CHAMADOS_APP_DIR", str(app_source_dir("chamados"))))
+CHAMADOS_UPLOAD_DIR = Path(os.environ.get(
+    "CHAMADOS_UPLOAD_DIR",
+    str(APPS_DIR / "chamados" / "uploads"),
+))
 FINANCEIRO_COLLECTIONS = (
     "contas",
     "categorias",
@@ -175,9 +188,6 @@ ZAP_PORT = int(os.environ.get("ZAP_PORT", "8892"))
 ZAP_BASE_URL = f"http://127.0.0.1:{ZAP_PORT}"
 NANOSTORE_PORT = int(os.environ.get("NANOSTORE_PORT", "8893"))
 NANOSTORE_BASE_URL = f"http://127.0.0.1:{NANOSTORE_PORT}"
-RAIOXPACS_PORT = int(os.environ.get("RAIOXPACS_PORT", "8899"))
-RAIOXPACS_BASE_URL = f"http://127.0.0.1:{RAIOXPACS_PORT}"
-RAIOXPACS_STARTUP_WAIT = float(os.environ.get("RAIOXPACS_STARTUP_WAIT", "90"))
 
 
 RIOB_PROXY_ONLY = str(os.environ.get("RIOB_PROXY_ONLY") or "").strip().lower() in {"1", "true", "yes", "sim", "on"}
@@ -277,8 +287,6 @@ _zap_lock = threading.Lock()
 _zap_proc = None
 _nanostore_lock = threading.Lock()
 _nanostore_proc = None
-_raioxpacs_lock = threading.Lock()
-_raioxpacs_proc = None
 _finance_state_lock = threading.Lock()
 _technology_probe_lock = threading.Lock()
 _technology_speed_lock = threading.Lock()
@@ -310,6 +318,50 @@ DB_CONFIG = {
     "collation": "utf8mb4_unicode_ci",
     "connection_timeout": int(os.environ.get("NS_DB_CONNECT_TIMEOUT", "10")),
 }
+
+
+def load_cache_database_map():
+    raw = str(os.environ.get("NS_CACHE_DATABASE_MAP") or "").strip()
+    if not raw:
+        return {}
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"NS_CACHE_DATABASE_MAP invalido: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError("NS_CACHE_DATABASE_MAP deve ser um objeto JSON")
+    result = {}
+    for client_id, database_name in payload.items():
+        normalized_client = unicodedata.normalize("NFKD", str(client_id or "").strip().lower())
+        safe_client = re.sub(
+            r"[^a-z0-9]+",
+            "-",
+            normalized_client.encode("ascii", "ignore").decode("ascii"),
+        ).strip("-")
+        safe_database = str(database_name or "").strip()
+        if not safe_client or not re.fullmatch(r"[A-Za-z0-9_]+", safe_database):
+            raise RuntimeError("NS_CACHE_DATABASE_MAP contem cliente ou database invalido")
+        result[safe_client] = safe_database
+    return result
+
+
+CACHE_DATABASE_MAP = load_cache_database_map()
+
+
+def selected_cache_client_id():
+    if not CLOUD_READ_ONLY or not CACHE_DATABASE_MAP:
+        return ""
+    selected = str(session.get("cache_client_id") or "") if has_request_context() else ""
+    if selected in CACHE_DATABASE_MAP:
+        return selected
+    configured = re.sub(
+        r"[^a-z0-9]+",
+        "-",
+        str(os.environ.get("NS_CACHE_DEFAULT_CLIENT") or "").strip().lower(),
+    ).strip("-")
+    if configured in CACHE_DATABASE_MAP:
+        return configured
+    return next(iter(CACHE_DATABASE_MAP))
 
 
 def render_db_env_missing():
@@ -368,7 +420,17 @@ def get_server_conn():
     return mysql.connector.connect(**cfg)
 
 
-def get_conn():
+def get_conn(database=None):
+    cfg = DB_CONFIG.copy()
+    selected_client = selected_cache_client_id()
+    if database:
+        cfg["database"] = str(database)
+    elif selected_client:
+        cfg["database"] = CACHE_DATABASE_MAP[selected_client]
+    return mysql.connector.connect(**cfg)
+
+
+def get_auth_conn():
     return mysql.connector.connect(**DB_CONFIG)
 
 
@@ -392,6 +454,12 @@ def ensure_mysql_database(database_name):
 def ensure_database():
     global _db_ready
     if _db_ready:
+        return
+
+    # O cache de nuvem deve ser preparado somente pelo processo unidirecional
+    # executado no cliente. O Render nunca cria schema, semeia ou migra dados.
+    if CLOUD_READ_ONLY:
+        _db_ready = True
         return
 
     db_name = DB_CONFIG["database"]
@@ -583,6 +651,23 @@ def ensure_database():
     _db_ready = True
 
 
+READ_ONLY_SESSION_PATHS = {"/api/login", "/api/logout"}
+
+
+@app.before_request
+def enforce_cloud_read_only():
+    if not CLOUD_READ_ONLY:
+        return None
+    if request.method in {"GET", "HEAD", "OPTIONS"}:
+        return None
+    if request.path in READ_ONLY_SESSION_PATHS and request.method == "POST":
+        return None
+    return jsonify({
+        "erro": "Este portal em nuvem e somente leitura. Realize alteracoes no deploy local pela Tailscale.",
+        "code": "cloud_read_only",
+    }), 403
+
+
 @app.before_request
 def bootstrap_request():
     if request.path.startswith("/static/") or request.path.startswith("/healthz"):
@@ -592,9 +677,12 @@ def bootstrap_request():
 
 @app.after_request
 def add_no_cache_headers(resp):
+    if CLOUD_READ_ONLY:
+        resp.headers["X-Nanotech-Read-Only"] = "1"
     if (
         request.path.startswith("/api/")
         or request.path.startswith("/apps/tecnologia/api/")
+        or request.path.startswith("/apps/chamados/api/")
         or request.path in {"/", "/login", "/config"}
     ):
         resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
@@ -605,7 +693,13 @@ def add_no_cache_headers(resp):
 
 @app.route("/healthz")
 def healthz():
-    return jsonify({"ok": True})
+    return jsonify({
+        "ok": True,
+        "deploymentMode": DEPLOY_MODE,
+        "readOnly": CLOUD_READ_ONLY,
+        "cacheProvider": CACHE_PROVIDER,
+        "clientId": configured_client_id(),
+    })
 
 
 def _masked_host(value):
@@ -641,24 +735,37 @@ def healthz_database():
         cur = conn.cursor()
         cur.execute("SELECT DATABASE()")
         result["connected_schema"] = (cur.fetchone() or [""])[0]
-        riob_schema = str(result["riob_schema"]).replace("`", "")
-        cur.execute(
-            """
-            SELECT table_name
-            FROM information_schema.tables
-            WHERE table_schema=%s AND table_name IN ('fretes', 'veiculos')
-            """,
-            (riob_schema,),
-        )
-        tables = {row[0] for row in cur.fetchall()}
-        result["riob_tables"] = sorted(tables)
-        for table in ("fretes", "veiculos"):
-            if table in tables:
-                cur.execute(f"SELECT COUNT(*) FROM `{riob_schema}`.`{table}`")
-                result[f"riob_{table}"] = int((cur.fetchone() or [0])[0])
+        if CLOUD_READ_ONLY:
+            cur.execute(
+                """
+                SELECT table_name
+                FROM information_schema.tables
+                WHERE table_schema=DATABASE()
+                  AND table_name IN ('usuarios', 'cloud_cache_status')
+                """
+            )
+            tables = {row[0] for row in cur.fetchall()}
+            result["cache_tables"] = sorted(tables)
+            result["ok"] = "usuarios" in tables
+        else:
+            riob_schema = str(result["riob_schema"]).replace("`", "")
+            cur.execute(
+                """
+                SELECT table_name
+                FROM information_schema.tables
+                WHERE table_schema=%s AND table_name IN ('fretes', 'veiculos')
+                """,
+                (riob_schema,),
+            )
+            tables = {row[0] for row in cur.fetchall()}
+            result["riob_tables"] = sorted(tables)
+            for table in ("fretes", "veiculos"):
+                if table in tables:
+                    cur.execute(f"SELECT COUNT(*) FROM `{riob_schema}`.`{table}`")
+                    result[f"riob_{table}"] = int((cur.fetchone() or [0])[0])
+            result["ok"] = {"fretes", "veiculos"}.issubset(tables)
         cur.close()
         conn.close()
-        result["ok"] = {"fretes", "veiculos"}.issubset(tables)
     except Exception as exc:
         result["error_type"] = type(exc).__name__
         errno = getattr(exc, "errno", None)
@@ -666,6 +773,73 @@ def healthz_database():
             result["error_code"] = errno
     result["elapsed_ms"] = round((time.monotonic() - started) * 1000)
     return jsonify(result), (200 if result["ok"] else 503)
+
+
+def cloud_cache_status_payload():
+    now = dt.datetime.now(dt.timezone.utc)
+    items = []
+    errors = []
+    targets = list(CACHE_DATABASE_MAP.items()) or [(configured_client_id() or "cache", DB_CONFIG["database"])]
+    for configured_client, database_name in targets:
+        try:
+            conn = get_conn(database=database_name)
+            cur = conn.cursor(dictionary=True)
+            cur.execute(
+                """
+                SELECT client_id, dataset, row_count, source_snapshot_at, synced_at
+                FROM cloud_cache_status
+                ORDER BY client_id, dataset
+                """
+            )
+            rows = cur.fetchall()
+            cur.close()
+            conn.close()
+        except mysql.connector.Error as exc:
+            errors.append({"clientId": configured_client, "errorType": type(exc).__name__})
+            continue
+        for row in rows:
+            synced_at = row.get("synced_at")
+            if isinstance(synced_at, dt.datetime):
+                if synced_at.tzinfo is None:
+                    synced_at = synced_at.replace(tzinfo=dt.timezone.utc)
+                age_seconds = max(0, int((now - synced_at).total_seconds()))
+                synced_value = synced_at.isoformat()
+            else:
+                age_seconds = None
+                synced_value = str(synced_at or "")
+            source_at = row.get("source_snapshot_at")
+            items.append({
+                "clientId": configured_client,
+                "sourceClientId": row.get("client_id") or "",
+                "dataset": row.get("dataset") or "",
+                "rowCount": int(row.get("row_count") or 0),
+                "sourceSnapshotAt": source_at.isoformat() if isinstance(source_at, dt.datetime) else str(source_at or ""),
+                "syncedAt": synced_value,
+                "ageSeconds": age_seconds,
+                "fresh": age_seconds is not None and age_seconds <= CACHE_MAX_AGE_SECONDS,
+            })
+    return {
+        "ok": bool(items) and not errors and all(item["fresh"] for item in items),
+        "readOnly": CLOUD_READ_ONLY,
+        "provider": CACHE_PROVIDER,
+        "maxAgeSeconds": CACHE_MAX_AGE_SECONDS,
+        "datasets": items,
+        "errors": errors,
+    }
+
+
+@app.route("/healthz/cache")
+def healthz_cache():
+    try:
+        payload = cloud_cache_status_payload()
+    except mysql.connector.Error as exc:
+        return jsonify({
+            "ok": False,
+            "readOnly": CLOUD_READ_ONLY,
+            "provider": CACHE_PROVIDER,
+            "errorType": type(exc).__name__,
+        }), 503
+    return jsonify(payload), (200 if payload["ok"] else 503)
 
 
 # ---------------------------------------------------------------------------
@@ -694,7 +868,7 @@ def user_is_admin(usuario):
 
 
 def get_user_by_login(login):
-    conn = get_conn()
+    conn = get_auth_conn()
     cur = conn.cursor(dictionary=True)
     cur.execute(
         "SELECT id, nome, login, senha, perfil, nanostore_perfil, ativo FROM usuarios WHERE login=%s LIMIT 1",
@@ -707,7 +881,7 @@ def get_user_by_login(login):
 
 
 def get_user_by_id(user_id):
-    conn = get_conn()
+    conn = get_auth_conn()
     cur = conn.cursor(dictionary=True)
     cur.execute(
         "SELECT id, nome, login, perfil, nanostore_perfil, ativo FROM usuarios WHERE id=%s LIMIT 1",
@@ -721,7 +895,7 @@ def get_user_by_id(user_id):
 
 def get_config():
     try:
-        conn = get_conn()
+        conn = get_auth_conn()
         cur = conn.cursor(dictionary=True)
         cur.execute("SELECT tema FROM portal_config WHERE id=1")
         row = cur.fetchone() or {"tema": "rio_branco"}
@@ -735,7 +909,7 @@ def get_config():
 def get_user_permissions(usuario):
     if not usuario or user_is_admin(usuario):
         return {}
-    conn = get_conn()
+    conn = get_auth_conn()
     cur = conn.cursor(dictionary=True)
     cur.execute(
         """
@@ -773,7 +947,7 @@ def set_theme(theme_key):
     enabled_keys = {t["key"] for t in THEMES if t["enabled"]}
     if theme_key not in enabled_keys:
         theme_key = "rio_branco"
-    conn = get_conn()
+    conn = get_auth_conn()
     cur = conn.cursor()
     cur.execute(
         """
@@ -833,6 +1007,7 @@ def normalize_client_module(raw_module):
         "nome": str(raw_module.get("nome") or raw_module.get("name") or slug).strip(),
         "descricao": str(raw_module.get("descricao") or raw_module.get("description") or "").strip(),
         "href": str(raw_module.get("href") or raw_module.get("url") or "").strip(),
+        "hrefEnv": str(raw_module.get("hrefEnv") or raw_module.get("urlEnv") or "").strip(),
         "status": str(raw_module.get("status") or "contratado").strip() or "contratado",
     }
 
@@ -1203,6 +1378,42 @@ def allowed_app_keys():
     return {module["slug"] for module in client.get("modules") or [] if module.get("status") != "importar"}
 
 
+def resolved_module_href(module):
+    env_name = str(module.get("hrefEnv") or "").strip()
+    if env_name:
+        return str(os.environ.get(env_name) or "").strip()
+    return str(module.get("href") or "").strip()
+
+
+def active_external_apps():
+    client = active_client_contract()
+    if not client:
+        return []
+    apps = []
+    for module in client.get("modules") or []:
+        if str(module.get("status") or "").lower() != "externo":
+            continue
+        href = resolved_module_href(module)
+        if not href:
+            continue
+        app_item = normalize_app(
+            {
+                "app_key": module["slug"],
+                "nome": module.get("nome") or module["slug"],
+                "descricao": module.get("descricao") or "Modulo mantido em deploy proprio.",
+                "url": href,
+                "standalone_url": href,
+                "icone": "external-link",
+                "ordem": 900,
+                "ativo": True,
+            },
+            "externo",
+        )
+        if app_item:
+            apps.append(app_item)
+    return apps
+
+
 def filesystem_apps():
     """Carrega manifests de apps em apps/manifest.json e apps/*/app.json."""
     apps = []
@@ -1251,7 +1462,14 @@ def all_portal_apps():
 
 def list_apps():
     allowed = allowed_app_keys()
-    return [item for item in all_portal_apps() if allowed is None or item["app_key"] in allowed]
+    merged = {
+        item["app_key"]: item
+        for item in all_portal_apps()
+        if allowed is None or item["app_key"] in allowed
+    }
+    for item in active_external_apps():
+        merged[item["app_key"]] = item
+    return sorted(merged.values(), key=lambda item: (item["ordem"], item["nome"].lower()))
 
 
 def app_catalog():
@@ -1273,7 +1491,8 @@ def enrich_client_module(module, catalog):
         "slug": module["slug"],
         "nome": module["nome"] or catalog_item.get("nome") or module["slug"],
         "descricao": module["descricao"] or catalog_item.get("descricao") or "",
-        "href": module["href"] or catalog_item.get("href") or "",
+        "href": resolved_module_href(module) or catalog_item.get("href") or "",
+        "hrefEnv": module.get("hrefEnv") or "",
         "status": module["status"] or "contratado",
     }
 
@@ -1295,11 +1514,15 @@ def client_contracts_payload():
     clients = []
     for client in state["clients"]:
         if client["allModules"]:
-            modules = [
-                {**module, "status": "contratado"}
+            modules_by_slug = {
+                module["slug"]: {**module, "status": "contratado"}
                 for module in catalog.values()
                 if module.get("href")
-            ]
+            }
+            for module in client["modules"]:
+                if module.get("status") == "externo":
+                    modules_by_slug[module["slug"]] = enrich_client_module(module, catalog)
+            modules = list(modules_by_slug.values())
         else:
             modules = [enrich_client_module(module, catalog) for module in client["modules"]]
         clients.append(
@@ -1388,9 +1611,6 @@ def app_visible_to_user(app_item, usuario):
 PUBLIC_APP_PATH_PREFIXES = (
     "/apps/zap/webhooks/whatsapp",
     "/apps/zap/public/uploads/",
-    "/apps/pacs/static/",
-    "/apps/pacs/share/",
-    "/apps/pacs/api/share/",
 )
 
 
@@ -1408,7 +1628,7 @@ def enforce_app_permission():
 
     usuario = current_user_or_logout()
     if not usuario:
-        if path.startswith("/apps/tecnologia/api/"):
+        if path.startswith(("/apps/tecnologia/api/", "/apps/chamados/api/")):
             return jsonify({"erro": "login necessário"}), 401
         return redirect(url_for("login_page"))
     if not app_visible_to_user({"app_key": app_key}, usuario):
@@ -1527,6 +1747,13 @@ def portal_context(usuario=None):
         "themes": THEMES,
         "client_config": client_config,
         "active_client": client_config["activeClient"],
+        "deployment": {
+            "mode": DEPLOY_MODE,
+            "readOnly": CLOUD_READ_ONLY,
+            "cacheProvider": CACHE_PROVIDER,
+            "cacheClients": sorted(CACHE_DATABASE_MAP),
+            "selectedCacheClient": selected_cache_client_id(),
+        },
     }
 
 
@@ -1547,6 +1774,18 @@ def portal():
         "portal.html",
         **portal_context(usuario),
     )
+
+
+@app.route("/cloud/client/<client_id>")
+@login_required
+def select_cloud_client(client_id):
+    if not CLOUD_READ_ONLY:
+        return jsonify({"erro": "selecao de cache disponivel somente no portal em nuvem"}), 404
+    safe_id = slugify(client_id)
+    if safe_id not in CACHE_DATABASE_MAP:
+        return jsonify({"erro": "cache de cliente nao configurado"}), 404
+    session["cache_client_id"] = safe_id
+    return redirect(url_for("portal"))
 
 
 @app.route("/config")
@@ -1715,7 +1954,7 @@ NANOSTORE_USER_PROFILES = {
 
 
 def portal_users_payload():
-    conn = get_conn()
+    conn = get_auth_conn()
     cur = conn.cursor(dictionary=True)
     cur.execute(
         """
@@ -1778,7 +2017,7 @@ def api_update_user(user_id):
     if int(admin["id"]) == user_id and (perfil != "admin" or not ativo):
         return jsonify({"erro": "o administrador conectado nao pode remover o proprio acesso"}), 400
 
-    conn = get_conn()
+    conn = get_auth_conn()
     cur = conn.cursor(dictionary=True)
     try:
         cur.execute("SELECT id FROM usuarios WHERE id=%s LIMIT 1", (user_id,))
@@ -4211,433 +4450,40 @@ def nanostore_proxy(subpath):
     return nanostore_proxy_response(subpath)
 
 
-# ---------------------------------------------------------------------------
-# Integracao do app RaioxPacs
-# ---------------------------------------------------------------------------
-def prefixed_raioxpacs_env(env, key):
-    value = str(env.get(f"RAIOXPACS_{key}") or "").strip()
-    if value:
-        env[key] = value
-
-
-def ensure_raioxpacs_app():
-    """Sobe o RaioxPacs em loopback quando uma tela dele e aberta."""
-    global _raioxpacs_proc
-    if tcp_open("127.0.0.1", RAIOXPACS_PORT):
-        _app_startup_errors.pop("pacs", None)
-        return True
-
-    with _raioxpacs_lock:
-        if tcp_open("127.0.0.1", RAIOXPACS_PORT):
-            _app_startup_errors.pop("pacs", None)
-            return True
-        if _raioxpacs_proc is not None and _raioxpacs_proc.poll() is None:
-            time.sleep(0.5)
-            ok = tcp_open("127.0.0.1", RAIOXPACS_PORT)
-            if ok:
-                _app_startup_errors.pop("pacs", None)
-            return ok
-
-        if not (RAIOXPACS_DIR / "app.py").exists():
-            log_app_startup_error("pacs", f"codigo nao encontrado em {RAIOXPACS_DIR / 'app.py'}")
-            return False
-
-        python_bin = python_bin_for(RAIOXPACS_DIR / ".venv" / "bin" / "python")
-        runtime_root = RAIOXPACS_DIR / "runtime"
-        imagebox_root = Path(os.environ.get("RAIOXPACS_IMAGEBOX_PATH", str(runtime_root / "imagebox")))
-        runtime_root.mkdir(parents=True, exist_ok=True)
-        imagebox_root.mkdir(parents=True, exist_ok=True)
-
-        env = os.environ.copy()
-        env.pop("WERKZEUG_SERVER_FD", None)
-        env.pop("WERKZEUG_RUN_MAIN", None)
-        for key in ("PGHOST", "PGPORT", "PGUSER", "PGPASSWORD", "PGDATABASE", "PGSSLMODE"):
-            prefixed_raioxpacs_env(env, key)
-        database_url = (
-            configured_database_url(env, "RAIOXPACS_DATABASE_URL")
-            or configured_database_url(env, "PACS_DATABASE_URL")
-        )
-        if database_url:
-            env["DATABASE_URL"] = database_url
-        if env.get("RAIOXPACS_AUTO_BOOTSTRAP_SCHEMA"):
-            env["AUTO_BOOTSTRAP_SCHEMA"] = env["RAIOXPACS_AUTO_BOOTSTRAP_SCHEMA"]
-        env.update({
-            "FLASK_APP": "app.py",
-            "APP_HOST": "127.0.0.1",
-            "APP_PORT": str(RAIOXPACS_PORT),
-            "PORT": str(RAIOXPACS_PORT),
-            "APP_DEBUG": "0",
-            "APP_SECRET_KEY": env.get("RAIOXPACS_SECRET_KEY", env.get("APP_SECRET_KEY", "raioxpacs-dev-key")),
-            "RUNTIME_ROOT": str(runtime_root),
-            "PACS_IMAGEBOX_PATH": str(imagebox_root),
-            "PACS_WEB_URL": env.get("RAIOXPACS_PUBLIC_BASE_URL", env.get("PACS_WEB_URL", RAIOXPACS_BASE_URL)),
-            "PYTHONUNBUFFERED": "1",
-        })
-        try:
-            log_file = (BASE_DIR / "pacs.log").open("ab")
-            _raioxpacs_proc = subprocess.Popen(
-                [str(python_bin), "-m", "flask", "run", "--host", "127.0.0.1", "--port", str(RAIOXPACS_PORT)],
-                cwd=str(RAIOXPACS_DIR),
-                env=env,
-                stdout=log_file,
-                stderr=subprocess.STDOUT,
-            )
-        except Exception as exc:
-            log_app_startup_error("pacs", exc)
-            return False
-        attempts = max(1, int(RAIOXPACS_STARTUP_WAIT / 0.25))
-        for _ in range(attempts):
-            if tcp_open("127.0.0.1", RAIOXPACS_PORT):
-                _app_startup_errors.pop("pacs", None)
-                return True
-            if _raioxpacs_proc.poll() is not None:
-                log_app_startup_error(
-                    "pacs",
-                    f"processo encerrou antes de abrir a porta 127.0.0.1:{RAIOXPACS_PORT} "
-                    f"com codigo {_raioxpacs_proc.returncode}",
-                )
-                return False
-            time.sleep(0.25)
-        log_app_startup_error("pacs", f"processo iniciou, mas a porta 127.0.0.1:{RAIOXPACS_PORT} nao respondeu")
-    return False
-
-
-def raioxpacs_prefix(integrated=True):
-    return "/apps/pacs" if integrated else "/apps/pacs/original"
-
-
-def rewrite_raioxpacs_location(value, prefix):
-    parsed = urllib.parse.urlparse(value)
-    if parsed.scheme and parsed.netloc:
-        if value.startswith(RAIOXPACS_BASE_URL):
-            return prefix + parsed.path + (("?" + parsed.query) if parsed.query else "")
-        return value
-    if value.startswith(prefix):
-        return value
-    if value.startswith("/"):
-        return prefix + value
-    return value
-
-
-def rewrite_raioxpacs_text(text, integrated=True):
-    prefix = raioxpacs_prefix(integrated)
-    text = text.lstrip("\ufeff")
-    replacements = {
-        'href="/': f'href="{prefix}/',
-        "href='/": f"href='{prefix}/",
-        'src="/': f'src="{prefix}/',
-        "src='/": f"src='{prefix}/",
-        'action="/': f'action="{prefix}/',
-        "action='/": f"action='{prefix}/",
-        'fetch("/': f'fetch("{prefix}/',
-        "fetch('/": f"fetch('{prefix}/",
-        "fetch(`/": f"fetch(`{prefix}/",
-        'api("/': f'api("{prefix}/',
-        "api('/": f"api('{prefix}/",
-        "api(`/": f"api(`{prefix}/",
-        'window.open("/': f'window.open("{prefix}/',
-        "window.open('/": f"window.open('{prefix}/",
-        "window.open(`/": f"window.open(`{prefix}/",
-        'window.location.href = "/': f'window.location.href = "{prefix}/',
-        "window.location.href = '/": f"window.location.href = '{prefix}/",
-        "window.location.href = `/": f"window.location.href = `{prefix}/",
-        '"/api/': f'"{prefix}/api/',
-        "'/api/": f"'{prefix}/api/",
-        "`/api/": f"`{prefix}/api/",
-        '"/media/': f'"{prefix}/media/',
-        "'/media/": f"'{prefix}/media/",
-        "`/media/": f"`{prefix}/media/",
-        '"/viewer/': f'"{prefix}/viewer/',
-        "'/viewer/": f"'{prefix}/viewer/",
-        "`/viewer/": f"`{prefix}/viewer/",
-        '"/share/': f'"{prefix}/share/',
-        "'/share/": f"'{prefix}/share/",
-        "`/share/": f"`{prefix}/share/",
-        '"/docs/': f'"{prefix}/docs/',
-        "'/docs/": f"'{prefix}/docs/",
-        "`/docs/": f"`{prefix}/docs/",
-        '"/reports/': f'"{prefix}/reports/',
-        "'/reports/": f"'{prefix}/reports/",
-        "`/reports/": f"`{prefix}/reports/",
-        '"/exam-orders/': f'"{prefix}/exam-orders/',
-        "'/exam-orders/": f"'{prefix}/exam-orders/",
-        "`/exam-orders/": f"`{prefix}/exam-orders/",
-        '"/camera-streams/': f'"{prefix}/camera-streams/',
-        "'/camera-streams/": f"'{prefix}/camera-streams/",
-        "`/camera-streams/": f"`{prefix}/camera-streams/",
-        f'"{RAIOXPACS_BASE_URL}/': f'"{prefix}/',
-        f"'{RAIOXPACS_BASE_URL}/": f"'{prefix}/",
-        f"`{RAIOXPACS_BASE_URL}/": f"`{prefix}/",
-        "${window.location.origin}/share/": f"${{window.location.origin}}{prefix}/share/",
-    }
-    for source, target in replacements.items():
-        text = text.replace(source, target)
-    return text
-
-
-def raioxpacs_navigation_bridge():
-    return """
-<script>
-(function() {
-  function applyPortalTarget() {
-    var params = new URLSearchParams(window.location.search || "");
-    var section = params.get("section") || (window.location.hash || "").replace(/^#/, "");
-    var configTab = params.get("configTab");
-    if (configTab && typeof window.setConfigTab === "function") {
-      window.setConfigTab(configTab);
-    }
-    if (section && typeof window.setActiveSection === "function") {
-      window.setActiveSection(section);
-    }
-  }
-  window.addEventListener("load", function() { window.setTimeout(applyPortalTarget, 120); });
-  window.setTimeout(applyPortalTarget, 180);
-})();
-</script>
-"""
-
-
-def raioxpacs_theme_bridge():
-    theme = current_theme_key()
-    palettes = {
-        "rio_branco": ("#f4f6f9", "#ffffff", "#fff8ed", "#263238", "#667085", "#ff9800", "#c66900", "#d9e1ea"),
-        "autoblue": ("#f4f8fd", "#ffffff", "#eef6ff", "#263238", "#5b6f86", "#003366", "#004c99", "#cbd7e6"),
-        "fin-blue": ("#0b1020", "#111a33", "#0f1730", "#e8ecff", "#aeb7e7", "#5eead4", "#60a5fa", "rgba(255,255,255,.16)"),
-        "pontobege": ("#f5efe4", "#fffaf1", "#f7dfc8", "#183237", "#5f6d63", "#e08b3e", "#bb5b2a", "rgba(24,50,55,.14)"),
-        "zapgreen": ("#07111f", "#0d1727", "#13263a", "#e5eefc", "#99a8c2", "#25d366", "#128c4a", "rgba(148,163,184,.18)"),
-        "pacsred": ("#f6f7f9", "#ffffff", "#fff1f2", "#2d3038", "#6b7280", "#c81e3a", "#8f1d2c", "#e5d3d7"),
-    }
-    bg, surface, alt, ink, muted, accent, strong, line = palettes.get(theme, palettes["rio_branco"])
-    return f"""
-<style id="nanotechsoft-pacs-global-theme">
-body.theme-{theme} {{ --bg:{bg}; --surface:{surface}; --surface-alt:{alt}; --ink:{ink}; --text:{ink}; --muted:{muted}; --accent:{accent}; --accent-strong:{strong}; --line:{line}; --line-strong:{line}; background:{bg}!important; color:{ink}!important; }}
-body.theme-{theme} .sidebar, body.theme-{theme} .login-hero {{ background:linear-gradient(160deg,{strong},{accent})!important; }}
-body.theme-{theme} .panel, body.theme-{theme} .card, body.theme-{theme} .login-card, body.theme-{theme} .topbar, body.theme-{theme} .viewer-frame, body.theme-{theme} .viewer-empty, body.theme-{theme} table, body.theme-{theme} dialog {{ background:{surface}!important; color:{ink}!important; border-color:{line}!important; }}
-body.theme-{theme} input, body.theme-{theme} select, body.theme-{theme} textarea {{ background:{surface}!important; color:{ink}!important; border-color:{line}!important; }}
-</style>
-"""
-
-
-def rewrite_raioxpacs_body(body, content_type, subpath="", integrated=True):
-    lowered = (content_type or "").lower()
-    is_text = (
-        "text/" in lowered
-        or "javascript" in lowered
-        or "json" in lowered
-        or subpath.endswith((".js", ".css", ".html", ".htm", ".json"))
-    )
-    if not is_text:
-        return body
-    text = body.decode("utf-8", errors="replace")
-    text = rewrite_raioxpacs_text(text, integrated=integrated)
-    if "text/html" in lowered or subpath.endswith((".html", ".htm")):
-        theme = current_theme_key()
-        text = re.sub(
-            r'(<body\b[^>]*\bclass=["\'])([^"\']*)(["\'])',
-            lambda match: f"{match.group(1)}{match.group(2)} theme-{theme}{match.group(3)}",
-            text, count=1, flags=re.I,
-        )
-        if not re.search(r'<body\b[^>]*\bclass=', text, flags=re.I):
-            text = re.sub(r'<body\b', f'<body class="theme-{theme}"', text, count=1, flags=re.I)
-        text = re.sub(r'</head>', raioxpacs_theme_bridge() + '</head>', text, count=1, flags=re.I)
-        text = inject_before_body_close(text, raioxpacs_navigation_bridge())
-    return text.encode("utf-8")
-
-
-def transform_raioxpacs_cookie_header(value):
-    if not value:
-        return value
-    parts = []
-    for chunk in value.split(";"):
-        item = chunk.strip()
-        if item.startswith("session="):
-            continue
-        if item.startswith("raioxpacs_session="):
-            item = "session=" + item.split("=", 1)[1]
-        parts.append(item)
-    return "; ".join(parts)
-
-
-def transform_raioxpacs_set_cookie(value):
-    if not value:
-        return value
-    cookie = value
-    if cookie.startswith("session="):
-        cookie = cookie.replace("session=", "raioxpacs_session=", 1)
-    cookie = re.sub(r";\s*Path=/($|;)", r"; Path=/apps/pacs\1", cookie, count=1, flags=re.I)
-    if not re.search(r";\s*Path=", cookie, flags=re.I):
-        cookie += "; Path=/apps/pacs"
-    return cookie
-
-
-def raioxpacs_unavailable(message):
-    if not session.get("usuario_id"):
-        return Response(message, status=502, content_type="text/plain; charset=utf-8")
-    return render_template(
-        "app_placeholder.html",
-        app_key="pacs",
-        erro=message,
-        **portal_context(),
-    ), 502
-
-
-def raioxpacs_proxy_response(subpath="", integrated=True):
-    if not ensure_raioxpacs_app():
-        return raioxpacs_unavailable(app_startup_message("pacs", "RaioxPacs nao iniciou."))
-
-    upstream_path = "/" + (subpath or "")
-    query = request.query_string.decode("utf-8", errors="ignore")
-    upstream_url = f"{RAIOXPACS_BASE_URL}{upstream_path}"
-    if query:
-        upstream_url += "?" + query
-
-    headers = {}
-    for key, value in request.headers.items():
-        lowered = key.lower()
-        if lowered in {"host", "content-length", "connection"}:
-            continue
-        if lowered == "cookie":
-            value = transform_raioxpacs_cookie_header(value)
-        headers[key] = value
-    portal_user = None
-    if session.get("usuario_id"):
-        try:
-            portal_user = get_user_by_id(int(session["usuario_id"]))
-        except Exception:
-            portal_user = None
-    headers["X-Portal-Usuario-Id"] = str((portal_user or {}).get("id") or "")
-    headers["X-Portal-Usuario-Login"] = str((portal_user or {}).get("login") or "visitante")
-    headers["X-Portal-Usuario-Perfil"] = str((portal_user or {}).get("perfil") or "visitante")
-    data = request.get_data() if request.method in {"POST", "PUT", "PATCH", "DELETE"} else None
-    req = urllib.request.Request(upstream_url, data=data, headers=headers, method=request.method)
-
-    class NoRedirect(urllib.request.HTTPRedirectHandler):
-        def redirect_request(self, req, fp, code, msg, headers, newurl):
-            return None
-
-    opener = urllib.request.build_opener(NoRedirect)
-    try:
-        with opener.open(req, timeout=90) as resp:
-            body = resp.read()
-            status = resp.status
-            content_type = resp.headers.get("Content-Type", "")
-            upstream_headers = resp.headers
-    except urllib.error.HTTPError as exc:
-        body = exc.read()
-        status = exc.code
-        content_type = exc.headers.get("Content-Type", "")
-        upstream_headers = exc.headers
-    except Exception as exc:
-        return raioxpacs_unavailable(f"Nao foi possivel acessar o RaioxPacs em {RAIOXPACS_BASE_URL}: {exc}")
-
-    prefix = raioxpacs_prefix(integrated)
-    response_headers = []
-    excluded = {"content-length", "connection", "transfer-encoding", "content-encoding"}
-    for key in upstream_headers.keys():
-        values = upstream_headers.get_all(key) if hasattr(upstream_headers, "get_all") else [upstream_headers.get(key)]
-        for value in values:
-            if value is None:
-                continue
-            lowered = key.lower()
-            if lowered in excluded:
-                continue
-            if lowered == "location":
-                value = rewrite_raioxpacs_location(value, prefix)
-            if lowered == "set-cookie":
-                value = transform_raioxpacs_set_cookie(value)
-            response_headers.append((key, value))
-
-    body = rewrite_raioxpacs_body(body, content_type, subpath=subpath, integrated=integrated)
-    if (content_type or "").lower().startswith("text/") or "javascript" in (content_type or "").lower() or "json" in (content_type or "").lower():
-        response_headers = [(k, v) for k, v in response_headers if k.lower() != "content-length"]
-
-    return Response(body, status=status, headers=response_headers, content_type=content_type)
-
-
-@app.route("/apps/pacs/static/<path:subpath>", methods=["GET"])
-def raioxpacs_public_static(subpath):
-    return raioxpacs_proxy_response(f"static/{subpath}")
-
-
-@app.route("/apps/pacs/share/<path:subpath>", methods=["GET", "POST"])
-def raioxpacs_public_share(subpath):
-    return raioxpacs_proxy_response(f"share/{subpath}")
-
-
-@app.route("/apps/pacs/api/share/<path:subpath>", methods=["GET", "POST"])
-def raioxpacs_public_share_api(subpath):
-    return raioxpacs_proxy_response(f"api/share/{subpath}")
-
-
-@app.route("/apps/pacs", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
-def raioxpacs_proxy_root():
-    return raioxpacs_proxy_response("")
-
-
-@app.route("/apps/pacs/original", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
-def raioxpacs_original_root():
-    return raioxpacs_proxy_response("", integrated=False)
-
-
-@app.route("/apps/pacs/original/", defaults={"subpath": ""}, methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
-@app.route("/apps/pacs/original/<path:subpath>", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
-def raioxpacs_original_proxy(subpath):
-    return raioxpacs_proxy_response(subpath, integrated=False)
-
-
-@app.route("/apps/pacs/", defaults={"subpath": ""}, methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
-@app.route("/apps/pacs/<path:subpath>", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
-def raioxpacs_proxy(subpath):
-    return raioxpacs_proxy_response(subpath)
-
-
-# ---------------------------------------------------------------------------
 # Integracao de apps estaticos Nanotech
 # ---------------------------------------------------------------------------
 STATIC_APP_DIRS = {
-    "gpsmusical": GPSMUSICAL_DIR,
-    "bpa": BPA_DIR,
-    "tatoo": TATOO_DIR,
     "tecnologia": TECNOLOGIA_DIR,
+    "chamados": CHAMADOS_DIR,
 }
 
 STATIC_APP_INDEX = {
-    "gpsmusical": "index.html",
-    "bpa": "index.html",
-    "tatoo": "index.html",
     "tecnologia": "index.html",
+    "chamados": "index.html",
 }
 
 STATIC_APP_NAMES = {
-    "gpsmusical": "GPS Musical",
-    "bpa": "BPA",
-    "tatoo": "Tatoo",
     "tecnologia": "Tecnologia",
+    "chamados": "Chamados",
 }
 
 
 def static_app_active_page(app_key, subpath):
-    if app_key == "gpsmusical":
-        return "dashboards"
-    if app_key == "bpa":
-        return "cadastros"
-    if app_key == "tatoo":
-        return "cadastros"
     if app_key == "tecnologia":
         return "dashboards"
+    if app_key == "chamados":
+        view = str(request.args.get("view") or "chamados").strip().lower()
+        return {
+            "dashboard": "dashboards",
+            "documentos": "cadastros",
+            "historico": "relatorios",
+        }.get(view, "workflow")
     return "dashboards"
 
 
 def static_app_file(app_key, subpath=""):
     if app_key not in STATIC_APP_DIRS:
         return None
-    if app_key == "gpsmusical" and subpath.startswith("shared/"):
-        path = (NANOTECH_SHARED_DIR / subpath.replace("shared/", "", 1)).resolve()
-        try:
-            path.relative_to(NANOTECH_SHARED_DIR.resolve())
-            return path
-        except ValueError:
-            return None
     base = STATIC_APP_DIRS[app_key].resolve()
     requested = subpath or STATIC_APP_INDEX[app_key]
     path = (base / requested).resolve()
@@ -4667,54 +4513,14 @@ def rewrite_static_app_paths(text, app_key, integrated=True):
         'api("/api/': f'api("{prefix}/api/',
         "api('/api/": f"api('{prefix}/api/",
         "api(`/api/": f"api(`{prefix}/api/",
-        'const API_CONFIG_URL = "/api/gps/config";': f'const API_CONFIG_URL = "{prefix}/api/gps/config";',
-        'const API_CONFIG_TEST_URL = "/api/gps/config/test-database";': f'const API_CONFIG_TEST_URL = "{prefix}/api/gps/config/test-database";',
-        'const API_BACKUPS_URL = "/api/gps/backups";': f'const API_BACKUPS_URL = "{prefix}/api/gps/backups";',
     }
     for source, target in replacements.items():
         text = text.replace(source, target)
     return text
 
 
-def static_app_navigation_bridge(app_key):
-    if app_key != "gpsmusical":
-        return ""
-    return """
-<script>
-(function() {
-  var tabs = {
-    biblioteca: "biblioteca",
-    editor: "editor",
-    view: "view",
-    docs: "docs",
-    config: "config",
-    backup: "backup"
-  };
-
-  function activateFromHash() {
-    var raw = (window.location.hash || "").replace(/^#/, "");
-    if (!raw) return;
-    var key = raw.indexOf("docs") === 0 ? "docs" : raw.split(":")[0];
-    var target = tabs[key];
-    if (!target) return;
-    if (typeof window.UI_showTab === "function") {
-      window.UI_showTab(target);
-      return;
-    }
-    var button = document.querySelector('[data-tab="' + target + '"]');
-    if (button) button.click();
-  }
-
-  window.addEventListener("load", function() { setTimeout(activateFromHash, 80); });
-  window.addEventListener("hashchange", activateFromHash);
-})();
-</script>
-"""
-
-
 def rewrite_static_app_html(text, app_key, integrated=True):
     text = rewrite_static_app_paths(text, app_key, integrated=integrated)
-    text = inject_before_body_close(text, static_app_navigation_bridge(app_key))
     return apply_standalone_theme(text)
 
 
@@ -4762,76 +4568,737 @@ def static_app_response(app_key, subpath="", integrated=True):
     return send_from_directory(path.parent, path.name)
 
 
-@app.route("/apps/gpsmusical")
+# ---------------------------------------------------------------------------
+# Chamados: requisicoes, manutencoes e base de solucoes
+# ---------------------------------------------------------------------------
+CHAMADO_CATEGORIAS = (
+    "TI", "PREDIAL", "ELETRICA", "HIDRAULICA", "MECANICA", "SEGURANCA", "OUTROS",
+)
+CHAMADO_PRIORIDADES = ("BAIXA", "MEDIA", "ALTA", "CRITICA")
+CHAMADO_STATUS = (
+    "ABERTO", "TRIAGEM", "EM_ATENDIMENTO", "AGUARDANDO",
+    "RESOLVIDO", "FECHADO", "CANCELADO",
+)
+CHAMADO_INTERVENCAO_TIPOS = ("COMENTARIO", "TRABALHO", "DIAGNOSTICO", "SOLUCAO", "STATUS")
+CHAMADO_DOCUMENT_EXTENSIONS = {
+    ".pdf", ".png", ".jpg", ".jpeg", ".webp", ".txt", ".md",
+    ".doc", ".docx", ".xls", ".xlsx", ".csv", ".odt", ".ods",
+}
+CHAMADO_MAX_DOCUMENT_BYTES = 15 * 1024 * 1024
+
+
+def chamado_optional_int(value):
+    if value in (None, "", 0, "0"):
+        return None
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        raise ValueError("referencia invalida")
+    if number <= 0:
+        raise ValueError("referencia invalida")
+    return number
+
+
+def chamado_text(value, max_length=None):
+    text = str(value or "").strip()
+    if max_length and len(text) > max_length:
+        raise ValueError(f"texto excede {max_length} caracteres")
+    return text
+
+
+def chamado_choice(value, allowed, label, default=None):
+    normalized = chamado_text(value or default).upper()
+    if normalized not in allowed:
+        raise ValueError(f"{label} invalido")
+    return normalized
+
+
+def chamado_public_row(row):
+    if not row:
+        return None
+    return {
+        "id": int(row["id"]),
+        "protocol": row.get("protocolo") or "",
+        "title": row.get("titulo") or "",
+        "description": row.get("descricao") or "",
+        "category": row.get("categoria") or "OUTROS",
+        "subcategory": row.get("subcategoria") or "",
+        "priority": row.get("prioridade") or "MEDIA",
+        "status": row.get("status") or "ABERTO",
+        "location": row.get("localizacao") or "",
+        "symptoms": row.get("sintomas") or "",
+        "rootCause": row.get("causa_raiz") or "",
+        "resolution": row.get("solucao_resumo") or "",
+        "requesterId": int(row["solicitante_id"]) if row.get("solicitante_id") else None,
+        "requesterName": row.get("solicitante_nome") or "",
+        "assigneeId": int(row["responsavel_id"]) if row.get("responsavel_id") else None,
+        "assigneeName": row.get("responsavel_nome") or "",
+        "createdById": int(row["criado_por_id"]) if row.get("criado_por_id") else None,
+        "createdByName": row.get("criado_por_nome") or "",
+        "deviceId": int(row["dispositivo_id"]) if row.get("dispositivo_id") else None,
+        "deviceName": row.get("dispositivo_nome") or "",
+        "deviceType": row.get("dispositivo_tipo") or "",
+        "deviceHost": row.get("dispositivo_host") or "",
+        "minutesSpent": int(row.get("minutos_gastos") or 0),
+        "interventionCount": int(row.get("intervencoes_count") or 0),
+        "documentCount": int(row.get("documentos_count") or 0),
+        "createdAt": technology_db_timestamp_iso(row.get("created_at")),
+        "updatedAt": technology_db_timestamp_iso(row.get("updated_at")),
+        "closedAt": technology_db_timestamp_iso(row.get("encerrado_em")) if row.get("encerrado_em") else "",
+    }
+
+
+CHAMADO_SELECT = """
+    SELECT c.*,
+           solicitante.nome AS solicitante_nome,
+           responsavel.nome AS responsavel_nome,
+           criador.nome AS criado_por_nome,
+           dispositivo.nome AS dispositivo_nome,
+           dispositivo.tipo AS dispositivo_tipo,
+           dispositivo.host AS dispositivo_host,
+           COALESCE((SELECT SUM(i.minutos_gastos) FROM chamados_intervencoes i WHERE i.chamado_id=c.id), 0) AS minutos_gastos,
+           (SELECT COUNT(*) FROM chamados_intervencoes i WHERE i.chamado_id=c.id) AS intervencoes_count,
+           (SELECT COUNT(*) FROM chamados_documentos doc WHERE doc.chamado_id=c.id) AS documentos_count
+    FROM chamados c
+    LEFT JOIN usuarios solicitante ON solicitante.id=c.solicitante_id
+    LEFT JOIN usuarios responsavel ON responsavel.id=c.responsavel_id
+    LEFT JOIN usuarios criador ON criador.id=c.criado_por_id
+    LEFT JOIN tecnologia_dispositivos dispositivo ON dispositivo.id=c.dispositivo_id
+"""
+
+
+def get_chamado(chamado_id):
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    cur.execute(CHAMADO_SELECT + " WHERE c.id=%s", (int(chamado_id),))
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+    return row
+
+
+def chamado_public_intervention(row):
+    return {
+        "id": int(row["id"]),
+        "type": row.get("tipo") or "COMENTARIO",
+        "description": row.get("descricao") or "",
+        "minutesSpent": int(row.get("minutos_gastos") or 0),
+        "previousStatus": row.get("status_anterior") or "",
+        "newStatus": row.get("status_novo") or "",
+        "resolution": row.get("solucao_aplicada") or "",
+        "authorId": int(row["autor_id"]) if row.get("autor_id") else None,
+        "authorName": row.get("autor_nome") or "Sistema",
+        "createdAt": technology_db_timestamp_iso(row.get("created_at")),
+    }
+
+
+def chamado_public_document(row):
+    document_id = int(row["id"])
+    return {
+        "id": document_id,
+        "ticketId": int(row["chamado_id"]) if row.get("chamado_id") else None,
+        "deviceId": int(row["dispositivo_id"]) if row.get("dispositivo_id") else None,
+        "deviceName": row.get("dispositivo_nome") or "",
+        "category": row.get("categoria") or "GERAL",
+        "title": row.get("titulo") or "",
+        "description": row.get("descricao") or "",
+        "fileName": row.get("nome_arquivo") or "",
+        "mimeType": row.get("mime_type") or "",
+        "sizeBytes": int(row.get("tamanho_bytes") or 0),
+        "externalUrl": row.get("url_externa") or "",
+        "downloadUrl": f"/apps/chamados/api/documents/{document_id}/download",
+        "createdByName": row.get("criado_por_nome") or "",
+        "createdAt": technology_db_timestamp_iso(row.get("created_at")),
+    }
+
+
+def chamado_tokenize(*values):
+    stopwords = {
+        "a", "ao", "aos", "as", "com", "como", "da", "das", "de", "do", "dos",
+        "e", "em", "na", "nas", "no", "nos", "o", "os", "ou", "para", "por",
+        "que", "se", "sem", "um", "uma", "foi", "esta", "este", "isso",
+    }
+    normalized = unicodedata.normalize("NFKD", " ".join(str(value or "") for value in values))
+    normalized = normalized.encode("ascii", "ignore").decode("ascii").lower()
+    return {
+        token for token in re.findall(r"[a-z0-9]{3,}", normalized)
+        if token not in stopwords
+    }
+
+
+def chamado_similar_suggestions(text="", category="", subcategory="", device_id=None, exclude_id=None):
+    query_tokens = chamado_tokenize(text, category, subcategory)
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    sql = CHAMADO_SELECT + " WHERE c.status IN ('RESOLVIDO', 'FECHADO')"
+    params = []
+    if exclude_id:
+        sql += " AND c.id<>%s"
+        params.append(int(exclude_id))
+    sql += " ORDER BY c.updated_at DESC LIMIT 250"
+    cur.execute(sql, tuple(params))
+    rows = cur.fetchall()
+
+    selected_device_type = ""
+    if device_id:
+        cur.execute("SELECT tipo FROM tecnologia_dispositivos WHERE id=%s", (int(device_id),))
+        device_row = cur.fetchone()
+        selected_device_type = (device_row or {}).get("tipo") or ""
+
+    scored = []
+    for row in rows:
+        row_tokens = chamado_tokenize(
+            row.get("titulo"), row.get("descricao"), row.get("sintomas"),
+            row.get("causa_raiz"), row.get("solucao_resumo"), row.get("subcategoria"),
+        )
+        common = query_tokens & row_tokens
+        union = query_tokens | row_tokens
+        score = len(common) * 2 + ((len(common) / len(union)) * 12 if union else 0)
+        reasons = []
+        if category and row.get("categoria") == category:
+            score += 6
+            reasons.append("mesma categoria")
+        if subcategory and row.get("subcategoria") and row.get("subcategoria").casefold() == subcategory.casefold():
+            score += 4
+            reasons.append("mesma subcategoria")
+        if device_id and int(row.get("dispositivo_id") or 0) == int(device_id):
+            score += 9
+            reasons.append("mesmo equipamento")
+        elif selected_device_type and row.get("dispositivo_tipo") == selected_device_type:
+            score += 3
+            reasons.append("mesmo tipo de equipamento")
+        if common:
+            reasons.append("termos: " + ", ".join(sorted(common)[:5]))
+        if score >= 3:
+            item = chamado_public_row(row)
+            item["similarityScore"] = round(score, 1)
+            item["similarityReasons"] = reasons
+            scored.append(item)
+    scored.sort(key=lambda item: (item["similarityScore"], item["updatedAt"]), reverse=True)
+
+    doc_sql = """
+        SELECT doc.*, dispositivo.nome AS dispositivo_nome, criador.nome AS criado_por_nome
+        FROM chamados_documentos doc
+        LEFT JOIN tecnologia_dispositivos dispositivo ON dispositivo.id=doc.dispositivo_id
+        LEFT JOIN usuarios criador ON criador.id=doc.criado_por_id
+        WHERE doc.chamado_id IS NULL
+        ORDER BY doc.created_at DESC LIMIT 250
+    """
+    cur.execute(doc_sql)
+    documents = []
+    for row in cur.fetchall():
+        doc_tokens = chamado_tokenize(row.get("titulo"), row.get("descricao"), row.get("categoria"))
+        common = query_tokens & doc_tokens
+        score = len(common) * 2
+        if category and row.get("categoria") in {category, "GERAL"}:
+            score += 4 if row.get("categoria") == category else 1
+        if device_id and int(row.get("dispositivo_id") or 0) == int(device_id):
+            score += 7
+        if score >= 2:
+            item = chamado_public_document(row)
+            item["similarityScore"] = score
+            documents.append(item)
+    cur.close()
+    conn.close()
+    documents.sort(key=lambda item: -item["similarityScore"])
+    return {"tickets": scored[:6], "documents": documents[:6]}
+
+
+@app.route("/apps/chamados/api/bootstrap")
 @login_required
-def gpsmusical_static_root():
-    return static_app_response("gpsmusical")
+def chamados_bootstrap_api():
+    usuario = current_user_or_logout()
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    cur.execute("SELECT id, nome, login, perfil FROM usuarios WHERE ativo=1 ORDER BY nome, login")
+    users = [public_user(row) for row in cur.fetchall()]
+    cur.execute(
+        "SELECT id, nome, tipo, host, localizacao FROM tecnologia_dispositivos WHERE ativo=1 ORDER BY tipo, nome"
+    )
+    devices = [{
+        "id": int(row["id"]), "name": row.get("nome") or "", "type": row.get("tipo") or "",
+        "host": row.get("host") or "", "location": row.get("localizacao") or "",
+    } for row in cur.fetchall()]
+    cur.execute(
+        """
+        SELECT COUNT(*) AS total,
+               SUM(status NOT IN ('RESOLVIDO','FECHADO','CANCELADO')) AS abertos,
+               SUM(status='EM_ATENDIMENTO') AS em_atendimento,
+               SUM(status IN ('RESOLVIDO','FECHADO')) AS resolvidos,
+               COALESCE(SUM((SELECT COALESCE(SUM(i.minutos_gastos),0) FROM chamados_intervencoes i WHERE i.chamado_id=chamados.id)),0) AS minutos
+        FROM chamados
+        """
+    )
+    summary = cur.fetchone() or {}
+    cur.close()
+    conn.close()
+    return jsonify({
+        "currentUser": usuario,
+        "users": users,
+        "devices": devices,
+        "categories": list(CHAMADO_CATEGORIAS),
+        "priorities": list(CHAMADO_PRIORIDADES),
+        "statuses": list(CHAMADO_STATUS),
+        "interventionTypes": list(CHAMADO_INTERVENCAO_TIPOS),
+        "summary": {
+            "total": int(summary.get("total") or 0),
+            "open": int(summary.get("abertos") or 0),
+            "inProgress": int(summary.get("em_atendimento") or 0),
+            "resolved": int(summary.get("resolvidos") or 0),
+            "minutesSpent": int(summary.get("minutos") or 0),
+        },
+    })
 
 
-@app.route("/apps/gpsmusical/original")
+@app.route("/apps/chamados/api/tickets", methods=["GET", "POST"])
 @login_required
-def gpsmusical_original_root():
-    return static_app_response("gpsmusical", integrated=False)
+def chamados_tickets_api():
+    usuario = current_user_or_logout()
+    if request.method == "GET":
+        status_filter = chamado_text(request.args.get("status"), 24).upper()
+        category_filter = chamado_text(request.args.get("category"), 40).upper()
+        search = chamado_text(request.args.get("search"), 180)
+        device_id = chamado_optional_int(request.args.get("deviceId"))
+        conn = get_conn()
+        cur = conn.cursor(dictionary=True)
+        sql = CHAMADO_SELECT + " WHERE 1=1"
+        params = []
+        if status_filter:
+            sql += " AND c.status=%s"
+            params.append(status_filter)
+        if category_filter:
+            sql += " AND c.categoria=%s"
+            params.append(category_filter)
+        if device_id:
+            sql += " AND c.dispositivo_id=%s"
+            params.append(device_id)
+        if search:
+            like = f"%{search}%"
+            sql += " AND (c.protocolo LIKE %s OR c.titulo LIKE %s OR c.descricao LIKE %s OR c.sintomas LIKE %s OR c.solucao_resumo LIKE %s)"
+            params.extend([like] * 5)
+        sql += " ORDER BY FIELD(c.prioridade,'CRITICA','ALTA','MEDIA','BAIXA'), c.updated_at DESC LIMIT 500"
+        cur.execute(sql, tuple(params))
+        rows = [chamado_public_row(row) for row in cur.fetchall()]
+        cur.close()
+        conn.close()
+        return jsonify({"tickets": rows})
+
+    payload = request.get_json(silent=True) or {}
+    try:
+        title = chamado_text(payload.get("title"), 180)
+        description = chamado_text(payload.get("description"), 12000)
+        if not title or not description:
+            raise ValueError("informe titulo e descricao do chamado")
+        category = chamado_choice(payload.get("category"), CHAMADO_CATEGORIAS, "categoria", "TI")
+        priority = chamado_choice(payload.get("priority"), CHAMADO_PRIORIDADES, "prioridade", "MEDIA")
+        requester_id = chamado_optional_int(payload.get("requesterId")) or int(usuario["id"])
+        assignee_id = chamado_optional_int(payload.get("assigneeId"))
+        device_id = chamado_optional_int(payload.get("deviceId"))
+        subcategory = chamado_text(payload.get("subcategory"), 100)
+        location = chamado_text(payload.get("location"), 160)
+        symptoms = chamado_text(payload.get("symptoms"), 12000)
+    except ValueError as exc:
+        return jsonify({"erro": str(exc)}), 400
+
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    try:
+        temporary = "TMP-" + hashlib.sha256(os.urandom(24)).hexdigest()[:20]
+        cur.execute(
+            """
+            INSERT INTO chamados
+                (protocolo, titulo, descricao, categoria, subcategoria, prioridade,
+                 status, localizacao, sintomas, solicitante_id, responsavel_id,
+                 dispositivo_id, criado_por_id)
+            VALUES (%s,%s,%s,%s,%s,%s,'ABERTO',%s,%s,%s,%s,%s,%s)
+            """,
+            (
+                temporary, title, description, category, subcategory, priority,
+                location, symptoms, requester_id, assignee_id, device_id, int(usuario["id"]),
+            ),
+        )
+        chamado_id = int(cur.lastrowid)
+        protocol = f"CH-{dt.datetime.now(dt.UTC).year}-{chamado_id:06d}"
+        cur.execute("UPDATE chamados SET protocolo=%s WHERE id=%s", (protocol, chamado_id))
+        cur.execute(
+            """
+            INSERT INTO chamados_intervencoes
+                (chamado_id, autor_id, tipo, descricao, status_novo)
+            VALUES (%s,%s,'STATUS','Chamado aberto.','ABERTO')
+            """,
+            (chamado_id, int(usuario["id"])),
+        )
+        conn.commit()
+    except mysql.connector.IntegrityError:
+        conn.rollback()
+        return jsonify({"erro": "usuario ou equipamento vinculado nao foi encontrado"}), 400
+    finally:
+        cur.close()
+        conn.close()
+    return jsonify({"ticket": chamado_public_row(get_chamado(chamado_id))}), 201
 
 
-@app.route("/apps/gpsmusical/original/<path:subpath>")
+@app.route("/apps/chamados/api/tickets/<int:chamado_id>", methods=["GET", "PUT"])
 @login_required
-def gpsmusical_original_static(subpath):
-    return static_app_response("gpsmusical", subpath, integrated=False)
+def chamados_ticket_api(chamado_id):
+    usuario = current_user_or_logout()
+    current = get_chamado(chamado_id)
+    if not current:
+        return jsonify({"erro": "chamado nao encontrado"}), 404
+    if request.method == "GET":
+        conn = get_conn()
+        cur = conn.cursor(dictionary=True)
+        cur.execute(
+            """
+            SELECT i.*, u.nome AS autor_nome
+            FROM chamados_intervencoes i
+            LEFT JOIN usuarios u ON u.id=i.autor_id
+            WHERE i.chamado_id=%s ORDER BY i.created_at, i.id
+            """,
+            (chamado_id,),
+        )
+        interventions = [chamado_public_intervention(row) for row in cur.fetchall()]
+        cur.execute(
+            """
+            SELECT doc.*, dispositivo.nome AS dispositivo_nome, criador.nome AS criado_por_nome
+            FROM chamados_documentos doc
+            LEFT JOIN tecnologia_dispositivos dispositivo ON dispositivo.id=doc.dispositivo_id
+            LEFT JOIN usuarios criador ON criador.id=doc.criado_por_id
+            WHERE doc.chamado_id=%s ORDER BY doc.created_at DESC
+            """,
+            (chamado_id,),
+        )
+        documents = [chamado_public_document(row) for row in cur.fetchall()]
+        cur.close()
+        conn.close()
+        suggestions = chamado_similar_suggestions(
+            current.get("titulo", "") + " " + current.get("descricao", "") + " " + (current.get("sintomas") or ""),
+            current.get("categoria") or "", current.get("subcategoria") or "",
+            current.get("dispositivo_id"), exclude_id=chamado_id,
+        )
+        return jsonify({
+            "ticket": chamado_public_row(current),
+            "interventions": interventions,
+            "documents": documents,
+            "suggestions": suggestions,
+        })
+
+    payload = request.get_json(silent=True) or {}
+    try:
+        title = chamado_text(payload.get("title", current.get("titulo")), 180)
+        description = chamado_text(payload.get("description", current.get("descricao")), 12000)
+        if not title or not description:
+            raise ValueError("informe titulo e descricao do chamado")
+        category = chamado_choice(payload.get("category"), CHAMADO_CATEGORIAS, "categoria", current.get("categoria"))
+        priority = chamado_choice(payload.get("priority"), CHAMADO_PRIORIDADES, "prioridade", current.get("prioridade"))
+        status = chamado_choice(payload.get("status"), CHAMADO_STATUS, "status", current.get("status"))
+        requester_id = chamado_optional_int(payload.get("requesterId", current.get("solicitante_id")))
+        assignee_id = chamado_optional_int(payload.get("assigneeId", current.get("responsavel_id")))
+        device_id = chamado_optional_int(payload.get("deviceId", current.get("dispositivo_id")))
+        subcategory = chamado_text(payload.get("subcategory", current.get("subcategoria")), 100)
+        location = chamado_text(payload.get("location", current.get("localizacao")), 160)
+        symptoms = chamado_text(payload.get("symptoms", current.get("sintomas")), 12000)
+        root_cause = chamado_text(payload.get("rootCause", current.get("causa_raiz")), 12000)
+        resolution = chamado_text(payload.get("resolution", current.get("solucao_resumo")), 16000)
+        if status in {"RESOLVIDO", "FECHADO"} and not resolution:
+            raise ValueError("registre a medida resolutiva antes de concluir o chamado")
+    except ValueError as exc:
+        return jsonify({"erro": str(exc)}), 400
+
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            UPDATE chamados
+            SET titulo=%s, descricao=%s, categoria=%s, subcategoria=%s,
+                prioridade=%s, status=%s, localizacao=%s, sintomas=%s,
+                causa_raiz=%s, solucao_resumo=%s, solicitante_id=%s,
+                responsavel_id=%s, dispositivo_id=%s,
+                encerrado_em=CASE
+                    WHEN %s IN ('RESOLVIDO','FECHADO') AND encerrado_em IS NULL THEN UTC_TIMESTAMP()
+                    WHEN %s NOT IN ('RESOLVIDO','FECHADO') THEN NULL
+                    ELSE encerrado_em END
+            WHERE id=%s
+            """,
+            (
+                title, description, category, subcategory, priority, status, location,
+                symptoms, root_cause, resolution, requester_id, assignee_id, device_id,
+                status, status, chamado_id,
+            ),
+        )
+        changes = []
+        if status != current.get("status"):
+            changes.append(f"Status alterado de {current.get('status')} para {status}.")
+        if assignee_id != current.get("responsavel_id"):
+            changes.append("Responsavel alterado.")
+        if priority != current.get("prioridade"):
+            changes.append(f"Prioridade alterada para {priority}.")
+        if resolution and resolution != (current.get("solucao_resumo") or ""):
+            changes.append("Medida resolutiva atualizada.")
+        if not changes:
+            changes.append("Dados do chamado atualizados.")
+        cur.execute(
+            """
+            INSERT INTO chamados_intervencoes
+                (chamado_id, autor_id, tipo, descricao, status_anterior, status_novo, solucao_aplicada)
+            VALUES (%s,%s,%s,%s,%s,%s,%s)
+            """,
+            (
+                chamado_id, int(usuario["id"]), "STATUS" if status != current.get("status") else "COMENTARIO",
+                " ".join(changes), current.get("status"), status,
+                resolution if resolution != (current.get("solucao_resumo") or "") else "",
+            ),
+        )
+        conn.commit()
+    except mysql.connector.IntegrityError:
+        conn.rollback()
+        return jsonify({"erro": "usuario ou equipamento vinculado nao foi encontrado"}), 400
+    finally:
+        cur.close()
+        conn.close()
+    return jsonify({"ticket": chamado_public_row(get_chamado(chamado_id))})
 
 
-@app.route("/apps/gpsmusical/<path:subpath>")
+@app.route("/apps/chamados/api/tickets/<int:chamado_id>/interventions", methods=["POST"])
 @login_required
-def gpsmusical_static(subpath):
-    return static_app_response("gpsmusical", subpath)
+def chamados_intervention_api(chamado_id):
+    usuario = current_user_or_logout()
+    current = get_chamado(chamado_id)
+    if not current:
+        return jsonify({"erro": "chamado nao encontrado"}), 404
+    payload = request.get_json(silent=True) or {}
+    try:
+        intervention_type = chamado_choice(
+            payload.get("type"), CHAMADO_INTERVENCAO_TIPOS, "tipo de registro", "COMENTARIO"
+        )
+        description = chamado_text(payload.get("description"), 16000)
+        resolution = chamado_text(payload.get("resolution"), 16000)
+        if not description and not resolution:
+            raise ValueError("descreva o trabalho, diagnostico ou solucao")
+        minutes = int(payload.get("minutesSpent") or 0)
+        if minutes < 0 or minutes > 10080:
+            raise ValueError("tempo gasto deve ficar entre 0 e 10080 minutos")
+        new_status = chamado_choice(
+            payload.get("newStatus"), CHAMADO_STATUS, "status", current.get("status")
+        )
+        final_resolution = resolution or (current.get("solucao_resumo") or "")
+        if new_status in {"RESOLVIDO", "FECHADO"} and not final_resolution:
+            raise ValueError("registre a medida resolutiva antes de concluir o chamado")
+    except (TypeError, ValueError) as exc:
+        return jsonify({"erro": str(exc)}), 400
+
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            INSERT INTO chamados_intervencoes
+                (chamado_id, autor_id, tipo, descricao, minutos_gastos,
+                 status_anterior, status_novo, solucao_aplicada)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+            """,
+            (
+                chamado_id, int(usuario["id"]), intervention_type,
+                description or "Medida resolutiva registrada.", minutes,
+                current.get("status"), new_status, resolution,
+            ),
+        )
+        cur.execute(
+            """
+            UPDATE chamados
+            SET status=%s,
+                solucao_resumo=CASE WHEN %s<>'' THEN %s ELSE solucao_resumo END,
+                responsavel_id=COALESCE(responsavel_id, %s),
+                encerrado_em=CASE
+                    WHEN %s IN ('RESOLVIDO','FECHADO') AND encerrado_em IS NULL THEN UTC_TIMESTAMP()
+                    WHEN %s NOT IN ('RESOLVIDO','FECHADO') THEN NULL
+                    ELSE encerrado_em END
+            WHERE id=%s
+            """,
+            (new_status, resolution, resolution, int(usuario["id"]), new_status, new_status, chamado_id),
+        )
+        conn.commit()
+    finally:
+        cur.close()
+        conn.close()
+    return jsonify({"ticket": chamado_public_row(get_chamado(chamado_id))}), 201
 
 
-@app.route("/apps/bpa")
+@app.route("/apps/chamados/api/similar")
 @login_required
-def bpa_static_root():
-    return static_app_response("bpa")
+def chamados_similar_api():
+    try:
+        text = chamado_text(request.args.get("text"), 12000)
+        category = chamado_text(request.args.get("category"), 40).upper()
+        subcategory = chamado_text(request.args.get("subcategory"), 100)
+        device_id = chamado_optional_int(request.args.get("deviceId"))
+        exclude_id = chamado_optional_int(request.args.get("excludeId"))
+    except ValueError as exc:
+        return jsonify({"erro": str(exc)}), 400
+    return jsonify(chamado_similar_suggestions(text, category, subcategory, device_id, exclude_id))
 
 
-@app.route("/apps/bpa/original")
+@app.route("/apps/chamados/api/documents", methods=["GET", "POST"])
 @login_required
-def bpa_original_root():
-    return static_app_response("bpa", integrated=False)
+def chamados_documents_api():
+    usuario = current_user_or_logout()
+    if request.method == "GET":
+        try:
+            ticket_id = chamado_optional_int(request.args.get("ticketId"))
+            device_id = chamado_optional_int(request.args.get("deviceId"))
+        except ValueError as exc:
+            return jsonify({"erro": str(exc)}), 400
+        category = chamado_text(request.args.get("category"), 40).upper()
+        search = chamado_text(request.args.get("search"), 180)
+        conn = get_conn()
+        cur = conn.cursor(dictionary=True)
+        sql = """
+            SELECT doc.*, dispositivo.nome AS dispositivo_nome, criador.nome AS criado_por_nome
+            FROM chamados_documentos doc
+            LEFT JOIN tecnologia_dispositivos dispositivo ON dispositivo.id=doc.dispositivo_id
+            LEFT JOIN usuarios criador ON criador.id=doc.criado_por_id
+            WHERE 1=1
+        """
+        params = []
+        if ticket_id:
+            sql += " AND doc.chamado_id=%s"
+            params.append(ticket_id)
+        else:
+            sql += " AND doc.chamado_id IS NULL"
+        if device_id:
+            sql += " AND doc.dispositivo_id=%s"
+            params.append(device_id)
+        if category:
+            sql += " AND doc.categoria=%s"
+            params.append(category)
+        if search:
+            like = f"%{search}%"
+            sql += " AND (doc.titulo LIKE %s OR doc.descricao LIKE %s OR doc.nome_arquivo LIKE %s)"
+            params.extend([like, like, like])
+        sql += " ORDER BY doc.created_at DESC LIMIT 500"
+        cur.execute(sql, tuple(params))
+        documents = [chamado_public_document(row) for row in cur.fetchall()]
+        cur.close()
+        conn.close()
+        return jsonify({"documents": documents})
+
+    if request.content_length and request.content_length > CHAMADO_MAX_DOCUMENT_BYTES + 1024 * 1024:
+        return jsonify({"erro": "o envio excede o limite de 15 MB"}), 413
+    try:
+        ticket_id = chamado_optional_int(request.form.get("ticketId"))
+        device_id = chamado_optional_int(request.form.get("deviceId"))
+        category = chamado_text(request.form.get("category") or "GERAL", 40).upper()
+        title = chamado_text(request.form.get("title"), 180)
+        description = chamado_text(request.form.get("description"), 12000)
+        external_url = chamado_text(request.form.get("externalUrl"), 1000)
+        if external_url and urllib.parse.urlparse(external_url).scheme not in {"http", "https"}:
+            raise ValueError("o link do documento deve usar HTTP ou HTTPS")
+    except ValueError as exc:
+        return jsonify({"erro": str(exc)}), 400
+
+    upload = request.files.get("file")
+    stored_name = ""
+    original_name = ""
+    mime_type = ""
+    size = 0
+    if upload and upload.filename:
+        original_name = secure_filename(upload.filename)
+        suffix = Path(original_name).suffix.lower()
+        if suffix not in CHAMADO_DOCUMENT_EXTENSIONS:
+            return jsonify({"erro": "tipo de arquivo nao permitido"}), 400
+        upload.stream.seek(0, os.SEEK_END)
+        size = upload.stream.tell()
+        upload.stream.seek(0)
+        if size > CHAMADO_MAX_DOCUMENT_BYTES:
+            return jsonify({"erro": "o arquivo excede o limite de 15 MB"}), 413
+        stored_name = hashlib.sha256(os.urandom(32)).hexdigest()[:20] + suffix
+        CHAMADOS_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+        upload.save(CHAMADOS_UPLOAD_DIR / stored_name)
+        mime_type = upload.mimetype or mimetypes.guess_type(original_name)[0] or "application/octet-stream"
+    if not stored_name and not external_url:
+        return jsonify({"erro": "anexe um arquivo ou informe um link"}), 400
+    if not title:
+        title = original_name or external_url
+
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            INSERT INTO chamados_documentos
+                (chamado_id, dispositivo_id, criado_por_id, categoria, titulo,
+                 descricao, nome_arquivo, arquivo_armazenado, mime_type,
+                 tamanho_bytes, url_externa)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            """,
+            (
+                ticket_id, device_id, int(usuario["id"]), category, title,
+                description, original_name, stored_name, mime_type, size, external_url,
+            ),
+        )
+        document_id = int(cur.lastrowid)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        if stored_name:
+            try:
+                (CHAMADOS_UPLOAD_DIR / stored_name).unlink(missing_ok=True)
+            except OSError:
+                pass
+        raise
+    finally:
+        cur.close()
+        conn.close()
+    return jsonify({"ok": True, "documentId": document_id}), 201
 
 
-@app.route("/apps/bpa/original/<path:subpath>")
+@app.route("/apps/chamados/api/documents/<int:document_id>/download")
 @login_required
-def bpa_original_static(subpath):
-    return static_app_response("bpa", subpath, integrated=False)
+def chamados_document_download_api(document_id):
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    cur.execute("SELECT * FROM chamados_documentos WHERE id=%s", (document_id,))
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+    if not row:
+        return jsonify({"erro": "documento nao encontrado"}), 404
+    if row.get("url_externa"):
+        return redirect(row["url_externa"])
+    stored_name = Path(row.get("arquivo_armazenado") or "").name
+    if not stored_name or not (CHAMADOS_UPLOAD_DIR / stored_name).is_file():
+        return jsonify({"erro": "arquivo nao encontrado no armazenamento"}), 404
+    return send_from_directory(
+        CHAMADOS_UPLOAD_DIR,
+        stored_name,
+        as_attachment=True,
+        download_name=row.get("nome_arquivo") or stored_name,
+    )
 
 
-@app.route("/apps/bpa/<path:subpath>")
+@app.route("/apps/chamados")
 @login_required
-def bpa_static(subpath):
-    return static_app_response("bpa", subpath)
+def chamados_static_root():
+    return static_app_response("chamados")
 
 
-@app.route("/apps/tatoo")
+@app.route("/apps/chamados/original")
 @login_required
-def tatoo_static_root():
-    return static_app_response("tatoo")
+def chamados_original_root():
+    return static_app_response("chamados", integrated=False)
 
 
-@app.route("/apps/tatoo/original")
+@app.route("/apps/chamados/original/<path:subpath>")
 @login_required
-def tatoo_original_root():
-    return static_app_response("tatoo", integrated=False)
+def chamados_original_static(subpath):
+    return static_app_response("chamados", subpath, integrated=False)
 
 
-@app.route("/apps/tatoo/original/<path:subpath>")
+@app.route("/apps/chamados/<path:subpath>")
 @login_required
-def tatoo_original_static(subpath):
-    return static_app_response("tatoo", subpath, integrated=False)
-
-
-@app.route("/apps/tatoo/<path:subpath>")
-@login_required
-def tatoo_static(subpath):
-    return static_app_response("tatoo", subpath)
+def chamados_static(subpath):
+    return static_app_response("chamados", subpath)
 
 
 # ---------------------------------------------------------------------------
@@ -5621,6 +6088,8 @@ def _technology_monitor_loop():
 
 def start_technology_monitor():
     global _technology_monitor_thread
+    if CLOUD_READ_ONLY:
+        return
     with _technology_monitor_lock:
         if _technology_monitor_thread and _technology_monitor_thread.is_alive():
             return
@@ -6691,9 +7160,9 @@ def api_login():
     except Exception:
         senha_ok = False
 
-    if not senha_ok and senha_db == senha:
+    if not senha_ok and senha_db == senha and not CLOUD_READ_ONLY:
         senha_ok = True
-        conn = get_conn()
+        conn = get_auth_conn()
         cur = conn.cursor()
         cur.execute(
             "UPDATE usuarios SET senha=%s WHERE id=%s",

@@ -5,7 +5,7 @@
   "url": "/apps/automacao",
   "standalone_url": "/apps/automacao/original/",
   "icone": "automation",
-  "ordem": 10,
+  "ordem": 50,
   "ativo": true,
   "origem": "sensoresMonitor",
   "source_dir": "apps/automacao/source",

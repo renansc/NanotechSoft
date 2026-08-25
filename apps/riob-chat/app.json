@@ -1,11 +1,11 @@
 {
   "app_key": "riob-chat",
-  "nome": "Chat RioB",
+  "nome": "Chat",
   "descricao": "Chat convencional interno do RioB com anexos e contatos.",
   "url": "/apps/riob-chat/riob",
   "standalone_url": "/apps/riob-chat/riob",
   "icone": "chat",
-  "ordem": 94,
+  "ordem": 70,
   "ativo": true,
   "origem": "riob",
   "source_dir": "apps/riob/source",

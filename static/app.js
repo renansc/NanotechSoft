@@ -140,26 +140,6 @@ function syncMenuSection() {
     };
     section = nanostoreSections[hash] || "dashboards";
   }
-  if (location.pathname.startsWith("/apps/gpsmusical")) {
-    const gpsSections = {
-      editor: "cadastros",
-      backup: "import_export",
-      config: "config",
-      docs: "config",
-    };
-    section = gpsSections[hash] || "dashboards";
-  }
-  if (location.pathname.startsWith("/apps/bpa")) section = "cadastros";
-  if (location.pathname.startsWith("/apps/tatoo")) {
-    const tatooSections = {
-      clientes: "cadastros",
-      sessoes: "cadastros",
-      consentimentos: "cadastros",
-      financeiro: "financeiro",
-      dados: "import_export",
-    };
-    section = tatooSections[hash] || "dashboards";
-  }
   if (location.pathname.startsWith("/apps/riob")) {
     const riobSections = {
       dashboard: "dashboards",
@@ -520,8 +500,13 @@ function bindClientAdmin() {
         nome: module.nome,
         descricao: module.descricao || "",
         href: module.href || "",
-        status: module.status === "importar" ? "importar" : "contratado",
+        hrefEnv: module.hrefEnv || "",
+        status: ["importar", "externo", "cache-leitura"].includes(module.status)
+          ? module.status
+          : "contratado",
       }));
+    const externalModules = (selectedClient()?.modules || [])
+      .filter((module) => module.status === "externo");
     return {
       nome: String(data.get("nome") || "").trim(),
       id: slugify(data.get("id") || data.get("nome")),
@@ -529,7 +514,7 @@ function bindClientAdmin() {
       databaseKey: String(data.get("databaseKey") || "").trim(),
       observacao: String(data.get("observacao") || "").trim(),
       allModules,
-      modules: allModules ? [] : modules,
+      modules: allModules ? externalModules : modules,
     };
   }
 

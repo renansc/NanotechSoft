@@ -53,6 +53,7 @@ is_risky_path() {
   [[ "$path" == backups/* ]] && return 0
   [[ "$path" == .deploy-backups/* ]] && return 0
   [[ "$path" == deploy/tmp/* ]] && return 0
+  [[ "$path" == apps/financeiro/dados/* ]] && return 0
   [[ "$path" == "apps/riob/source/config" || "$path" == apps/riob/source/config/* ]] && return 0
   [[ "$path" == apps/riob/source/.continue/* ]] && return 0
   [[ "$path" == apps/riob/source/finalizados/* ]] && return 0
@@ -124,24 +125,28 @@ run_validations() {
   fi
 
   if [[ "$SKIP_HEALTH" != "1" ]]; then
-    log "subindo bancos preservados, portal e RioB para checagem local"
-    compose up -d "${DATABASE_SERVICES[@]}"
+    log "subindo os servicos preservados do perfil ${DEPLOY_PROFILE_ID} para checagem local"
+    if local_database_enabled; then
+      compose up -d "${DATABASE_SERVICES[@]}"
+    fi
     compose up -d --no-deps "${RUNTIME_SERVICES[@]}" "$PORTAL_PROXY_SERVICE"
     if ! wait_for_app 45 2; then
       compose logs --tail=120 "$APP_SERVICE" >&2 || true
       die "falha ao consultar o portal dentro do container"
     fi
     log "reiniciando proxies para atualizar os upstreams Docker"
-    compose restart "$PORTAL_PROXY_SERVICE" "$RIOB_PROXY_SERVICE"
+    compose restart "${PROXY_SERVICES[@]}"
     if ! wait_for_proxy_url "$PORTAL_PROXY_HEALTH_URL" 30 2; then
       compose logs --tail=120 "$PORTAL_PROXY_SERVICE" >&2 || true
       die "falha ao consultar o Portal pelo proxy"
     fi
-    if ! wait_for_proxy_url "$RIOB_PROXY_STATUS_URL" "$RIOB_PROXY_STARTUP_TRIES" 2; then
-      compose logs --tail=120 "$RIOB_PROXY_SERVICE" >&2 || true
-      die "falha ao consultar o RioB pelo proxy"
+    if riob_stack_enabled; then
+      if ! wait_for_proxy_url "$RIOB_PROXY_STATUS_URL" "$RIOB_PROXY_STARTUP_TRIES" 2; then
+        compose logs --tail=120 "$RIOB_PROXY_SERVICE" >&2 || true
+        die "falha ao consultar o RioB pelo proxy"
+      fi
+      log "RioB validado pelo proxy externo; a rota real responde /api/status"
     fi
-    log "RioB validado pelo proxy externo; a rota real responde /api/status"
   fi
 }
 

@@ -32,7 +32,8 @@ fi
 
 ensure_riob_import_sources
 
-log "recriando somente portal e RioB; nenhum servico de banco sera iniciado, restaurado ou sincronizado..."
+log "perfil ativo: ${DEPLOY_PROFILE_ID} (${DEPLOY_MODE}), cliente ${CLIENTE_DEPLOY_ID}"
+log "recriando somente os servicos de aplicacao habilitados; nenhum banco sera operado..."
 if [[ "${NO_CACHE:-0}" == "1" ]]; then
   compose build --no-cache "${BUILD_SERVICES[@]}"
 else
@@ -44,11 +45,11 @@ if ! wait_for_app 45 2; then
   compose logs --tail=120 "$APP_SERVICE" >&2 || true
   die "portal nao respondeu apos update"
 fi
-if ! wait_for_riob 45 2; then
+if riob_stack_enabled && ! wait_for_riob 45 2; then
   compose logs --tail=120 "$RIOB_APP_SERVICE" >&2 || true
   die "RioB nao respondeu apos update"
 fi
 refresh_and_validate_proxies
 
 compose ps "${RUNTIME_SERVICES[@]}"
-log "update de producao concluido e validado pelos proxies, sem operacoes de banco"
+log "update do perfil ${DEPLOY_PROFILE_ID} concluido, sem operacoes de banco"

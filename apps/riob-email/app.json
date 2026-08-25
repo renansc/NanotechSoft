@@ -1,11 +1,11 @@
 {
   "app_key": "riob-email",
-  "nome": "E-mail RioB",
+  "nome": "Email",
   "descricao": "Gestor de e-mails e anexos legado do RioB.",
   "url": "/apps/riob-email/riob",
   "standalone_url": "/apps/riob-email/riob",
   "icone": "mail",
-  "ordem": 95,
+  "ordem": 140,
   "ativo": true,
   "origem": "riob",
   "source_dir": "apps/riob-email/source",

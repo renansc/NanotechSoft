@@ -17,47 +17,6 @@ services:
       retries: 30
       start_period: 30s
 
-  pacs-postgres:
-    image: postgres:16-alpine
-    container_name: nanotechsoft-pacs-postgres
-    restart: unless-stopped
-    command:
-      - postgres
-      - -c
-      - ssl=on
-      - -c
-      - log_connections=on
-      - -c
-      - log_disconnections=on
-      - -c
-      - "log_line_prefix=%m [%p] user=%u db=%d client=%r "
-    environment:
-      POSTGRES_USER: ${RAIOXPACS_PGUSER:-postgres}
-      POSTGRES_PASSWORD: ${RAIOXPACS_PGPASSWORD:-postgres}
-      POSTGRES_DB: ${RAIOXPACS_PGDATABASE:-raioxpacs}
-      TZ: ${TZ:-America/Sao_Paulo}
-    volumes:
-      - notechsoft_pacs_postgres:/var/lib/postgresql/data
-      - ./apps/pacs/source/docker/init:/docker-entrypoint-initdb.d:ro
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
-      interval: 10s
-      timeout: 5s
-      retries: 30
-      start_period: 30s
-
-  pacs-postgres-gateway:
-    image: haproxy:3.0-alpine
-    container_name: nanotechsoft-pacs-postgres-gateway
-    restart: unless-stopped
-    depends_on:
-      pacs-postgres:
-        condition: service_healthy
-    ports:
-      - "${RAIOXPACS_POSTGRES_PORT:-5433}:5433"
-    volumes:
-      - ./deploy/postgres-gateway/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
-
   riob-app:
     container_name: riobranco-app
     image: riob-app:latest
@@ -168,10 +127,6 @@ services:
     depends_on:
       mysql:
         condition: service_healthy
-      pacs-postgres:
-        condition: service_healthy
-      riob-proxy:
-        condition: service_started
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
@@ -185,6 +140,11 @@ services:
       NS_HOST: 0.0.0.0
       NS_PORT: 5600
       NS_DEBUG: ${NS_DEBUG:-0}
+      NS_DEPLOY_MODE: ${NS_DEPLOY_MODE:-local}
+      NS_READ_ONLY: ${NS_READ_ONLY:-0}
+      NS_CACHE_PROVIDER: ${NS_CACHE_PROVIDER:-}
+      NS_CACHE_MAX_AGE_SECONDS: ${NS_CACHE_MAX_AGE_SECONDS:-900}
+      CLIENTE_DEPLOY_ID: ${CLIENTE_DEPLOY_ID:-rio-branco}
       AUTOMACAO_APP_DIR: ${AUTOMACAO_APP_DIR:-/app/apps/automacao/source}
       NANOPONTO_APP_DIR: ${NANOPONTO_APP_DIR:-/app/apps/nanoponto/source}
       ZAP_APP_DIR: ${ZAP_APP_DIR:-/app/apps/zap/source}
@@ -201,18 +161,6 @@ services:
       NANOSTORE_PUBLIC_BASE_URL: ${NANOSTORE_PUBLIC_BASE_URL:-https://192.168.200.254/apps/nanostore}
       NANOSTORE_CA_CERT_PATH: ${NANOSTORE_CA_CERT_PATH:-/app/apps/riob/source/certs/riobranco-ca.crt}
       NANOSTORE_HTTPS_CERT_PATH: ${NANOSTORE_HTTPS_CERT_PATH:-/app/apps/riob/source/certs/riobranco-app.crt}
-      GPSMUSICAL_APP_DIR: ${GPSMUSICAL_APP_DIR:-/app/apps/gpsmusical/source}
-      BPA_APP_DIR: ${BPA_APP_DIR:-/app/apps/bpa/source}
-      TATOO_APP_DIR: ${TATOO_APP_DIR:-/app/apps/tatoo/source}
-      RAIOXPACS_APP_DIR: ${RAIOXPACS_APP_DIR:-/app/apps/pacs/source}
-      RAIOXPACS_PGHOST: ${RAIOXPACS_PGHOST:-pacs-postgres}
-      RAIOXPACS_PGPORT: ${RAIOXPACS_PGPORT:-5432}
-      RAIOXPACS_PGUSER: ${RAIOXPACS_PGUSER:-postgres}
-      RAIOXPACS_PGPASSWORD: ${RAIOXPACS_PGPASSWORD:-postgres}
-      RAIOXPACS_PGDATABASE: ${RAIOXPACS_PGDATABASE:-raioxpacs}
-      RAIOXPACS_PGSSLMODE: ${RAIOXPACS_PGSSLMODE:-prefer}
-      RAIOXPACS_AUTO_BOOTSTRAP_SCHEMA: ${RAIOXPACS_AUTO_BOOTSTRAP_SCHEMA:-1}
-      NANOTECH_SHARED_DIR: ${NANOTECH_SHARED_DIR:-/app/apps/shared}
       RIOB_BASE_URL: ${RIOB_BASE_URL:-https://riob-proxy}
       RIOB_SSL_VERIFY: ${RIOB_SSL_VERIFY:-0}
       SMTP_HOST: ${SMTP_HOST:-}
@@ -225,6 +173,7 @@ services:
       TECH_ALERT_EMAIL_TO: ${TECH_ALERT_EMAIL_TO:-solucoestecnologicasrenan@gmail.com}
       TECH_ALERT_REMINDER_HOURS: ${TECH_ALERT_REMINDER_HOURS:-6}
       TECH_ALERT_RECOVERY_MARGIN_PCT: ${TECH_ALERT_RECOVERY_MARGIN_PCT:-5}
+      LABORATORIO_PACS_URL: ${LABORATORIO_PACS_URL:-}
     ports:
       - "${NOTECHSOFT_APP_PORT:-5600}:5600"
     volumes:
@@ -252,7 +201,6 @@ services:
 
 volumes:
   notechsoft_mysql:
-  notechsoft_pacs_postgres:
   riob_app_data:
     name: riob_app_data
   riob_cameras_data:

@@ -14,8 +14,22 @@
         <h2>Menu principal</h2>
         <p>Apps instalados dinamicamente em uma base Flask e MySQL.</p>
       </div>
-      <a class="action-link" href="{{ url_for('config_page') }}">Configurar temas</a>
+      {% if not deployment.readOnly %}
+        <a class="action-link" href="{{ url_for('config_page') }}">Configurar temas</a>
+      {% endif %}
     </section>
+
+    {% if deployment.readOnly and deployment.cacheClients %}
+      <nav class="cloud-client-picker" aria-label="Cliente consultado no cache">
+        <strong>Cache consultado:</strong>
+        {% for client_id in deployment.cacheClients %}
+          <a
+            href="{{ url_for('select_cloud_client', client_id=client_id) }}"
+            class="{% if deployment.selectedCacheClient == client_id %}active{% endif %}"
+          >{{ client_id }}</a>
+        {% endfor %}
+      </nav>
+    {% endif %}
 
     <section class="apps-grid" aria-label="Apps instalados">
       {% if apps %}

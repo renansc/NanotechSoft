@@ -140,6 +140,76 @@ CREATE TABLE IF NOT EXISTS tecnologia_alertas_recursos (
     FOREIGN KEY (dispositivo_id) REFERENCES tecnologia_dispositivos(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS chamados (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    protocolo VARCHAR(32) NOT NULL UNIQUE,
+    titulo VARCHAR(180) NOT NULL,
+    descricao TEXT NOT NULL,
+    categoria VARCHAR(40) NOT NULL DEFAULT 'TI',
+    subcategoria VARCHAR(100) NOT NULL DEFAULT '',
+    prioridade VARCHAR(20) NOT NULL DEFAULT 'MEDIA',
+    status VARCHAR(24) NOT NULL DEFAULT 'ABERTO',
+    localizacao VARCHAR(160) NOT NULL DEFAULT '',
+    sintomas TEXT NULL,
+    causa_raiz TEXT NULL,
+    solucao_resumo TEXT NULL,
+    solicitante_id INT NULL,
+    responsavel_id INT NULL,
+    dispositivo_id INT NULL,
+    criado_por_id INT NULL,
+    encerrado_em DATETIME NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_chamados_status_prioridade (status, prioridade, updated_at),
+    INDEX idx_chamados_categoria (categoria, subcategoria),
+    INDEX idx_chamados_solicitante (solicitante_id),
+    INDEX idx_chamados_responsavel (responsavel_id),
+    INDEX idx_chamados_dispositivo (dispositivo_id),
+    FOREIGN KEY (solicitante_id) REFERENCES usuarios(id) ON DELETE SET NULL,
+    FOREIGN KEY (responsavel_id) REFERENCES usuarios(id) ON DELETE SET NULL,
+    FOREIGN KEY (criado_por_id) REFERENCES usuarios(id) ON DELETE SET NULL,
+    FOREIGN KEY (dispositivo_id) REFERENCES tecnologia_dispositivos(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS chamados_intervencoes (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    chamado_id BIGINT NOT NULL,
+    autor_id INT NULL,
+    tipo VARCHAR(24) NOT NULL DEFAULT 'COMENTARIO',
+    descricao TEXT NOT NULL,
+    minutos_gastos INT NOT NULL DEFAULT 0,
+    status_anterior VARCHAR(24) NULL,
+    status_novo VARCHAR(24) NULL,
+    solucao_aplicada TEXT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_chamados_intervencoes_chamado_data (chamado_id, created_at),
+    INDEX idx_chamados_intervencoes_autor (autor_id),
+    FOREIGN KEY (chamado_id) REFERENCES chamados(id) ON DELETE CASCADE,
+    FOREIGN KEY (autor_id) REFERENCES usuarios(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS chamados_documentos (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    chamado_id BIGINT NULL,
+    dispositivo_id INT NULL,
+    criado_por_id INT NULL,
+    categoria VARCHAR(40) NOT NULL DEFAULT 'GERAL',
+    titulo VARCHAR(180) NOT NULL,
+    descricao TEXT NULL,
+    nome_arquivo VARCHAR(255) NOT NULL DEFAULT '',
+    arquivo_armazenado VARCHAR(255) NOT NULL DEFAULT '',
+    mime_type VARCHAR(120) NOT NULL DEFAULT '',
+    tamanho_bytes BIGINT NOT NULL DEFAULT 0,
+    url_externa VARCHAR(1000) NOT NULL DEFAULT '',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_chamados_documentos_chamado (chamado_id, created_at),
+    INDEX idx_chamados_documentos_dispositivo (dispositivo_id),
+    INDEX idx_chamados_documentos_categoria (categoria),
+    FOREIGN KEY (chamado_id) REFERENCES chamados(id) ON DELETE CASCADE,
+    FOREIGN KEY (dispositivo_id) REFERENCES tecnologia_dispositivos(id) ON DELETE SET NULL,
+    FOREIGN KEY (criado_por_id) REFERENCES usuarios(id) ON DELETE SET NULL
+);
+
 INSERT INTO portal_config (id, tema)
 VALUES (1, 'rio_branco')
 ON DUPLICATE KEY UPDATE id = id;

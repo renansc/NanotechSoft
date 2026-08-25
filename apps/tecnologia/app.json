@@ -5,7 +5,7 @@
   "url": "/apps/tecnologia",
   "standalone_url": "/apps/tecnologia/original",
   "icone": "network",
-  "ordem": 25,
+  "ordem": 120,
   "ativo": true,
   "origem": "nanotech",
   "source_dir": "apps/tecnologia/source",

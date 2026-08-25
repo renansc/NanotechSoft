@@ -208,15 +208,17 @@ If you need context fast, read these files first:
 - A change is not complete merely because it works in the local Docker
   environment. For every RioB change that can reach production, explicitly
   validate both environments: confirm the intended commit is on `origin/main`,
-  confirm the Render deployment is running that revision, exercise the affected
-  route through the public Render URL, and verify that the Render service is
-  connected to the intended persistent database. The `/healthz` result alone is
-  insufficient because it only proves that the portal process is alive.
+  validate the local RioB deployment for the affected client, and separately
+  confirm that the Render portal is running the intended portal revision. The
+  Render service is read-only and does not proxy RioB or access the local
+  Tailscale. Use `/healthz/cache` only to validate cache freshness; `/healthz`
+  alone proves only that the portal process is alive.
 - Code deployment and data deployment are separate operations. Never assume
-  that a Git push or Render auto-deploy copies the local MySQL data: the Render
-  service must point RioB to the `riobranco` schema on the single MySQL server
-  configured by `NS_DB_*`. Before attributing empty screens to cache or frontend
-  code, compare a read-only business-data endpoint in local Docker and Render.
+  that a Git push or Render auto-deploy copies the local MySQL data. RioB uses
+  the client's local `riobranco` schema; the Render portal reads only the
+  client's isolated AlwaysData cache with a `SELECT` credential. Before
+  attributing empty screens to frontend code, compare the local source count to
+  the separately recorded cache snapshot.
   Never restore, synchronize, replace, or seed production data as part of a
   normal code deploy; require an explicit, backed-up, separately approved data
   operation.
@@ -224,9 +226,9 @@ If you need context fast, read these files first:
   configured by `NS_DB_HOST`, `NS_DB_PORT`, `NS_DB_USER`, and
   `NS_DB_PASSWORD`. `NS_DB_NAME` selects the portal schema (`notechsoft`) and
   `RIOB_DB_NAME` selects the RioB schema (`riobranco`) on that same server.
-  Never introduce a second MySQL connection or let the Render Blueprint
-  overwrite the operator-provided `NS_DB_*` values with an empty private
-  service.
+  This rule applies to the local RioB profile only. The Render profile must not
+  start RioB, configure `RIOB_BASE_URL`, or reuse local credentials; its
+  `NS_DB_*` values point to the read-only AlwaysData cache.
 - Removing an outgoing NF-e from a frete means "leave it available without a
   link", not cancel, discard, hide, or automatically recreate its card. Persist
   this as the manual `desvinculado` state, show it in the `sem_vinculo` filter

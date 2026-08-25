@@ -25,29 +25,26 @@ em `https://192.168.200.254` pela porta `443`; instale primeiro a CA interna
 oferecida em **NanoStore > Configuracao > HTTPS e camera** para liberar a camera
 do celular em um contexto seguro.
 
-## Bancos com Docker
+## Banco com Docker
 
 ```bash
 cd NanotechSoft
 cp .env.example .env
-docker compose up -d mysql pacs-postgres
+docker compose up -d mysql
 ```
 
-Esse compose publica o MySQL do portal na porta `3307` e o PostgreSQL do
-RaioxPacs na porta `5433`, para nao conflitar com bancos locais padrao.
+Esse compose publica o MySQL do portal na porta `3307`, para nao conflitar com
+um MySQL local padrao.
 
 Dentro da rede Docker, o portal acessa:
 
 - MySQL do portal: `mysql:3306`.
-- PostgreSQL do PACS: `pacs-postgres:5432`.
 
 De fora do Docker, use:
 
 - MySQL do portal: `127.0.0.1:3307`.
-- PostgreSQL do PACS: `127.0.0.1:5433`.
 
-Com o banco do compose, mantenha `NS_DB_PORT=3307`, `RAIOXPACS_PGHOST=pacs-postgres`
-e `RAIOXPACS_PGPORT=5432` no `.env`.
+Com o banco do compose, mantenha `NS_DB_PORT=3307` no `.env`.
 
 ## Arquivos de ambiente
 
@@ -68,10 +65,8 @@ Para rodar local explicitamente:
 NANOTECH_ENV_FILE=.env_local python app.py
 ```
 
-No Render, use o `render.yaml`; ele preserva as variaveis `NS_DB_*` configuradas
-no painel para o servidor MySQL unico. Para o PACS, configure tambem as variaveis
-`RAIOXPACS_*` para apontar ao PostgreSQL publicado do servidor local ou a um
-PostgreSQL externo.
+No Render, use o `render.yaml`; as variaveis `NS_DB_*` devem apontar para o
+cache AlwaysData com um usuario que possua somente `SELECT`.
 
 ## Deploy no Render
 
@@ -83,70 +78,40 @@ Web Service:
 No Render, importe o Blueprint a partir da branch `main`. Criar apenas um
 Web Service manual exige a configuracao equivalente das variaveis no painel.
 
-No Render, configure `RIOB_BASE_URL` com a URL HTTPS publica da origem RioB.
-O Portal atua como proxy reverso: o navegador permanece na URL do Render e o IP
-da origem nao aparece nos links da interface. Se essa variavel estiver ausente,
-o Render retorna erro de configuracao e nao inicia outro RioB no mesmo container.
-O `render.yaml` fixa `RIOB_PROXY_ONLY=1`; o fallback por subprocesso permanece
-disponivel apenas em ambientes locais com `RIOB_PROXY_ONLY=0`.
+O perfil do Blueprint e fixo em `CLIENTE_DEPLOY_ID=cloud`,
+`NS_DEPLOY_MODE=cloud-readonly`, `NS_READ_ONLY=1` e
+`NS_CACHE_PROVIDER=alwaysdata`. Nesse modo:
 
-Valide a origem configurada em `/healthz/riob`. Esse diagnostico consulta
-`/api/status` no servidor RioB sem expor a URL completa da origem.
+- o Render nao acessa bancos, URLs ou APIs locais pela Tailscale;
+- o Render nao inicia RioB nem outros servicos operacionais locais;
+- toda requisicao de negocio `POST`, `PUT`, `PATCH` ou `DELETE` e recusada;
+- apenas login/logout de sessao sao aceitos por `POST`;
+- o startup nao cria banco, nao aplica schema e nao semeia registros;
+- o modulo Tecnologia consulta o cache, mas nao inicia coletores;
+- `NS_DB_*` usa a credencial de leitura do cache AlwaysData.
 
-O Render nao oferece MySQL gerenciado nativo como oferece Postgres; este projeto
-acessa o servidor MySQL unico informado em `NS_DB_*`. Para producao, faca
-backups periodicos com `mysqldump`.
+Cada cliente continua sendo a fonte oficial dos proprios dados. Um processo
+separado no cliente envia snapshots autorizados ao AlwaysData no sentido unico
+`local -> cache`. Esse processo nao faz parte de `up.sh` nem `update.sh`.
+Consulte `docs/METODOLOGIA_DEPLOYS_CACHE_NUVEM.md` para configuracao, seguranca,
+retencao e contingencia.
 
-### Validacao obrigatoria do RioB no Render
-
-O auto-deploy do Render publica codigo, mas nao copia o banco MySQL local. O
-RioB publicado usa o schema `riobranco` do servidor informado em `NS_DB_*`;
-portanto, uma tela vazia pode significar que o servico esta saudavel, mas
-conectado a um schema vazio ou diferente.
-
-O portal e o RioB devem usar um unico servidor MySQL, configurado no Web Service
-pelas variaveis `NS_DB_HOST`, `NS_DB_PORT`, `NS_DB_USER` e `NS_DB_PASSWORD`.
-Nesse servidor, `NS_DB_NAME` seleciona o schema do portal (`notechsoft`) e
-`RIOB_DB_NAME` seleciona o schema operacional do RioB (`riobranco`). O
-`render.yaml` nao deve sobrescrever essas variaveis com outro MySQL.
+### Validacao obrigatoria do Render somente leitura
 
 Antes de considerar uma alteracao concluida:
 
 1. confirme que o commit esperado esta em `origin/main`;
 2. confirme no Render que esse mesmo commit terminou o deploy;
-3. teste `/healthz` e tambem uma rota de dados do recurso alterado pela URL
-   publica;
-4. confirme, somente com consultas de leitura, que o schema persistente do
-   Render contem os registros esperados;
-5. trate backup, restore ou sincronizacao de dados como operacao separada,
+3. teste `/healthz`, `/healthz/database` e `/healthz/cache` pela URL publica;
+4. confirme que uma requisicao de escrita retorna `403` com
+   `code=cloud_read_only`;
+5. confirme, somente com consultas de leitura, que o cache contem os registros
+   esperados e que `syncedAt` esta dentro da janela configurada;
+6. trate backup, restore ou sincronizacao de dados como operacao separada,
    explicitamente autorizada e nunca como efeito colateral do deploy.
 
-Um `200` em `/healthz` comprova apenas que o portal esta respondendo; ele nao
-valida o subprocesso RioB nem a presenca dos dados de negocio.
-
-O RaioxPacs usa PostgreSQL separado do MySQL do portal. No deploy Docker local,
-o servico `pacs-postgres` e publicado somente no loopback do host em
-`127.0.0.1:RAIOXPACS_POSTGRES_PORT`, por padrao `127.0.0.1:5433`, e o container
-`app` recebe `RAIOXPACS_PGHOST=pacs-postgres`,
-`RAIOXPACS_PGPORT=5432`, `RAIOXPACS_PGUSER`, `RAIOXPACS_PGPASSWORD` e
-`RAIOXPACS_PGDATABASE`.
-
-O PostgreSQL nao e publicado diretamente. O servico
-`pacs-postgres-gateway` publica a porta externa e aceita somente os blocos de
-saida do Render declarados em `deploy/postgres-gateway/haproxy.cfg`; qualquer
-outra origem e recusada antes de chegar ao banco. O PostgreSQL usa TLS e a URL
-externa deve manter `sslmode=require`. Se os IPs de saida do Render mudarem,
-atualize a allowlist antes do deploy. Depois configure no web service:
-
-- `RAIOXPACS_PGHOST`: IP/DNS publico que chega ao servidor Docker local.
-- `RAIOXPACS_PGPORT`: porta encaminhada, por padrao `5433`.
-- `RAIOXPACS_PGUSER`: usuario do Postgres, por padrao `postgres`.
-- `RAIOXPACS_PGPASSWORD`: senha configurada no `.env`.
-- `RAIOXPACS_PGDATABASE`: banco do PACS, por padrao `raioxpacs`.
-- `RAIOXPACS_PGSSLMODE`: `require` para qualquer conexao externa.
-
-Tambem e possivel preencher `RAIOXPACS_DATABASE_URL` no Render; se ela existir,
-ela tem prioridade sobre as variaveis `RAIOXPACS_PG*`.
+Um `200` em `/healthz` comprova apenas que o portal esta respondendo.
+`/healthz/cache` valida a existencia e a atualidade registrada dos datasets.
 
 Configure o servidor MySQL unico no Web Service do Render com estas variaveis:
 
@@ -156,8 +121,9 @@ Configure o servidor MySQL unico no Web Service do Render com estas variaveis:
 - `NS_DB_PASSWORD`
 - `NS_DB_NAME`
 
-Nao use SQLite para o portal principal sem uma refatoracao: o app usa
-`mysql.connector`, tipos/DDL de MySQL e tabelas com JSON/AUTO_INCREMENT.
+O usuario definido em `NS_DB_USER` no Render deve receber apenas permissao de
+leitura. A credencial de escrita usada pelo sincronizador local e diferente e
+nunca deve ser configurada no Render.
 
 ### Backup JSON pelo navegador
 
@@ -165,7 +131,8 @@ A tela `Config` possui um painel `Backup do portal` para administradores. Ele
 exporta todas as tabelas do banco principal para um arquivo JSON e permite
 importar esse JSON de volta para o MySQL atual.
 
-Esse recurso serve como metodologia simples para ambiente inicial/free: baixe o
+Esse recurso existe somente nos ambientes locais gravaveis. No Render, a
+importacao e bloqueada pelo modo somente leitura. Em ambiente local, baixe o
 backup antes de redeploys ou trocas de banco, guarde o arquivo em um local
 externo como Google Drive e importe quando precisar reconstruir os dados.
 Ele nao substitui o MySQL em tempo de execucao; a aplicacao ainda precisa estar
@@ -182,10 +149,15 @@ Os quatro comandos operacionais canônicos ficam na raiz:
 ./git-safe-push.sh -m "mensagem do commit"
 ```
 
-- `./up.sh` reconstrói e sobe portal e RioB para teste, preservando os bancos e volumes.
-- `./down.sh` para portal e RioB, sem parar, restaurar ou sincronizar bancos.
-- `./update.sh` atualiza o código e recria somente as aplicações em produção, sem operar bancos.
-- `./git-safe-push.sh` bloqueia arquivos sensíveis/runtime, valida portal e RioB, cria o commit e envia a branch atual para `origin`.
+- `./up.sh` reconstrói e sobe os serviços habilitados no perfil, preservando bancos e volumes.
+- `./down.sh` para os serviços do perfil sem parar, restaurar ou sincronizar bancos.
+- `./update.sh` atualiza o código e recria somente as aplicações habilitadas, sem operar bancos.
+- `./git-safe-push.sh` bloqueia arquivos sensíveis/runtime, valida o perfil, cria o commit e envia a branch atual para `origin`.
+
+Os perfis versionados ficam em `deploy/profiles.json`. Selecione um deles com
+`NANOTECH_DEPLOY_PROFILE`: `nanotech`, `rio-branco`, `laboratorio`, `senhor` ou
+`render`. O perfil define o cliente, se existe banco local e se a pilha RioB
+deve ser operada; ele nao define credenciais.
 
 Não existem scripts operacionais próprios dentro dos apps. Consulte
 `docs/AI_RESEARCH_MANUAL.md` para os contratos completos e pressupostos
@@ -216,7 +188,14 @@ destinatário; a substituição opcional por `SMTP_*` fica documentada no README
 do módulo. Consulte
 `apps/tecnologia/README.md` para os limites do diagnóstico de Wi-Fi e a operação.
 
-O arquivo `clientes-modulos.json` define os clientes e quais modulos cada um possui. No deploy, configure `CLIENTE_DEPLOY_ID` com o ID do cliente, por exemplo `rio-branco`. Cada ambiente continua usando seu proprio banco via `NS_DB_NAME`/credenciais, sem misturar dados entre clientes.
+O módulo **Chamados** registra requisições e manutenções de TI, predial,
+elétrica e outras áreas. Ele reutiliza os usuários do portal e os equipamentos
+do módulo Tecnologia, mantém intervenções com tempo gasto, exige uma medida
+resolutiva ao concluir e consulta casos semelhantes já resolvidos. Manuais,
+links e anexos podem ser gerais ou vinculados a equipamento/chamado. Consulte
+`apps/chamados/README.md` para o fluxo e as rotas.
+
+O arquivo `clientes-modulos.json` define os clientes e quais modulos cada um possui. No deploy local, `NANOTECH_DEPLOY_PROFILE` seleciona tambem o `CLIENTE_DEPLOY_ID`; configuracoes divergentes sao bloqueadas. Cada ambiente continua usando seu proprio banco via `NS_DB_NAME`/credenciais, sem misturar dados entre clientes. Modulos com `status=externo` usam a URL indicada por `hrefEnv`, como `LABORATORIO_PACS_URL`, sem copiar seu codigo para este repositorio.
 
 Se `CLIENTE_DEPLOY_ID` nao estiver configurado, o portal usa `apps_liberados.txt` como fallback local/legado.
 
@@ -269,4 +248,4 @@ Na tela **Importar Extrato**, o histórico de importações permite trocar a con
 
 Na **Conciliação**, os matches confirmados são a fonte única do vínculo banco-lançamento. As criações em lote ignoram transações já vinculadas ou com candidato similar, e títulos não podem tomar uma transação pertencente a outro lançamento. Ao carregar estados gravados por versões anteriores, o app restaura vínculos parciais e cancela somente títulos/lançamentos comprovadamente duplicados que tenham sido gerados do próprio extrato.
 
-O tema padrao do portal continua sendo `Rio Branco`. O tema original do financeiro fica disponivel como `Fin Blue`, e o tema do RaioxPacs fica disponivel como `PACS Red`; nenhum deles e aplicado automaticamente ao abrir um app.
+O tema padrao do portal continua sendo `Rio Branco`. O tema original do financeiro fica disponivel como `Fin Blue`; nenhum deles e aplicado automaticamente ao abrir um app.

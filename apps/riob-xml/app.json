@@ -1,11 +1,11 @@
 {
   "app_key": "riob-xml",
-  "nome": "Importar XML RioB",
+  "nome": "XML",
   "descricao": "Importador XML de estoque e abastecimentos do RioB.",
   "url": "/apps/riob-xml/riob",
   "standalone_url": "/apps/riob-xml/riob",
   "icone": "xml",
-  "ordem": 97,
+  "ordem": 150,
   "ativo": true,
   "origem": "riob",
   "source_dir": "apps/riob-xml/source",

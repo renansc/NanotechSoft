@@ -1,6 +1,6 @@
 {
   "app_key": "nanoponto",
-  "nome": "NanoPonto",
+  "nome": "Ponto",
   "descricao": "Registro de ponto REP-P, banco de horas, justificativas e relatórios fiscais.",
   "url": "/apps/nanoponto",
   "standalone_url": "/apps/nanoponto/original",

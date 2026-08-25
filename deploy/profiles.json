@@ -1,0 +1,44 @@
+{
+  "profiles": [
+    {
+      "id": "rio-branco",
+      "clientId": "rio-branco",
+      "mode": "local",
+      "localDatabase": true,
+      "riobStack": true,
+      "tailscale": true
+    },
+    {
+      "id": "nanotech",
+      "clientId": "nanotech",
+      "mode": "local",
+      "localDatabase": true,
+      "riobStack": true,
+      "tailscale": true
+    },
+    {
+      "id": "laboratorio",
+      "clientId": "laboratorio",
+      "mode": "local",
+      "localDatabase": true,
+      "riobStack": false,
+      "tailscale": true
+    },
+    {
+      "id": "senhor",
+      "clientId": "senhor",
+      "mode": "local",
+      "localDatabase": true,
+      "riobStack": false,
+      "tailscale": true
+    },
+    {
+      "id": "render",
+      "clientId": "cloud",
+      "mode": "cloud-readonly",
+      "localDatabase": false,
+      "riobStack": false,
+      "tailscale": false
+    }
+  ]
+}

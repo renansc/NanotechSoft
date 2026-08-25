@@ -36,6 +36,7 @@ apps/**/instance/
 apps/**/uploads/
 apps/**/certs/
 apps/**/logs/
+apps/financeiro/dados/
 
 .deploy-backups/
 

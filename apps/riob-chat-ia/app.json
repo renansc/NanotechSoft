@@ -1,11 +1,11 @@
 {
   "app_key": "riob-chat-ia",
-  "nome": "Chat IA RioB",
+  "nome": "Ia-chatbot",
   "descricao": "Agent IA e conversa assistida por IA do RioB.",
   "url": "/apps/riob-chat-ia/riob",
   "standalone_url": "/apps/riob-chat-ia/riob",
   "icone": "ai",
-  "ordem": 93,
+  "ordem": 80,
   "ativo": true,
   "origem": "riob",
   "source_dir": "apps/riob/source",

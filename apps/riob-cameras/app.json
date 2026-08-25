@@ -1,11 +1,11 @@
 {
   "app_key": "riob-cameras",
-  "nome": "Cameras RioB",
+  "nome": "Cameras",
   "descricao": "Painel de cameras e cadastro de streams do RioB.",
   "url": "/apps/riob#monitor:cameras",
   "standalone_url": "/apps/riob/original#monitor:cameras",
   "icone": "camera",
-  "ordem": 91,
+  "ordem": 100,
   "ativo": true,
   "origem": "riob",
   "source_dir": "apps/riob-cameras/source",

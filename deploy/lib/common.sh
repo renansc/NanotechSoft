@@ -6,14 +6,18 @@ PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PROJECT_NAME="nanotechsoft"
 APP_SERVICE="app"
 DB_SERVICE="mysql"
-PACS_DB_SERVICE="pacs-postgres"
 RIOB_APP_SERVICE="riob-app"
 RIOB_PROXY_SERVICE="riob-proxy"
 PORTAL_PROXY_SERVICE="portal-proxy"
-BUILD_SERVICES=("$APP_SERVICE" "$RIOB_APP_SERVICE")
-PROXY_SERVICES=("$PORTAL_PROXY_SERVICE" "$RIOB_PROXY_SERVICE")
-RUNTIME_SERVICES=("$RIOB_APP_SERVICE" "$RIOB_PROXY_SERVICE" "$APP_SERVICE" "$PORTAL_PROXY_SERVICE")
-DATABASE_SERVICES=("$DB_SERVICE" "$PACS_DB_SERVICE")
+BUILD_SERVICES=()
+PROXY_SERVICES=()
+RUNTIME_SERVICES=()
+DATABASE_SERVICES=()
+DEPLOY_PROFILE_ID=""
+DEPLOY_CLIENT_ID=""
+DEPLOY_MODE=""
+DEPLOY_HAS_RIOB=0
+DEPLOY_HAS_LOCAL_DATABASE=0
 APP_URL="http://127.0.0.1:${NOTECHSOFT_APP_PORT:-5600}/login"
 PORTAL_PROXY_HEALTH_URL="https://127.0.0.1:${NOTECHSOFT_HTTPS_PORT:-443}/healthz"
 RIOB_PROXY_STATUS_URL="https://127.0.0.1:${RB_HTTPS_PORT:-8899}/api/status"
@@ -92,6 +96,86 @@ python_cmd() {
   return 1
 }
 
+configure_deploy_profile() {
+  local py profile_id profiles_file output key value
+  py="$(python_cmd)" || die "python nao encontrado para carregar o perfil de deploy"
+  profile_id="${NANOTECH_DEPLOY_PROFILE:-${CLIENTE_DEPLOY_ID:-rio-branco}}"
+  profiles_file="${NANOTECH_DEPLOY_PROFILES_FILE:-$PROJECT_DIR/deploy/profiles.json}"
+
+  output="$($py - "$profiles_file" "$profile_id" <<'PY'
+import json
+import re
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+requested = re.sub(r"[^a-z0-9]+", "-", sys.argv[2].strip().lower()).strip("-")
+try:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+except Exception as exc:
+    print(f"ERRO=perfil de deploy invalido em {path}: {exc}")
+    raise SystemExit(2)
+
+profiles = payload.get("profiles") or []
+profile = next((item for item in profiles if str(item.get("id") or "").strip() == requested), None)
+if not profile:
+    print(f"ERRO=perfil de deploy nao encontrado: {requested}")
+    raise SystemExit(2)
+
+mode = str(profile.get("mode") or "local").strip()
+if mode not in {"local", "cloud-readonly"}:
+    print(f"ERRO=modo de deploy invalido no perfil {requested}: {mode}")
+    raise SystemExit(2)
+
+print(f"PROFILE_ID={requested}")
+print(f"CLIENT_ID={str(profile.get('clientId') or requested).strip()}")
+print(f"MODE={mode}")
+print(f"RIOB={1 if profile.get('riobStack') is True else 0}")
+print(f"LOCAL_DB={1 if profile.get('localDatabase') is True else 0}")
+PY
+  )" || die "${output#ERRO=}"
+
+  while IFS='=' read -r key value; do
+    case "$key" in
+      PROFILE_ID) DEPLOY_PROFILE_ID="$value" ;;
+      CLIENT_ID) DEPLOY_CLIENT_ID="$value" ;;
+      MODE) DEPLOY_MODE="$value" ;;
+      RIOB) DEPLOY_HAS_RIOB="$value" ;;
+      LOCAL_DB) DEPLOY_HAS_LOCAL_DATABASE="$value" ;;
+      ERRO) die "$value" ;;
+    esac
+  done <<<"$output"
+
+  if [[ -n "${CLIENTE_DEPLOY_ID:-}" && "$CLIENTE_DEPLOY_ID" != "$DEPLOY_CLIENT_ID" && "${NANOTECH_ALLOW_PROFILE_CLIENT_OVERRIDE:-0}" != "1" ]]; then
+    die "CLIENTE_DEPLOY_ID=$CLIENTE_DEPLOY_ID diverge do perfil $DEPLOY_PROFILE_ID ($DEPLOY_CLIENT_ID)"
+  fi
+
+  export CLIENTE_DEPLOY_ID="${CLIENTE_DEPLOY_ID:-$DEPLOY_CLIENT_ID}"
+  export NS_DEPLOY_MODE="${NS_DEPLOY_MODE:-$DEPLOY_MODE}"
+
+  BUILD_SERVICES=("$APP_SERVICE")
+  PROXY_SERVICES=("$PORTAL_PROXY_SERVICE")
+  RUNTIME_SERVICES=("$APP_SERVICE" "$PORTAL_PROXY_SERVICE")
+  if [[ "$DEPLOY_HAS_LOCAL_DATABASE" == "1" ]]; then
+    DATABASE_SERVICES=("$DB_SERVICE")
+  fi
+  if [[ "$DEPLOY_HAS_RIOB" == "1" ]]; then
+    BUILD_SERVICES+=("$RIOB_APP_SERVICE")
+    PROXY_SERVICES+=("$RIOB_PROXY_SERVICE")
+    RUNTIME_SERVICES=("$RIOB_APP_SERVICE" "$RIOB_PROXY_SERVICE" "$APP_SERVICE" "$PORTAL_PROXY_SERVICE")
+  fi
+}
+
+configure_deploy_profile
+
+riob_stack_enabled() {
+  [[ "$DEPLOY_HAS_RIOB" == "1" ]]
+}
+
+local_database_enabled() {
+  [[ "$DEPLOY_HAS_LOCAL_DATABASE" == "1" ]]
+}
+
 validate_app_sources() {
   local py
   py="$(python_cmd)" || die "python nao encontrado para validar os apps"
@@ -146,6 +230,10 @@ PY
 ensure_riob_import_sources() {
   local py compose_json source
   local -a sources=()
+
+  if ! riob_stack_enabled; then
+    return 0
+  fi
 
   py="$(python_cmd)" || die "python nao encontrado para validar as pastas de importacao do RioB"
   if compose_json="$(compose config --format json 2>/dev/null)"; then
@@ -247,8 +335,44 @@ for index, client in enumerate(clients if isinstance(clients, list) else []):
         if module_id in seen_modules:
             errors.append(f"{client_id}: modulo duplicado {module_id}")
         seen_modules.add(module_id)
-        if module_id not in manifest_keys and status != "importar":
-            errors.append(f"{client_id}: modulo {module_id} nao existe em apps/*/app.json e nao esta marcado como importar")
+        has_external_target = bool(
+            isinstance(module, dict)
+            and (str(module.get("href") or "").strip() or str(module.get("hrefEnv") or "").strip())
+        )
+        if module_id not in manifest_keys and not (
+            status == "importar" or (status == "externo" and has_external_target)
+        ):
+            errors.append(
+                f"{client_id}: modulo {module_id} nao existe em apps/*/app.json "
+                "e nao possui destino externo valido"
+            )
+
+profiles_path = root / "deploy" / "profiles.json"
+try:
+    profiles_payload = json.loads(profiles_path.read_text(encoding="utf-8"))
+except Exception as exc:
+    errors.append(f"deploy/profiles.json invalido ({exc})")
+    profiles_payload = {}
+
+profiles = profiles_payload.get("profiles") or []
+seen_profiles = set()
+for index, profile in enumerate(profiles if isinstance(profiles, list) else []):
+    if not isinstance(profile, dict):
+        errors.append(f"profiles[{index}] deve ser objeto")
+        continue
+    profile_id = slug(profile.get("id"))
+    client_id = slug(profile.get("clientId") or profile_id)
+    if not profile_id or profile_id in seen_profiles:
+        errors.append(f"perfil de deploy ausente ou duplicado: {profile_id or index}")
+    seen_profiles.add(profile_id)
+    if client_id not in seen_clients:
+        errors.append(f"perfil {profile_id}: cliente inexistente {client_id}")
+    if profile.get("mode") not in {"local", "cloud-readonly"}:
+        errors.append(f"perfil {profile_id}: mode invalido")
+    if profile.get("mode") == "cloud-readonly" and (
+        profile.get("localDatabase") is not False or profile.get("riobStack") is not False
+    ):
+        errors.append(f"perfil {profile_id}: nuvem nao pode iniciar banco local ou RioB")
 
 if errors:
     for item in errors:
@@ -403,9 +527,6 @@ if portal is not None:
             "nanoponto": portal.rewrite_nanoponto_html(sample, integrated=False),
             "zap": portal.rewrite_zap_document(sample, integrated=False),
             "nanostore": portal.rewrite_nanostore_html(sample, integrated=False),
-            "gpsmusical": portal.rewrite_static_app_html(sample.decode("utf-8"), "gpsmusical", integrated=False),
-            "bpa": portal.rewrite_static_app_html(sample.decode("utf-8"), "bpa", integrated=False),
-            "tatoo": portal.rewrite_static_app_html(sample.decode("utf-8"), "tatoo", integrated=False),
             "riob-remoto": portal.rewrite_riob_html(sample).decode("utf-8"),
         }
         for app_key, html in standalone_checks.items():
@@ -415,8 +536,6 @@ if portal is not None:
             html = portal.rewrite_local_riob_text(sample, app_key, apply_theme=True).decode("utf-8")
             assert_theme(app_key, html)
 
-        if "UI_showTab" not in standalone_checks["gpsmusical"]:
-            errors.append("gpsmusical: ponte de hash para abas nao encontrada")
         if "activateFromHash" not in standalone_checks["nanostore"]:
             errors.append("nanostore: ponte de hash para visoes nao encontrada")
         if "openFromHash" not in standalone_checks["riob-remoto"]:
@@ -452,6 +571,10 @@ wait_for_riob() {
   local tries="${1:-45}"
   local delay="${2:-2}"
   local attempt
+
+  if ! riob_stack_enabled; then
+    return 0
+  fi
 
   for ((attempt=1; attempt<=tries; attempt+=1)); do
     if compose exec -T "$RIOB_APP_SERVICE" python - <<'PY' >/dev/null 2>&1
@@ -492,8 +615,10 @@ refresh_and_validate_proxies() {
     compose logs --tail=120 "$PORTAL_PROXY_SERVICE" >&2 || true
     die "portal nao respondeu pelo proxy apos atualizar os enderecos internos"
   fi
-  if ! wait_for_proxy_url "$RIOB_PROXY_STATUS_URL" "$RIOB_PROXY_STARTUP_TRIES" 2; then
-    compose logs --tail=120 "$RIOB_PROXY_SERVICE" >&2 || true
-    die "RioB nao respondeu pelo proxy apos atualizar os enderecos internos"
+  if riob_stack_enabled; then
+    if ! wait_for_proxy_url "$RIOB_PROXY_STATUS_URL" "$RIOB_PROXY_STARTUP_TRIES" 2; then
+      compose logs --tail=120 "$RIOB_PROXY_SERVICE" >&2 || true
+      die "RioB nao respondeu pelo proxy apos atualizar os enderecos internos"
+    fi
   fi
 }

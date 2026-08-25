@@ -53,9 +53,6 @@ class PortalAppPermissionsTests(unittest.TestCase):
         for path in (
             "/apps/zap/webhooks/whatsapp",
             "/apps/zap/public/uploads/comprovante.jpg",
-            "/apps/pacs/static/app.css",
-            "/apps/pacs/share/exame-123",
-            "/apps/pacs/api/share/exame-123",
         ):
             with self.subTest(path=path), portal.app.test_request_context(path):
                 self.assertIsNone(portal.enforce_app_permission())

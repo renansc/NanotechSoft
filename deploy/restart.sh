@@ -8,21 +8,24 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/common.sh"
 cd_project
 require_compose
 
-log "garantindo bancos antes do restart..."
-compose up -d "$DB_SERVICE" "$PACS_DB_SERVICE"
+log "perfil ativo: ${DEPLOY_PROFILE_ID} (${DEPLOY_MODE}), cliente ${CLIENTE_DEPLOY_ID}"
+if local_database_enabled; then
+  log "garantindo banco local antes do restart..."
+  compose up -d "${DATABASE_SERVICES[@]}"
+fi
 ensure_riob_import_sources
 
-log "reiniciando portal e RioB..."
-compose restart "$APP_SERVICE" "$RIOB_APP_SERVICE"
+log "reiniciando os servicos de aplicacao habilitados..."
+compose restart "${BUILD_SERVICES[@]}"
 
 if ! wait_for_app 45 2; then
   compose logs --tail=120 "$APP_SERVICE" >&2 || true
   die "app nao respondeu apos restart"
 fi
-if ! wait_for_riob 45 2; then
+if riob_stack_enabled && ! wait_for_riob 45 2; then
   compose logs --tail=120 "$RIOB_APP_SERVICE" >&2 || true
   die "RioB nao respondeu apos restart"
 fi
 refresh_and_validate_proxies
 
-compose ps "${DATABASE_SERVICES[@]}" "${RUNTIME_SERVICES[@]}"
+compose ps "${RUNTIME_SERVICES[@]}"

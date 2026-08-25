@@ -5,17 +5,82 @@
       "nome": "Rio Branco",
       "status": "ativo",
       "databaseKey": "riobranco",
-      "observacao": "Cliente com acesso somente ao App RioB e ao App Ponto.",
+      "observacao": "Deploy de producao da Rio Branco com 15 modulos organizados no portal.",
       "allModules": false,
       "modules": [
         {
           "slug": "riob",
-          "nome": "App RioB",
+          "nome": "RioB",
+          "status": "contratado"
+        },
+        {
+          "slug": "financeiro",
+          "nome": "Financeiro",
           "status": "contratado"
         },
         {
           "slug": "nanoponto",
-          "nome": "App Ponto",
+          "nome": "Ponto",
+          "status": "contratado"
+        },
+        {
+          "slug": "nanostore",
+          "nome": "Store",
+          "status": "contratado"
+        },
+        {
+          "slug": "automacao",
+          "nome": "Automacao",
+          "status": "contratado"
+        },
+        {
+          "slug": "zap",
+          "nome": "Zap",
+          "status": "contratado"
+        },
+        {
+          "slug": "riob-chat",
+          "nome": "Chat",
+          "status": "contratado"
+        },
+        {
+          "slug": "riob-chat-ia",
+          "nome": "Ia-chatbot",
+          "status": "contratado"
+        },
+        {
+          "slug": "riob-telefonia",
+          "nome": "Telefonia",
+          "status": "contratado"
+        },
+        {
+          "slug": "riob-cameras",
+          "nome": "Cameras",
+          "status": "contratado"
+        },
+        {
+          "slug": "chamados",
+          "nome": "Chamados",
+          "status": "contratado"
+        },
+        {
+          "slug": "tecnologia",
+          "nome": "Tecnologia",
+          "status": "contratado"
+        },
+        {
+          "slug": "riob-esxi",
+          "nome": "ESXi",
+          "status": "contratado"
+        },
+        {
+          "slug": "riob-email",
+          "nome": "Email",
+          "status": "contratado"
+        },
+        {
+          "slug": "riob-xml",
+          "nome": "XML",
           "status": "contratado"
         }
       ]
@@ -25,24 +90,72 @@
       "nome": "Nanotech",
       "status": "interno",
       "databaseKey": "nanotech",
-      "observacao": "Cliente interno com acesso a todos os apps publicados.",
+      "observacao": "Deploy administrativo local com acesso aos apps publicados e atalhos externos autorizados.",
       "allModules": true,
-      "modules": []
+      "modules": [
+        {
+          "slug": "pacs",
+          "nome": "PACS",
+          "descricao": "Codigo e dados mantidos exclusivamente no deploy do laboratorio.",
+          "hrefEnv": "LABORATORIO_PACS_URL",
+          "status": "externo"
+        }
+      ]
     },
     {
-      "id": "laboratorio-santa-terezinha",
-      "nome": "Laboratorio Santa Terezinha",
-      "status": "implantacao",
-      "databaseKey": "santa-terezinha",
-      "observacao": "Cliente usando o RaioxPacs importado para o portal NanotechSoft.",
+      "id": "laboratorio",
+      "nome": "Laboratorio",
+      "status": "ativo",
+      "databaseKey": "laboratorio",
+      "observacao": "Deploy local do laboratorio. O PACS permanece no repositorio e ambiente proprios.",
       "allModules": false,
       "modules": [
         {
           "slug": "pacs",
-          "nome": "RaioxPacs",
-          "descricao": "RIS/PACS do Laboratorio Santa Terezinha com worklist, viewer, laudos e compartilhamento de imagens.",
-          "href": "/apps/pacs",
+          "nome": "PACS",
+          "descricao": "PACS global mantido no ambiente do laboratorio.",
+          "hrefEnv": "LABORATORIO_PACS_URL",
+          "status": "externo"
+        }
+      ]
+    },
+    {
+      "id": "senhor",
+      "nome": "Senhor",
+      "status": "ativo",
+      "databaseKey": "senhor",
+      "observacao": "Deploy local da loja de chopp com somente os modulos contratados.",
+      "allModules": false,
+      "modules": [
+        {
+          "slug": "nanostore",
+          "nome": "Store",
           "status": "contratado"
+        }
+      ]
+    },
+    {
+      "id": "cloud",
+      "nome": "Nanotech Nuvem",
+      "status": "interno",
+      "databaseKey": "cache_cloud",
+      "observacao": "Portal Render somente leitura sobre os caches do AlwaysData; sem conexao direta aos bancos locais.",
+      "allModules": false,
+      "modules": [
+        {
+          "slug": "financeiro",
+          "nome": "Financeiro",
+          "status": "cache-leitura"
+        },
+        {
+          "slug": "chamados",
+          "nome": "Chamados",
+          "status": "cache-leitura"
+        },
+        {
+          "slug": "tecnologia",
+          "nome": "Tecnologia",
+          "status": "cache-leitura"
         }
       ]
     }

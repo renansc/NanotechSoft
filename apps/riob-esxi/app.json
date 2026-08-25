@@ -1,11 +1,11 @@
 {
   "app_key": "riob-esxi",
-  "nome": "ESXi RioB",
+  "nome": "ESXi",
   "descricao": "Cliente ESXi/vSphere integrado pelo RioB.",
   "url": "/apps/riob-esxi/riob",
   "standalone_url": "/apps/riob-esxi/riob",
   "icone": "server",
-  "ordem": 96,
+  "ordem": 130,
   "ativo": true,
   "origem": "riob",
   "source_dir": "apps/riob-esxi/source",

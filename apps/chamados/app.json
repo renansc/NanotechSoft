@@ -1,0 +1,36 @@
+{
+  "app_key": "chamados",
+  "nome": "Chamados",
+  "descricao": "Requisições e histórico de manutenção de TI, predial, elétrica e demais áreas.",
+  "url": "/apps/chamados?view=chamados",
+  "standalone_url": "/apps/chamados/original?view=chamados",
+  "icone": "clipboard-list",
+  "ordem": 110,
+  "ativo": true,
+  "origem": "nanotech",
+  "source_dir": "apps/chamados/source",
+  "temas": ["rio_branco", "autoblue", "fin-blue", "pontobege", "zapgreen", "pacsred"],
+  "menu_groups": {
+    "dashboards": [
+      {"nome": "Indicadores de Chamados", "url": "/apps/chamados?view=dashboard", "recurso": "dashboard"}
+    ],
+    "workflow": [
+      {"nome": "Chamados e Manutenções", "url": "/apps/chamados?view=chamados", "recurso": "chamados"}
+    ],
+    "cadastros": [
+      {"nome": "Manuais e Documentações", "url": "/apps/chamados?view=documentos", "grupo": "Chamados", "recurso": "documentos"}
+    ],
+    "relatorios": [
+      {"nome": "Histórico de Soluções", "url": "/apps/chamados?view=historico", "recurso": "historico"}
+    ]
+  },
+  "workflow_cards": [
+    {
+      "nome": "Chamados e Manutenções",
+      "descricao": "Abra, atribua e acompanhe requisições até a solução.",
+      "url": "/apps/chamados?view=chamados",
+      "recurso": "chamados"
+    }
+  ],
+  "config_groups": {}
+}

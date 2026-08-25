@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Metodologia Nanotech - Deploys e Cache em Nuvem</title>
+  <style>
+    @page { size: A4; margin: 16mm 15mm 18mm; }
+    :root { color-scheme: light; }
+    * { box-sizing: border-box; }
+    body {
+      max-width: 920px;
+      margin: 0 auto;
+      padding: 32px;
+      font: 14px/1.48 Arial, Helvetica, sans-serif;
+      color: #263238;
+      background: #fff;
+    }
+    h1 { color: #a64b00; font-size: 27px; line-height: 1.15; }
+    h2 { margin-top: 25px; color: #7a3900; font-size: 19px; page-break-after: avoid; }
+    h3 { page-break-after: avoid; }
+    p, li { orphans: 3; widows: 3; }
+    a { color: #8a4100; overflow-wrap: anywhere; }
+    table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 12px; }
+    th, td { padding: 7px; border: 1px solid #cfd8dc; text-align: left; vertical-align: top; }
+    th { background: #fff1df; }
+    pre {
+      padding: 11px;
+      border: 1px solid #d8dee2;
+      border-radius: 5px;
+      background: #f5f7f8;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      font: 11px/1.4 Consolas, monospace;
+      page-break-inside: avoid;
+    }
+    code { font-family: Consolas, monospace; }
+    blockquote { margin-left: 0; padding-left: 12px; border-left: 4px solid #f0a24a; color: #4f5b62; }
+    @media print {
+      body { max-width: none; padding: 0; }
+      a { color: inherit; text-decoration: none; }
+    }
+  </style>
+</head>
+<body>
+  <main id="document"><p>Carregando documentacao...</p></main>
+  <script src="../apps/riob/source/docs/vendor/marked.min.js"></script>
+  <script>
+    fetch("METODOLOGIA_DEPLOYS_CACHE_NUVEM.md")
+      .then((response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return response.text();
+      })
+      .then((markdown) => {
+        document.getElementById("document").innerHTML = marked.parse(markdown);
+        document.title = document.querySelector("h1")?.textContent || document.title;
+        document.documentElement.dataset.ready = "1";
+      })
+      .catch((error) => {
+        document.getElementById("document").textContent = `Falha ao carregar: ${error.message}`;
+      });
+  </script>
+</body>
+</html>

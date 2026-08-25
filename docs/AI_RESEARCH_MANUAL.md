@@ -97,6 +97,35 @@ atualizar ou publicar código não autorizam:
 Backup, restore, sincronização e migração de dados são operações separadas e
 exigem pedido explícito do usuário.
 
+## Metodologia permanente de clientes, cache e nuvem
+
+- Cada banco local é a fonte oficial e gravável do respectivo cliente.
+- Os ambientes locais `nanotech`, `rio-branco`, `laboratorio` e `senhor`
+  permanecem isolados, acessíveis pela Tailscale e usam deploys individuais.
+- O código comum é distribuído pelo GitHub. Cada deploy ativa somente o perfil
+  e os módulos contratados; atualização de código nunca movimenta dados.
+- `deploy/profiles.json` é a fonte versionada dos papéis de deploy. A variável
+  `NANOTECH_DEPLOY_PROFILE` seleciona o perfil e deve concordar com
+  `CLIENTE_DEPLOY_ID`.
+- O Render usa exclusivamente `NS_DEPLOY_MODE=cloud-readonly`, o contrato
+  `cloud` e um usuário MySQL/MariaDB com somente `SELECT` no AlwaysData.
+- O Render nunca deve acessar bancos, APIs ou URLs locais pela Tailscale, nem
+  iniciar RioB ou coletores. Requisições de negócio mutáveis devem continuar
+  bloqueadas no servidor, mesmo que uma tela ainda apresente algum controle.
+- O AlwaysData é cache de consulta, não banco oficial e não agrupador gravável.
+  Mantenha um database/schema e credenciais separados por cliente.
+- A alimentação do cache tem sentido único `banco local -> AlwaysData`. Ela é
+  executada somente no cliente autorizado, com lista explícita de tabelas e
+  credencial de escrita exclusiva do cache.
+- `tools/cloud_cache_sync.py` é uma operação de dados separada e nunca pode ser
+  chamada por `up.sh`, `update.sh`, startup da aplicação ou auto-deploy.
+- Cache não substitui backup. Dumps criptografados, retenção e testes de restore
+  continuam independentes; restore exige autorização explícita e nunca ocorre
+  no Render.
+- O PACS não pertence a este repositório. Seu código global permanece no
+  repositório/deploy do laboratório; aqui existe somente referência externa por
+  `LABORATORIO_PACS_URL` quando o perfil autorizado precisar do atalho.
+
 ## RioB
 
 - Frontend principal: `apps/riob/source/RioBranco.html`, `script.js` e
@@ -152,9 +181,9 @@ avaliado quanto a entrada externa antes da exclusão.
 - Quando `PORT` não estiver definida, o padrão local obrigatório é `5600`, conforme o `docker-compose.yml`.
 - Nunca fixe `10000` diretamente no `Dockerfile`: essa é a porta atualmente usada pelo Render e uma constante nela interrompe o healthcheck e o acesso local.
 - Alterações de inicialização devem ser validadas tanto pelo `./up.sh` local quanto pela configuração do `render.yaml`.
-- No Render, prefira `RIOB_BASE_URL` apontando para uma origem HTTPS externa: o
-  Portal deve funcionar como proxy reverso e manter a URL pública do Render no
-  navegador. O subprocesso no mesmo contêiner é somente compatibilidade.
+- No Render, não configure `RIOB_BASE_URL` para origens locais. O contrato
+  `cloud` mostra apenas módulos capazes de consultar o cache sem iniciar
+  serviços operacionais.
 - No compose local, o RioB permanece no serviço `riob-app`.
 - Cache e balanceamento não podem incluir respostas mutáveis, sessões, uploads
   ou APIs de escrita sem armazenamento e afinidade compartilhados entre todas

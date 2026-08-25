@@ -1,11 +1,11 @@
 {
   "app_key": "riob-telefonia",
-  "nome": "Telefonia RioB",
+  "nome": "Telefonia",
   "descricao": "Configuracao SIP/WebRTC, FreePBX e chamadas pelo chat RioB.",
   "url": "/apps/riob-telefonia/riob",
   "standalone_url": "/apps/riob-telefonia/riob",
   "icone": "phone",
-  "ordem": 92,
+  "ordem": 90,
   "ativo": true,
   "origem": "riob",
   "source_dir": "apps/riob/source",

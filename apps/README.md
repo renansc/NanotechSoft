@@ -31,6 +31,12 @@ Tambem e possivel cadastrar apps diretamente na tabela `installed_apps`.
 
 O arquivo `apps_liberados.txt`, na raiz do projeto, controla quais apps entram no deploy de um cliente.
 
+Modulos cujo codigo oficial vive em outro repositorio/deploy podem ser
+referenciados em `clientes-modulos.json` com `status: "externo"` e `hrefEnv`.
+A URL vem do ambiente (por exemplo, `LABORATORIO_PACS_URL`) e nunca deve ser
+gravada como credencial ou usada pelo perfil Render para acessar a Tailscale.
+O perfil `cloud` lista somente apps preparados para consulta ao cache.
+
 ## Regra de localizacao
 
 Cada app deve ter todo o seu codigo dentro desta arvore `apps/`, normalmente em `apps/<app>/source`. Evite apontar `source_dir` para caminhos absolutos do servidor, como `/srv/...`, porque esta plataforma deve ser autocontida.

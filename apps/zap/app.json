@@ -5,7 +5,7 @@
   "url": "/apps/zap",
   "standalone_url": "/apps/zap/original",
   "icone": "message",
-  "ordem": 40,
+  "ordem": 60,
   "ativo": true,
   "origem": "nanotech",
   "source_dir": "apps/zap/source",

@@ -8,6 +8,6 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/common.sh"
 cd_project
 require_compose
 
-log "parando portal e RioB sem remover bancos, volumes ou dados..."
+log "parando os servicos do perfil ${DEPLOY_PROFILE_ID} sem remover bancos, volumes ou dados..."
 compose stop "${RUNTIME_SERVICES[@]}"
-compose ps "${DATABASE_SERVICES[@]}" "${RUNTIME_SERVICES[@]}"
+compose ps "${RUNTIME_SERVICES[@]}"

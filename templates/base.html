@@ -8,7 +8,12 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
   <script defer src="{{ url_for('static', filename='app.js') }}"></script>
 </head>
-<body class="theme-{{ config.tema if config else 'rio_branco' }}">
+<body class="theme-{{ config.tema if config else 'rio_branco' }}{% if deployment and deployment.readOnly %} deployment-read-only{% endif %}">
+  {% if deployment and deployment.readOnly %}
+    <aside class="read-only-banner" role="status">
+      Nuvem somente leitura: os dados vêm do cache AlwaysData. Alterações devem ser feitas no ambiente local pela Tailscale.
+    </aside>
+  {% endif %}
   {% block body %}{% endblock %}
 </body>
 </html>

@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Chamados</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div class="ticketApp">
+    <header class="ticketHero">
+      <div>
+        <span class="eyebrow">Operação e manutenção</span>
+        <h1>Chamados e Manutenções</h1>
+        <p>TI, predial, elétrica e demais áreas em um único histórico resolutivo.</p>
+      </div>
+      <button class="btn primary heroButton" id="newTicketButton" type="button">+ Novo chamado</button>
+    </header>
+
+    <nav class="ticketTabs" aria-label="Áreas do módulo">
+      <button class="tab" data-view="dashboard" type="button">Indicadores</button>
+      <button class="tab" data-view="chamados" type="button">Chamados</button>
+      <button class="tab" data-view="historico" type="button">Histórico de soluções</button>
+      <button class="tab" data-view="documentos" type="button">Manuais e documentos</button>
+    </nav>
+
+    <main>
+      <section class="ticketView" data-page="dashboard" hidden>
+        <div class="kpiGrid">
+          <article class="kpi danger"><span>Em aberto</span><strong id="kpiOpen">0</strong><small>aguardando conclusão</small></article>
+          <article class="kpi warning"><span>Em atendimento</span><strong id="kpiProgress">0</strong><small>com trabalho em andamento</small></article>
+          <article class="kpi ok"><span>Resolvidos</span><strong id="kpiResolved">0</strong><small>base de soluções</small></article>
+          <article class="kpi"><span>Tempo registrado</span><strong id="kpiTime">0 min</strong><small>em intervenções</small></article>
+        </div>
+        <div class="dashboardGrid">
+          <section class="panel">
+            <div class="panelHead"><div><span class="eyebrow">Prioridades</span><h2>Chamados que exigem atenção</h2></div></div>
+            <div id="attentionTickets" class="compactList"></div>
+          </section>
+          <section class="panel insightPanel">
+            <span class="eyebrow">Memória operacional</span>
+            <h2>O histórico trabalha por você</h2>
+            <p>Ao digitar um problema, o módulo cruza categoria, equipamento e termos técnicos com ocorrências já resolvidas.</p>
+            <ul>
+              <li>medida resolutiva aplicada;</li>
+              <li>causa raiz e tempo investido;</li>
+              <li>manuais ligados ao equipamento.</li>
+            </ul>
+            <button class="btn" data-open-view="historico" type="button">Consultar soluções</button>
+          </section>
+        </div>
+      </section>
+
+      <section class="ticketView" data-page="chamados" hidden>
+        <section class="panel">
+          <div class="panelHead filterHead">
+            <div><span class="eyebrow">Fila operacional</span><h2>Requisições e manutenções</h2></div>
+            <div class="filters">
+              <input id="ticketSearch" type="search" placeholder="Protocolo, problema ou solução">
+              <select id="ticketStatusFilter"><option value="">Todos os status</option></select>
+              <select id="ticketCategoryFilter"><option value="">Todas as categorias</option></select>
+            </div>
+          </div>
+          <div class="tableWrap">
+            <table>
+              <thead><tr><th>Chamado</th><th>Área / equipamento</th><th>Solicitante</th><th>Responsável</th><th>Tempo</th><th>Status</th></tr></thead>
+              <tbody id="ticketTable"></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+
+      <section class="ticketView" data-page="historico" hidden>
+        <section class="panel">
+          <div class="panelHead filterHead">
+            <div><span class="eyebrow">Consulta resolutiva</span><h2>Problemas semelhantes</h2></div>
+            <div class="filters solutionFilters">
+              <input id="solutionSearch" type="search" placeholder="Ex.: impressora não imprime, disjuntor desarma">
+              <select id="solutionCategory"><option value="">Todas as categorias</option></select>
+              <select id="solutionDevice"><option value="">Qualquer equipamento</option></select>
+              <button class="btn primary" id="solutionSearchButton" type="button">Buscar</button>
+            </div>
+          </div>
+          <div id="solutionResults" class="solutionResults emptyState">Descreva o problema para consultar soluções e documentos relacionados.</div>
+        </section>
+      </section>
+
+      <section class="ticketView" data-page="documentos" hidden>
+        <div class="documentsGrid">
+          <section class="panel">
+            <div class="panelHead"><div><span class="eyebrow">Base técnica</span><h2>Manuais e documentações</h2></div></div>
+            <div class="filters documentFilters">
+              <input id="documentSearch" type="search" placeholder="Buscar manual ou procedimento">
+              <select id="documentCategoryFilter"><option value="">Todas as categorias</option></select>
+            </div>
+            <div id="documentList" class="documentList"></div>
+          </section>
+          <section class="panel uploadPanel">
+            <span class="eyebrow">Novo conteúdo</span><h2>Adicionar documento</h2>
+            <form id="documentForm" class="stackForm">
+              <label>Título<input name="title" required maxlength="180"></label>
+              <label>Categoria<select name="category"></select></label>
+              <label>Equipamento<select name="deviceId"><option value="">Documento geral</option></select></label>
+              <label>Descrição<textarea name="description" rows="4" placeholder="Quando usar e o que este documento cobre"></textarea></label>
+              <label>Arquivo<input name="file" type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.txt,.md,.doc,.docx,.xls,.xlsx,.csv,.odt,.ods"></label>
+              <div class="orDivider">ou</div>
+              <label>Link externo<input name="externalUrl" type="url" placeholder="https://..."></label>
+              <button class="btn primary" type="submit">Salvar documento</button>
+              <p class="formMessage" id="documentMessage"></p>
+            </form>
+          </section>
+        </div>
+      </section>
+    </main>
+
+    <div class="modal hidden" id="ticketModal" role="dialog" aria-modal="true" aria-labelledby="ticketModalTitle">
+      <div class="modalCard ticketFormCard">
+        <div class="modalHead"><div><span class="eyebrow">Nova requisição</span><h2 id="ticketModalTitle">Abrir chamado</h2></div><button class="iconButton" data-close-modal type="button">×</button></div>
+        <form id="ticketForm" class="formGrid">
+          <label class="wide">Título<input name="title" required maxlength="180" placeholder="Resumo objetivo do problema"></label>
+          <label>Categoria<select name="category" required></select></label>
+          <label>Subcategoria<input name="subcategory" maxlength="100" placeholder="Rede, iluminação, telhado..."></label>
+          <label>Prioridade<select name="priority" required></select></label>
+          <label>Localização<input name="location" maxlength="160" placeholder="Setor, sala ou unidade"></label>
+          <label>Solicitante<select name="requesterId" required></select></label>
+          <label>Responsável<select name="assigneeId"><option value="">A definir</option></select></label>
+          <label class="wide">Equipamento<select name="deviceId"><option value="">Sem equipamento vinculado</option></select></label>
+          <label class="wide">Descrição<textarea name="description" required rows="5" placeholder="O que aconteceu, impacto e quando começou"></textarea></label>
+          <label class="wide">Sintomas observados<textarea name="symptoms" rows="3" placeholder="Mensagens, ruídos, falhas intermitentes ou medições"></textarea></label>
+          <div class="wide suggestionPreview" id="newTicketSuggestions"></div>
+          <div class="modalActions wide"><button class="btn" data-close-modal type="button">Cancelar</button><button class="btn primary" type="submit">Abrir chamado</button></div>
+          <p class="formMessage wide" id="ticketFormMessage"></p>
+        </form>
+      </div>
+    </div>
+
+    <div class="modal hidden" id="detailModal" role="dialog" aria-modal="true" aria-labelledby="detailTitle">
+      <div class="modalCard detailCard">
+        <div class="modalHead"><div><span class="eyebrow" id="detailProtocol">Chamado</span><h2 id="detailTitle">Detalhes</h2></div><button class="iconButton" data-close-detail type="button">×</button></div>
+        <div id="detailSummary" class="detailSummary"></div>
+        <div class="detailColumns">
+          <section>
+            <form id="detailForm" class="formGrid compactForm">
+              <label>Status<select name="status"></select></label>
+              <label>Prioridade<select name="priority"></select></label>
+              <label>Responsável<select name="assigneeId"><option value="">A definir</option></select></label>
+              <label>Equipamento<select name="deviceId"><option value="">Sem equipamento</option></select></label>
+              <label class="wide">Causa raiz<textarea name="rootCause" rows="3" placeholder="O que originou o problema"></textarea></label>
+              <label class="wide">Medida resolutiva<textarea name="resolution" rows="4" placeholder="Passos que solucionaram e como validar"></textarea></label>
+              <button class="btn primary wide" type="submit">Salvar andamento</button>
+              <p class="formMessage wide" id="detailFormMessage"></p>
+            </form>
+            <section class="detailSection">
+              <div class="sectionHead"><h3>Registrar intervenção</h3><span>Tempo e conhecimento executado</span></div>
+              <form id="interventionForm" class="formGrid compactForm">
+                <label>Tipo<select name="type"></select></label>
+                <label>Tempo gasto (min)<input name="minutesSpent" type="number" min="0" max="10080" value="0"></label>
+                <label class="wide">Descrição<textarea name="description" rows="3" placeholder="Diagnóstico, teste ou trabalho realizado"></textarea></label>
+                <label class="wide">Solução aplicada<textarea name="resolution" rows="3" placeholder="Preencha quando esta intervenção resolveu o problema"></textarea></label>
+                <label>Novo status<select name="newStatus"></select></label>
+                <button class="btn primary alignEnd" type="submit">Adicionar ao histórico</button>
+              </form>
+            </section>
+            <section class="detailSection"><div class="sectionHead"><h3>Histórico</h3></div><div id="timeline" class="timeline"></div></section>
+          </section>
+          <aside>
+            <section class="sidePanel"><div class="sectionHead"><h3>Soluções sugeridas</h3></div><div id="detailSuggestions"></div></section>
+            <section class="sidePanel"><div class="sectionHead"><h3>Anexos do chamado</h3></div><div id="ticketDocuments"></div>
+              <form id="ticketDocumentForm" class="stackForm miniUpload">
+                <input name="title" placeholder="Título do anexo" required>
+                <input name="file" type="file" required>
+                <button class="btn" type="submit">Anexar arquivo</button>
+              </form>
+            </section>
+          </aside>
+        </div>
+      </div>
+    </div>
+
+    <div class="toast hidden" id="toast"></div>
+  </div>
+  <script src="./app.js"></script>
+</body>
+</html>

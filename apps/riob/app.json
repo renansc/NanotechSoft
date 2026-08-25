@@ -5,7 +5,7 @@
   "url": "/apps/riob",
   "standalone_url": "/apps/riob",
   "icone": "riob",
-  "ordem": 90,
+  "ordem": 10,
   "ativo": true,
   "origem": "riob",
   "source_dir": "apps/riob/source",
