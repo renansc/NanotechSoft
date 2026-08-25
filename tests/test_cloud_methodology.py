@@ -124,6 +124,28 @@ class CloudCacheSyncSafetyTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 cloud_cache_sync.validate_safety(source, target, ["usuarios"])
 
+    def test_accepts_alwaysdata_account_prefixed_cache_database(self):
+        source = {"host": "db.local", "port": 3306, "database": "notechsoft"}
+        target = {
+            "host": "mysql-nanotechsoft.alwaysdata.net",
+            "port": 3306,
+            "database": "nanotechsoft_cache_riobranco",
+        }
+
+        cloud_cache_sync.validate_safety(source, target, ["chamados"])
+
+    def test_rejects_administrative_cloud_database_as_snapshot_target(self):
+        source = {"host": "db.local", "port": 3306, "database": "notechsoft"}
+        target = {
+            "host": "mysql-nanotechsoft.alwaysdata.net",
+            "port": 3306,
+            "database": "nanotechsoft_cloud",
+        }
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("CACHE_SYNC_ALLOW_ANY_TARGET", None)
+            with self.assertRaises(ValueError):
+                cloud_cache_sync.validate_safety(source, target, ["chamados"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -163,8 +163,13 @@ def validate_safety(source_config: dict, target_config: dict, tables: list[str])
     )
     if same_endpoint:
         raise ValueError("origem e destino apontam para o mesmo banco; sincronizacao bloqueada")
-    if not target_config["database"].lower().startswith("cache_") and not env_flag("CACHE_SYNC_ALLOW_ANY_TARGET"):
-        raise ValueError("o banco de destino deve comecar com cache_ (ou use CACHE_SYNC_ALLOW_ANY_TARGET=1 conscientemente)")
+    target_database = target_config["database"].lower()
+    is_cache_database = target_database.startswith("cache_") or "_cache_" in target_database
+    if not is_cache_database and not env_flag("CACHE_SYNC_ALLOW_ANY_TARGET"):
+        raise ValueError(
+            "o banco de destino deve ser dedicado a cache (cache_* ou <conta>_cache_*); "
+            "use CACHE_SYNC_ALLOW_ANY_TARGET=1 apenas conscientemente"
+        )
     sensitive = sorted(set(tables) & SENSITIVE_TABLES)
     if sensitive and not env_flag("CACHE_SYNC_ALLOW_SENSITIVE"):
         raise ValueError(

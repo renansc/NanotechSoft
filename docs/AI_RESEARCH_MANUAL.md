@@ -113,6 +113,9 @@ exigem pedido explícito do usuário.
   iniciar RioB ou coletores. Requisições de negócio mutáveis devem continuar
   bloqueadas no servidor, mesmo que uma tela ainda apresente algum controle.
 - O AlwaysData é cache de consulta, não banco oficial e não agrupador gravável.
+- No AlwaysData, mantenha `nanotechsoft_cloud` para autenticação/administração e
+  use caches isolados no padrão `nanotechsoft_cache_<cliente>`; nunca use o banco
+  administrativo como destino de snapshot operacional.
   Mantenha um database/schema e credenciais separados por cliente.
 - A alimentação do cache tem sentido único `banco local -> AlwaysData`. Ela é
   executada somente no cliente autorizado, com lista explícita de tabelas e

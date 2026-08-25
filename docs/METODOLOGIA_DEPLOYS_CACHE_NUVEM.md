@@ -71,10 +71,14 @@ de cada dataset e usa `NS_CACHE_MAX_AGE_SECONDS` como limite de atualidade.
 
 Use um database/schema separado por cliente no AlwaysData:
 
-- `cache_nanotech`
-- `cache_riobranco`
-- `cache_laboratorio`
-- `cache_senhor`
+- `nanotechsoft_cache_nanotech`
+- `nanotechsoft_cache_riobranco`
+- `nanotechsoft_cache_laboratorio`
+- `nanotechsoft_cache_senhor`
+
+No AlwaysData, o prefixo `nanotechsoft_` pertence a conta. O banco ja criado
+`nanotechsoft_cloud` fica reservado para autenticacao e dados administrativos
+da interface. Ele nao deve receber snapshots operacionais dos clientes.
 
 Cada cliente recebe um usuario de escrita limitado exclusivamente ao proprio
 cache. O Render recebe outro usuario, com somente `SELECT` nos caches que a
@@ -85,7 +89,7 @@ O campo `NS_CACHE_DATABASE_MAP` informa ao portal quais caches podem ser
 consultados pela mesma interface. Exemplo de valor no painel do Render:
 
 ```json
-{"rio-branco":"cache_riobranco","laboratorio":"cache_laboratorio","senhor":"cache_senhor","nanotech":"cache_nanotech"}
+{"rio-branco":"nanotechsoft_cache_riobranco","laboratorio":"nanotechsoft_cache_laboratorio","senhor":"nanotechsoft_cache_senhor","nanotech":"nanotechsoft_cache_nanotech"}
 ```
 
 `NS_DB_NAME` permanece sendo o database de autenticacao/cache administrativo.
@@ -238,10 +242,11 @@ Depois, somente no cliente autorizado:
 CACHE_SYNC_ENABLED=1 python3 -m tools.cloud_cache_sync --yes
 ```
 
-O destino deve comecar com `cache_`. O programa bloqueia origem e destino
-iguais, exige lista de tabelas, valida schemas, usa lotes e substitui cada
-snapshot dentro de uma transacao no cache. Falhas executam rollback no destino
-e nunca escrevem na origem.
+O destino deve comecar com `cache_` ou seguir o formato do AlwaysData
+`<conta>_cache_...`. O programa bloqueia origem e destino iguais, exige lista
+de tabelas, valida schemas, usa lotes e substitui cada snapshot dentro de uma
+transacao no cache. Falhas executam rollback no destino e nunca escrevem na
+origem.
 
 Para automatizar, use o agendador do sistema operacional do cliente somente
 depois de uma execucao manual validada. Grave logs fora do Git e alerte quando
