@@ -122,7 +122,7 @@
 .metricLine span { color: var(--tech-muted); font-size: .65rem; text-transform: uppercase; }
 .metricLine strong { margin-top: 3px; font-size: .85rem; }
 .deviceMessage { margin: 10px 0 0; color: var(--tech-muted); font-size: .76rem; }
-.resourceLine { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 5px; margin-top: 9px; }
+.resourceLine { display: grid; grid-template-columns: repeat(auto-fit, minmax(88px, 1fr)); gap: 5px; margin-top: 9px; }
 .resourceLine span { border-radius: 7px; padding: 6px; color: var(--tech-muted); background: #eaf2ef; font-size: .62rem; text-transform: uppercase; }
 .resourceLine strong { display: block; margin-top: 2px; color: var(--tech-ink); font-size: .72rem; text-transform: none; }
 

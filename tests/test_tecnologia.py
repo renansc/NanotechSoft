@@ -97,6 +97,7 @@ class TecnologiaMonitorTests(unittest.TestCase):
             ".1.3.6.1.2.1.31.1.1.1.10": [(".1.3.6.1.2.1.31.1.1.1.10.1", "500000")],
             ".1.3.6.1.2.1.31.1.1.1.15": [(".1.3.6.1.2.1.31.1.1.1.15.1", "1000")],
             ".1.3.6.1.2.1.25.3.3.1.2": [],
+            ".1.3.6.1.2.1.25.2.3.1": [],
             ".1.3.6.1.2.1.25.3.5.1.1": [(".1.3.6.1.2.1.25.3.5.1.1.1", "idle(3)")],
             ".1.3.6.1.2.1.43.5.1.1.17": [(".1.3.6.1.2.1.43.5.1.1.17.1", "SERIAL-123")],
             ".1.3.6.1.2.1.43.10.2.1.4": [(".1.3.6.1.2.1.43.10.2.1.4.1.1", "125571")],
@@ -132,6 +133,27 @@ class TecnologiaMonitorTests(unittest.TestCase):
         self.assertEqual(50, telemetry["supplies"][0]["pct"])
         self.assertEqual("Disponível", telemetry["supplies"][1]["status"])
 
+    def test_snmp_storage_table_collects_fixed_disk_capacity(self):
+        rows = [
+            (".1.3.6.1.2.1.25.2.3.1.2.7", ".1.3.6.1.2.1.25.2.1.4"),
+            (".1.3.6.1.2.1.25.2.3.1.3.7", "/mnt/recordings"),
+            (".1.3.6.1.2.1.25.2.3.1.4.7", "4096 Bytes"),
+            (".1.3.6.1.2.1.25.2.3.1.5.7", "1000"),
+            (".1.3.6.1.2.1.25.2.3.1.6.7", "750"),
+            (".1.3.6.1.2.1.25.2.3.1.2.8", ".1.3.6.1.2.1.25.2.1.2"),
+            (".1.3.6.1.2.1.25.2.3.1.4.8", "1024 Bytes"),
+            (".1.3.6.1.2.1.25.2.3.1.5.8", "500"),
+            (".1.3.6.1.2.1.25.2.3.1.6.8", "400"),
+        ]
+
+        disks = monitor._snmp_storage_metrics(rows)
+
+        self.assertEqual(1, len(disks))
+        self.assertEqual("/mnt/recordings", disks[0]["name"])
+        self.assertEqual(4_096_000, disks[0]["sizeBytes"])
+        self.assertEqual(3_072_000, disks[0]["usedBytes"])
+        self.assertEqual(75, disks[0]["usedPct"])
+
     def test_snmp_nvr_falls_back_to_if_table_and_reads_enterprise_inventory(self):
         rows_by_oid = {
             ".1.3.6.1.2.1.1": [
@@ -161,6 +183,7 @@ class TecnologiaMonitorTests(unittest.TestCase):
                 (".1.3.6.1.2.1.2.2.1.5.3", "1000000000"),
             ],
             ".1.3.6.1.2.1.25.3.3.1.2": [],
+            ".1.3.6.1.2.1.25.2.3.1": [],
             ".1.3.6.1.4.1.1004849.2.1.1": [
                 (".1.3.6.1.4.1.1004849.2.1.1.1.0", "4.000.00IB003.0"),
             ],
@@ -202,6 +225,7 @@ class TecnologiaMonitorTests(unittest.TestCase):
         self.assertEqual(0.8, telemetry["downloadMbps"])
         self.assertEqual(0.4, telemetry["uploadMbps"])
         self.assertEqual("", telemetry["systemName"])
+        self.assertEqual({"cpu": False, "disk": False}, telemetry["snmpCapabilities"])
 
     def test_snmp_walk_ignores_unsupported_oid_as_data(self):
         result = mock.Mock(

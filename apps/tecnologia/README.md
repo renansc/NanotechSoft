@@ -85,8 +85,8 @@ O cadastro aceita quatro tipos de coleta:
 
 - `ICMP`: disponibilidade, perda, latência e porta TCP opcional;
 - `TCP`: mantém ICMP e exige uma porta de serviço;
-- `SNMP`: usa SNMP v2c somente leitura para identificação, CPU exposta pelo
-  equipamento e contadores de tráfego das interfaces. Em impressoras, também
+- `SNMP`: usa SNMP v2c somente leitura para identificação, CPU e discos expostos
+  pelo equipamento via HOST-RESOURCES-MIB e contadores de tráfego das interfaces. Em impressoras, também
   consulta o Printer-MIB para estado, número de série, contador de páginas e
   níveis de suprimentos disponibilizados pelo fabricante. Em NVRs compatíveis,
   consulta também o ramo empresarial anunciado pelo próprio agente para mostrar
@@ -125,6 +125,9 @@ Alguns NVRs não implementam a tabela moderna `ifXTable`, embora respondam
 normalmente ao SNMP. Nesses casos, a coleta usa automaticamente a `ifTable`
 clássica para nomes, velocidade e contadores de rede e ignora respostas
 `No Such Object` em vez de apresentá-las como interfaces.
+Alguns firmwares de NVR também não publicam CPU ou armazenamento na
+HOST-RESOURCES-MIB. O card identifica explicitamente essas métricas como não
+expostas, sem tratá-las como zero ou como falha da coleta.
 
 ## Alertas
 

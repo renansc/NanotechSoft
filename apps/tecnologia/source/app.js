@@ -178,6 +178,8 @@
       const resourceLine = telemetry ? (isSnmpNvr ? `<div class="resourceLine">
         <span>Modelo <strong>${esc(telemetry.model || "—")}</strong></span>
         <span>Canais <strong>${telemetry.channelCapacity == null ? "—" : number(telemetry.channelCapacity, 0)}</strong></span>
+        <span>CPU <strong>${telemetry.cpuPct == null ? "Não exposto" : `${number(telemetry.cpuPct)}%`}</strong></span>
+        <span>Disco <strong>${telemetry.diskPct == null ? "Não exposto" : `${number(telemetry.diskPct)}%`}</strong></span>
         <span>Interfaces <strong>${number(telemetry.interfaceCount ?? telemetry.interfaces?.length, 0)}</strong></span>
         <span>Rede ↓ <strong>${telemetry.downloadMbps == null ? "Aguardando" : `${number(telemetry.downloadMbps, 3)} Mbps`}</strong></span>
         <span>Rede ↑ <strong>${telemetry.uploadMbps == null ? "Aguardando" : `${number(telemetry.uploadMbps, 3)} Mbps`}</strong></span>
@@ -279,6 +281,8 @@
     const nvrResourceCards = [
       ["Modelo", telemetry?.model || "—"],
       ["Capacidade de canais", telemetry?.channelCapacity == null ? "—" : number(telemetry.channelCapacity, 0)],
+      ["CPU", telemetry?.cpuPct == null ? "Não exposto via SNMP" : `${number(telemetry.cpuPct)}%`],
+      ["Disco", telemetry?.diskPct == null ? "Não exposto via SNMP" : `${number(telemetry.diskPct)}%`],
       ["Interfaces", telemetry?.interfaceCount ?? telemetry?.interfaces?.length ?? "—"],
       ["Capacidade da rede", telemetry?.networkCapacityMbps == null ? "—" : `${number(telemetry.networkCapacityMbps)} Mbps`],
       ["Rede recebida", telemetry?.downloadMbps == null ? "Aguardando 2ª coleta" : `${number(telemetry.downloadMbps, 3)} Mbps`],
@@ -315,6 +319,11 @@
     const identity = (isPrinter ? printerIdentity : isNvr ? nvrIdentity : genericIdentity)
       .map(([label, value]) => `<div><span>${esc(label)}</span><strong>${esc(value)}</strong></div>`).join("");
     const disks = telemetry?.disks?.length ? `<div class="detailSection"><h3>Discos</h3><div class="detailTableWrap"><table><thead><tr><th>Volume</th><th>Uso</th><th>Livre</th><th>Total</th></tr></thead><tbody>${telemetry.disks.map((disk) => `<tr><td>${esc(disk.name)}</td><td>${number(disk.usedPct)}%</td><td>${esc(bytes(disk.freeBytes))}</td><td>${esc(bytes(disk.sizeBytes))}</td></tr>`).join("")}</tbody></table></div></div>` : "";
+    const unavailableNvrResources = isNvr ? [
+      telemetry?.cpuPct == null ? "CPU" : "",
+      telemetry?.diskPct == null ? "armazenamento" : "",
+    ].filter(Boolean) : [];
+    const nvrResourceNotice = unavailableNvrResources.length ? `<div class="detailNotice warning"><strong>Métricas não fornecidas pelo NVR</strong><span>O agente SNMP deste firmware não expõe ${esc(unavailableNvrResources.join(" nem "))} nas tabelas padrão. O monitoramento de disponibilidade, rede e identificação continua funcionando normalmente.</span></div>` : "";
     const interfaces = telemetry?.interfaces?.length ? `<div class="detailSection"><h3>Interfaces monitoradas</h3><div class="detailTags">${telemetry.interfaces.map((name) => `<span>${esc(name)}</span>`).join("")}</div></div>` : "";
     const supplies = telemetry?.supplies?.length ? `<div class="detailSection"><h3>Suprimentos</h3><div class="detailTableWrap"><table><thead><tr><th>Item</th><th>Nível</th><th>Atual</th><th>Capacidade</th></tr></thead><tbody>${telemetry.supplies.map((supply) => `<tr><td>${esc(supply.name)}</td><td>${supply.pct == null ? esc(supply.status || "Não informado") : `${number(supply.pct)}%`}</td><td>${supply.level == null || supply.level < 0 ? "—" : number(supply.level, 0)}</td><td>${supply.capacity == null || supply.capacity < 0 ? "—" : number(supply.capacity, 0)}</td></tr>`).join("")}</tbody></table></div></div>` : "";
     const printerUsage = isPrinter ? renderPrinterUsage(state.printerUsage[device.id]) : "";
@@ -326,7 +335,7 @@
     }).join("");
     const addresses = `<div class="detailSection"><h3>Endereços e caminhos de rede</h3><div class="detailTableWrap"><table><thead><tr><th>Interface</th><th>IP ou host</th><th>Latência</th><th>Situação</th></tr></thead><tbody>${addressRows}</tbody></table></div></div>`;
     const collectionSummary = isSnmp ? `${telemetry?.interfaceCount ?? telemetry?.interfaces?.length ?? 0} interfaces consultadas` : `${number(telemetry?.series, 0)} séries coletadas`;
-    const telemetryBlock = telemetry ? `<div class="detailSection"><div class="detailSectionHead"><h3>${esc(protocol)}</h3><span>${esc(collectionSummary)}</span></div><div class="detailResources">${resourceCards}</div></div><div class="detailSection"><h3>Identificação do equipamento</h3><div class="detailIdentity">${identity}</div></div>${printerUsage}${supplies}${disks}${interfaces}` : `<div class="detailNotice warning"><strong>Sem métricas de ${esc(protocol)} nesta coleta.</strong><span>${esc(metric?.message || "Aguardando a primeira coleta.")}</span><small>${isSnmp ? `Confirme o SNMP somente leitura na porta ${esc(device.snmpPort || 161)} e permita consultas do servidor 192.168.200.254.` : `Confirme se o exporter está iniciado e se a porta ${esc(device.agentPort || 9182)} aceita conexão do servidor 192.168.200.254.`}</small></div>`;
+    const telemetryBlock = telemetry ? `<div class="detailSection"><div class="detailSectionHead"><h3>${esc(protocol)}</h3><span>${esc(collectionSummary)}</span></div><div class="detailResources">${resourceCards}</div></div>${nvrResourceNotice}<div class="detailSection"><h3>Identificação do equipamento</h3><div class="detailIdentity">${identity}</div></div>${printerUsage}${supplies}${disks}${interfaces}` : `<div class="detailNotice warning"><strong>Sem métricas de ${esc(protocol)} nesta coleta.</strong><span>${esc(metric?.message || "Aguardando a primeira coleta.")}</span><small>${isSnmp ? `Confirme o SNMP somente leitura na porta ${esc(device.snmpPort || 161)} e permita consultas do servidor 192.168.200.254.` : `Confirme se o exporter está iniciado e se a porta ${esc(device.agentPort || 9182)} aceita conexão do servidor 192.168.200.254.`}</small></div>`;
     $("#deviceDetailsBody").innerHTML = `<div class="detailStatus"><div>${statusBadge(metric)}<span>${esc(metric?.message || "Aguardando medição")}</span></div><small>Última coleta: ${esc(dateTime(metric?.checkedAt))}</small></div><div class="detailEndpoint"><span>Coleta</span><strong>${esc(protocol)}</strong><span>Endpoint ativo</span><code>${esc(collectionEndpoint)}</code></div>${addresses}${telemetryBlock}`;
   }
 

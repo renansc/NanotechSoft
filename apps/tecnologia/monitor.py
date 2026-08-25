@@ -374,6 +374,43 @@ def _snmp_rows_map(rows: list[tuple[str, str]]) -> dict[str, str]:
     return {oid: value for oid, value in rows}
 
 
+def _snmp_storage_metrics(rows: list[tuple[str, str]]) -> list[dict[str, Any]]:
+    """Convert HOST-RESOURCES-MIB fixed disk rows into normalized volumes."""
+    storage_base = ".1.3.6.1.2.1.25.2.3.1"
+    columns: dict[str, dict[str, str]] = {}
+    for oid, value in rows:
+        prefix = f"{storage_base}."
+        if not oid.startswith(prefix):
+            continue
+        suffix = oid[len(prefix):].split(".")
+        if len(suffix) < 2:
+            continue
+        column, index = suffix[0], ".".join(suffix[1:])
+        columns.setdefault(column, {})[index] = value
+
+    fixed_disk_oid = ".1.3.6.1.2.1.25.2.1.4"
+    disks: list[dict[str, Any]] = []
+    for index, raw_type in columns.get("2", {}).items():
+        storage_type = _snmp_clean_text(raw_type)
+        if storage_type != fixed_disk_oid and "fixeddisk" not in storage_type.lower():
+            continue
+        allocation_unit = _snmp_number(columns.get("4", {}).get(index))
+        size_units = _snmp_number(columns.get("5", {}).get(index))
+        used_units = _snmp_number(columns.get("6", {}).get(index))
+        if not allocation_unit or size_units is None or used_units is None or size_units <= 0:
+            continue
+        size_bytes = int(allocation_unit * size_units)
+        used_bytes = max(0, min(size_bytes, int(allocation_unit * used_units)))
+        disks.append({
+            "name": _snmp_clean_text(columns.get("3", {}).get(index)) or f"Disco {index}",
+            "sizeBytes": size_bytes,
+            "usedBytes": used_bytes,
+            "freeBytes": size_bytes - used_bytes,
+            "usedPct": round(used_bytes / size_bytes * 100, 1),
+        })
+    return disks
+
+
 def _snmp_enterprise_nvr_metrics(host: str, community: str, port: int, system_object_id: str) -> dict[str, Any]:
     if not system_object_id.startswith(".1.3.6.1.4.1.1004849."):
         return {}
@@ -426,6 +463,7 @@ def collect_snmp_metrics(device: dict[str, Any]) -> dict[str, Any]:
         speed_rows = _snmp_walk_optional(host, community, port, ".1.3.6.1.2.1.2.2.1.5")
         legacy_speed = True
     cpu_rows = _snmp_walk_optional(host, community, port, ".1.3.6.1.2.1.25.3.3.1.2")
+    storage_rows = _snmp_walk_optional(host, community, port, ".1.3.6.1.2.1.25.2.3.1")
 
     def indexed(rows: list[tuple[str, str]]) -> dict[str, Any]:
         return {oid.rsplit(".", 1)[-1]: value for oid, value in rows}
@@ -449,6 +487,7 @@ def collect_snmp_metrics(device: dict[str, Any]) -> dict[str, Any]:
     has_rate = rates["downloadMbps"] is not None or rates["uploadMbps"] is not None
     network_pct = round(traffic_mbps / capacity_mbps * 100, 1) if capacity_mbps and has_rate else None
     cpu_values = [number for _, value in cpu_rows if (number := _snmp_number(value)) is not None]
+    disks = _snmp_storage_metrics(storage_rows)
     system_values = {oid: value for oid, value in system_rows}
     system_name = _snmp_clean_text(next((value for oid, value in system_values.items() if oid.endswith(".1.5.0")), ""))
     description = _snmp_clean_text(next((value for oid, value in system_values.items() if oid.endswith(".1.1.0")), ""))
@@ -466,7 +505,9 @@ def collect_snmp_metrics(device: dict[str, Any]) -> dict[str, Any]:
         "uptimeSeconds": round(uptime_ticks / 100, 2) if uptime_ticks is not None else None,
         "cpuPct": round(sum(cpu_values) / len(cpu_values), 1) if cpu_values else None,
         "memoryPct": None,
-        "diskPct": None,
+        "diskPct": round(max(disk["usedPct"] for disk in disks), 1) if disks else None,
+        "disks": disks,
+        "snmpCapabilities": {"cpu": bool(cpu_values), "disk": bool(disks)},
         "downloadMbps": rates["downloadMbps"],
         "uploadMbps": rates["uploadMbps"],
         "networkCapacityMbps": round(capacity_mbps, 1) if capacity_mbps else None,
