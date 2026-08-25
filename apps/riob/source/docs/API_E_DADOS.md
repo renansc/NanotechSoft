@@ -706,7 +706,10 @@ estoque/RioB. Fornecedores sao os mesmos de `gestor_email_fornecedores`;
 estoque de seguranca, lote minimo, multiplo e demais parametros de compra. A
 configuracao do fornecedor tambem guarda `representante_nome`, `telefone` e
 `endereco`; o e-mail permanece no cadastro canonico. Esses dados aparecem no
-botao `Contato` do popup da compra para o fornecedor selecionado.
+botao `Contato` do popup da compra para o fornecedor selecionado e podem ser
+editados e salvos ali sem alterar prazo, pedido minimo ou condicao de pagamento.
+O Kanban operacional de compras fica em `Workflow -> Compras`; previsao e
+importacao de documentos continuam no dominio `Compras`.
 
 Endpoints:
 
@@ -723,6 +726,7 @@ Endpoints:
 - `PUT /api/compras/produtos/<id>/config`
 - `GET|POST /api/compras/fornecedores`
 - `PUT|DELETE /api/compras/fornecedores/<id>`
+- `PATCH /api/compras/fornecedores/<id>/contato`
 - `GET /api/compras/relatorio`
 - `GET /api/compras/relatorio/pdf`
 - `GET /api/dashboard_compras`

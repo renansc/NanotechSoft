@@ -654,6 +654,30 @@ def register_gestao_processos_compras(app, services):
              as_str(payload.get("endereco"))[:500]),
         )
 
+    def save_supplier_contact(cur, supplier_id, payload):
+        contact = {
+            "representante_nome": as_str(payload.get("representante_nome"))[:255],
+            "telefone": as_str(payload.get("telefone"))[:80],
+            "emails": as_str(payload.get("emails")),
+            "endereco": as_str(payload.get("endereco"))[:500],
+        }
+        cur.execute("SELECT id FROM gestor_email_fornecedores WHERE id=%s AND ativo=1", (supplier_id,))
+        if not cur.fetchone():
+            return None
+        cur.execute(
+            "UPDATE gestor_email_fornecedores SET emails=%s,updated_at=%s WHERE id=%s AND ativo=1",
+            (contact["emails"], fmt_dt(datetime.datetime.now()), supplier_id),
+        )
+        cur.execute(
+            """INSERT INTO compras_fornecedor_config
+            (fornecedor_id,representante_nome,telefone,endereco)
+            VALUES (%s,%s,%s,%s)
+            ON DUPLICATE KEY UPDATE representante_nome=VALUES(representante_nome),
+            telefone=VALUES(telefone),endereco=VALUES(endereco),atualizado_em=NOW()""",
+            (supplier_id, contact["representante_nome"], contact["telefone"], contact["endereco"]),
+        )
+        return contact
+
     @bp.route("/api/compras/fornecedores", methods=["GET", "POST"])
     def purchase_suppliers_api():
         conn = get_conn()
@@ -713,6 +737,22 @@ def register_gestao_processos_compras(app, services):
         except mysql.connector.IntegrityError:
             conn.rollback()
             return jsonify({"erro": "Ja existe um fornecedor com esse CNPJ."}), 409
+        finally:
+            cur.close()
+            conn.close()
+
+    @bp.route("/api/compras/fornecedores/<int:supplier_id>/contato", methods=["PATCH"])
+    def purchase_supplier_contact_api(supplier_id):
+        payload = request.get_json(silent=True) or {}
+        conn = get_conn()
+        cur = conn.cursor(dictionary=True)
+        try:
+            contact = save_supplier_contact(cur, supplier_id, payload)
+            if contact is None:
+                conn.rollback()
+                return jsonify({"erro": "Fornecedor nao encontrado."}), 404
+            conn.commit()
+            return jsonify({"ok": True, "fornecedor": {"id": supplier_id, **contact}})
         finally:
             cur.close()
             conn.close()

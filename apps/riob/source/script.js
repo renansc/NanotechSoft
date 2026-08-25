@@ -2202,13 +2202,17 @@ function _fecharSubmenuAposNavegacao(menu){
 }
 
 function toggleComprasSubmenu(ev){
-  toggleExclusiveSubmenu(ev, () => openComprasView(null, window.__comprasView || "kanban"));
+  toggleExclusiveSubmenu(ev, () => openComprasView(null, "previsao"));
 }
 
-function openComprasView(ev, view = "kanban"){
+function openComprasView(ev, view = "previsao"){
   if (ev) { ev.preventDefault(); ev.stopPropagation(); }
+  if (view === "kanban") {
+    openWorkflowView(null, "compras");
+    return;
+  }
   const menu = document.querySelector('.menu-item.has-submenu[data-tab="compras"]');
-  const nextView = ["kanban", "previsao", "importar_xml_bipe", "importar_xml_auto"].includes(view) ? view : "kanban";
+  const nextView = ["previsao", "importar_xml_bipe", "importar_xml_auto"].includes(view) ? view : "previsao";
   window.__comprasView = nextView;
   document.querySelectorAll("#submenuCompras .submenu-item").forEach((item) => {
     item.classList.toggle("active", item.dataset.comprasView === nextView);
@@ -2699,13 +2703,12 @@ function openWorkflowView(ev, view){
     return;
   }
   const menu = document.querySelector('.menu-item.has-submenu[data-tab="workflow"]');
-  const targetView = rawView === "comissao"
-    ? "comissao"
-    : (rawView === "vendas_diario" ? "vendas_diario" : "fretes");
+  const targetView = ["fretes", "comissao", "vendas_diario", "compras"].includes(rawView) ? rawView : "fretes";
   window.__workflowView = targetView;
   const targetTab = targetView === "vendas_diario"
     ? "vendasDiarioWorkflow"
-    : targetView;
+    : (targetView === "compras" ? "comprasGestao" : targetView);
+  if (targetView === "compras") window.__comprasView = "kanban";
   showTab(targetTab, menu);
   document.querySelectorAll("#submenuWorkflow .submenu-item").forEach((item) => {
     item.classList.toggle("active", item.dataset.workflowView === targetView);

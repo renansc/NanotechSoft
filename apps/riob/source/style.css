@@ -1620,10 +1620,11 @@ button:hover{ background:#e68900; }
 .gestao-contact-head span,.gestao-contact-grid span{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#64748b}
 .gestao-contact-head strong{font-size:17px;color:#0f172a}
 .gestao-contact-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
-.gestao-contact-grid > div{display:grid;gap:4px;padding:10px;border-radius:9px;background:#fff}
-.gestao-contact-grid strong,.gestao-contact-grid a{color:#1e293b;overflow-wrap:anywhere}
-.gestao-contact-grid a[href]{color:#1d4ed8;text-decoration:underline}
+.gestao-contact-grid > div,.gestao-contact-grid > label{display:grid;gap:4px;padding:10px;border-radius:9px;background:#fff}
+.gestao-contact-grid input{width:100%;margin:0;color:#1e293b}
 .gestao-contact-address{grid-column:1/-1}
+.gestao-contact-actions{display:flex;align-items:center;gap:12px;margin-top:12px}
+.gestao-contact-actions button{margin:0}
 .gestao-row-alert td{background:#fff1f2!important;color:#9f1239}
 .gestao-color-dot{display:inline-block;width:18px;height:18px;border-radius:50%;border:1px solid rgba(15,23,42,.18)}
 #comprasParametrosProdutosBody input,#comprasParametrosProdutosBody select{min-width:100px;width:100%;margin:0}

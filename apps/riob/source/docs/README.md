@@ -103,4 +103,5 @@ Esta revisao da documentacao passa a registrar explicitamente:
   dashboards, relatorios filtraveis/PDF e cadastros orientados por tarefa; a
   previsao de compras reutiliza estoque, produtos, grupos e fornecedores
   canonicos e considera historico de consumo, prazo, seguranca e pedidos abertos;
-  o popup da compra mostra representante, telefone, e-mail e endereco
+  o Kanban de compras fica em `Workflow -> Compras`, e o popup da compra permite
+  consultar e atualizar representante, telefone, e-mail e endereco sem sair do card

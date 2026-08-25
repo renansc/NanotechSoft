@@ -1960,7 +1960,7 @@ def riob_hash_bridge_script():
         return;
       }
       if (section === "compras" && typeof window.openComprasView === "function") {
-        window.openComprasView(null, view || "kanban");
+        window.openComprasView(null, view || "previsao");
         return;
       }
       if (section === "comissao" && ["relatorios", "exportar"].includes(view) && typeof window.openComissaoView === "function") {

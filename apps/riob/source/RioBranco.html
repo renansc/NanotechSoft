@@ -59,6 +59,7 @@
         <div class="submenu-item active" data-workflow-view="fretes" onclick="openWorkflowView(event,'fretes')">Fretes</div>
         <div class="submenu-item" data-workflow-view="comissao" onclick="openWorkflowView(event,'comissao')">Comissões</div>
         <div class="submenu-item" data-workflow-view="vendas_diario" onclick="openWorkflowView(event,'vendas_diario')">Vendas Diário</div>
+        <div class="submenu-item" data-workflow-view="compras" onclick="openWorkflowView(event,'compras')">Compras</div>
       </div>
     </div>
     <div class="menu-item has-submenu" data-tab="import" onclick="toggleImportSubmenu(event)">
@@ -70,8 +71,7 @@
     <div class="menu-item has-submenu" data-tab="compras" onclick="toggleComprasSubmenu(event)">
       Compras <span class="submenu-caret">&#9662;</span>
       <div class="submenu" id="submenuCompras">
-        <div class="submenu-item active" data-compras-view="kanban" onclick="openComprasView(event,'kanban')">Kanban de compras</div>
-        <div class="submenu-item" data-compras-view="previsao" onclick="openComprasView(event,'previsao')">Previsão de compras</div>
+        <div class="submenu-item active" data-compras-view="previsao" onclick="openComprasView(event,'previsao')">Previsão de compras</div>
         <div class="submenu-item" data-compras-view="importar_xml_bipe" onclick="openComprasView(event,'importar_xml_bipe')">Importar XML (Bipe)</div>
         <div class="submenu-item" data-compras-view="importar_xml_auto" onclick="openComprasView(event,'importar_xml_auto')">Importar XML Auto</div>
       </div>
@@ -684,7 +684,8 @@
       </div>
       <section id="compraContatoPainel" class="gestao-contact-panel hidden" aria-live="polite">
         <div class="gestao-contact-head"><div><span>Contato do fornecedor</span><strong id="compraContatoFornecedor">-</strong></div><button type="button" class="btn-secondary" onclick="fecharContatoCompra()">Fechar contato</button></div>
-        <div class="gestao-contact-grid"><div><span>Representante</span><strong id="compraContatoRepresentante">Não informado</strong></div><div><span>Telefone</span><a id="compraContatoTelefone">Não informado</a></div><div><span>E-mail</span><a id="compraContatoEmail">Não informado</a></div><div class="gestao-contact-address"><span>Endereço</span><strong id="compraContatoEndereco">Não informado</strong></div></div>
+        <div class="gestao-contact-grid"><label><span>Representante</span><input id="compraContatoRepresentante"></label><label><span>Telefone</span><input id="compraContatoTelefone" inputmode="tel"></label><label><span>E-mail</span><input id="compraContatoEmail" type="email"></label><label class="gestao-contact-address"><span>Endereço</span><input id="compraContatoEndereco"></label></div>
+        <div class="gestao-contact-actions"><button type="button" id="compraContatoSalvarBtn" onclick="salvarContatoCompra()">Salvar contato</button><span id="compraContatoStatus" class="hint"></span></div>
       </section>
       <div class="estoque-inline-actions"><button type="button" onclick="salvarCompra()">Salvar compra</button><button type="button" id="compraExcluirBtn" class="btn-danger hidden" onclick="excluirCompra()">Excluir</button></div><div id="compraStatusMensagem" class="hint"></div>
     </div>

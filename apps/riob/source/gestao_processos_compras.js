@@ -132,6 +132,7 @@ function setComprasGestaoView(view){
   document.getElementById("comprasViewKanban")?.classList.toggle("hidden", next !== "kanban");
   document.getElementById("comprasViewPrevisao")?.classList.toggle("hidden", next !== "previsao");
   document.querySelectorAll("#submenuCompras .submenu-item").forEach((item) => item.classList.toggle("active", item.dataset.comprasView === next));
+  document.querySelectorAll("#submenuWorkflow .submenu-item").forEach((item) => item.classList.toggle("active", next === "kanban" && item.dataset.workflowView === "compras"));
   if (next === "kanban") carregarComprasKanban().catch((erro) => console.warn("kanban compras erro:", erro));
   else carregarPrevisaoCompras().catch((erro) => console.warn("previsao compras erro:", erro));
 }
@@ -155,25 +156,12 @@ function fornecedorContatoCompraAtual(){
   return (comprasGestaoState.opcoes?.fornecedores || []).find((row) => Number(row.id) === fornecedorId) || null;
 }
 
-function contatoCompraLink(id, value, prefix){
-  const link = document.getElementById(id);
-  if (!link) return;
-  const texto = String(value || "").trim();
-  link.textContent = texto || "Não informado";
-  if (!texto) {
-    link.removeAttribute("href");
-    return;
-  }
-  const destino = prefix === "tel:" ? texto.replace(/[^+\d]/g, "") : texto.split(/[;,\s]+/).find((item) => item.includes("@")) || texto;
-  link.href = `${prefix}${destino}`;
-}
-
 function renderContatoCompra(fornecedor){
   document.getElementById("compraContatoFornecedor").textContent = gestaoFornecedorNome(fornecedor);
-  document.getElementById("compraContatoRepresentante").textContent = fornecedor.representante_nome || fornecedor.contato_compras || "Não informado";
-  document.getElementById("compraContatoEndereco").textContent = fornecedor.endereco || "Não informado";
-  contatoCompraLink("compraContatoTelefone", fornecedor.telefone, "tel:");
-  contatoCompraLink("compraContatoEmail", fornecedor.emails, "mailto:");
+  document.getElementById("compraContatoRepresentante").value = fornecedor.representante_nome || fornecedor.contato_compras || "";
+  document.getElementById("compraContatoTelefone").value = fornecedor.telefone || "";
+  document.getElementById("compraContatoEmail").value = fornecedor.emails || "";
+  document.getElementById("compraContatoEndereco").value = fornecedor.endereco || "";
 }
 
 function atualizarContatoCompra(){
@@ -192,10 +180,42 @@ function abrirContatoCompra(){
   const fornecedor = fornecedorContatoCompraAtual();
   if (!fornecedor) return;
   renderContatoCompra(fornecedor);
+  document.getElementById("compraContatoStatus").textContent = "";
   document.getElementById("compraContatoPainel")?.classList.remove("hidden");
 }
 
 function fecharContatoCompra(){ document.getElementById("compraContatoPainel")?.classList.add("hidden"); }
+
+async function salvarContatoCompra(){
+  const fornecedor = fornecedorContatoCompraAtual();
+  if (!fornecedor) return;
+  const status = document.getElementById("compraContatoStatus");
+  const botao = document.getElementById("compraContatoSalvarBtn");
+  const payload = {
+    representante_nome: document.getElementById("compraContatoRepresentante").value.trim(),
+    telefone: document.getElementById("compraContatoTelefone").value.trim(),
+    emails: document.getElementById("compraContatoEmail").value.trim(),
+    endereco: document.getElementById("compraContatoEndereco").value.trim(),
+  };
+  status.textContent = "Salvando contato...";
+  botao.disabled = true;
+  try {
+    const resp = await apiFetch(`/api/compras/fornecedores/${Number(fornecedor.id)}/contato`, {method:"PATCH", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload)});
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) { status.textContent = data.erro || "Falha ao salvar contato."; return; }
+    Object.assign(fornecedor, data.fornecedor || payload);
+    const cadastro = (comprasGestaoState.fornecedores || []).find((row) => Number(row.id) === Number(fornecedor.id));
+    if (cadastro) Object.assign(cadastro, data.fornecedor || payload);
+    renderContatoCompra(fornecedor);
+    if (document.getElementById("comprasFornecedoresBody")) renderFornecedoresCompras();
+    status.textContent = "Contato atualizado.";
+  } catch (erro) {
+    console.warn("contato do fornecedor erro:", erro);
+    status.textContent = "Falha ao salvar contato.";
+  } finally {
+    botao.disabled = false;
+  }
+}
 
 function renderComprasKanban(){
   const busca = String(document.getElementById("comprasKanbanBusca")?.value || "").trim().toLowerCase();

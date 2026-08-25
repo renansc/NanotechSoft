@@ -46,6 +46,7 @@ class GestaoProcessosComprasTests(unittest.TestCase):
         self.assertIn("/api/processos-internos/relatorio/pdf", routes)
         self.assertIn("/api/compras/solicitacoes", routes)
         self.assertIn("/api/compras/previsao", routes)
+        self.assertIn("/api/compras/fornecedores/<int:supplier_id>/contato", routes)
         self.assertIn("/api/compras/relatorio/pdf", routes)
         self.assertIn("/api/dashboard_processos", routes)
         self.assertIn("/api/dashboard_compras", routes)
@@ -66,6 +67,8 @@ class GestaoProcessosComprasTests(unittest.TestCase):
         self.assertIn("function renderProcessosInternosKanban()", script)
         self.assertIn("function renderComprasKanban()", script)
         self.assertIn("function renderPrevisaoCompras()", script)
+        self.assertIn('data-workflow-view="compras"', html)
+        self.assertNotIn('data-compras-view="kanban"', html)
 
     def test_popup_da_compra_exibe_contato_do_fornecedor(self):
         root = Path(__file__).resolve().parents[1]
@@ -80,13 +83,18 @@ class GestaoProcessosComprasTests(unittest.TestCase):
             'id="compraContatoTelefone"',
             'id="compraContatoEmail"',
             'id="compraContatoEndereco"',
+            'id="compraContatoSalvarBtn"',
+            'id="compraContatoStatus"',
         ):
             self.assertIn(item_id, html)
         self.assertIn("function abrirContatoCompra()", script)
+        self.assertIn("async function salvarContatoCompra()", script)
+        self.assertIn('method:"PATCH"', script)
         self.assertIn("representante_nome VARCHAR(255)", source)
         self.assertIn("COALESCE(cfg.representante_nome,'') AS representante_nome", module)
         self.assertIn("telefone=VALUES(telefone)", module)
         self.assertIn("endereco=VALUES(endereco)", module)
+        self.assertIn('methods=["PATCH"]', module)
 
     def test_recebimento_de_compra_nao_movimenta_estoque_automaticamente(self):
         source = Path(server.__file__).read_text(encoding="utf-8")

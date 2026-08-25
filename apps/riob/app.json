@@ -84,6 +84,10 @@
         "url": "/apps/riob#processos"
       },
       {
+        "nome": "Compras RioB",
+        "url": "/apps/riob#workflow:compras"
+      },
+      {
         "nome": "Monitor Cameras RioB",
         "url": "/apps/riob#monitor:cameras"
       }
@@ -136,10 +140,6 @@
       }
     ],
     "compras": [
-      {
-        "nome": "Kanban de compras RioB",
-        "url": "/apps/riob#compras:kanban"
-      },
       {
         "nome": "Previsao de compras RioB",
         "url": "/apps/riob#compras:previsao"

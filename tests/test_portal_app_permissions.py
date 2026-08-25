@@ -104,6 +104,11 @@ class PortalAppPermissionsTests(unittest.TestCase):
         }
 
         self.assertIn("/apps/riob#workflow:vendas_diario", workflow_urls)
+        self.assertIn("/apps/riob#workflow:compras", workflow_urls)
+        self.assertNotIn(
+            "/apps/riob#compras:kanban",
+            {item["url"] for item in groups["compras"]},
+        )
         self.assertEqual(
             "/apps/riob#workflow:vendas_diario_importar",
             import_items["Importar Vendas Diario"],
@@ -132,7 +137,7 @@ class PortalAppPermissionsTests(unittest.TestCase):
         self.assertIn('section === "processos"', bridge)
         self.assertIn('window.openProcessosInternos(null)', bridge)
         self.assertIn('section === "compras"', bridge)
-        self.assertIn('window.openComprasView(null, view || "kanban")', bridge)
+        self.assertIn('window.openComprasView(null, view || "previsao")', bridge)
 
 
 if __name__ == "__main__":
