@@ -56,6 +56,20 @@ def _inter_fitid(account, date, amount, memo, occurrence):
     return f"pdf-inter-{digest}"
 
 
+def _bradesco_fitid(account, date, document, amount, memo, occurrence):
+    identity = "|".join((
+        "BRADESCO",
+        account,
+        date,
+        document,
+        format(amount, ".2f"),
+        _fold(memo),
+        str(occurrence),
+    ))
+    digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24]
+    return f"pdf-bradesco-{digest}"
+
+
 def _parse_inter_long_date(day, month_name, year):
     months = {
         "JANEIRO": 1, "FEVEREIRO": 2, "MARCO": 3, "ABRIL": 4,
@@ -248,14 +262,139 @@ def parse_caixa_statement_text(text):
     }
 
 
+def parse_bradesco_statement_text(text):
+    folded = _fold(text)
+    if "BRADESCO CELULAR" not in folded or "CREDITO (R$)" not in folded:
+        raise FinancePdfImportError("O PDF não corresponde ao modelo de extrato do Bradesco.")
+
+    account_match = re.search(
+        r"(?i)Ag[eê]ncia:\s*([0-9.\-]+)\s*\|\s*Conta:\s*([0-9.\-]+)",
+        text,
+    )
+    period_match = re.search(
+        r"(?i)Movimenta[cç][aã]o\s+entre:\s*(\d{2}/\d{2}/\d{4})\s+e\s+(\d{2}/\d{2}/\d{4})",
+        text,
+    )
+    total_match = re.search(
+        r"(?im)^\s*Total\s+[\d.]+,\d{2}\s+[\d.]+,\d{2}\s+([\d.]+,\d{2})\s*$",
+        text,
+    )
+    account = ""
+    if account_match:
+        account = f"Agência {account_match.group(1)} / Conta {account_match.group(2)}"
+
+    row = re.compile(
+        r"^\s*(?:(\d{2}/\d{2}/\d{4})\s+)?(.*?)\s*(\d{1,9})\s+"
+        r"([\d.]+,\d{2})\s+(-?[\d.]+,\d{2})\s*$"
+    )
+    date_prefix = re.compile(r"^\s*(\d{2}/\d{2}/\d{4})\s+(.+?)\s*$")
+    current_date = ""
+    pending_memo = []
+    previous_balance = None
+    balance_date = ""
+    occurrences = {}
+    transactions = []
+
+    for raw_line in str(text or "").splitlines():
+        line = " ".join(raw_line.split())
+        if not line or line.startswith(("Bradesco Celular", "Data: ", "Nome: ", "Extrato de:", "Data Histórico")):
+            continue
+        if line.startswith("Total ") or _fold(line) == "EXTRATO INEXISTENTE":
+            pending_memo = []
+            continue
+
+        match = row.match(line)
+        if not match:
+            prefixed = date_prefix.match(line)
+            if prefixed:
+                try:
+                    current_date = datetime.strptime(prefixed.group(1), "%d/%m/%Y").date().isoformat()
+                except ValueError:
+                    current_date = ""
+                pending_memo = [prefixed.group(2)]
+            elif current_date:
+                heading = _fold(line).startswith((
+                    "PIX ", "PAGTO ", "PAGAMENTO ", "RENTAB.",
+                    "GASTOS ", "COMPRA ", "SAQUE ", "TARIFA ",
+                    "TRANSF ", "TED ", "DOC ", "DEPOSITO ",
+                ))
+                if heading:
+                    pending_memo = [line]
+                elif transactions:
+                    transactions[-1]["memo"] = " ".join(
+                        (transactions[-1]["memo"], line)
+                    ).strip()
+                else:
+                    pending_memo.append(line)
+            continue
+
+        date_br, memo_tail, document, amount_text, balance_text = match.groups()
+        if date_br:
+            try:
+                current_date = datetime.strptime(date_br, "%d/%m/%Y").date().isoformat()
+            except ValueError:
+                current_date = ""
+        if not current_date:
+            pending_memo = []
+            continue
+
+        memo = " ".join(pending_memo + [memo_tail]).strip()
+        pending_memo = []
+        amount = _brl_decimal(amount_text)
+        balance = _brl_decimal(balance_text)
+
+        # The text layer merges the credit/debit columns. The balance variation
+        # is therefore the reliable source for the transaction direction.
+        if previous_balance is None or "COD. LANC." in _fold(memo):
+            previous_balance = balance
+            balance_date = current_date
+            continue
+        delta = balance - previous_balance
+        signed_amount = amount if delta >= 0 else -amount
+        previous_balance = balance
+        balance_date = current_date
+
+        identity = (current_date, document, format(signed_amount, ".2f"), _fold(memo))
+        occurrences[identity] = occurrences.get(identity, 0) + 1
+        transactions.append({
+            "date": current_date,
+            "amount": float(signed_amount),
+            "fitid": _bradesco_fitid(
+                account, current_date, document, signed_amount, memo, occurrences[identity]
+            ),
+            "memo": memo,
+            "trntype": "CREDIT" if signed_amount >= 0 else "DEBIT",
+            "document": document,
+            "transactionBalance": float(balance),
+        })
+
+    if not transactions:
+        raise FinancePdfImportError("Nenhuma transação foi reconhecida no extrato do Bradesco.")
+
+    return {
+        "bank": "BRADESCO",
+        "account": account,
+        "periodStart": datetime.strptime(period_match.group(1), "%d/%m/%Y").date().isoformat()
+        if period_match else "",
+        "periodEnd": datetime.strptime(period_match.group(2), "%d/%m/%Y").date().isoformat()
+        if period_match else "",
+        "closingBalance": float(_brl_decimal(total_match.group(1)))
+        if total_match else float(previous_balance),
+        "balanceDate": balance_date,
+        "txs": transactions,
+    }
+
+
 def parse_bank_statement_text(text):
     folded = _fold(text)
     if "EXTRATO POR PERIODO" in folded or "ALO CAIXA" in folded:
         return parse_caixa_statement_text(text)
     if "INSTITUICAO: BANCO INTER" in folded:
         return parse_inter_statement_text(text)
+    if "BRADESCO CELULAR" in folded:
+        return parse_bradesco_statement_text(text)
     raise FinancePdfImportError(
-        "Modelo de PDF ainda não suportado. Atualmente estão disponíveis: Caixa e Banco Inter."
+        "Modelo de PDF ainda não suportado. Atualmente estão disponíveis: Caixa, Banco Inter e Bradesco."
     )
 
 

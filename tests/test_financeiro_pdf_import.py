@@ -7,6 +7,7 @@ from unittest import mock
 
 from apps.financeiro.pdf_import import (
     FinancePdfImportError,
+    parse_bradesco_statement_text,
     parse_caixa_statement_text,
     parse_inter_statement_text,
     parse_installment_pages,
@@ -48,6 +49,24 @@ R$ 1.488,61                R$ 1.488,61           R$ 0,00
 
  12 de Agosto de 2026 Saldo do dia: R$ 1.488,61
  Pix enviado: "Cp :90400888-Claudio Amaro"                                    -R$ 350,00   R$ 1.488,61
+"""
+
+BRADESCO_SAMPLE = """
+Bradesco Celular
+Extrato de: Agência: 89 | Conta: 12203-3 | Movimentação entre: 01/07/2026 e 31/07/2026 Folha: 1/2
+Data Histórico Docto. Crédito (R$) Débito (R$) Saldo (R$)
+30/06/2026 COD. LANC. 0 0,00 86,17
+PIX RECEBIDO
+09/07/2026 1026285 1.500,00 1.586,17
+REM: CLIENTE TESTE 09/07
+10/07/2026 RENTAB.INVEST FACILCRED* 0000002 0,03 1.586,20
+PAGTO ELETRON COBRANCA
+0000040 85,31 1.500,89
+FORNECEDOR TESTE
+PIX ENVIADO
+29/07/2026 1546432 20,00 1.480,89
+DES: PESSOA TESTE 29/07
+Total 1.500,03 105,31 1.480,89
 """
 
 DARF_SAMPLE = """
@@ -118,6 +137,19 @@ class FinanceiroPdfImportTests(unittest.TestCase):
             [tx["fitid"] for tx in first["txs"]],
             [tx["fitid"] for tx in second["txs"]],
         )
+
+    def test_parser_bradesco_usa_variacao_do_saldo_para_credito_e_debito(self):
+        result = parse_bradesco_statement_text(BRADESCO_SAMPLE)
+
+        self.assertEqual("BRADESCO", result["bank"])
+        self.assertEqual("Agência 89 / Conta 12203-3", result["account"])
+        self.assertEqual("2026-07-01", result["periodStart"])
+        self.assertEqual("2026-07-31", result["periodEnd"])
+        self.assertEqual("2026-07-29", result["balanceDate"])
+        self.assertEqual(1480.89, result["closingBalance"])
+        self.assertEqual([1500.0, 0.03, -85.31, -20.0], [tx["amount"] for tx in result["txs"]])
+        self.assertIn("REM: CLIENTE TESTE", result["txs"][0]["memo"])
+        self.assertTrue(all(tx["fitid"].startswith("pdf-bradesco-") for tx in result["txs"]))
 
     def test_pdf_de_banco_desconhecido_e_rejeitado(self):
         with self.assertRaises(FinancePdfImportError):
