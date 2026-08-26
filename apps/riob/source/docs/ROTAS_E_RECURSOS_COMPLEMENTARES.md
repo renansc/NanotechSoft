@@ -116,6 +116,8 @@ O recurso mantem agenda e periodicidade de visitas, vendedor, cliente e rota.
   `RB_VENDAS_DIARIO_INTERVALO_MINUTOS`; `RB_VENDAS_DIARIO_HORA` permanece como
   fallback compativel para o inicio da janela. O container RioB usa
   `TZ=America/Sao_Paulo` para interpretar essa janela no horario da operacao.
+  Entre as passagens, um snapshot de nome, tamanho e modificacao evita reler os
+  PDFs antigos quando nenhuma fonte mudou.
 
 - `GET /api/vendas/relatorio/preco-medio/pdf`
 - `GET /api/vendas/dashboard`

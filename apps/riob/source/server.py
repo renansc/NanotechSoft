@@ -39143,8 +39143,33 @@ def _vendas_diario_scheduler_result_summary(result):
     }
 
 
+def _vendas_diario_source_snapshot():
+    files = []
+    for directory, extension in (
+        (VENDAS_DIARIO_TXT_DIR, ".txt"),
+        (VENDAS_DIARIO_PDF_DIR, ".pdf"),
+    ):
+        if not directory or not os.path.isdir(directory):
+            return None
+        try:
+            names = sorted(
+                name for name in os.listdir(directory)
+                if name.lower().endswith(extension)
+            )
+            for name in names:
+                path = os.path.join(directory, name)
+                if not os.path.isfile(path):
+                    continue
+                stat = os.stat(path)
+                files.append((path, stat.st_size, stat.st_mtime_ns))
+        except OSError:
+            return None
+    return tuple(files)
+
+
 def _vendas_diario_scheduler_loop():
     last_slot = ""
+    last_snapshot = None
     while True:
         now = datetime.datetime.now()
         if _vendas_diario_janela_ativa(now):
@@ -39154,14 +39179,19 @@ def _vendas_diario_scheduler_loop():
             last_slot = ""
         if run_slot and last_slot != run_slot:
             last_slot = run_slot
-            try:
-                result = _vendas_diario_importar_pasta()
-                app.logger.info(
-                    "Importacao programada de vendas diario: %s",
-                    _vendas_diario_scheduler_result_summary(result),
-                )
-            except Exception:
-                app.logger.exception("Falha na importacao programada de vendas diario")
+            snapshot = _vendas_diario_source_snapshot()
+            if snapshot is None:
+                app.logger.warning("Pastas de vendas diario indisponiveis; nova tentativa no proximo intervalo.")
+            elif last_snapshot is None or snapshot != last_snapshot:
+                try:
+                    result = _vendas_diario_importar_pasta()
+                    last_snapshot = _vendas_diario_source_snapshot() or snapshot
+                    app.logger.info(
+                        "Importacao programada de vendas diario: %s",
+                        _vendas_diario_scheduler_result_summary(result),
+                    )
+                except Exception:
+                    app.logger.exception("Falha na importacao programada de vendas diario")
         time.sleep(30)
 
 

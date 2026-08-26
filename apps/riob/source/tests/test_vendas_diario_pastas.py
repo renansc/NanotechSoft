@@ -39,6 +39,21 @@ class VendasDiarioPastasTest(unittest.TestCase):
             server._vendas_diario_scheduler_result_summary(result),
         )
 
+    def test_scheduler_snapshot_changes_only_when_source_file_changes(self):
+        with tempfile.TemporaryDirectory() as root:
+            txt_dir = Path(root) / "txt"
+            pdf_dir = Path(root) / "pdf"
+            txt_dir.mkdir()
+            pdf_dir.mkdir()
+            txt_path = txt_dir / "vendas.txt"
+            txt_path.write_text("primeira versao", encoding="utf-8")
+            with mock.patch.object(server, "VENDAS_DIARIO_TXT_DIR", os.fspath(txt_dir)), \
+                    mock.patch.object(server, "VENDAS_DIARIO_PDF_DIR", os.fspath(pdf_dir)):
+                first = server._vendas_diario_source_snapshot()
+                self.assertEqual(first, server._vendas_diario_source_snapshot())
+                txt_path.write_text("segunda versao maior", encoding="utf-8")
+                self.assertNotEqual(first, server._vendas_diario_source_snapshot())
+
     def test_infers_seller_from_map_prefix(self):
         self.assertEqual("6", server._vendas_diario_vendedor_por_carga({"mapa": "060401"}))
         self.assertEqual("15", server._vendas_diario_vendedor_por_carga({"mapa": "153101"}))
