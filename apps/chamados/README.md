@@ -30,6 +30,26 @@ Manuais e documentações gerais também podem ser editados. É possível corrig
 metadados e links ou substituir o arquivo; sem um novo arquivo, o anexo atual é
 preservado.
 
+## Agenda de tarefas e avisos
+
+A aba **Agenda de tarefas** registra tarefas, orçamentos, reuniões, retornos e
+outros compromissos. Cada item possui data/hora, antecedência do lembrete,
+um ou mais destinatários e vínculo opcional com chamado. Tarefas podem ser
+editadas, concluídas, canceladas e reabertas.
+
+O lembrete usa o mesmo SMTP local dos alertas do módulo Tecnologia: primeiro as
+variáveis `SMTP_*` do ambiente e, quando elas não estiverem configuradas, uma
+conta ativa do Gestor de E-mails do RioB. `CHAMADOS_AGENDA_ENABLED=1` mantém o
+verificador ativo e `CHAMADOS_AGENDA_INTERVAL_SECONDS` controla o intervalo,
+com mínimo de 15 segundos. Falhas ficam visíveis no item e são tentadas
+novamente após 15 minutos; a mensagem nunca é marcada como enviada antes da
+confirmação do SMTP.
+
+Cada deploy grava a agenda no próprio banco local. O perfil Nanotech não recebe
+mais os usuários e equipamentos de demonstração do Rio Branco. Registros
+legados criados automaticamente continuam preservados no banco, mas são
+ocultados dos seletores do Chamados fora do perfil `rio-branco`.
+
 Status disponíveis: `ABERTO`, `TRIAGEM`, `EM_ATENDIMENTO`, `AGUARDANDO`,
 `RESOLVIDO`, `FECHADO` e `CANCELADO`.
 
@@ -50,6 +70,8 @@ backup de dados do servidor separadamente do código.
 ## Rotas principais
 
 - `GET /apps/chamados/api/bootstrap`: usuários, equipamentos e indicadores.
+- `GET|POST /apps/chamados/api/agenda`: lista e agenda tarefas com aviso.
+- `PUT /apps/chamados/api/agenda/<id>`: edita, conclui, cancela ou reabre uma tarefa.
 - `GET|POST /apps/chamados/api/tickets`: lista ou abre chamados.
 - `GET|PUT /apps/chamados/api/tickets/<id>`: detalhe e atualização.
 - `POST /apps/chamados/api/tickets/<id>/interventions`: histórico e tempo.

@@ -210,6 +210,29 @@ CREATE TABLE IF NOT EXISTS chamados_documentos (
     FOREIGN KEY (criado_por_id) REFERENCES usuarios(id) ON DELETE SET NULL
 );
 
+CREATE TABLE IF NOT EXISTS chamados_agenda (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    chamado_id BIGINT NULL,
+    criado_por_id INT NULL,
+    tipo VARCHAR(24) NOT NULL DEFAULT 'TAREFA',
+    titulo VARCHAR(180) NOT NULL,
+    descricao TEXT NULL,
+    agendado_em DATETIME NOT NULL,
+    avisar_em DATETIME NOT NULL,
+    destinatarios VARCHAR(1000) NOT NULL,
+    status VARCHAR(24) NOT NULL DEFAULT 'PENDENTE',
+    email_enviado_em DATETIME NULL,
+    ultima_tentativa_em DATETIME NULL,
+    tentativas INT NOT NULL DEFAULT 0,
+    ultimo_erro VARCHAR(500) NOT NULL DEFAULT '',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_chamados_agenda_aviso (status, avisar_em, email_enviado_em),
+    INDEX idx_chamados_agenda_chamado (chamado_id, agendado_em),
+    FOREIGN KEY (chamado_id) REFERENCES chamados(id) ON DELETE SET NULL,
+    FOREIGN KEY (criado_por_id) REFERENCES usuarios(id) ON DELETE SET NULL
+);
+
 INSERT INTO portal_config (id, tema)
 VALUES (1, 'rio_branco')
 ON DUPLICATE KEY UPDATE id = id;

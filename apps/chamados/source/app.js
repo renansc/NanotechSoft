@@ -5,8 +5,8 @@
   const $ = (selector, root = document) => root.querySelector(selector);
   const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
   const state = {
-    bootstrap: null, tickets: [], documents: [], current: null, detail: null,
-    editingIntervention: null, editingDocument: null,
+    bootstrap: null, tickets: [], documents: [], agenda: [], current: null, detail: null,
+    editingIntervention: null, editingDocument: null, editingAgenda: null,
   };
   let suggestionTimer = null;
   let filterTimer = null;
@@ -16,6 +16,11 @@
   })[char]);
   const label = (value) => String(value || "").replaceAll("_", " ").toLowerCase().replace(/(^|\s)\S/g, (char) => char.toUpperCase());
   const dateTime = (value) => value ? new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" }).format(new Date(value)) : "—";
+  const dateTimeLocalValue = (value) => {
+    const date = value ? new Date(value) : new Date(Date.now() + 60 * 60 * 1000);
+    const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+    return local.toISOString().slice(0, 16);
+  };
   const duration = (minutes) => {
     const total = Number(minutes || 0);
     if (total < 60) return `${total} min`;
@@ -74,7 +79,7 @@
   }
 
   function setView(view, updateUrl = true) {
-    const allowed = ["dashboard", "chamados", "historico", "documentos"];
+    const allowed = ["dashboard", "chamados", "agenda", "historico", "documentos"];
     const selected = allowed.includes(view) ? view : "chamados";
     $$('[data-page]').forEach((page) => { page.hidden = page.dataset.page !== selected; });
     $$('[data-view]').forEach((button) => button.classList.toggle("active", button.dataset.view === selected));
@@ -84,6 +89,7 @@
       history.replaceState({}, "", url);
     }
     if (selected === "documentos") loadDocuments();
+    if (selected === "agenda") loadAgenda();
     if (selected === "historico") searchSolutions();
   }
 
@@ -134,8 +140,113 @@
     if (category) params.set("category", category);
     const data = await request(`/tickets?${params}`);
     state.tickets = data.tickets;
+    fillAgendaTicketOptions();
     renderTickets();
     renderSummary();
+  }
+
+  function fillAgendaTicketOptions() {
+    const select = $("select[name='ticketId']", $("#agendaForm"));
+    const selected = select.value;
+    select.innerHTML = `<option value="">Sem chamado relacionado</option>${state.tickets.map((ticket) => `<option value="${ticket.id}">${esc(ticket.protocol)} · ${esc(ticket.title)}</option>`).join("")}`;
+    select.value = selected;
+  }
+
+  function agendaStatusActions(item) {
+    if (item.status !== "PENDENTE") {
+      return `<button class="documentEdit" type="button" data-agenda-status="PENDENTE" data-agenda-id="${item.id}">Reabrir</button>`;
+    }
+    return `<button class="documentEdit" type="button" data-agenda-status="CONCLUIDA" data-agenda-id="${item.id}">Concluir</button><button class="documentEdit dangerText" type="button" data-agenda-status="CANCELADA" data-agenda-id="${item.id}">Cancelar</button>`;
+  }
+
+  function renderAgenda() {
+    $("#agendaList").innerHTML = state.agenda.length ? state.agenda.map((item) => {
+      const emailState = item.emailSentAt
+        ? `Aviso enviado em ${dateTime(item.emailSentAt)}`
+        : (item.lastError ? `Falha no aviso: ${item.lastError}` : `Aviso programado para ${dateTime(item.notifyAt)}`);
+      const related = item.ticketProtocol ? `${item.ticketProtocol} · ${item.ticketTitle}` : "Sem chamado relacionado";
+      return `<article class="agendaCard status-${esc(item.status)}">
+        <div class="agendaDate"><strong>${esc(dateTime(item.scheduledAt))}</strong><span>${esc(label(item.type))}</span></div>
+        <div class="agendaBody"><div class="solutionMeta"><span>${esc(label(item.status))}</span><span>${esc(related)}</span></div><h3>${esc(item.title)}</h3>${item.description ? `<p>${esc(item.description)}</p>` : ""}<small class="${item.lastError ? "errorText" : ""}">${esc(emailState)} · ${esc(item.recipients.join(", "))}</small></div>
+        <div class="agendaActions"><button class="documentEdit" type="button" data-edit-agenda="${item.id}">Editar</button>${agendaStatusActions(item)}</div>
+      </article>`;
+    }).join("") : '<p class="emptyState">Nenhuma tarefa encontrada na agenda.</p>';
+  }
+
+  async function loadAgenda() {
+    const params = new URLSearchParams();
+    if ($("#agendaStatusFilter").value) params.set("status", $("#agendaStatusFilter").value);
+    try {
+      const data = await request(`/agenda?${params}`);
+      state.agenda = data.items || [];
+      renderAgenda();
+    } catch (error) { $("#agendaList").innerHTML = `<p class="emptyState">${esc(error.message)}</p>`; }
+  }
+
+  function resetAgendaForm() {
+    const form = $("#agendaForm");
+    form.reset();
+    state.editingAgenda = null;
+    form.elements.scheduledAt.value = dateTimeLocalValue();
+    form.elements.reminderMinutes.value = "60";
+    $("#agendaFormEyebrow").textContent = "Novo compromisso";
+    $("#agendaFormTitle").textContent = "Agendar tarefa";
+    $("#agendaSubmitButton").textContent = "Agendar tarefa";
+    $("#cancelAgendaEdit").classList.add("hidden");
+    $("#agendaMessage").textContent = "";
+  }
+
+  function editAgenda(agendaId) {
+    const item = state.agenda.find((entry) => entry.id === agendaId);
+    if (!item) return;
+    const form = $("#agendaForm");
+    state.editingAgenda = item.id;
+    form.elements.type.value = item.type;
+    form.elements.title.value = item.title;
+    form.elements.scheduledAt.value = dateTimeLocalValue(item.scheduledAt);
+    const reminder = Math.max(0, Math.round((new Date(item.scheduledAt) - new Date(item.notifyAt)) / 60000));
+    if (![...form.elements.reminderMinutes.options].some((option) => Number(option.value) === reminder)) {
+      form.elements.reminderMinutes.add(new Option(`${reminder} minutos`, String(reminder)));
+    }
+    form.elements.reminderMinutes.value = String(reminder);
+    form.elements.recipients.value = item.recipients.join(", ");
+    form.elements.ticketId.value = item.ticketId || "";
+    form.elements.description.value = item.description || "";
+    $("#agendaFormEyebrow").textContent = "Editar compromisso";
+    $("#agendaFormTitle").textContent = "Editar tarefa agendada";
+    $("#agendaSubmitButton").textContent = "Salvar alterações";
+    $("#cancelAgendaEdit").classList.remove("hidden");
+    $("#agendaMessage").textContent = "";
+    form.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  async function submitAgenda(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const message = $("#agendaMessage");
+    message.textContent = "Salvando...";
+    try {
+      const payload = ticketPayload(form);
+      const scheduledAt = new Date(payload.scheduledAt);
+      if (Number.isNaN(scheduledAt.getTime())) throw new Error("Informe uma data e hora válidas.");
+      payload.scheduledAt = scheduledAt.toISOString();
+      payload.reminderMinutes = Number(payload.reminderMinutes);
+      const editingId = state.editingAgenda;
+      await request(editingId ? `/agenda/${editingId}` : "/agenda", {
+        method: editingId ? "PUT" : "POST", body: JSON.stringify(payload),
+      });
+      resetAgendaForm();
+      toast(editingId ? "Tarefa agendada atualizada." : "Tarefa agendada com aviso por e-mail.");
+      await loadAgenda();
+    } catch (error) { message.textContent = error.message; }
+  }
+
+  async function updateAgendaStatus(agendaId, status) {
+    try {
+      await request(`/agenda/${agendaId}`, { method: "PUT", body: JSON.stringify({ status }) });
+      toast(status === "CONCLUIDA" ? "Tarefa concluída." : (status === "CANCELADA" ? "Tarefa cancelada." : "Tarefa reaberta."));
+      await loadAgenda();
+    } catch (error) { toast(error.message, true); }
   }
 
   function openTicketModal() {
@@ -442,6 +553,9 @@
     $("#cancelInterventionEdit").addEventListener("click", resetInterventionForm);
     $("#documentForm").addEventListener("submit", submitDocument);
     $("#cancelDocumentEdit").addEventListener("click", resetDocumentForm);
+    $("#agendaForm").addEventListener("submit", submitAgenda);
+    $("#cancelAgendaEdit").addEventListener("click", resetAgendaForm);
+    $("#agendaStatusFilter").addEventListener("change", loadAgenda);
     $("#documentForm").elements.file.addEventListener("change", (event) => {
       if (event.currentTarget.files.length) $("#documentForm").elements.externalUrl.value = "";
     });
@@ -463,6 +577,16 @@
       });
     });
     document.addEventListener("click", (event) => {
+      const agendaStatusTarget = event.target.closest("[data-agenda-status]");
+      if (agendaStatusTarget) {
+        updateAgendaStatus(Number(agendaStatusTarget.dataset.agendaId), agendaStatusTarget.dataset.agendaStatus);
+        return;
+      }
+      const agendaEditTarget = event.target.closest("[data-edit-agenda]");
+      if (agendaEditTarget) {
+        editAgenda(Number(agendaEditTarget.dataset.editAgenda));
+        return;
+      }
       const documentTarget = event.target.closest("[data-edit-document]");
       if (documentTarget) {
         editDocument(Number(documentTarget.dataset.editDocument));
@@ -487,6 +611,7 @@
       state.bootstrap = await request("/bootstrap");
       fillSelects();
       bindEvents();
+      resetAgendaForm();
       await loadTickets();
       const initial = new URL(window.location.href).searchParams.get("view") || "chamados";
       setView(initial, false);

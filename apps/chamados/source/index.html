@@ -20,6 +20,7 @@
     <nav class="ticketTabs" aria-label="Áreas do módulo">
       <button class="tab" data-view="dashboard" type="button">Indicadores</button>
       <button class="tab" data-view="chamados" type="button">Chamados</button>
+      <button class="tab" data-view="agenda" type="button">Agenda de tarefas</button>
       <button class="tab" data-view="historico" type="button">Histórico de soluções</button>
       <button class="tab" data-view="documentos" type="button">Manuais e documentos</button>
     </nav>
@@ -68,6 +69,35 @@
             </table>
           </div>
         </section>
+      </section>
+
+      <section class="ticketView" data-page="agenda" hidden>
+        <div class="documentsGrid agendaGrid">
+          <section class="panel">
+            <div class="panelHead filterHead">
+              <div><span class="eyebrow">Compromissos e retornos</span><h2>Agenda de tarefas</h2></div>
+              <div class="filters"><select id="agendaStatusFilter"><option value="">Todos os status</option><option value="PENDENTE">Pendentes</option><option value="CONCLUIDA">Concluídas</option><option value="CANCELADA">Canceladas</option></select></div>
+            </div>
+            <div id="agendaList" class="agendaList"></div>
+          </section>
+          <section class="panel uploadPanel">
+            <span class="eyebrow" id="agendaFormEyebrow">Novo compromisso</span><h2 id="agendaFormTitle">Agendar tarefa</h2>
+            <form id="agendaForm" class="stackForm">
+              <label>Tipo<select name="type"><option value="TAREFA">Tarefa</option><option value="ORCAMENTO">Orçamento</option><option value="REUNIAO">Reunião</option><option value="RETORNO">Retorno</option><option value="OUTRO">Outro</option></select></label>
+              <label>Título<input name="title" required maxlength="180" placeholder="Ex.: Enviar orçamento ao cliente"></label>
+              <label>Data e hora<input name="scheduledAt" type="datetime-local" required></label>
+              <label>Avisar com antecedência<select name="reminderMinutes"><option value="0">No horário</option><option value="15">15 minutos</option><option value="30">30 minutos</option><option value="60" selected>1 hora</option><option value="1440">1 dia</option><option value="10080">1 semana</option></select></label>
+              <label>E-mails destinatários<input name="recipients" type="text" required maxlength="1000" placeholder="pessoa@empresa.com; equipe@empresa.com"><small>Separe vários endereços por vírgula ou ponto e vírgula.</small></label>
+              <label>Chamado relacionado<select name="ticketId"><option value="">Sem chamado relacionado</option></select></label>
+              <label>Descrição<textarea name="description" rows="4" placeholder="Pauta, providência ou informação importante"></textarea></label>
+              <div class="documentFormActions">
+                <button class="btn hidden" id="cancelAgendaEdit" type="button">Cancelar edição</button>
+                <button class="btn primary" id="agendaSubmitButton" type="submit">Agendar tarefa</button>
+              </div>
+              <p class="formMessage" id="agendaMessage"></p>
+            </form>
+          </section>
+        </div>
       </section>
 
       <section class="ticketView" data-page="historico" hidden>

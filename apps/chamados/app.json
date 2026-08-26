@@ -15,7 +15,8 @@
       {"nome": "Indicadores de Chamados", "url": "/apps/chamados?view=dashboard", "recurso": "dashboard"}
     ],
     "workflow": [
-      {"nome": "Chamados e Manutenções", "url": "/apps/chamados?view=chamados", "recurso": "chamados"}
+      {"nome": "Chamados e Manutenções", "url": "/apps/chamados?view=chamados", "recurso": "chamados"},
+      {"nome": "Agenda de Tarefas", "url": "/apps/chamados?view=agenda", "recurso": "agenda"}
     ],
     "cadastros": [
       {"nome": "Manuais e Documentações", "url": "/apps/chamados?view=documentos", "grupo": "Chamados", "recurso": "documentos"}

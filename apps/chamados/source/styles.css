@@ -116,6 +116,18 @@
 .stackForm { display: grid; gap: 12px; }
 .orDivider { display: flex; align-items: center; gap: 8px; color: var(--ticket-muted); font-size: .7rem; }
 .orDivider::before, .orDivider::after { content: ""; flex: 1; height: 1px; background: var(--ticket-line); }
+.agendaList { display: grid; gap: 10px; }
+.agendaCard { display: grid; grid-template-columns: minmax(125px,.35fr) minmax(0,1fr) auto; gap: 14px; align-items: start; border: 1px solid var(--ticket-line); border-left: 4px solid var(--ticket-primary); border-radius: 12px; padding: 14px; background: #fbfcfd; }
+.agendaCard.status-CONCLUIDA { border-left-color: var(--ticket-ok); }
+.agendaCard.status-CANCELADA { border-left-color: var(--ticket-muted); opacity: .78; }
+.agendaDate, .agendaBody { display: grid; gap: 5px; }
+.agendaDate strong { font-size: .82rem; }
+.agendaDate span, .agendaBody small { color: var(--ticket-muted); font-size: .7rem; }
+.agendaBody h3, .agendaBody p { margin: 0; }
+.agendaBody h3 { font-size: 1rem; }
+.agendaBody p { color: var(--ticket-muted); line-height: 1.45; }
+.agendaActions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 5px; }
+.dangerText, .errorText { color: var(--ticket-danger) !important; }
 
 .modal { position: fixed; z-index: 1200; inset: 0; display: grid; place-items: center; padding: 20px; background: rgba(8,20,30,.62); }
 .modalCard { width: min(840px,100%); max-height: 94vh; overflow-y: auto; border-radius: 18px; padding: 23px; color: var(--ticket-ink); background: #fff; box-shadow: 0 26px 85px rgba(0,0,0,.32); }
@@ -154,7 +166,8 @@ body.theme-fin-blue .ticketApp input, body.theme-fin-blue .ticketApp select, bod
 body.theme-zapgreen .ticketApp input, body.theme-zapgreen .ticketApp select, body.theme-zapgreen .ticketApp textarea,
 body.theme-fin-blue .ticketApp .modalCard, body.theme-zapgreen .ticketApp .modalCard { color: var(--text); border-color: var(--line); background: var(--panel2); }
 body.theme-fin-blue .ticketApp .compactForm, body.theme-fin-blue .ticketApp .compactTicket, body.theme-fin-blue .ticketApp .solutionCard,
-body.theme-zapgreen .ticketApp .compactForm, body.theme-zapgreen .ticketApp .compactTicket, body.theme-zapgreen .ticketApp .solutionCard { background: var(--panel2); }
+body.theme-zapgreen .ticketApp .compactForm, body.theme-zapgreen .ticketApp .compactTicket, body.theme-zapgreen .ticketApp .solutionCard,
+body.theme-fin-blue .ticketApp .agendaCard, body.theme-zapgreen .ticketApp .agendaCard { background: var(--panel2); }
 
 @media (max-width: 1050px) {
   .kpiGrid { grid-template-columns: repeat(2,minmax(0,1fr)); }
@@ -171,4 +184,6 @@ body.theme-zapgreen .ticketApp .compactForm, body.theme-zapgreen .ticketApp .com
   .filters input, .filters select { min-width: 0; width: 100%; }
   .modal { padding: 8px; }
   .modalCard { padding: 17px; }
+  .agendaCard { grid-template-columns: 1fr; }
+  .agendaActions { justify-content: flex-start; }
 }

@@ -100,6 +100,9 @@ exigem pedido explícito do usuário.
 ## Metodologia permanente de clientes, cache e nuvem
 
 - Cada banco local é a fonte oficial e gravável do respectivo cliente.
+- Dados iniciais específicos de um cliente, como usuários técnicos e
+  equipamentos conhecidos do Rio Branco, só podem ser semeados no perfil desse
+  cliente. Um deploy novo nunca recebe cadastros operacionais de outro ambiente.
 - Os ambientes locais `nanotech`, `rio-branco`, `laboratorio` e `senhor`
   permanecem isolados, acessíveis pela Tailscale e usam deploys individuais.
 - O código comum é distribuído pelo GitHub. Cada deploy ativa somente o perfil

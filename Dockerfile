@@ -17,4 +17,4 @@ COPY . .
 
 EXPOSE 5600
 
-CMD ["sh", "-c", "exec gunicorn --bind 0.0.0.0:${PORT:-5600} --workers 1 --threads 16 --timeout 240 app:app"]
+CMD ["sh", "-c", "export CHAMADOS_AGENDA_AUTOSTART=1; exec gunicorn --bind 0.0.0.0:${PORT:-5600} --workers 1 --threads 16 --timeout 240 app:app"]

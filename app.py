@@ -296,6 +296,8 @@ _technology_probe_lock = threading.Lock()
 _technology_speed_lock = threading.Lock()
 _technology_monitor_lock = threading.Lock()
 _technology_monitor_thread = None
+_chamados_agenda_lock = threading.Lock()
+_chamados_agenda_thread = None
 
 TECH_ALERT_DEFAULT_TO = "solucoestecnologicasrenan@gmail.com"
 TECH_ALERT_RESOURCES = {
@@ -496,8 +498,9 @@ def ensure_database():
         if not cur.fetchone():
             cur.execute(f"ALTER TABLE tecnologia_dispositivos ADD COLUMN {column_name} {column_ddl}")
 
+    seed_rio_branco = configured_client_id() == "rio-branco"
     cur.execute("SELECT COUNT(*) FROM tecnologia_dispositivos")
-    if int((cur.fetchone() or [0])[0]) == 0:
+    if seed_rio_branco and int((cur.fetchone() or [0])[0]) == 0:
         cur.executemany(
             """
             INSERT INTO tecnologia_dispositivos
@@ -526,6 +529,8 @@ def ensure_database():
         ("Notebook Renan", "NOTEBOOK", "192.168.200.122", None, "ICMP", "Rede principal", "Notebook Windows 11 informado; nome NetBIOS NOTEBOOK-RENAN confirmado na varredura.", 0, 30, 5),
         ("Notebook WHITEVENDAS", "NOTEBOOK", "192.168.200.197", None, "ICMP", "Rede principal", "Notebook Windows 10 informado; nome NetBIOS WHITEVENDAS confirmado na varredura.", 0, 30, 5),
     ):
+        if not seed_rio_branco:
+            continue
         cur.execute(
             """
             SELECT id FROM tecnologia_dispositivos
@@ -576,7 +581,7 @@ def ensure_database():
     riob_hash = generate_password_hash("riob")
     cur.execute("SELECT id FROM usuarios WHERE login=%s LIMIT 1", ("riob",))
     riob_row = cur.fetchone()
-    if riob_row:
+    if riob_row and seed_rio_branco:
         riob_user_id = int(riob_row[0])
         cur.execute(
             """
@@ -586,7 +591,7 @@ def ensure_database():
             """,
             ("Usuario RioB", riob_hash, "usuario", 1, riob_user_id),
         )
-    else:
+    elif seed_rio_branco:
         cur.execute(
             """
             INSERT INTO usuarios (nome, login, senha, perfil, ativo)
@@ -596,23 +601,26 @@ def ensure_database():
         )
         riob_user_id = int(cur.lastrowid)
 
-    cur.execute(
-        "DELETE FROM usuario_app_permissoes WHERE usuario_id=%s",
-        (riob_user_id,),
-    )
-    cur.execute(
-        """
-        INSERT INTO usuario_app_permissoes
-            (usuario_id, app_key, recurso, permitido)
-        VALUES (%s, %s, %s, %s)
-        """,
-        (riob_user_id, "riob", "*", 1),
-    )
+    if seed_rio_branco:
+        cur.execute(
+            "DELETE FROM usuario_app_permissoes WHERE usuario_id=%s",
+            (riob_user_id,),
+        )
+        cur.execute(
+            """
+            INSERT INTO usuario_app_permissoes
+                (usuario_id, app_key, recurso, permitido)
+            VALUES (%s, %s, %s, %s)
+            """,
+            (riob_user_id, "riob", "*", 1),
+        )
 
     for nome, login, senha in (
         ("Junior", "junior", "junior"),
         ("Rebeca", "rebeca", "rebeca"),
     ):
+        if not seed_rio_branco:
+            continue
         senha_hash = generate_password_hash(senha)
         cur.execute("SELECT id FROM usuarios WHERE login=%s LIMIT 1", (login,))
         usuario_row = cur.fetchone()
@@ -4738,6 +4746,16 @@ CHAMADO_STATUS = (
     "RESOLVIDO", "FECHADO", "CANCELADO",
 )
 CHAMADO_INTERVENCAO_TIPOS = ("COMENTARIO", "TRABALHO", "DIAGNOSTICO", "SOLUCAO", "STATUS")
+CHAMADO_AGENDA_TIPOS = ("TAREFA", "ORCAMENTO", "REUNIAO", "RETORNO", "OUTRO")
+CHAMADO_AGENDA_STATUS = ("PENDENTE", "CONCLUIDA", "CANCELADA")
+RIO_BRANCO_SEED_USER_LOGINS = ("riob", "junior", "rebeca")
+RIO_BRANCO_SEED_DEVICE_HOSTS = (
+    "1.1.1.1", "192.168.200.1", "192.168.200.254", "192.168.200.121",
+    "192.168.200.138", "192.168.200.147", "192.168.200.196",
+    "192.168.200.110", "192.168.200.210", "192.168.200.12",
+    "192.168.200.21", "192.168.200.136", "192.168.200.184",
+    "192.168.200.122", "192.168.200.197",
+)
 CHAMADO_DOCUMENT_EXTENSIONS = {
     ".pdf", ".png", ".jpg", ".jpeg", ".webp", ".txt", ".md",
     ".doc", ".docx", ".xls", ".xlsx", ".csv", ".odt", ".ods",
@@ -4870,6 +4888,221 @@ def chamado_public_document(row):
     }
 
 
+def chamado_datetime_utc(value, label):
+    if isinstance(value, dt.datetime):
+        if value.tzinfo is None:
+            return value
+        return value.astimezone(dt.UTC).replace(tzinfo=None)
+    text = chamado_text(value, 80)
+    if not text:
+        raise ValueError(f"informe {label}")
+    try:
+        parsed = dt.datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(f"{label} invalido") from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=ZoneInfo("America/Sao_Paulo"))
+    return parsed.astimezone(dt.UTC).replace(tzinfo=None)
+
+
+def chamado_email_recipients(value):
+    recipients = []
+    for item in re.split(r"[,;\n]+", chamado_text(value, 1000)):
+        email = item.strip().lower()
+        if not email:
+            continue
+        if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email):
+            raise ValueError(f"e-mail destinatario invalido: {email}")
+        if email not in recipients:
+            recipients.append(email)
+    if not recipients:
+        raise ValueError("informe ao menos um e-mail destinatario")
+    return recipients
+
+
+def chamado_public_agenda(row):
+    return {
+        "id": int(row["id"]),
+        "ticketId": int(row["chamado_id"]) if row.get("chamado_id") else None,
+        "ticketProtocol": row.get("protocolo") or "",
+        "ticketTitle": row.get("chamado_titulo") or "",
+        "type": row.get("tipo") or "TAREFA",
+        "title": row.get("titulo") or "",
+        "description": row.get("descricao") or "",
+        "scheduledAt": technology_db_timestamp_iso(row.get("agendado_em")),
+        "notifyAt": technology_db_timestamp_iso(row.get("avisar_em")),
+        "recipients": [item.strip() for item in str(row.get("destinatarios") or "").split(",") if item.strip()],
+        "status": row.get("status") or "PENDENTE",
+        "emailSentAt": technology_db_timestamp_iso(row.get("email_enviado_em")) if row.get("email_enviado_em") else "",
+        "lastError": row.get("ultimo_erro") or "",
+        "attempts": int(row.get("tentativas") or 0),
+        "createdByName": row.get("criado_por_nome") or "",
+        "createdAt": technology_db_timestamp_iso(row.get("created_at")),
+        "updatedAt": technology_db_timestamp_iso(row.get("updated_at")),
+    }
+
+
+CHAMADO_AGENDA_SELECT = """
+    SELECT agenda.*, chamado.protocolo, chamado.titulo AS chamado_titulo,
+           criador.nome AS criado_por_nome
+    FROM chamados_agenda agenda
+    LEFT JOIN chamados chamado ON chamado.id=agenda.chamado_id
+    LEFT JOIN usuarios criador ON criador.id=agenda.criado_por_id
+"""
+
+
+def get_chamado_agenda_item(agenda_id):
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    cur.execute(CHAMADO_AGENDA_SELECT + " WHERE agenda.id=%s", (int(agenda_id),))
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+    return row
+
+
+def send_chamado_agenda_email(item):
+    config = technology_email_config()
+    recipients = chamado_email_recipients(item.get("destinatarios"))
+    if not config["host"] or not config["sender"] or (config["user"] and not config["password"]):
+        raise RuntimeError("SMTP não configurado: informe servidor, remetente e credencial")
+    scheduled_at = item.get("agendado_em")
+    if isinstance(scheduled_at, dt.datetime):
+        if scheduled_at.tzinfo is None:
+            scheduled_at = scheduled_at.replace(tzinfo=dt.UTC)
+        local_schedule = scheduled_at.astimezone(ZoneInfo("America/Sao_Paulo"))
+        schedule_label = local_schedule.strftime("%d/%m/%Y às %H:%M")
+    else:
+        schedule_label = str(scheduled_at or "")
+    lines = [
+        f"Lembrete de {str(item.get('tipo') or 'TAREFA').replace('_', ' ').lower()}.",
+        "",
+        f"Título: {item.get('titulo') or ''}",
+        f"Data e hora: {schedule_label}",
+    ]
+    if item.get("descricao"):
+        lines.extend(("", f"Descrição: {item['descricao']}"))
+    if item.get("protocolo"):
+        lines.extend(("", f"Chamado relacionado: {item['protocolo']} - {item.get('chamado_titulo') or ''}"))
+    public_url = str(os.environ.get("CHAMADOS_PUBLIC_BASE_URL") or "").strip().rstrip("/")
+    if public_url:
+        lines.extend(("", f"Abrir agenda: {public_url}/apps/chamados?view=agenda"))
+    message = EmailMessage()
+    message["Subject"] = f"[Chamados] Lembrete: {item.get('titulo') or 'tarefa agendada'}"
+    message["From"] = config["sender"]
+    message["To"] = ", ".join(recipients)
+    message.set_content("\n".join(lines))
+    context = ssl.create_default_context()
+    if config["port"] == 465:
+        client = smtplib.SMTP_SSL(config["host"], config["port"], timeout=15, context=context)
+    else:
+        client = smtplib.SMTP(config["host"], config["port"], timeout=15)
+    with client:
+        if config["port"] != 465 and config["useTls"]:
+            client.starttls(context=context)
+        if config["user"]:
+            client.login(config["user"], config["password"])
+        client.send_message(message)
+    return recipients
+
+
+def process_chamados_agenda_notifications(limit=20):
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    cur.execute(
+        CHAMADO_AGENDA_SELECT + """
+        WHERE agenda.status='PENDENTE'
+          AND agenda.email_enviado_em IS NULL
+          AND agenda.avisar_em<=UTC_TIMESTAMP()
+          AND (agenda.ultima_tentativa_em IS NULL
+               OR agenda.ultima_tentativa_em<=UTC_TIMESTAMP() - INTERVAL 15 MINUTE)
+        ORDER BY agenda.avisar_em, agenda.id
+        LIMIT %s
+        """,
+        (max(1, min(int(limit), 100)),),
+    )
+    due_items = cur.fetchall()
+    cur.close()
+    conn.close()
+    sent = 0
+    for item in due_items:
+        claim_conn = get_conn()
+        claim_cur = claim_conn.cursor()
+        claim_cur.execute(
+            """
+            UPDATE chamados_agenda
+            SET ultima_tentativa_em=UTC_TIMESTAMP(), tentativas=tentativas+1
+            WHERE id=%s AND status='PENDENTE' AND email_enviado_em IS NULL
+              AND (ultima_tentativa_em IS NULL
+                   OR ultima_tentativa_em<=UTC_TIMESTAMP() - INTERVAL 15 MINUTE)
+            """,
+            (int(item["id"]),),
+        )
+        claimed = claim_cur.rowcount == 1
+        claim_conn.commit()
+        claim_cur.close()
+        claim_conn.close()
+        if not claimed:
+            continue
+        try:
+            send_chamado_agenda_email(item)
+            error = ""
+        except Exception as exc:
+            error = technology_smtp_error_message(exc)[:500]
+            print(f"[chamados] lembrete {item['id']} não enviado: {error}", file=sys.stderr)
+        result_conn = get_conn()
+        result_cur = result_conn.cursor()
+        if error:
+            result_cur.execute(
+                "UPDATE chamados_agenda SET ultimo_erro=%s WHERE id=%s",
+                (error, int(item["id"])),
+            )
+        else:
+            result_cur.execute(
+                """
+                UPDATE chamados_agenda
+                SET email_enviado_em=UTC_TIMESTAMP(), ultimo_erro=''
+                WHERE id=%s AND email_enviado_em IS NULL
+                """,
+                (int(item["id"]),),
+            )
+            sent += int(result_cur.rowcount == 1)
+        result_conn.commit()
+        result_cur.close()
+        result_conn.close()
+    return sent
+
+
+def _chamados_agenda_loop():
+    interval = max(15, int(os.environ.get("CHAMADOS_AGENDA_INTERVAL_SECONDS", "60")))
+    while True:
+        try:
+            ensure_database()
+            process_chamados_agenda_notifications()
+        except Exception as exc:
+            print(f"[chamados] falha no agendador: {type(exc).__name__}: {exc}", file=sys.stderr)
+        time.sleep(interval)
+
+
+def start_chamados_agenda_scheduler(force=False):
+    global _chamados_agenda_thread
+    if CLOUD_READ_ONLY:
+        return
+    enabled = as_bool(os.environ.get("CHAMADOS_AGENDA_ENABLED"), False)
+    autostart = as_bool(os.environ.get("CHAMADOS_AGENDA_AUTOSTART"), False)
+    if not enabled or (not force and not autostart):
+        return
+    with _chamados_agenda_lock:
+        if _chamados_agenda_thread and _chamados_agenda_thread.is_alive():
+            return
+        _chamados_agenda_thread = threading.Thread(
+            target=_chamados_agenda_loop,
+            name="chamados-agenda",
+            daemon=True,
+        )
+        _chamados_agenda_thread.start()
+
+
 def chamado_tokenize(*values):
     stopwords = {
         "a", "ao", "aos", "as", "com", "como", "da", "das", "de", "do", "dos",
@@ -4975,13 +5208,27 @@ def chamado_similar_suggestions(
 @login_required
 def chamados_bootstrap_api():
     usuario = current_user_or_logout()
+    start_chamados_agenda_scheduler(force=True)
     conn = get_conn()
     cur = conn.cursor(dictionary=True)
-    cur.execute("SELECT id, nome, login, perfil FROM usuarios WHERE ativo=1 ORDER BY nome, login")
+    users_sql = "SELECT id, nome, login, perfil FROM usuarios WHERE ativo=1"
+    user_params = []
+    if configured_client_id() != "rio-branco":
+        placeholders = ",".join(["%s"] * len(RIO_BRANCO_SEED_USER_LOGINS))
+        users_sql += f" AND (login NOT IN ({placeholders}) OR id=%s)"
+        user_params.extend(RIO_BRANCO_SEED_USER_LOGINS)
+        user_params.append(int(usuario["id"]))
+    users_sql += " ORDER BY nome, login"
+    cur.execute(users_sql, tuple(user_params))
     users = [public_user(row) for row in cur.fetchall()]
-    cur.execute(
-        "SELECT id, nome, tipo, host, localizacao FROM tecnologia_dispositivos WHERE ativo=1 ORDER BY tipo, nome"
-    )
+    devices_sql = "SELECT id, nome, tipo, host, localizacao FROM tecnologia_dispositivos WHERE ativo=1"
+    device_params = []
+    if configured_client_id() != "rio-branco":
+        placeholders = ",".join(["%s"] * len(RIO_BRANCO_SEED_DEVICE_HOSTS))
+        devices_sql += f" AND host NOT IN ({placeholders})"
+        device_params.extend(RIO_BRANCO_SEED_DEVICE_HOSTS)
+    devices_sql += " ORDER BY tipo, nome"
+    cur.execute(devices_sql, tuple(device_params))
     devices = [{
         "id": int(row["id"]), "name": row.get("nome") or "", "type": row.get("tipo") or "",
         "host": row.get("host") or "", "location": row.get("localizacao") or "",
@@ -5015,6 +5262,153 @@ def chamados_bootstrap_api():
             "minutesSpent": int(summary.get("minutos") or 0),
         },
     })
+
+
+def chamado_agenda_payload(payload, current=None):
+    current = current or {}
+    title = chamado_text(payload.get("title", current.get("titulo")), 180)
+    if not title:
+        raise ValueError("informe o titulo da tarefa")
+    task_type = chamado_choice(
+        payload.get("type"), CHAMADO_AGENDA_TIPOS, "tipo de tarefa", current.get("tipo") or "TAREFA"
+    )
+    status = chamado_choice(
+        payload.get("status"), CHAMADO_AGENDA_STATUS, "status da tarefa", current.get("status") or "PENDENTE"
+    )
+    scheduled_value = payload.get("scheduledAt", current.get("agendado_em"))
+    scheduled_at = chamado_datetime_utc(scheduled_value, "a data e hora da tarefa")
+    notify_value = payload.get("notifyAt")
+    if notify_value in (None, ""):
+        if current.get("avisar_em") is not None and "reminderMinutes" not in payload:
+            notify_at = chamado_datetime_utc(current["avisar_em"], "a data do aviso")
+        else:
+            try:
+                reminder_minutes = int(payload.get("reminderMinutes", 60))
+            except (TypeError, ValueError) as exc:
+                raise ValueError("antecedencia do aviso invalida") from exc
+            if reminder_minutes < 0 or reminder_minutes > 525600:
+                raise ValueError("antecedencia do aviso deve ficar entre 0 e 525600 minutos")
+            notify_at = scheduled_at - dt.timedelta(minutes=reminder_minutes)
+    else:
+        notify_at = chamado_datetime_utc(notify_value, "a data do aviso")
+    if notify_at > scheduled_at:
+        raise ValueError("o aviso não pode ocorrer depois da tarefa")
+    recipients = chamado_email_recipients(payload.get("recipients", current.get("destinatarios")))
+    return {
+        "ticket_id": chamado_optional_int(payload.get("ticketId", current.get("chamado_id"))),
+        "type": task_type,
+        "title": title,
+        "description": chamado_text(payload.get("description", current.get("descricao")), 12000),
+        "scheduled_at": scheduled_at,
+        "notify_at": notify_at,
+        "recipients": ",".join(recipients),
+        "status": status,
+    }
+
+
+@app.route("/apps/chamados/api/agenda", methods=["GET", "POST"])
+@login_required
+def chamados_agenda_api():
+    usuario = current_user_or_logout()
+    start_chamados_agenda_scheduler(force=True)
+    if request.method == "GET":
+        status_filter = chamado_text(request.args.get("status"), 24).upper()
+        if status_filter and status_filter not in CHAMADO_AGENDA_STATUS:
+            return jsonify({"erro": "status da tarefa invalido"}), 400
+        conn = get_conn()
+        cur = conn.cursor(dictionary=True)
+        sql = CHAMADO_AGENDA_SELECT + " WHERE 1=1"
+        params = []
+        if status_filter:
+            sql += " AND agenda.status=%s"
+            params.append(status_filter)
+        sql += " ORDER BY (agenda.status='PENDENTE') DESC, agenda.agendado_em, agenda.id LIMIT 500"
+        cur.execute(sql, tuple(params))
+        items = [chamado_public_agenda(row) for row in cur.fetchall()]
+        cur.close()
+        conn.close()
+        return jsonify({"items": items})
+
+    payload = request.get_json(silent=True) or {}
+    try:
+        item = chamado_agenda_payload(payload)
+    except ValueError as exc:
+        return jsonify({"erro": str(exc)}), 400
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            INSERT INTO chamados_agenda
+                (chamado_id, criado_por_id, tipo, titulo, descricao,
+                 agendado_em, avisar_em, destinatarios, status)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            """,
+            (
+                item["ticket_id"], int(usuario["id"]), item["type"], item["title"],
+                item["description"], item["scheduled_at"], item["notify_at"],
+                item["recipients"], item["status"],
+            ),
+        )
+        agenda_id = int(cur.lastrowid)
+        conn.commit()
+    except mysql.connector.IntegrityError:
+        conn.rollback()
+        return jsonify({"erro": "o chamado relacionado não foi encontrado"}), 400
+    finally:
+        cur.close()
+        conn.close()
+    return jsonify({"item": chamado_public_agenda(get_chamado_agenda_item(agenda_id))}), 201
+
+
+@app.route("/apps/chamados/api/agenda/<int:agenda_id>", methods=["PUT"])
+@login_required
+def chamados_agenda_update_api(agenda_id):
+    current = get_chamado_agenda_item(agenda_id)
+    if not current:
+        return jsonify({"erro": "tarefa agendada não encontrada"}), 404
+    payload = request.get_json(silent=True) or {}
+    try:
+        item = chamado_agenda_payload(payload, current=current)
+    except ValueError as exc:
+        return jsonify({"erro": str(exc)}), 400
+    notification_changed = any((
+        item["title"] != (current.get("titulo") or ""),
+        item["description"] != (current.get("descricao") or ""),
+        item["scheduled_at"] != current.get("agendado_em"),
+        item["notify_at"] != current.get("avisar_em"),
+        item["recipients"] != (current.get("destinatarios") or ""),
+        item["status"] == "PENDENTE" and current.get("status") != "PENDENTE",
+    ))
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            UPDATE chamados_agenda
+            SET chamado_id=%s, tipo=%s, titulo=%s, descricao=%s,
+                agendado_em=%s, avisar_em=%s, destinatarios=%s, status=%s,
+                email_enviado_em=IF(%s, NULL, email_enviado_em),
+                ultima_tentativa_em=IF(%s, NULL, ultima_tentativa_em),
+                tentativas=IF(%s, 0, tentativas),
+                ultimo_erro=IF(%s, '', ultimo_erro)
+            WHERE id=%s
+            """,
+            (
+                item["ticket_id"], item["type"], item["title"], item["description"],
+                item["scheduled_at"], item["notify_at"], item["recipients"], item["status"],
+                notification_changed, notification_changed, notification_changed,
+                notification_changed, agenda_id,
+            ),
+        )
+        conn.commit()
+    except mysql.connector.IntegrityError:
+        conn.rollback()
+        return jsonify({"erro": "o chamado relacionado não foi encontrado"}), 400
+    finally:
+        cur.close()
+        conn.close()
+    return jsonify({"item": chamado_public_agenda(get_chamado_agenda_item(agenda_id))})
 
 
 @app.route("/apps/chamados/api/tickets", methods=["GET", "POST"])
@@ -7639,10 +8033,12 @@ def db_error(exc):
     return render_template("db_error.html", detalhe=detail), status
 
 
+start_chamados_agenda_scheduler()
 warmup_render_riob()
 
 
 if __name__ == "__main__":
+    start_chamados_agenda_scheduler(force=True)
     app.run(
         host=os.environ.get("NS_HOST", "0.0.0.0"),
         port=int(os.environ.get("NS_PORT") or os.environ.get("PORT", "5600")),

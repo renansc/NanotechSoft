@@ -198,7 +198,10 @@ O módulo **Chamados** registra requisições e manutenções de TI, predial,
 elétrica e outras áreas. Ele reutiliza os usuários do portal e os equipamentos
 do módulo Tecnologia, mantém intervenções com tempo gasto, exige uma medida
 resolutiva ao concluir e consulta casos semelhantes já resolvidos. Manuais,
-links e anexos podem ser gerais ou vinculados a equipamento/chamado. Consulte
+links e anexos podem ser gerais ou vinculados a equipamento/chamado. A agenda
+do módulo programa tarefas, reuniões, orçamentos e retornos com aviso por e-mail
+usando o SMTP local. Os cadastros automáticos de rede do Rio Branco são criados
+somente no perfil `rio-branco`, sem contaminar ambientes Nanotech novos. Consulte
 `apps/chamados/README.md` para o fluxo e as rotas.
 
 O arquivo `clientes-modulos.json` define os clientes e quais modulos cada um possui. No deploy local, `NANOTECH_DEPLOY_PROFILE` seleciona tambem o `CLIENTE_DEPLOY_ID`; configuracoes divergentes sao bloqueadas. Cada ambiente continua usando seu proprio banco via `NS_DB_NAME`/credenciais, sem misturar dados entre clientes. Modulos com `status=externo` usam a URL indicada por `hrefEnv`, como `LABORATORIO_PACS_URL`, sem copiar seu codigo para este repositorio.

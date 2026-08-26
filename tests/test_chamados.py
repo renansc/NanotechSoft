@@ -28,6 +28,8 @@ class ChamadosTests(unittest.TestCase):
         self.assertIn("CREATE TABLE IF NOT EXISTS chamados (", schema)
         self.assertIn("CREATE TABLE IF NOT EXISTS chamados_intervencoes (", schema)
         self.assertIn("CREATE TABLE IF NOT EXISTS chamados_documentos (", schema)
+        self.assertIn("CREATE TABLE IF NOT EXISTS chamados_agenda (", schema)
+        self.assertTrue(any(item["recurso"] == "agenda" for item in manifest["menu_groups"]["workflow"]))
 
     def test_routes_and_static_integration_are_registered(self):
         routes = {rule.rule: rule.methods for rule in portal.app.url_map.iter_rules()}
@@ -46,6 +48,71 @@ class ChamadosTests(unittest.TestCase):
         self.assertIn("GET", routes["/apps/chamados/api/similar"])
         self.assertIn("POST", routes["/apps/chamados/api/documents"])
         self.assertIn("PUT", routes["/apps/chamados/api/documents/<int:document_id>"])
+        self.assertIn("POST", routes["/apps/chamados/api/agenda"])
+        self.assertIn("GET", routes["/apps/chamados/api/agenda"])
+        self.assertIn("PUT", routes["/apps/chamados/api/agenda/<int:agenda_id>"])
+
+    def test_agenda_payload_converts_local_schedule_to_utc_and_validates_recipients(self):
+        payload = portal.chamado_agenda_payload({
+            "type": "REUNIAO",
+            "title": "Reunião de orçamento",
+            "scheduledAt": "2026-08-28T14:00:00-03:00",
+            "reminderMinutes": 60,
+            "recipients": "compras@example.com; DIRETORIA@example.com",
+        })
+
+        self.assertEqual(dt.datetime(2026, 8, 28, 17, 0), payload["scheduled_at"])
+        self.assertEqual(dt.datetime(2026, 8, 28, 16, 0), payload["notify_at"])
+        self.assertEqual("compras@example.com,diretoria@example.com", payload["recipients"])
+
+    def test_agenda_email_uses_existing_smtp_and_task_recipients(self):
+        smtp = mock.MagicMock()
+        smtp.return_value.__enter__.return_value = smtp.return_value
+        item = {
+            "id": 2, "tipo": "ORCAMENTO", "titulo": "Enviar orçamento",
+            "descricao": "Revisar valores antes do envio.",
+            "agendado_em": dt.datetime(2026, 8, 28, 17, 0),
+            "destinatarios": "cliente@example.com,equipe@example.com",
+            "protocolo": "CH-2026-000002", "chamado_titulo": "Cotação de servidor",
+        }
+        config = {
+            "host": "smtp.example.com", "port": 587, "user": "portal@example.com",
+            "password": "secret", "sender": "portal@example.com", "useTls": True,
+        }
+        with (
+            mock.patch.object(portal, "technology_email_config", return_value=config),
+            mock.patch.object(portal.smtplib, "SMTP", smtp),
+        ):
+            recipients = portal.send_chamado_agenda_email(item)
+
+        self.assertEqual(["cliente@example.com", "equipe@example.com"], recipients)
+        smtp.return_value.starttls.assert_called_once()
+        message = smtp.return_value.send_message.call_args.args[0]
+        self.assertIn("Enviar orçamento", message["Subject"])
+        self.assertIn("cliente@example.com", message["To"])
+
+    def test_nanotech_chamados_bootstrap_filters_legacy_rio_seed_records(self):
+        conn = mock.MagicMock()
+        cursor = conn.cursor.return_value
+        cursor.fetchall.side_effect = [[], []]
+        cursor.fetchone.return_value = {}
+        with (
+            portal.app.test_request_context("/apps/chamados/api/bootstrap"),
+            mock.patch.object(portal, "current_user_or_logout", return_value={"id": 9, "nome": "Local", "login": "local"}),
+            mock.patch.object(portal, "configured_client_id", return_value="nanotech"),
+            mock.patch.object(portal, "start_chamados_agenda_scheduler"),
+            mock.patch.object(portal, "get_conn", return_value=conn),
+        ):
+            portal.session["usuario_id"] = 9
+            response = portal.chamados_bootstrap_api()
+
+        self.assertEqual(200, response.status_code)
+        user_sql, user_params = cursor.execute.call_args_list[0].args
+        device_sql, device_params = cursor.execute.call_args_list[1].args
+        self.assertIn("login NOT IN", user_sql)
+        self.assertIn("host NOT IN", device_sql)
+        self.assertIn("riob", user_params)
+        self.assertIn("192.168.200.254", device_params)
 
     def test_public_ticket_exposes_time_and_linked_records(self):
         row = {
@@ -226,6 +293,8 @@ class ChamadosTests(unittest.TestCase):
         self.assertIn("Chamados e Manutenções", html)
         self.assertIn("Histórico de soluções", html)
         self.assertIn("Manuais e documentos", html)
+        self.assertIn("Agenda de tarefas", html)
+        self.assertIn("E-mails destinatários", html)
         self.assertIn("Tempo gasto", html)
         self.assertIn("Medida resolutiva", html)
         self.assertIn("Salvar alterações do chamado", html)
@@ -235,6 +304,8 @@ class ChamadosTests(unittest.TestCase):
         self.assertIn('const API = "/apps/chamados/api"', javascript)
         self.assertIn("/interventions", javascript)
         self.assertIn("/similar", javascript)
+        self.assertIn("/agenda", javascript)
+        self.assertIn("submitAgenda", javascript)
 
     def test_javascript_has_valid_syntax_in_chrome(self):
         browser = shutil.which("google-chrome") or shutil.which("chromium") or shutil.which("node")
