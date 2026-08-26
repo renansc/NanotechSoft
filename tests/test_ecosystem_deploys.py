@@ -40,6 +40,8 @@ class EcosystemDeployTests(unittest.TestCase):
         self.assertIn('source_fstype" != "cifs"', common)
         self.assertTrue((PROJECT_DIR / "deploy/systemd/media-serverwin.mount.d/retry.conf").is_file())
         self.assertTrue((PROJECT_DIR / "deploy/systemd/media-serverwin.automount.d/retry.conf").is_file())
+        compose = (PROJECT_DIR / "docker-compose.yml").read_text(encoding="utf-8")
+        self.assertIn("TZ: ${TZ:-America/Sao_Paulo}", compose)
 
     def test_server_blocks_module_outside_deploy_even_for_admin(self):
         with (

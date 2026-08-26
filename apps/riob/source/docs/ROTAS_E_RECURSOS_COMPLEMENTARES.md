@@ -114,7 +114,8 @@ O recurso mantem agenda e periodicidade de visitas, vendedor, cliente e rota.
   17:00 por padrao. A janela e controlada por
   `RB_VENDAS_DIARIO_JANELA_INICIO`, `RB_VENDAS_DIARIO_JANELA_FIM` e
   `RB_VENDAS_DIARIO_INTERVALO_MINUTOS`; `RB_VENDAS_DIARIO_HORA` permanece como
-  fallback compativel para o inicio da janela.
+  fallback compativel para o inicio da janela. O container RioB usa
+  `TZ=America/Sao_Paulo` para interpretar essa janela no horario da operacao.
 
 - `GET /api/vendas/relatorio/preco-medio/pdf`
 - `GET /api/vendas/dashboard`
