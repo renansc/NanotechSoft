@@ -4,7 +4,10 @@
   const API = "/apps/chamados/api";
   const $ = (selector, root = document) => root.querySelector(selector);
   const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
-  const state = { bootstrap: null, tickets: [], documents: [], current: null, detail: null };
+  const state = {
+    bootstrap: null, tickets: [], documents: [], current: null, detail: null,
+    editingIntervention: null, editingDocument: null,
+  };
   let suggestionTimer = null;
   let filterTimer = null;
 
@@ -57,7 +60,7 @@
       select.insertAdjacentHTML("beforeend", optionHtml(categories, "", label));
     });
     const usersHtml = optionHtml(users, "id", (user) => `${user.nome} (${user.login})`);
-    $("select[name='requesterId']", $("#ticketForm")).innerHTML = usersHtml;
+    $$('select[name="requesterId"]').forEach((select) => { select.innerHTML = usersHtml; });
     $$("select[name='assigneeId']").forEach((select) => {
       select.innerHTML = `<option value="">A definir</option>${usersHtml}`;
     });
@@ -81,7 +84,7 @@
       history.replaceState({}, "", url);
     }
     if (selected === "documentos") loadDocuments();
-    if (selected === "historico" && $("#solutionSearch").value.trim()) searchSolutions();
+    if (selected === "historico") searchSolutions();
   }
 
   function priorityBadge(ticket) {
@@ -201,22 +204,28 @@
 
   async function searchSolutions() {
     const text = $("#solutionSearch").value.trim();
-    const params = new URLSearchParams({ text });
+    const params = new URLSearchParams({ text, history: "1" });
     if ($("#solutionCategory").value) params.set("category", $("#solutionCategory").value);
     if ($("#solutionDevice").value) params.set("deviceId", $("#solutionDevice").value);
     $("#solutionResults").innerHTML = '<p class="emptyState">Consultando o histórico...</p>';
     try {
       const data = await request(`/similar?${params}`);
-      $("#solutionResults").innerHTML = renderSuggestionBlocks(data);
+      const hasResults = (data.tickets || []).length || (data.documents || []).length;
+      $("#solutionResults").innerHTML = hasResults
+        ? renderSuggestionBlocks(data)
+        : '<p class="emptyState">Nenhuma solução registrada corresponde aos filtros.</p>';
     } catch (error) { $("#solutionResults").innerHTML = `<p class="emptyState">${esc(error.message)}</p>`; }
   }
 
-  function documentCard(document) {
+  function documentCard(document, editable = false) {
     const meta = [label(document.category), document.deviceName, document.fileName, document.sizeBytes ? `${Math.ceil(document.sizeBytes / 1024)} KB` : ""].filter(Boolean).join(" · ");
     return `<article class="documentCard">
       <span class="documentIcon">${document.externalUrl ? "↗" : "DOC"}</span>
       <div><strong>${esc(document.title)}</strong><small>${esc(meta || document.description || "Documento geral")}</small></div>
-      <a href="${esc(document.downloadUrl)}" target="_blank" rel="noopener">Abrir</a>
+      <div class="documentActions">
+        ${editable ? `<button class="documentEdit" type="button" data-edit-document="${document.id}">Editar</button>` : ""}
+        <a href="${esc(document.downloadUrl)}" target="_blank" rel="noopener">Abrir</a>
+      </div>
     </article>`;
   }
 
@@ -227,7 +236,9 @@
     try {
       const data = await request(`/documents?${params}`);
       state.documents = data.documents;
-      $("#documentList").innerHTML = state.documents.length ? state.documents.map(documentCard).join("") : '<p class="emptyState">Nenhum manual ou documento cadastrado.</p>';
+      $("#documentList").innerHTML = state.documents.length
+        ? state.documents.map((document) => documentCard(document, true)).join("")
+        : '<p class="emptyState">Nenhum manual ou documento cadastrado.</p>';
     } catch (error) { $("#documentList").innerHTML = `<p class="emptyState">${esc(error.message)}</p>`; }
   }
 
@@ -238,18 +249,57 @@
     const body = new FormData(form);
     message.textContent = "Salvando...";
     try {
-      await request("/documents", { method: "POST", body });
-      form.reset();
-      form.elements.category.value = "TI";
-      message.textContent = "Documento salvo.";
+      const editingId = state.editingDocument;
+      await request(editingId ? `/documents/${editingId}` : "/documents", { method: editingId ? "PUT" : "POST", body });
+      resetDocumentForm();
+      message.textContent = editingId ? "Documento atualizado." : "Documento salvo.";
       await loadDocuments();
     } catch (error) { message.textContent = error.message; }
+  }
+
+  function resetDocumentForm() {
+    const form = $("#documentForm");
+    form.reset();
+    state.editingDocument = null;
+    form.elements.category.value = "TI";
+    $("#documentFormEyebrow").textContent = "Novo conteúdo";
+    $("#documentFormTitle").textContent = "Adicionar documento";
+    $("#documentFileHint").textContent = "Anexe um arquivo ou informe um link.";
+    $("#documentSubmitButton").textContent = "Salvar documento";
+    $("#cancelDocumentEdit").classList.add("hidden");
+    $("#documentMessage").textContent = "";
+  }
+
+  function editDocument(documentId) {
+    const item = state.documents.find((document) => document.id === documentId);
+    if (!item) return;
+    const form = $("#documentForm");
+    state.editingDocument = item.id;
+    form.elements.title.value = item.title || "";
+    form.elements.category.value = item.category || "GERAL";
+    form.elements.deviceId.value = item.deviceId || "";
+    form.elements.description.value = item.description || "";
+    form.elements.externalUrl.value = item.externalUrl || "";
+    form.elements.file.value = "";
+    $("#documentFormEyebrow").textContent = "Editar conteúdo";
+    $("#documentFormTitle").textContent = "Editar manual ou documentação";
+    $("#documentFileHint").textContent = item.fileName
+      ? `Arquivo atual: ${item.fileName}. Selecione outro somente para substituí-lo.`
+      : "Este registro usa um link externo. Você também pode anexar um arquivo.";
+    $("#documentSubmitButton").textContent = "Salvar alterações";
+    $("#cancelDocumentEdit").classList.remove("hidden");
+    $("#documentMessage").textContent = "";
+    form.scrollIntoView({ behavior: "smooth", block: "start" });
+    form.elements.title.focus();
   }
 
   function renderTimeline(items) {
     $("#timeline").innerHTML = items.length ? [...items].reverse().map((item) => `
       <article class="timelineItem">
-        <strong>${esc(label(item.type))}${item.minutesSpent ? ` · ${esc(duration(item.minutesSpent))}` : ""}</strong>
+        <div class="timelineHead">
+          <strong>${esc(label(item.type))}${item.minutesSpent ? ` · ${esc(duration(item.minutesSpent))}` : ""}</strong>
+          <button class="timelineEdit" type="button" data-edit-intervention="${item.id}">Editar</button>
+        </div>
         <p>${esc(item.description)}</p>
         ${item.resolution ? `<p class="timelineResolution"><strong>Solução:</strong> ${esc(item.resolution)}</p>` : ""}
         <small>${esc(item.authorName)} · ${esc(dateTime(item.createdAt))}${item.previousStatus && item.newStatus && item.previousStatus !== item.newStatus ? ` · ${esc(label(item.previousStatus))} → ${esc(label(item.newStatus))}` : ""}</small>
@@ -258,6 +308,7 @@
 
   function fillDetail(data) {
     state.detail = data;
+    state.editingIntervention = null;
     const ticket = data.ticket;
     const form = $("#detailForm");
     $("#detailProtocol").textContent = ticket.protocol;
@@ -267,13 +318,20 @@
       ticket.deviceName ? `${ticket.deviceName}${ticket.deviceHost ? ` · ${ticket.deviceHost}` : ""}` : ticket.location,
       `Tempo: ${duration(ticket.minutesSpent)}`, `Aberto: ${dateTime(ticket.createdAt)}`,
     ].filter(Boolean).map((item) => `<span>${esc(item)}</span>`).join("");
+    form.elements.title.value = ticket.title || "";
+    form.elements.category.value = ticket.category;
+    form.elements.subcategory.value = ticket.subcategory || "";
     form.elements.status.value = ticket.status;
     form.elements.priority.value = ticket.priority;
+    form.elements.requesterId.value = ticket.requesterId || "";
     form.elements.assigneeId.value = ticket.assigneeId || "";
     form.elements.deviceId.value = ticket.deviceId || "";
+    form.elements.location.value = ticket.location || "";
+    form.elements.description.value = ticket.description || "";
+    form.elements.symptoms.value = ticket.symptoms || "";
     form.elements.rootCause.value = ticket.rootCause || "";
     form.elements.resolution.value = ticket.resolution || "";
-    $("#interventionForm").elements.newStatus.value = ticket.status;
+    resetInterventionForm();
     $("#detailSuggestions").innerHTML = renderSuggestionBlocks(data.suggestions);
     $("#ticketDocuments").innerHTML = data.documents.length ? data.documents.map(documentCard).join("") : '<p class="emptyState">Nenhum anexo.</p>';
     renderTimeline(data.interventions);
@@ -297,7 +355,7 @@
     message.textContent = "Salvando...";
     try {
       await request(`/tickets/${state.current}`, { method: "PUT", body: JSON.stringify(ticketPayload(form)) });
-      message.textContent = "Andamento salvo.";
+      message.textContent = "Chamado atualizado.";
       await refreshAll();
       fillDetail(await request(`/tickets/${state.current}`));
     } catch (error) { message.textContent = error.message; }
@@ -307,14 +365,47 @@
     event.preventDefault();
     const form = event.currentTarget;
     try {
-      await request(`/tickets/${state.current}/interventions`, { method: "POST", body: JSON.stringify(ticketPayload(form)) });
-      form.elements.description.value = "";
-      form.elements.resolution.value = "";
-      form.elements.minutesSpent.value = "0";
-      toast("Intervenção registrada.");
+      const editingId = state.editingIntervention;
+      const path = editingId
+        ? `/tickets/${state.current}/interventions/${editingId}`
+        : `/tickets/${state.current}/interventions`;
+      await request(path, { method: editingId ? "PUT" : "POST", body: JSON.stringify(ticketPayload(form)) });
+      toast(editingId ? "Registro do histórico atualizado." : "Intervenção registrada.");
       await refreshAll();
       fillDetail(await request(`/tickets/${state.current}`));
     } catch (error) { toast(error.message, true); }
+  }
+
+  function resetInterventionForm() {
+    const form = $("#interventionForm");
+    form.reset();
+    state.editingIntervention = null;
+    form.elements.minutesSpent.value = "0";
+    form.elements.newStatus.disabled = false;
+    form.elements.newStatus.value = state.detail?.ticket.status || "ABERTO";
+    $("#interventionFormTitle").textContent = "Registrar intervenção";
+    $("#interventionFormHint").textContent = "Tempo e conhecimento executado";
+    $("#interventionSubmitButton").textContent = "Adicionar ao histórico";
+    $("#cancelInterventionEdit").classList.add("hidden");
+  }
+
+  function editIntervention(interventionId) {
+    const item = state.detail?.interventions.find((intervention) => intervention.id === interventionId);
+    if (!item) return;
+    const form = $("#interventionForm");
+    state.editingIntervention = item.id;
+    form.elements.type.value = item.type;
+    form.elements.minutesSpent.value = String(item.minutesSpent || 0);
+    form.elements.description.value = item.description || "";
+    form.elements.resolution.value = item.resolution || "";
+    form.elements.newStatus.value = item.newStatus || state.detail.ticket.status;
+    form.elements.newStatus.disabled = true;
+    $("#interventionFormTitle").textContent = "Editar registro do histórico";
+    $("#interventionFormHint").textContent = "O status histórico permanece preservado";
+    $("#interventionSubmitButton").textContent = "Salvar correção";
+    $("#cancelInterventionEdit").classList.remove("hidden");
+    form.scrollIntoView({ behavior: "smooth", block: "center" });
+    form.elements.description.focus();
   }
 
   async function submitTicketDocument(event) {
@@ -348,7 +439,15 @@
     $("#ticketForm").addEventListener("submit", submitTicket);
     $("#detailForm").addEventListener("submit", saveDetail);
     $("#interventionForm").addEventListener("submit", submitIntervention);
+    $("#cancelInterventionEdit").addEventListener("click", resetInterventionForm);
     $("#documentForm").addEventListener("submit", submitDocument);
+    $("#cancelDocumentEdit").addEventListener("click", resetDocumentForm);
+    $("#documentForm").elements.file.addEventListener("change", (event) => {
+      if (event.currentTarget.files.length) $("#documentForm").elements.externalUrl.value = "";
+    });
+    $("#documentForm").elements.externalUrl.addEventListener("input", (event) => {
+      if (event.currentTarget.value.trim()) $("#documentForm").elements.file.value = "";
+    });
     $("#ticketDocumentForm").addEventListener("submit", submitTicketDocument);
     $("#solutionSearchButton").addEventListener("click", searchSolutions);
     $("#solutionSearch").addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); searchSolutions(); } });
@@ -364,6 +463,16 @@
       });
     });
     document.addEventListener("click", (event) => {
+      const documentTarget = event.target.closest("[data-edit-document]");
+      if (documentTarget) {
+        editDocument(Number(documentTarget.dataset.editDocument));
+        return;
+      }
+      const editTarget = event.target.closest("[data-edit-intervention]");
+      if (editTarget) {
+        editIntervention(Number(editTarget.dataset.editIntervention));
+        return;
+      }
       const target = event.target.closest("[data-ticket-id]");
       if (target) openTicket(Number(target.dataset.ticketId));
     });

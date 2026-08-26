@@ -109,6 +109,10 @@
 .documentCard strong, .documentCard small { display: block; }
 .documentCard small { margin-top: 4px; color: var(--ticket-muted); }
 .documentCard a { color: var(--ticket-primary); font-weight: 750; text-decoration: none; }
+.documentActions { display: flex; align-items: center; gap: 8px; }
+.documentEdit { border: 0; padding: 4px; color: var(--ticket-primary); background: transparent; font-weight: 750; }
+.documentFormActions { display: flex; justify-content: flex-end; gap: 8px; }
+.ticketApp label small { color: var(--ticket-muted); font-weight: 500; }
 .stackForm { display: grid; gap: 12px; }
 .orDivider { display: flex; align-items: center; gap: 8px; color: var(--ticket-muted); font-size: .7rem; }
 .orDivider::before, .orDivider::after { content: ""; flex: 1; height: 1px; background: var(--ticket-line); }
@@ -138,6 +142,9 @@
 .timelineItem p { margin: 6px 0; color: var(--ticket-muted); line-height: 1.45; }
 .timelineItem small { color: var(--ticket-muted); font-size: .7rem; }
 .timelineResolution { border-radius: 8px; padding: 8px 9px; color: #17543b !important; background: #e9f6ef; }
+.timelineHead { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.timelineEdit { border: 0; padding: 3px 7px; color: var(--ticket-primary); background: transparent; font-size: .72rem; font-weight: 800; }
+.historyFormActions { display: flex; justify-content: flex-end; gap: 8px; }
 .miniUpload { margin-top: 12px; border-top: 1px solid var(--ticket-line); padding-top: 12px; }
 .toast { position: fixed; z-index: 1500; right: 24px; bottom: 24px; max-width: 390px; border-radius: 11px; padding: 13px 16px; color: #fff; background: #193d55; box-shadow: 0 12px 35px rgba(0,0,0,.24); font-size: .84rem; }
 .toast.error { background: #a4313b; }

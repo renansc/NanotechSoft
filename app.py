@@ -4726,11 +4726,16 @@ def chamado_tokenize(*values):
     }
 
 
-def chamado_similar_suggestions(text="", category="", subcategory="", device_id=None, exclude_id=None):
+def chamado_similar_suggestions(
+    text="", category="", subcategory="", device_id=None, exclude_id=None, browse_history=False,
+):
     query_tokens = chamado_tokenize(text, category, subcategory)
     conn = get_conn()
     cur = conn.cursor(dictionary=True)
-    sql = CHAMADO_SELECT + " WHERE c.status IN ('RESOLVIDO', 'FECHADO')"
+    if browse_history:
+        sql = CHAMADO_SELECT + " WHERE COALESCE(TRIM(c.solucao_resumo), '')<>''"
+    else:
+        sql = CHAMADO_SELECT + " WHERE c.status IN ('RESOLVIDO', 'FECHADO')"
     params = []
     if exclude_id:
         sql += " AND c.id<>%s"
@@ -4745,6 +4750,7 @@ def chamado_similar_suggestions(text="", category="", subcategory="", device_id=
         device_row = cur.fetchone()
         selected_device_type = (device_row or {}).get("tipo") or ""
 
+    has_filters = bool(query_tokens or category or subcategory or device_id)
     scored = []
     for row in rows:
         row_tokens = chamado_tokenize(
@@ -4755,6 +4761,9 @@ def chamado_similar_suggestions(text="", category="", subcategory="", device_id=
         union = query_tokens | row_tokens
         score = len(common) * 2 + ((len(common) / len(union)) * 12 if union else 0)
         reasons = []
+        if browse_history and not has_filters:
+            score = 3
+            reasons.append("solução registrada")
         if category and row.get("categoria") == category:
             score += 6
             reasons.append("mesma categoria")
@@ -5125,6 +5134,81 @@ def chamados_intervention_api(chamado_id):
     return jsonify({"ticket": chamado_public_row(get_chamado(chamado_id))}), 201
 
 
+@app.route(
+    "/apps/chamados/api/tickets/<int:chamado_id>/interventions/<int:intervencao_id>",
+    methods=["PUT"],
+)
+@login_required
+def chamados_intervention_update_api(chamado_id, intervencao_id):
+    current = get_chamado(chamado_id)
+    if not current:
+        return jsonify({"erro": "chamado nao encontrado"}), 404
+
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    cur.execute(
+        "SELECT * FROM chamados_intervencoes WHERE id=%s AND chamado_id=%s",
+        (intervencao_id, chamado_id),
+    )
+    intervention = cur.fetchone()
+    if not intervention:
+        cur.close()
+        conn.close()
+        return jsonify({"erro": "registro do historico nao encontrado"}), 404
+
+    payload = request.get_json(silent=True) or {}
+    try:
+        intervention_type = chamado_choice(
+            payload.get("type"), CHAMADO_INTERVENCAO_TIPOS, "tipo de registro", intervention.get("tipo")
+        )
+        description = chamado_text(payload.get("description", intervention.get("descricao")), 16000)
+        resolution = chamado_text(payload.get("resolution", intervention.get("solucao_aplicada")), 16000)
+        if not description and not resolution:
+            raise ValueError("descreva o trabalho, diagnostico ou solucao")
+        minutes = int(payload.get("minutesSpent", intervention.get("minutos_gastos")) or 0)
+        if minutes < 0 or minutes > 10080:
+            raise ValueError("tempo gasto deve ficar entre 0 e 10080 minutos")
+    except (TypeError, ValueError) as exc:
+        cur.close()
+        conn.close()
+        return jsonify({"erro": str(exc)}), 400
+
+    old_resolution = chamado_text(intervention.get("solucao_aplicada"))
+    try:
+        cur.execute(
+            """
+            UPDATE chamados_intervencoes
+            SET tipo=%s, descricao=%s, minutos_gastos=%s, solucao_aplicada=%s
+            WHERE id=%s AND chamado_id=%s
+            """,
+            (intervention_type, description or "Medida resolutiva registrada.", minutes,
+             resolution, intervencao_id, chamado_id),
+        )
+        if old_resolution or resolution:
+            cur.execute(
+                """
+                SELECT solucao_aplicada
+                FROM chamados_intervencoes
+                WHERE chamado_id=%s AND COALESCE(TRIM(solucao_aplicada), '')<>''
+                ORDER BY created_at DESC, id DESC LIMIT 1
+                """,
+                (chamado_id,),
+            )
+            latest_resolution = cur.fetchone()
+            if latest_resolution:
+                cur.execute(
+                    "UPDATE chamados SET solucao_resumo=%s WHERE id=%s",
+                    (latest_resolution.get("solucao_aplicada") or "", chamado_id),
+                )
+            elif old_resolution == (current.get("solucao_resumo") or ""):
+                cur.execute("UPDATE chamados SET solucao_resumo=NULL WHERE id=%s", (chamado_id,))
+        conn.commit()
+    finally:
+        cur.close()
+        conn.close()
+    return jsonify({"ticket": chamado_public_row(get_chamado(chamado_id))})
+
+
 @app.route("/apps/chamados/api/similar")
 @login_required
 def chamados_similar_api():
@@ -5134,9 +5218,12 @@ def chamados_similar_api():
         subcategory = chamado_text(request.args.get("subcategory"), 100)
         device_id = chamado_optional_int(request.args.get("deviceId"))
         exclude_id = chamado_optional_int(request.args.get("excludeId"))
+        browse_history = str(request.args.get("history") or "").strip().lower() in {"1", "true", "yes"}
     except ValueError as exc:
         return jsonify({"erro": str(exc)}), 400
-    return jsonify(chamado_similar_suggestions(text, category, subcategory, device_id, exclude_id))
+    return jsonify(chamado_similar_suggestions(
+        text, category, subcategory, device_id, exclude_id, browse_history=browse_history,
+    ))
 
 
 @app.route("/apps/chamados/api/documents", methods=["GET", "POST"])
@@ -5251,6 +5338,105 @@ def chamados_documents_api():
         cur.close()
         conn.close()
     return jsonify({"ok": True, "documentId": document_id}), 201
+
+
+@app.route("/apps/chamados/api/documents/<int:document_id>", methods=["PUT"])
+@login_required
+def chamados_document_update_api(document_id):
+    if request.content_length and request.content_length > CHAMADO_MAX_DOCUMENT_BYTES + 1024 * 1024:
+        return jsonify({"erro": "o envio excede o limite de 15 MB"}), 413
+
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    cur.execute("SELECT * FROM chamados_documentos WHERE id=%s", (document_id,))
+    current = cur.fetchone()
+    if not current:
+        cur.close()
+        conn.close()
+        return jsonify({"erro": "documento nao encontrado"}), 404
+
+    try:
+        device_value = request.form.get("deviceId") if "deviceId" in request.form else current.get("dispositivo_id")
+        device_id = chamado_optional_int(device_value)
+        category = chamado_text(request.form.get("category", current.get("categoria") or "GERAL"), 40).upper()
+        title = chamado_text(request.form.get("title", current.get("titulo")), 180)
+        description = chamado_text(request.form.get("description", current.get("descricao")), 12000)
+        external_url = chamado_text(request.form.get("externalUrl", current.get("url_externa")), 1000)
+        if external_url and urllib.parse.urlparse(external_url).scheme not in {"http", "https"}:
+            raise ValueError("o link do documento deve usar HTTP ou HTTPS")
+        if not title:
+            raise ValueError("informe o titulo do documento")
+    except ValueError as exc:
+        cur.close()
+        conn.close()
+        return jsonify({"erro": str(exc)}), 400
+
+    stored_name = current.get("arquivo_armazenado") or ""
+    original_name = current.get("nome_arquivo") or ""
+    mime_type = current.get("mime_type") or ""
+    size = int(current.get("tamanho_bytes") or 0)
+    old_stored_name = Path(stored_name).name if stored_name else ""
+    new_stored_name = ""
+    upload = request.files.get("file")
+    if upload and upload.filename:
+        original_name = secure_filename(upload.filename)
+        suffix = Path(original_name).suffix.lower()
+        if suffix not in CHAMADO_DOCUMENT_EXTENSIONS:
+            cur.close()
+            conn.close()
+            return jsonify({"erro": "tipo de arquivo nao permitido"}), 400
+        upload.stream.seek(0, os.SEEK_END)
+        size = upload.stream.tell()
+        upload.stream.seek(0)
+        if size > CHAMADO_MAX_DOCUMENT_BYTES:
+            cur.close()
+            conn.close()
+            return jsonify({"erro": "o arquivo excede o limite de 15 MB"}), 413
+        new_stored_name = hashlib.sha256(os.urandom(32)).hexdigest()[:20] + suffix
+        CHAMADOS_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+        upload.save(CHAMADOS_UPLOAD_DIR / new_stored_name)
+        stored_name = new_stored_name
+        mime_type = upload.mimetype or mimetypes.guess_type(original_name)[0] or "application/octet-stream"
+        external_url = ""
+
+    if not stored_name and not external_url:
+        cur.close()
+        conn.close()
+        return jsonify({"erro": "mantenha um arquivo ou informe um link"}), 400
+
+    try:
+        cur.execute(
+            """
+            UPDATE chamados_documentos
+            SET dispositivo_id=%s, categoria=%s, titulo=%s, descricao=%s,
+                nome_arquivo=%s, arquivo_armazenado=%s, mime_type=%s,
+                tamanho_bytes=%s, url_externa=%s
+            WHERE id=%s
+            """,
+            (
+                device_id, category, title, description, original_name, stored_name,
+                mime_type, size, external_url, document_id,
+            ),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        if new_stored_name:
+            try:
+                (CHAMADOS_UPLOAD_DIR / new_stored_name).unlink(missing_ok=True)
+            except OSError:
+                pass
+        raise
+    finally:
+        cur.close()
+        conn.close()
+
+    if new_stored_name and old_stored_name and old_stored_name != new_stored_name:
+        try:
+            (CHAMADOS_UPLOAD_DIR / old_stored_name).unlink(missing_ok=True)
+        except OSError:
+            pass
+    return jsonify({"ok": True, "documentId": document_id})
 
 
 @app.route("/apps/chamados/api/documents/<int:document_id>/download")

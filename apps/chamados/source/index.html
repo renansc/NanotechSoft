@@ -81,7 +81,7 @@
               <button class="btn primary" id="solutionSearchButton" type="button">Buscar</button>
             </div>
           </div>
-          <div id="solutionResults" class="solutionResults emptyState">Descreva o problema para consultar soluções e documentos relacionados.</div>
+          <div id="solutionResults" class="solutionResults emptyState">Carregando o histórico de soluções...</div>
         </section>
       </section>
 
@@ -96,16 +96,19 @@
             <div id="documentList" class="documentList"></div>
           </section>
           <section class="panel uploadPanel">
-            <span class="eyebrow">Novo conteúdo</span><h2>Adicionar documento</h2>
+            <span class="eyebrow" id="documentFormEyebrow">Novo conteúdo</span><h2 id="documentFormTitle">Adicionar documento</h2>
             <form id="documentForm" class="stackForm">
               <label>Título<input name="title" required maxlength="180"></label>
               <label>Categoria<select name="category"></select></label>
               <label>Equipamento<select name="deviceId"><option value="">Documento geral</option></select></label>
               <label>Descrição<textarea name="description" rows="4" placeholder="Quando usar e o que este documento cobre"></textarea></label>
-              <label>Arquivo<input name="file" type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.txt,.md,.doc,.docx,.xls,.xlsx,.csv,.odt,.ods"></label>
+              <label>Arquivo<input name="file" type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.txt,.md,.doc,.docx,.xls,.xlsx,.csv,.odt,.ods"><small id="documentFileHint">Anexe um arquivo ou informe um link.</small></label>
               <div class="orDivider">ou</div>
               <label>Link externo<input name="externalUrl" type="url" placeholder="https://..."></label>
-              <button class="btn primary" type="submit">Salvar documento</button>
+              <div class="documentFormActions">
+                <button class="btn hidden" id="cancelDocumentEdit" type="button">Cancelar edição</button>
+                <button class="btn primary" id="documentSubmitButton" type="submit">Salvar documento</button>
+              </div>
               <p class="formMessage" id="documentMessage"></p>
             </form>
           </section>
@@ -141,24 +144,34 @@
         <div class="detailColumns">
           <section>
             <form id="detailForm" class="formGrid compactForm">
+              <label class="wide">Título<input name="title" required maxlength="180"></label>
+              <label>Categoria<select name="category" required></select></label>
+              <label>Subcategoria<input name="subcategory" maxlength="100"></label>
               <label>Status<select name="status"></select></label>
               <label>Prioridade<select name="priority"></select></label>
+              <label>Solicitante<select name="requesterId" required></select></label>
               <label>Responsável<select name="assigneeId"><option value="">A definir</option></select></label>
               <label>Equipamento<select name="deviceId"><option value="">Sem equipamento</option></select></label>
+              <label>Localização<input name="location" maxlength="160"></label>
+              <label class="wide">Descrição<textarea name="description" required rows="4"></textarea></label>
+              <label class="wide">Sintomas observados<textarea name="symptoms" rows="3"></textarea></label>
               <label class="wide">Causa raiz<textarea name="rootCause" rows="3" placeholder="O que originou o problema"></textarea></label>
               <label class="wide">Medida resolutiva<textarea name="resolution" rows="4" placeholder="Passos que solucionaram e como validar"></textarea></label>
-              <button class="btn primary wide" type="submit">Salvar andamento</button>
+              <button class="btn primary wide" type="submit">Salvar alterações do chamado</button>
               <p class="formMessage wide" id="detailFormMessage"></p>
             </form>
             <section class="detailSection">
-              <div class="sectionHead"><h3>Registrar intervenção</h3><span>Tempo e conhecimento executado</span></div>
+              <div class="sectionHead"><h3 id="interventionFormTitle">Registrar intervenção</h3><span id="interventionFormHint">Tempo e conhecimento executado</span></div>
               <form id="interventionForm" class="formGrid compactForm">
                 <label>Tipo<select name="type"></select></label>
                 <label>Tempo gasto (min)<input name="minutesSpent" type="number" min="0" max="10080" value="0"></label>
                 <label class="wide">Descrição<textarea name="description" rows="3" placeholder="Diagnóstico, teste ou trabalho realizado"></textarea></label>
                 <label class="wide">Solução aplicada<textarea name="resolution" rows="3" placeholder="Preencha quando esta intervenção resolveu o problema"></textarea></label>
                 <label>Novo status<select name="newStatus"></select></label>
-                <button class="btn primary alignEnd" type="submit">Adicionar ao histórico</button>
+                <div class="historyFormActions alignEnd">
+                  <button class="btn hidden" id="cancelInterventionEdit" type="button">Cancelar edição</button>
+                  <button class="btn primary" id="interventionSubmitButton" type="submit">Adicionar ao histórico</button>
+                </div>
               </form>
             </section>
             <section class="detailSection"><div class="sectionHead"><h3>Histórico</h3></div><div id="timeline" class="timeline"></div></section>
