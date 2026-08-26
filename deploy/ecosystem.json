@@ -1,0 +1,89 @@
+{
+  "schemaVersion": 1,
+  "components": {
+    "portal": {
+      "repository": "git@github.com:renansc/NanotechSoft.git",
+      "branch": "main",
+      "updateCommand": "./update.sh"
+    },
+    "pacs": {
+      "repository": "git@github.com:renansc/RisPacsFull.git",
+      "branch": "main",
+      "updateCommand": "./scripts/deploy/update.sh",
+      "healthPath": "/api/ping"
+    }
+  },
+  "deployments": [
+    {
+      "id": "rio-branco",
+      "component": "portal",
+      "profile": "rio-branco",
+      "requiredModules": [
+        "riob",
+        "financeiro",
+        "nanoponto",
+        "nanostore",
+        "automacao",
+        "zap",
+        "riob-chat",
+        "riob-chat-ia",
+        "riob-telefonia",
+        "riob-cameras",
+        "chamados",
+        "tecnologia",
+        "riob-esxi",
+        "riob-email",
+        "riob-xml"
+      ]
+    },
+    {
+      "id": "nanotech",
+      "component": "portal",
+      "profile": "nanotech",
+      "allModules": true,
+      "requiredModules": [
+        "riob",
+        "financeiro",
+        "nanoponto",
+        "nanostore",
+        "automacao",
+        "zap",
+        "riob-chat",
+        "riob-chat-ia",
+        "riob-telefonia",
+        "riob-cameras",
+        "chamados",
+        "tecnologia",
+        "riob-esxi",
+        "riob-email",
+        "riob-xml",
+        "gpsmusical",
+        "bpa",
+        "tatoo",
+        "pacs"
+      ]
+    },
+    {
+      "id": "laboratorio",
+      "component": "pacs",
+      "requiredModules": ["pacs"]
+    },
+    {
+      "id": "senhor",
+      "component": "portal",
+      "profile": "senhor",
+      "requiredModules": ["nanostore"],
+      "updateWindow": {
+        "timezone": "America/Sao_Paulo",
+        "start": "18:00",
+        "end": "23:59"
+      }
+    },
+    {
+      "id": "render",
+      "component": "portal",
+      "profile": "render",
+      "requiredModules": ["financeiro", "chamados", "tecnologia"]
+    }
+  ]
+}

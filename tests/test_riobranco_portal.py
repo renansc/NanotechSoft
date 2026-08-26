@@ -35,11 +35,13 @@ class RioBrancoPortalTests(unittest.TestCase):
         self.assertEqual([app_key for app_key, _ in EXPECTED_APPS], allowed)
         self.assertTrue({"gpsmusical", "bpa", "pacs", "tatoo"}.isdisjoint(allowed))
 
-    def test_excluded_module_sources_are_absent(self):
-        for app_key in ("gpsmusical", "bpa", "pacs", "tatoo"):
+    def test_global_modules_remain_versioned_but_outside_rio_branco_contract(self):
+        for app_key in ("gpsmusical", "bpa", "tatoo"):
             with self.subTest(app_key=app_key):
-                self.assertFalse((PROJECT_DIR / "apps" / app_key).exists())
+                self.assertTrue((PROJECT_DIR / "apps" / app_key / "app.json").is_file())
 
+        self.assertFalse((PROJECT_DIR / "apps" / "pacs").exists())
+        self.assertFalse((PROJECT_DIR / "apps" / "gpsmusical" / "source" / "gps_musical_backup.json").exists())
         compose = (PROJECT_DIR / "docker-compose.yml").read_text(encoding="utf-8")
         self.assertNotIn("pacs-postgres:", compose)
 

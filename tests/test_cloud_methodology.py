@@ -84,6 +84,15 @@ class DeploymentProfileTests(unittest.TestCase):
             self.assertEqual("local", profiles[profile_id]["mode"])
             self.assertTrue(profiles[profile_id]["tailscale"])
 
+    def test_nanotech_contract_keeps_all_global_modules(self):
+        payload = json.loads((PROJECT_DIR / "clientes-modulos.json").read_text(encoding="utf-8"))
+        nanotech = next(item for item in payload["clients"] if item["id"] == "nanotech")
+
+        self.assertTrue(nanotech["allModules"])
+        external = {item["slug"]: item for item in nanotech["modules"]}
+        self.assertEqual("externo", external["pacs"]["status"])
+        self.assertEqual("LABORATORIO_PACS_URL", external["pacs"]["hrefEnv"])
+
     def test_render_blueprint_is_read_only_and_uses_cloud_contract(self):
         blueprint = (PROJECT_DIR / "render.yaml").read_text(encoding="utf-8")
 

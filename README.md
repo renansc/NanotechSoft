@@ -159,6 +159,12 @@ Os perfis versionados ficam em `deploy/profiles.json`. Selecione um deles com
 `render`. O perfil define o cliente, se existe banco local e se a pilha RioB
 deve ser operada; ele nao define credenciais.
 
+A matriz global de componentes e ambientes fica em `deploy/ecosystem.json`.
+Ela mantém o Portal neste repositório e referencia o PACS principal no
+`renansc/RisPacsFull`, além de registrar o catálogo mínimo do Nanotech e a janela
+de atualização do Senhor após 18h. Consulte
+`docs/ECOSSISTEMA_DEPLOYS.md`.
+
 Não existem scripts operacionais próprios dentro dos apps. Consulte
 `docs/AI_RESEARCH_MANUAL.md` para os contratos completos e pressupostos
 permanentes do projeto.
@@ -215,6 +221,10 @@ Esta plataforma nao deve depender de codigo em outros diretorios do servidor. O 
 - apps estaticos: `apps/<app>/source`
 - Financeiro integrado: `apps/financeiro`
 - RioB e modulos locais: `apps/riob/source`, `apps/riob-cameras/source`, `apps/riob-email/source`, `apps/riob-esxi/source` e `apps/riob-xml/source`
+
+Excluir um app do contrato de um cliente apenas o desabilita naquele perfil; o
+código global não deve ser apagado. A exceção é o PACS, mantido como componente
+externo no repositório próprio do Laboratório.
 
 Arquivos operacionais gerados em uso, como bancos SQLite, anexos, XMLs enviados, uploads e streams `.m3u8`, ficam ignorados pelo Git.
 Schemas SQL necessarios para boot dos apps embarcados, como

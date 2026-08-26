@@ -136,12 +136,16 @@ FINANCEIRO_ATTACHMENTS_DIR = Path(os.environ.get(
 NANOPONTO_DIR = Path(os.environ.get("NANOPONTO_APP_DIR", str(app_source_dir("nanoponto"))))
 ZAP_DIR = Path(os.environ.get("ZAP_APP_DIR", str(app_source_dir("zap"))))
 NANOSTORE_DIR = Path(os.environ.get("NANOSTORE_APP_DIR", str(app_source_dir("nanostore"))))
+GPSMUSICAL_DIR = Path(os.environ.get("GPSMUSICAL_APP_DIR", str(app_source_dir("gpsmusical"))))
+BPA_DIR = Path(os.environ.get("BPA_APP_DIR", str(app_source_dir("bpa"))))
+TATOO_DIR = Path(os.environ.get("TATOO_APP_DIR", str(app_source_dir("tatoo"))))
 TECNOLOGIA_DIR = Path(os.environ.get("TECNOLOGIA_APP_DIR", str(app_source_dir("tecnologia"))))
 CHAMADOS_DIR = Path(os.environ.get("CHAMADOS_APP_DIR", str(app_source_dir("chamados"))))
 CHAMADOS_UPLOAD_DIR = Path(os.environ.get(
     "CHAMADOS_UPLOAD_DIR",
     str(APPS_DIR / "chamados" / "uploads"),
 ))
+NANOTECH_SHARED_DIR = Path(os.environ.get("NANOTECH_SHARED_DIR", str(APPS_DIR / "shared")))
 FINANCEIRO_COLLECTIONS = (
     "contas",
     "categorias",
@@ -1625,6 +1629,14 @@ def enforce_app_permission():
     app_key = path.removeprefix("/apps/").split("/", 1)[0].strip()
     if not app_key:
         return None
+
+    # O codigo global permanece no repositorio central, mas cada deploy so pode
+    # servir os modulos do seu contrato. Esta verificacao vem antes da permissao
+    # do usuario para impedir que ate um administrador ative um app de outro
+    # cliente digitando a URL diretamente.
+    deployment_apps = allowed_app_keys()
+    if deployment_apps is not None and app_key not in deployment_apps:
+        return jsonify({"erro": "app nao habilitado neste deploy"}), 404
 
     usuario = current_user_or_logout()
     if not usuario:
@@ -4479,22 +4491,35 @@ def nanostore_proxy(subpath):
 # Integracao de apps estaticos Nanotech
 # ---------------------------------------------------------------------------
 STATIC_APP_DIRS = {
+    "gpsmusical": GPSMUSICAL_DIR,
+    "bpa": BPA_DIR,
+    "tatoo": TATOO_DIR,
     "tecnologia": TECNOLOGIA_DIR,
     "chamados": CHAMADOS_DIR,
 }
 
 STATIC_APP_INDEX = {
+    "gpsmusical": "index.html",
+    "bpa": "index.html",
+    "tatoo": "index.html",
     "tecnologia": "index.html",
     "chamados": "index.html",
 }
 
 STATIC_APP_NAMES = {
+    "gpsmusical": "GPS Musical",
+    "bpa": "BPA",
+    "tatoo": "Tatoo",
     "tecnologia": "Tecnologia",
     "chamados": "Chamados",
 }
 
 
 def static_app_active_page(app_key, subpath):
+    if app_key == "gpsmusical":
+        return "dashboards"
+    if app_key in {"bpa", "tatoo"}:
+        return "cadastros"
     if app_key == "tecnologia":
         return "dashboards"
     if app_key == "chamados":
@@ -4510,6 +4535,13 @@ def static_app_active_page(app_key, subpath):
 def static_app_file(app_key, subpath=""):
     if app_key not in STATIC_APP_DIRS:
         return None
+    if app_key == "gpsmusical" and subpath.startswith("shared/"):
+        path = (NANOTECH_SHARED_DIR / subpath.replace("shared/", "", 1)).resolve()
+        try:
+            path.relative_to(NANOTECH_SHARED_DIR.resolve())
+            return path
+        except ValueError:
+            return None
     base = STATIC_APP_DIRS[app_key].resolve()
     requested = subpath or STATIC_APP_INDEX[app_key]
     path = (base / requested).resolve()
@@ -4539,14 +4571,42 @@ def rewrite_static_app_paths(text, app_key, integrated=True):
         'api("/api/': f'api("{prefix}/api/',
         "api('/api/": f"api('{prefix}/api/",
         "api(`/api/": f"api(`{prefix}/api/",
+        'const API_CONFIG_URL = "/api/gps/config";': f'const API_CONFIG_URL = "{prefix}/api/gps/config";',
+        'const API_CONFIG_TEST_URL = "/api/gps/config/test-database";': f'const API_CONFIG_TEST_URL = "{prefix}/api/gps/config/test-database";',
+        'const API_BACKUPS_URL = "/api/gps/backups";': f'const API_BACKUPS_URL = "{prefix}/api/gps/backups";',
     }
     for source, target in replacements.items():
         text = text.replace(source, target)
     return text
 
 
+def static_app_navigation_bridge(app_key):
+    if app_key != "gpsmusical":
+        return ""
+    return """
+<script>
+(function() {
+  var tabs = { biblioteca: "biblioteca", editor: "editor", view: "view", docs: "docs", config: "config", backup: "backup" };
+  function activateFromHash() {
+    var raw = (window.location.hash || "").replace(/^#/, "");
+    if (!raw) return;
+    var key = raw.indexOf("docs") === 0 ? "docs" : raw.split(":")[0];
+    var target = tabs[key];
+    if (!target) return;
+    if (typeof window.UI_showTab === "function") { window.UI_showTab(target); return; }
+    var button = document.querySelector('[data-tab="' + target + '"]');
+    if (button) button.click();
+  }
+  window.addEventListener("load", function() { window.setTimeout(activateFromHash, 80); });
+  window.addEventListener("hashchange", activateFromHash);
+})();
+</script>
+"""
+
+
 def rewrite_static_app_html(text, app_key, integrated=True):
     text = rewrite_static_app_paths(text, app_key, integrated=integrated)
+    text = inject_before_body_close(text, static_app_navigation_bridge(app_key))
     return apply_standalone_theme(text)
 
 
@@ -4592,6 +4652,78 @@ def static_app_response(app_key, subpath="", integrated=True):
         return Response(text, content_type="text/javascript; charset=utf-8")
 
     return send_from_directory(path.parent, path.name)
+
+
+@app.route("/apps/gpsmusical")
+@login_required
+def gpsmusical_static_root():
+    return static_app_response("gpsmusical")
+
+
+@app.route("/apps/gpsmusical/original")
+@login_required
+def gpsmusical_original_root():
+    return static_app_response("gpsmusical", integrated=False)
+
+
+@app.route("/apps/gpsmusical/original/<path:subpath>")
+@login_required
+def gpsmusical_original_static(subpath):
+    return static_app_response("gpsmusical", subpath, integrated=False)
+
+
+@app.route("/apps/gpsmusical/<path:subpath>")
+@login_required
+def gpsmusical_static(subpath):
+    return static_app_response("gpsmusical", subpath)
+
+
+@app.route("/apps/bpa")
+@login_required
+def bpa_static_root():
+    return static_app_response("bpa")
+
+
+@app.route("/apps/bpa/original")
+@login_required
+def bpa_original_root():
+    return static_app_response("bpa", integrated=False)
+
+
+@app.route("/apps/bpa/original/<path:subpath>")
+@login_required
+def bpa_original_static(subpath):
+    return static_app_response("bpa", subpath, integrated=False)
+
+
+@app.route("/apps/bpa/<path:subpath>")
+@login_required
+def bpa_static(subpath):
+    return static_app_response("bpa", subpath)
+
+
+@app.route("/apps/tatoo")
+@login_required
+def tatoo_static_root():
+    return static_app_response("tatoo")
+
+
+@app.route("/apps/tatoo/original")
+@login_required
+def tatoo_original_root():
+    return static_app_response("tatoo", integrated=False)
+
+
+@app.route("/apps/tatoo/original/<path:subpath>")
+@login_required
+def tatoo_original_static(subpath):
+    return static_app_response("tatoo", subpath, integrated=False)
+
+
+@app.route("/apps/tatoo/<path:subpath>")
+@login_required
+def tatoo_static(subpath):
+    return static_app_response("tatoo", subpath)
 
 
 # ---------------------------------------------------------------------------

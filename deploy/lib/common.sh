@@ -356,6 +356,7 @@ except Exception as exc:
 
 profiles = profiles_payload.get("profiles") or []
 seen_profiles = set()
+profiles_by_id = {}
 for index, profile in enumerate(profiles if isinstance(profiles, list) else []):
     if not isinstance(profile, dict):
         errors.append(f"profiles[{index}] deve ser objeto")
@@ -365,6 +366,7 @@ for index, profile in enumerate(profiles if isinstance(profiles, list) else []):
     if not profile_id or profile_id in seen_profiles:
         errors.append(f"perfil de deploy ausente ou duplicado: {profile_id or index}")
     seen_profiles.add(profile_id)
+    profiles_by_id[profile_id] = profile
     if client_id not in seen_clients:
         errors.append(f"perfil {profile_id}: cliente inexistente {client_id}")
     if profile.get("mode") not in {"local", "cloud-readonly"}:
@@ -373,6 +375,84 @@ for index, profile in enumerate(profiles if isinstance(profiles, list) else []):
         profile.get("localDatabase") is not False or profile.get("riobStack") is not False
     ):
         errors.append(f"perfil {profile_id}: nuvem nao pode iniciar banco local ou RioB")
+
+ecosystem_path = root / "deploy" / "ecosystem.json"
+try:
+    ecosystem = json.loads(ecosystem_path.read_text(encoding="utf-8"))
+except Exception as exc:
+    errors.append(f"deploy/ecosystem.json invalido ({exc})")
+    ecosystem = {}
+
+components = ecosystem.get("components") or {}
+deployments = ecosystem.get("deployments") or []
+if not isinstance(components, dict) or not components:
+    errors.append("deploy/ecosystem.json deve declarar components")
+    components = {}
+if not isinstance(deployments, list) or not deployments:
+    errors.append("deploy/ecosystem.json deve declarar deployments")
+    deployments = []
+
+for component_id, component in components.items():
+    repository = str((component or {}).get("repository") or "").strip() if isinstance(component, dict) else ""
+    branch = str((component or {}).get("branch") or "").strip() if isinstance(component, dict) else ""
+    if not repository or not branch:
+        errors.append(f"componente {component_id}: repository e branch sao obrigatorios")
+    if any(marker in repository.lower() for marker in ("password=", "token=", "@http")):
+        errors.append(f"componente {component_id}: repository nao pode conter credencial")
+
+clients_by_id = {
+    slug(client.get("id") or client.get("nome")): client
+    for client in clients
+    if isinstance(client, dict)
+}
+seen_deployments = set()
+for index, deployment in enumerate(deployments):
+    if not isinstance(deployment, dict):
+        errors.append(f"deployments[{index}] deve ser objeto")
+        continue
+    deployment_id = slug(deployment.get("id"))
+    component_id = str(deployment.get("component") or "").strip()
+    if not deployment_id or deployment_id in seen_deployments:
+        errors.append(f"deploy ausente ou duplicado: {deployment_id or index}")
+        continue
+    seen_deployments.add(deployment_id)
+    if component_id not in components:
+        errors.append(f"deploy {deployment_id}: componente inexistente {component_id}")
+
+    profile_id = slug(deployment.get("profile"))
+    if component_id == "portal" and profile_id not in profiles_by_id:
+        errors.append(f"deploy {deployment_id}: perfil do portal inexistente {profile_id}")
+    profile_client_id = slug((profiles_by_id.get(profile_id) or {}).get("clientId") or profile_id)
+    contract = clients_by_id.get(profile_client_id, {})
+    contract_modules = contract.get("modules") or []
+    external_modules = {
+        slug(module.get("slug") or module.get("id") or module.get("nome"))
+        for module in contract_modules
+        if isinstance(module, dict)
+        and str(module.get("status") or "").strip() == "externo"
+        and (str(module.get("href") or "").strip() or str(module.get("hrefEnv") or "").strip())
+    }
+    required_modules = deployment.get("requiredModules") or []
+    if not isinstance(required_modules, list) or not required_modules:
+        errors.append(f"deploy {deployment_id}: requiredModules deve ser lista nao vazia")
+        continue
+    for module in required_modules:
+        module_id = slug(module)
+        if module_id not in manifest_keys and module_id not in external_modules and not (
+            component_id == "pacs" and module_id == "pacs"
+        ):
+            errors.append(
+                f"deploy {deployment_id}: modulo obrigatorio {module_id} perdeu seu manifest ou destino externo"
+            )
+
+senhor_deploy = next((item for item in deployments if isinstance(item, dict) and slug(item.get("id")) == "senhor"), {})
+senhor_window = senhor_deploy.get("updateWindow") or {}
+if str(senhor_window.get("start") or "") != "18:00" or str(senhor_window.get("timezone") or "") != "America/Sao_Paulo":
+    errors.append("deploy senhor: janela deve iniciar as 18:00 em America/Sao_Paulo")
+
+pacs_component = components.get("pacs") or {}
+if str(pacs_component.get("repository") or "").strip() != "git@github.com:renansc/RisPacsFull.git":
+    errors.append("componente pacs deve apontar para o repositorio principal renansc/RisPacsFull")
 
 if errors:
     for item in errors:

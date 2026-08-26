@@ -31,6 +31,11 @@ Tambem e possivel cadastrar apps diretamente na tabela `installed_apps`.
 
 O arquivo `apps_liberados.txt`, na raiz do projeto, controla quais apps entram no deploy de um cliente.
 
+O repositório é global: retirar um app de `apps_liberados.txt` ou do contrato de
+um cliente não autoriza remover `apps/<app>`. O bloqueio por cliente ocorre em
+tempo de execução e o catálogo mínimo global é validado por
+`deploy/ecosystem.json`.
+
 Modulos cujo codigo oficial vive em outro repositorio/deploy podem ser
 referenciados em `clientes-modulos.json` com `status: "externo"` e `hrefEnv`.
 A URL vem do ambiente (por exemplo, `LABORATORIO_PACS_URL`) e nunca deve ser

@@ -104,6 +104,10 @@ exigem pedido explícito do usuário.
   permanecem isolados, acessíveis pela Tailscale e usam deploys individuais.
 - O código comum é distribuído pelo GitHub. Cada deploy ativa somente o perfil
   e os módulos contratados; atualização de código nunca movimenta dados.
+- Desativar um módulo em um cliente nunca autoriza apagar seu código global.
+  Módulos publicados continuam no repositório e são bloqueados no servidor pelo
+  contrato do deploy. `deploy/ecosystem.json` protege o catálogo mínimo do
+  Nanotech contra exclusões acidentais.
 - `deploy/profiles.json` é a fonte versionada dos papéis de deploy. A variável
   `NANOTECH_DEPLOY_PROFILE` seleciona o perfil e deve concordar com
   `CLIENTE_DEPLOY_ID`.
@@ -126,8 +130,10 @@ exigem pedido explícito do usuário.
   continuam independentes; restore exige autorização explícita e nunca ocorre
   no Render.
 - O PACS não pertence a este repositório. Seu código global permanece no
-  repositório/deploy do laboratório; aqui existe somente referência externa por
-  `LABORATORIO_PACS_URL` quando o perfil autorizado precisar do atalho.
+  repositório `renansc/RisPacsFull` e no deploy do laboratório; aqui existe
+  somente referência externa por `LABORATORIO_PACS_URL` quando o perfil
+  autorizado precisar do atalho. A matriz dos dois componentes fica em
+  `deploy/ecosystem.json`.
 
 ## RioB
 
