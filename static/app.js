@@ -332,6 +332,7 @@ function bindUserAdmin() {
   const form = root.querySelector("[data-user-form]");
   const userSelect = root.querySelector("[data-user-select]");
   const profileSelect = root.querySelector("[data-user-store-profile]");
+  const deleteButton = root.querySelector("[data-user-delete]");
   let state = { usuarios: [], nanostore_perfis: [] };
 
   function selectedUser() {
@@ -399,6 +400,26 @@ function bindUserAdmin() {
       state = data;
       render();
       setMessage("#userAdminMsg", "Usuario atualizado.", "ok");
+    } catch (err) {
+      setMessage("#userAdminMsg", err.message, "error");
+    }
+  });
+
+  deleteButton?.addEventListener("click", async () => {
+    const user = selectedUser();
+    if (!user) return;
+    if (!window.confirm(`Excluir permanentemente o usuario ${user.nome} (${user.login})?`)) return;
+    setMessage("#userAdminMsg", "Excluindo...", "");
+    try {
+      const resp = await fetch(`/api/usuarios/${user.id}`, {
+        method: "DELETE",
+        headers: { Accept: "application/json" },
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(data.erro || "Falha ao excluir usuario");
+      state = data;
+      render();
+      setMessage("#userAdminMsg", "Usuario excluido.", "ok");
     } catch (err) {
       setMessage("#userAdminMsg", err.message, "error");
     }

@@ -2054,6 +2054,32 @@ def api_update_user(user_id):
     return jsonify(portal_users_payload())
 
 
+@app.route("/api/usuarios/<int:user_id>", methods=["DELETE"])
+@login_required
+def api_delete_user(user_id):
+    admin, error = current_admin_or_json_error()
+    if error:
+        return error
+    if int(admin["id"]) == user_id:
+        return jsonify({"erro": "o administrador conectado nao pode excluir o proprio usuario"}), 400
+
+    conn = get_auth_conn()
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute("SELECT id FROM usuarios WHERE id=%s LIMIT 1", (user_id,))
+        if not cur.fetchone():
+            return jsonify({"erro": "usuario nao encontrado"}), 404
+        cur.execute("DELETE FROM usuarios WHERE id=%s", (user_id,))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        conn.close()
+    return jsonify(portal_users_payload())
+
+
 @app.route("/api/backup/export")
 @login_required
 def api_backup_export():
