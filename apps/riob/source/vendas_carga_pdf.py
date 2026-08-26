@@ -97,6 +97,10 @@ def parse_cargas_pdf(path):
     page_count = len(reader.pages)
     for index, page in enumerate(reader.pages, start=1):
         text = page.extract_text(extraction_mode="layout") or ""
+        # Alguns geradores inserem uma folha tecnica totalmente vazia entre as
+        # cargas. Ela nao representa um mapa e nao deve invalidar o PDF inteiro.
+        if not text.strip():
+            continue
         signature_source = raw if page_count == 1 else raw + f"#page:{index}".encode("ascii")
         pages.append(_parse_carga_text(text, hashlib.sha256(signature_source).hexdigest(), index))
     if not pages:

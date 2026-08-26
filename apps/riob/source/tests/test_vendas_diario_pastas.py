@@ -1,3 +1,4 @@
+import datetime as dt
 import os
 import tempfile
 import unittest
@@ -8,6 +9,36 @@ import server
 
 
 class VendasDiarioPastasTest(unittest.TestCase):
+    def test_scheduler_runs_repeatedly_only_inside_windows_share_window(self):
+        with mock.patch.object(server, "VENDAS_DIARIO_JANELA_INICIO", "07:10"), \
+                mock.patch.object(server, "VENDAS_DIARIO_JANELA_FIM", "17:00"), \
+                mock.patch.object(server, "VENDAS_DIARIO_INTERVALO_MINUTOS", "15"):
+            self.assertFalse(server._vendas_diario_janela_ativa(dt.datetime(2026, 8, 26, 7, 9)))
+            self.assertTrue(server._vendas_diario_janela_ativa(dt.datetime(2026, 8, 26, 7, 10)))
+            self.assertTrue(server._vendas_diario_janela_ativa(dt.datetime(2026, 8, 26, 16, 59)))
+            self.assertFalse(server._vendas_diario_janela_ativa(dt.datetime(2026, 8, 26, 17, 0)))
+            self.assertEqual(
+                server._vendas_diario_scheduler_slot(dt.datetime(2026, 8, 26, 14, 44)),
+                server._vendas_diario_scheduler_slot(dt.datetime(2026, 8, 26, 14, 40)),
+            )
+
+    def test_scheduler_log_summary_does_not_repeat_every_file(self):
+        result = {
+            "arquivos": 3,
+            "txt": {"arquivos": 1},
+            "pdf": {"arquivos": 2},
+            "resultados": [
+                {"status": "importado"},
+                {"status": "ja_importado"},
+                {"status": "ja_importado"},
+            ],
+        }
+
+        self.assertEqual(
+            {"arquivos": 3, "txt": 1, "pdf": 2, "status": {"importado": 1, "ja_importado": 2}},
+            server._vendas_diario_scheduler_result_summary(result),
+        )
+
     def test_infers_seller_from_map_prefix(self):
         self.assertEqual("6", server._vendas_diario_vendedor_por_carga({"mapa": "060401"}))
         self.assertEqual("15", server._vendas_diario_vendedor_por_carga({"mapa": "153101"}))

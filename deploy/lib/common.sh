@@ -263,6 +263,13 @@ for volume in config.get("services", {}).get("riob-app", {}).get("volumes", []):
     if [[ ! -d "$source" ]]; then
       die "pasta de importacao indisponivel: $source. Verifique o compartilhamento do host antes de reiniciar o RioB."
     fi
+    if [[ "$source" == /media/serverwin/* ]] && command -v findmnt >/dev/null 2>&1; then
+      local source_fstype
+      source_fstype="$(findmnt -rn -T "$source" -o FSTYPE 2>/dev/null | tail -n 1)"
+      if [[ "$source_fstype" != "cifs" ]]; then
+        die "pasta de importacao sem o compartilhamento CIFS ativo: $source. O deploy foi interrompido para nao montar uma pasta local vazia no RioB."
+      fi
+    fi
   done
 }
 

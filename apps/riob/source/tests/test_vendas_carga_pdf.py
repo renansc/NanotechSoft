@@ -47,6 +47,27 @@ class VendasCargaPdfTest(unittest.TestCase):
         self.assertEqual([100.0, 200.0], [carga["valor_total"] for carga in cargas])
         self.assertNotEqual(cargas[0]["assinatura"], cargas[1]["assinatura"])
 
+    @mock.patch("vendas_carga_pdf.PdfReader")
+    @mock.patch("builtins.open", new_callable=mock.mock_open, read_data=b"pdf-test")
+    def test_ignores_blank_interstitial_pdf_page(self, _open, reader_mock):
+        carga = (
+            "quarta-feira, 26 de agosto de 2026\n"
+            "Mapa: 062601 [MAPA NAO ASSOCIADO] Placa: Rota: 521 - ASTORGA  \n"
+            "Numero Entregas: 1\n"
+            "Valor Total Liquido: 100,00\n"
+            "Peso Total: 100,000\n"
+        )
+        reader_mock.return_value.pages = [
+            mock.Mock(extract_text=mock.Mock(return_value=carga)),
+            mock.Mock(extract_text=mock.Mock(return_value="\f\n  ")),
+            mock.Mock(extract_text=mock.Mock(return_value=carga.replace("062601", "072601"))),
+        ]
+
+        cargas = parse_cargas_pdf("cargas-com-folha-vazia.pdf")
+
+        self.assertEqual(["062601", "072601"], [item["mapa"] for item in cargas])
+        self.assertEqual([1, 3], [item["pagina"] for item in cargas])
+
 
 if __name__ == "__main__":
     unittest.main()

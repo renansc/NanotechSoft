@@ -33,6 +33,14 @@ class EcosystemDeployTests(unittest.TestCase):
         self.assertEqual("18:00", senhor["updateWindow"]["start"])
         self.assertEqual(["nanostore"], senhor["requiredModules"])
 
+    def test_riob_deploy_rejects_empty_local_directory_when_cifs_is_missing(self):
+        common = (PROJECT_DIR / "deploy/lib/common.sh").read_text(encoding="utf-8")
+
+        self.assertIn('source_fstype="$(findmnt -rn -T "$source" -o FSTYPE', common)
+        self.assertIn('source_fstype" != "cifs"', common)
+        self.assertTrue((PROJECT_DIR / "deploy/systemd/media-serverwin.mount.d/retry.conf").is_file())
+        self.assertTrue((PROJECT_DIR / "deploy/systemd/media-serverwin.automount.d/retry.conf").is_file())
+
     def test_server_blocks_module_outside_deploy_even_for_admin(self):
         with (
             portal.app.test_request_context("/apps/bpa"),

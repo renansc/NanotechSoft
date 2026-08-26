@@ -106,7 +106,15 @@ O recurso mantem agenda e periodicidade de visitas, vendedor, cliente e rota.
   arquivos de clientes e rotas importados.
 - O campo de cidade do popup diario usa obrigatoriamente `comissao_cidades.id`, sincronizado com as cidades e rotas do Kanban RioB. O texto original do TXT/PDF e apenas referencia e nunca e enviado diretamente ao frete.
 - `POST /api/vendas/diario/importar`: dispara a varredura idempotente da pasta ou aceita um TXT manual no campo multipart `arquivo`.
-- O compartilhamento SMB deve ser montado no host e exposto ao container em `/imports/vendas-diario`; a rotina automatica roda por padrao as 08:00.
+- O compartilhamento SMB deve estar efetivamente montado no host e ser exposto
+  ao container em `/imports/vendas-diario`; a existencia de uma pasta local
+  vazia no mesmo caminho nao e considerada uma fonte valida pelo deploy.
+- A rotina automatica roda imediatamente quando o app inicia dentro da janela
+  configurada e repete a varredura idempotente a cada 15 minutos entre 07:10 e
+  17:00 por padrao. A janela e controlada por
+  `RB_VENDAS_DIARIO_JANELA_INICIO`, `RB_VENDAS_DIARIO_JANELA_FIM` e
+  `RB_VENDAS_DIARIO_INTERVALO_MINUTOS`; `RB_VENDAS_DIARIO_HORA` permanece como
+  fallback compativel para o inicio da janela.
 
 - `GET /api/vendas/relatorio/preco-medio/pdf`
 - `GET /api/vendas/dashboard`

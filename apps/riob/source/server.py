@@ -143,6 +143,13 @@ VENDAS_DIARIO_PDF_DIR = os.environ.get(
     "RB_VENDAS_DIARIO_PDF_DIR", os.path.join(VENDAS_DIARIO_DIR, "pdf")
 )
 VENDAS_DIARIO_HORA = os.environ.get("RB_VENDAS_DIARIO_HORA", "08:00")
+VENDAS_DIARIO_JANELA_INICIO = os.environ.get(
+    "RB_VENDAS_DIARIO_JANELA_INICIO", VENDAS_DIARIO_HORA
+)
+VENDAS_DIARIO_JANELA_FIM = os.environ.get("RB_VENDAS_DIARIO_JANELA_FIM", "17:00")
+VENDAS_DIARIO_INTERVALO_MINUTOS = os.environ.get(
+    "RB_VENDAS_DIARIO_INTERVALO_MINUTOS", "15"
+)
 DB_BACKUP_DIR = os.environ.get("RB_DB_BACKUP_DIR", os.path.join(BASE_DIR, "backupsSql"))
 CAMERAS_DATA_DIR = os.environ.get("CAMERAS_DATA_DIR", os.path.join(BASE_DIR, "cameras"))
 CARGAS_IMPORT_ROOT = os.environ.get("RB_CARGAS_IMPORT_DIR", "/media/SrvWin/CARGAS")
@@ -39086,17 +39093,73 @@ def static_files(path):
     return send_from_directory(BASE_DIR, path)
 
 
+def _vendas_diario_horario_minutos(value, default):
+    try:
+        hour, minute = str(value or "").strip().split(":", 1)
+        hour = int(hour)
+        minute = int(minute)
+        if not (0 <= hour <= 23 and 0 <= minute <= 59):
+            raise ValueError
+        return hour * 60 + minute
+    except (TypeError, ValueError):
+        return default
+
+
+def _vendas_diario_janela_ativa(now=None):
+    now = now or datetime.datetime.now()
+    current = now.hour * 60 + now.minute
+    start = _vendas_diario_horario_minutos(VENDAS_DIARIO_JANELA_INICIO, 8 * 60)
+    end = _vendas_diario_horario_minutos(VENDAS_DIARIO_JANELA_FIM, 17 * 60)
+    if start == end:
+        return True
+    if start < end:
+        return start <= current < end
+    return current >= start or current < end
+
+
+def _vendas_diario_intervalo_minutos():
+    try:
+        return max(1, int(VENDAS_DIARIO_INTERVALO_MINUTOS))
+    except (TypeError, ValueError):
+        return 15
+
+
+def _vendas_diario_scheduler_slot(now):
+    interval = _vendas_diario_intervalo_minutos()
+    minute_of_day = now.hour * 60 + now.minute
+    return f"{now:%Y-%m-%d}:{minute_of_day // interval}"
+
+
+def _vendas_diario_scheduler_result_summary(result):
+    statuses = {}
+    for item in (result or {}).get("resultados") or []:
+        status = _as_str(item.get("status")) or "desconhecido"
+        statuses[status] = statuses.get(status, 0) + 1
+    return {
+        "arquivos": _as_int((result or {}).get("arquivos"), 0),
+        "txt": _as_int(((result or {}).get("txt") or {}).get("arquivos"), 0),
+        "pdf": _as_int(((result or {}).get("pdf") or {}).get("arquivos"), 0),
+        "status": statuses,
+    }
+
+
 def _vendas_diario_scheduler_loop():
-    last_run = ""
+    last_slot = ""
     while True:
         now = datetime.datetime.now()
-        target = _as_str(VENDAS_DIARIO_HORA)
-        run_key = now.strftime("%Y-%m-%d")
-        if now.strftime("%H:%M") == target and last_run != run_key:
-            last_run = run_key
+        if _vendas_diario_janela_ativa(now):
+            run_slot = _vendas_diario_scheduler_slot(now)
+        else:
+            run_slot = ""
+            last_slot = ""
+        if run_slot and last_slot != run_slot:
+            last_slot = run_slot
             try:
                 result = _vendas_diario_importar_pasta()
-                app.logger.info("Importacao programada de vendas diario: %s", result)
+                app.logger.info(
+                    "Importacao programada de vendas diario: %s",
+                    _vendas_diario_scheduler_result_summary(result),
+                )
             except Exception:
                 app.logger.exception("Falha na importacao programada de vendas diario")
         time.sleep(30)
