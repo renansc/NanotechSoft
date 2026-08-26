@@ -31,6 +31,12 @@
       "descricao": "Abra, atribua e acompanhe requisições até a solução.",
       "url": "/apps/chamados?view=chamados",
       "recurso": "chamados"
+    },
+    {
+      "nome": "Agenda de Tarefas",
+      "descricao": "Programe orçamentos, reuniões e lembretes enviados por e-mail.",
+      "url": "/apps/chamados?view=agenda",
+      "recurso": "agenda"
     }
   ],
   "config_groups": {}

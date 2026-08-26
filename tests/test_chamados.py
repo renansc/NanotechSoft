@@ -30,6 +30,7 @@ class ChamadosTests(unittest.TestCase):
         self.assertIn("CREATE TABLE IF NOT EXISTS chamados_documentos (", schema)
         self.assertIn("CREATE TABLE IF NOT EXISTS chamados_agenda (", schema)
         self.assertTrue(any(item["recurso"] == "agenda" for item in manifest["menu_groups"]["workflow"]))
+        self.assertTrue(any(item["recurso"] == "agenda" for item in manifest["workflow_cards"]))
 
     def test_routes_and_static_integration_are_registered(self):
         routes = {rule.rule: rule.methods for rule in portal.app.url_map.iter_rules()}
