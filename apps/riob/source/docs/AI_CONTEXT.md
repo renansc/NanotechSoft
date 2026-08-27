@@ -183,7 +183,11 @@ If you need context fast, read these files first:
 - Pending-load stock commitments are not a dashboard panel. They belong to
   `Relatorios > Estoque comprometido`, with inclusive load-date, stock-group,
   and product filters. The JSON and PDF must apply the same filters; the PDF is
-  opened in the browser so it can be printed.
+  opened in the browser so it can be printed. This report must read both legacy
+  `cargas` and current PDF-rooted `vendas_diario_kanban` groups. Unsent cards in
+  import/review states remain committed; sent cards remain committed only while
+  their freight status is `chegada`, `descarregado`, `liberado`, `carregando`,
+  or `carregado`.
 - A composed daily-sales card must never add TXT, PDF, and XML quantities as if
   they were independent stock issues. They are alternate evidence for the same
   load. For stock-decrement suggestion prefer official outgoing XML when linked,

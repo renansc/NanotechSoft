@@ -3922,7 +3922,7 @@ def _estoque_base_nome_inferido(nome_produto="", grupo_estoque="", produto_base_
             (
                 rotulo
                 for padrao, rotulo in (
-                    (r"\b2\s*L(?:T|ITRO|ITROS)?\b|\b2L\b", "2L"),
+                    (r"(?<!\d)2\s*L(?:T|ITRO|ITROS)?\b|\b6\s*X\s*2(?:\s*L(?:T|ITRO|ITROS)?)?\b", "2L"),
                     (r"\b600\s*ML\b", "600ML"),
                     (r"\b510\s*ML\b", "510ML"),
                     (r"\b500\s*ML\b", "500ML"),
@@ -3955,7 +3955,7 @@ def _estoque_base_nome_inferido(nome_produto="", grupo_estoque="", produto_base_
         (
             rotulo
             for padrao, rotulo in (
-                (r"\b2\s*L(?:T|ITRO|ITROS)?\b|\b2L\b", "2L"),
+                (r"(?<!\d)2\s*L(?:T|ITRO|ITROS)?\b|\b6\s*X\s*2(?:\s*L(?:T|ITRO|ITROS)?)?\b", "2L"),
                 (r"\b600\s*ML\b", "600ML"),
                 (r"\b200\s*ML\b", "200ML"),
             )
@@ -3971,7 +3971,7 @@ def _estoque_base_nome_inferido(nome_produto="", grupo_estoque="", produto_base_
     if base_exp:
         return base_exp
     if grupo == "PET":
-        if re.search(r"\b2\s*L(?:T|ITRO|ITROS)?\b|\b2LT\b", texto):
+        if re.search(r"(?<!\d)2\s*L(?:T|ITRO|ITROS)?\b|\b6\s*X\s*2(?:\s*L(?:T|ITRO|ITROS)?)?\b", texto):
             return "PET 2L"
         if re.search(r"\b600\s*ML\b|\bPET\s*600\b", texto):
             return "PET 600ML"
@@ -4044,8 +4044,8 @@ def _fator_base_produto(nome_produto="", embalagem="", unidade_ref="", grupo_pro
         _as_str(grupo_produto).upper(),
     ]).strip()
     multiplicador = _estoque_extrair_multiplicador(texto)
-    eh_2l = bool(re.search(r"\b2\s*L(?:T|ITRO|ITROS)?\b|\b2L\b", texto))
-    eh_200ml = bool(re.search(r"\b200\s*ML\b", texto))
+    eh_2l = bool(re.search(r"(?<!\d)2\s*L(?:T|ITRO|ITROS)?\b", texto))
+    eh_200ml = bool(re.search(r"(?<!\d)200\s*ML\b", texto))
 
     if unidade == "UN":
         return 1.0
@@ -14716,6 +14716,139 @@ def _estoque_aplicar_vendas_rows(linhas, aliases, lookup, rows, campo="", histor
     return round(total, 3)
 
 
+def _estoque_aplicar_comprometimentos_vendas_diario(cur, produtos_lookup, linhas, aliases):
+    """Inclui cargas PDF do fluxo atual sem duplicar a evidencia TXT equivalente."""
+    status_frete_pendentes = ("chegada", "descarregado", "liberado", "carregando", "carregado")
+    cur.execute("""
+        SELECT
+            k.id AS root_id,
+            MAX(NULLIF(k.nome_frete, '')) AS carga_nome,
+            LOWER(COALESCE(MAX(f.status), '')) AS frete_status,
+            MIN(CASE WHEN kf.origem_tipo='pdf' THEN imp.data_ref END) AS data_comprometimento,
+            GROUP_CONCAT(
+                DISTINCT CASE WHEN kf.origem_tipo='pdf' THEN NULLIF(kf.mapa_numero, '') END
+                ORDER BY kf.id SEPARATOR ', '
+            ) AS mapas,
+            MAX(kf.origem_tipo='txt' AND kf.status<>'excluido') AS tem_txt,
+            MAX(kf.origem_tipo='pdf' AND kf.status<>'excluido') AS tem_pdf
+        FROM vendas_diario_kanban k
+        JOIN vendas_diario_kanban kf
+          ON COALESCE(kf.card_principal_id, kf.id)=k.id
+        JOIN vendas_diario_importacoes imp ON imp.id=kf.importacao_id
+        LEFT JOIN fretes f ON f.id=k.frete_id
+        WHERE k.card_principal_id IS NULL
+          AND k.status<>'excluido'
+          AND kf.status<>'excluido'
+          AND (
+              (k.frete_id IS NULL AND k.status IN ('importado', 'conferir_estoque', 'conferido'))
+              OR (k.frete_id IS NOT NULL AND LOWER(COALESCE(f.status, '')) IN (%s, %s, %s, %s, %s))
+          )
+        GROUP BY k.id
+        HAVING tem_pdf=1
+        ORDER BY k.id DESC
+    """, status_frete_pendentes)
+    grupos = cur.fetchall() or []
+    grupos_por_id = {
+        _as_int(grupo.get("root_id"), 0): grupo
+        for grupo in grupos
+        if _as_int(grupo.get("root_id"), 0) > 0
+    }
+    if not grupos_por_id:
+        return set()
+
+    root_ids = sorted(grupos_por_id)
+    placeholders = ",".join(["%s"] * len(root_ids))
+    cur.execute(f"""
+        SELECT
+            COALESCE(kf.card_principal_id, kf.id) AS root_id,
+            kf.origem_tipo,
+            i.produto_codigo,
+            i.descricao,
+            i.unidade,
+            COALESCE(SUM(i.quantidade), 0) AS quantidade
+        FROM vendas_diario_itens i
+        JOIN vendas_diario_pedidos p ON p.id=i.pedido_id
+        JOIN vendas_diario_kanban kf
+          ON kf.importacao_id=p.importacao_id
+         AND kf.vendedor_codigo=p.vendedor_codigo
+        WHERE COALESCE(kf.card_principal_id, kf.id) IN ({placeholders})
+          AND kf.status<>'excluido'
+          AND p.status='positiva'
+          AND p.valor_total>0
+        GROUP BY
+            COALESCE(kf.card_principal_id, kf.id),
+            kf.origem_tipo, i.produto_codigo, i.descricao, i.unidade
+        ORDER BY root_id, kf.origem_tipo, i.descricao
+    """, tuple(root_ids))
+
+    for row in (cur.fetchall() or []):
+        root_id = _as_int(row.get("root_id"), 0)
+        grupo = grupos_por_id.get(root_id) or {}
+        origem_preferida = "txt" if bool(_as_int(grupo.get("tem_txt"), 0)) else "pdf"
+        if _as_str(row.get("origem_tipo")).lower() != origem_preferida:
+            continue
+        nome_produto = _as_str(row.get("descricao"))
+        quantidade = _as_float(row.get("quantidade"), 0.0)
+        if not nome_produto or quantidade <= 0:
+            continue
+        cadastro = _resolver_produto_lookup_estoque(
+            produtos_lookup,
+            codigo_produto_nfe=row.get("produto_codigo"),
+            nome_produto=nome_produto,
+            origem_codigo="sellout",
+        ) or {}
+        unidade_origem = _as_str(row.get("unidade"))
+        fator_cadastro = _as_float(cadastro.get("fator_embalagem_padrao"), 0.0)
+        if unidade_origem:
+            unidade_normalizada = _estoque_apresentacao_normalizada(
+                unidade_origem, unidade_origem, nome_produto
+            )
+            fator_inferido = _fator_base_produto(
+                nome_produto=nome_produto,
+                embalagem=unidade_origem,
+                unidade_ref=unidade_origem,
+                grupo_produto=cadastro.get("grupo_estoque"),
+            )
+            if unidade_normalizada == "UN":
+                fator = 1.0
+            elif unidade_normalizada == "DZ":
+                fator = 12.0
+            elif unidade_normalizada in ("PCT", "FD") and fator_cadastro > 1:
+                fator = fator_cadastro
+            else:
+                fator = fator_inferido if fator_inferido > 1 else fator_cadastro
+        else:
+            fator = fator_cadastro
+        quantidade_base = round(quantidade * (fator if fator > 0 else 1.0), 3)
+        item = _estoque_merge_row(linhas, aliases, {
+            "produto_id": cadastro.get("id"),
+            "produto_ativo": cadastro.get("ativo", 1) if cadastro else 1,
+            "codigo_barras": cadastro.get("codigo_barras"),
+            "codigo_produto_nfe": cadastro.get("codigo_produto_nfe") or row.get("produto_codigo"),
+            "nome_produto": cadastro.get("nome_produto") or nome_produto,
+            "grupo_estoque": cadastro.get("grupo_estoque"),
+            "produto_base_nome": cadastro.get("produto_base_nome"),
+            "embalagem_tipo_padrao": cadastro.get("embalagem_tipo_padrao"),
+            "fator_embalagem_padrao": cadastro.get("fator_embalagem_padrao"),
+        })
+        item["quantidade_comprometida"] += quantidade_base
+        compromisso_chave = f"vendas_diario:{root_id}"
+        mapas = _as_str(grupo.get("mapas"))
+        compromisso = item.setdefault("comprometimentos", {}).setdefault(compromisso_chave, {
+            "carga_id": root_id,
+            "carga_nome": _as_str(grupo.get("carga_nome")) or (
+                f"Carga mapa {mapas}" if mapas else f"Carga Vendas Diario #{root_id}"
+            ),
+            "frete_status": _as_str(grupo.get("frete_status")).lower(),
+            "data_comprometimento": _fmt_date(grupo.get("data_comprometimento")),
+            "origem": "vendas_diario",
+            "quantidade": 0.0,
+        })
+        compromisso["quantidade"] += quantidade_base
+
+    return {f"vendas_diario:{root_id}" for root_id in root_ids}
+
+
 def _estoque_resumo_produtos_data(incluir_fornecedores=True):
     hoje = datetime.date.today()
     inicio_semana = hoje - datetime.timedelta(days=(hoje.weekday() + 1) % 7)
@@ -14907,6 +15040,13 @@ def _estoque_resumo_produtos_data(incluir_fornecedores=True):
                 "quantidade": 0.0,
             })
             compromisso["quantidade"] += quantidade_comprometida
+
+        pending_carga_ids.update(_estoque_aplicar_comprometimentos_vendas_diario(
+            cur,
+            produtos_lookup,
+            linhas,
+            aliases,
+        ))
 
         meta["cargas_pendentes"] = len(pending_carga_ids)
         meta["cargas_baixadas"] = len(baixadas_ids)

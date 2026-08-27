@@ -538,8 +538,16 @@ Regras:
   nome, como `Mes_junho2026`
 - `GET /api/estoque/relatorio-comprometido` retorna os produtos reservados por
   cargas PDF ainda pendentes de baixa e aceita `data_inicio`, `data_fim`,
-  `grupo_estoque` e `produto_id`. As datas filtram `cargas.data_carga`, com
-  `created_at` como contingencia
+  `grupo_estoque` e `produto_id`. O consolidado inclui tanto as cargas legadas
+  de `cargas` quanto os cards PDF do fluxo atual em `vendas_diario_kanban`. Um
+  card atual permanece comprometido durante importacao/conferencia e, depois de
+  enviado ao frete, enquanto o frete estiver em `chegada`, `descarregado`,
+  `liberado`, `carregando` ou `carregado`. As datas usam a data da carga PDF;
+  no legado, `created_at` e a contingencia
+- quando um card do Vendas Diario combina TXT e PDF da mesma carga, o relatorio
+  usa apenas os itens do TXT; o PDF e usado somente quando nao existe TXT ativo.
+  Quantidades `CX`, `DZ`, `PT` e `UN` sao convertidas para a unidade canonica do
+  estoque antes do comprometimento, evitando duplicidade e mistura de unidades
 - `GET /api/estoque/relatorio-comprometido/pdf` aplica os mesmos filtros e gera
   o PDF imprimivel da aba `Relatorios > Estoque comprometido`
 - excluir um produto e uma operacao logica: `estoque_produtos.ativo` e os aliases

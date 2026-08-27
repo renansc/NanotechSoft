@@ -25,6 +25,10 @@ class EstoqueTaxonomiaBebidasTests(unittest.TestCase):
             "AGUA SEM GAS 510ML",
             server._estoque_base_nome_inferido("Água sem gás 510 ml"),
         )
+        self.assertEqual(
+            "ABACAXI 2L",
+            server._estoque_base_nome_inferido("Abacaxi Rio Branco PET 6X2"),
+        )
 
     def test_nome_canonico_prevalece_sobre_cadastro_duplicado(self):
         self.assertEqual(
@@ -537,6 +541,66 @@ class EstoqueTaxonomiaBebidasTests(unittest.TestCase):
         self.assertEqual(25, relatorio["rows"][0]["quantidade_comprometida"])
         self.assertEqual(75, relatorio["rows"][0]["saldo_remanescente"])
         self.assertEqual(25, relatorio["meta"]["quantidade_comprometida_total"])
+
+    def test_comprometido_usa_txt_sem_duplicar_pdf_e_converte_unidade_base(self):
+        class Cursor:
+            def __init__(self):
+                self.resultados = [
+                    [
+                        {
+                            "root_id": 101,
+                            "carga_nome": "Carga conciliada",
+                            "frete_status": "",
+                            "data_comprometimento": "2026-08-25",
+                            "mapas": "12345",
+                            "tem_txt": 1,
+                            "tem_pdf": 1,
+                        },
+                        {
+                            "root_id": 102,
+                            "carga_nome": "",
+                            "frete_status": "liberado",
+                            "data_comprometimento": "2026-08-26",
+                            "mapas": "12346",
+                            "tem_txt": 0,
+                            "tem_pdf": 1,
+                        },
+                    ],
+                    [
+                        {"root_id": 101, "origem_tipo": "txt", "produto_codigo": "4000", "descricao": "TUBARIO 600ML GFA", "unidade": "DZ", "quantidade": 2},
+                        {"root_id": 101, "origem_tipo": "pdf", "produto_codigo": "4000", "descricao": "TUBARIO 600ML GFA", "unidade": "CX", "quantidade": 3},
+                        {"root_id": 102, "origem_tipo": "pdf", "produto_codigo": "7000", "descricao": "GUARANA PET 6X2L", "unidade": "PT", "quantidade": 4},
+                    ],
+                ]
+
+            def execute(self, _sql, _params=()):
+                pass
+
+            def fetchall(self):
+                return self.resultados.pop(0)
+
+        cadastros = {
+            "4000": {"id": 4, "ativo": 1, "nome_produto": "TUBARIO 600ML GFA", "grupo_estoque": "GFA", "produto_base_nome": "RETORNAVEL TUBARIO 600ML", "fator_embalagem_padrao": 1},
+            "7000": {"id": 9, "ativo": 1, "nome_produto": "GUARANA PET 6X2L", "grupo_estoque": "PET", "produto_base_nome": "GUARANA 2L", "fator_embalagem_padrao": 6},
+        }
+        linhas = {}
+        aliases = {}
+        with mock.patch.object(
+            server,
+            "_resolver_produto_lookup_estoque",
+            side_effect=lambda _lookup, **kwargs: cadastros.get(kwargs.get("codigo_produto_nfe")),
+        ):
+            pendentes = server._estoque_aplicar_comprometimentos_vendas_diario(
+                Cursor(), {}, linhas, aliases
+            )
+
+        self.assertEqual({"vendas_diario:101", "vendas_diario:102"}, pendentes)
+        por_id = {row["produto_id"]: row for row in linhas.values()}
+        self.assertEqual(24, por_id[4]["quantidade_comprometida"])
+        self.assertEqual(24, por_id[9]["quantidade_comprometida"])
+        compromisso = por_id[4]["comprometimentos"]["vendas_diario:101"]
+        self.assertEqual(24, compromisso["quantidade"])
+        self.assertEqual("vendas_diario", compromisso["origem"])
 
     def test_exclusao_de_produto_preserva_historico_e_desativa_cadastro(self):
         fonte = Path(server.__file__).read_text(encoding="utf-8")
