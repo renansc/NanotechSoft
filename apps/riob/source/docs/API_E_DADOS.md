@@ -576,8 +576,11 @@ Regras:
 - os saldos sao somados em unidades depois da conversao: pacote padrao e agua
   usam 12, PET 2 L usa 6, caixa retornavel 600 ml usa 24 e caixa retornavel
   200 ml usa 48
-- o dashboard apresenta o saldo canonico como pallets, volumes intermediarios
-  (pacotes ou caixas) e unidades restantes. Capacidades: agua 150 pacotes x 12,
+- as telas de estoque apresentam o saldo em duas linhas: a primeira mostra
+  somente pallets e volumes intermediarios (pacotes ou caixas), ligados por
+  `e`; a segunda mostra o total canonico integral em unidades. As unidades que
+  nao completam um volume nao sao acrescentadas a primeira linha. Capacidades:
+  agua 150 pacotes x 12,
   PET 600 ml 132 x 12, GFA 600 ml 35 caixas x 24, PET 2 L 80 x 6,
   PET 200 ml 304 x 12, GFA 200 ml CX48 48 x 48 e CX24 60 x 24
 - `GET /api/estoque` retorna o historico mais recente de movimentos

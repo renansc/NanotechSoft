@@ -166,8 +166,9 @@ If you need context fast, read these files first:
   belongs under Config, reports under Relatorios, registrations under Cadastros,
   purchase-document intake under Compras, and stock position/movement/product
   maintenance/traceability under Estoque.
-- Stock remains canonical in individual units, but production dashboards display
-  `pallets + packages/boxes + remaining units`. Capacities are: water 150x12,
+- Stock remains canonical in individual units. Stock screens display two lines:
+  `pallets and packages/boxes` on top, without appending remainder units, and
+  the exact canonical `Total: N units` below. Capacities are: water 150x12,
   PET 600 ml 132x12, GFA 600 ml 35x24, PET 2 L 80x6, PET 200 ml 304x12,
   GFA 200 ml CX48 48x48, and GFA 200 ml CX24 60x24. Never guess the GFA
   200 ml box variant when the product registration/name does not distinguish

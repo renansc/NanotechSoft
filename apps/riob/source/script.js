@@ -15629,11 +15629,12 @@ function _estoqueProdutoStatusHtml(item = {}){
   return `${nome}${unificados > 1 ? `<div class="hint">${unificados} cadastros consolidados</div>` : ""}`;
 }
 
-function _estoqueFormatPallet(item = {}, valor = 0){
+function _estoqueFormatPalletPartes(item = {}, valor = 0){
   const quantidade = Number(valor || 0);
   const meta = item?.pallet_meta || {};
   const porPallet = Number(meta.unidades_por_pallet || 0);
   const porVolume = Number(meta.unidades_por_volume || 0);
+  const total = `${_estoqueFormatQtd(quantidade)} unidades`;
   if (!(porPallet > 0) || !(porVolume > 0)) {
     const fatoresEmbalagem = [...new Set((Array.isArray(item?.fatores_embalagem_origem)
       ? item.fatores_embalagem_origem : [])
@@ -15644,22 +15645,31 @@ function _estoqueFormatPallet(item = {}, valor = 0){
       const sinal = quantidade < 0 ? "-" : "";
       const absoluta = Math.abs(quantidade);
       const volumes = Math.floor((absoluta + 1e-9) / fator);
-      const unidades = absoluta - (volumes * fator);
       const rotulo = _acertoEstoqueVolumeLabel(item);
-      return unidades > 1e-9
-        ? `${sinal}${volumes} ${rotulo} + ${_estoqueFormatQtd(unidades)} unidades`
-        : `${sinal}${volumes} ${rotulo}`;
+      return { logistica: `${sinal}${volumes} ${rotulo}`, total };
     }
-    return `${_estoqueFormatQtd(quantidade)} unidades`;
+    return { logistica: "Saldo em unidades", total };
   }
   const sinal = quantidade < 0 ? "-" : "";
   let restante = Math.abs(quantidade);
   const pallets = Math.floor((restante + 1e-9) / porPallet);
   restante -= pallets * porPallet;
   const volumes = Math.floor((restante + 1e-9) / porVolume);
-  restante -= volumes * porVolume;
   const rotulo = String(meta.rotulo_volume || "volumes");
-  return `${sinal}${pallets} pallet${pallets === 1 ? "" : "s"} + ${volumes} ${rotulo} + ${_estoqueFormatQtd(restante)} unidades`;
+  const partes = [];
+  if (pallets > 0) partes.push(`${sinal}${pallets} pallet${pallets === 1 ? "" : "s"}`);
+  if (volumes > 0 || !partes.length) partes.push(`${sinal && !partes.length ? sinal : ""}${volumes} ${rotulo}`);
+  return { logistica: partes.join(" e "), total };
+}
+
+function _estoqueFormatPallet(item = {}, valor = 0){
+  const partes = _estoqueFormatPalletPartes(item, valor);
+  return `${partes.logistica} = total ${partes.total}`;
+}
+
+function _estoqueFormatPalletHtml(item = {}, valor = 0){
+  const partes = _estoqueFormatPalletPartes(item, valor);
+  return `<div class="estoque-saldo-formatado"><div class="estoque-saldo-logistica">${_escHtml(partes.logistica)}</div><small class="estoque-saldo-unidades">Total: ${_escHtml(partes.total)}</small></div>`;
 }
 
 function sincronizarNumeroNotaPorCodigo(){
@@ -15710,10 +15720,10 @@ async function renderDashboardEstoque(){
     const renderLinhas = (rows, vazio) => rows.length ? rows.map((r) => `
       <tr>
         <td>${_estoqueProdutoStatusHtml(r)}</td>
-        <td>${_escHtml(_estoqueFormatPallet(r, r.vendas_semana))}</td>
-        <td>${_escHtml(_estoqueFormatPallet(r, r.quantidade_atual))}</td>
-        <td>${_escHtml(_estoqueFormatPallet(r, r.previsao_consumo_semana))}</td>
-        <td><span style="font-weight:700;color:${Number(r.sugestao_producao_semana || 0) > 0 ? "#b45309" : "#166534"};">${_escHtml(_estoqueFormatPallet(r, r.sugestao_producao_semana))}</span></td>
+        <td>${_estoqueFormatPalletHtml(r, r.vendas_semana)}</td>
+        <td>${_estoqueFormatPalletHtml(r, r.quantidade_atual)}</td>
+        <td>${_estoqueFormatPalletHtml(r, r.previsao_consumo_semana)}</td>
+        <td><div style="color:${Number(r.sugestao_producao_semana || 0) > 0 ? "#b45309" : "#166534"};">${_estoqueFormatPalletHtml(r, r.sugestao_producao_semana)}</div></td>
       </tr>
     `).join("") : `<tr><td colspan="5">${_escHtml(vazio)}</td></tr>`;
     bodyRetornavel.innerHTML = renderLinhas(retornaveis, "Sem produtos retornaveis ativos no dashboard.");
@@ -15792,9 +15802,9 @@ async function carregarRelatorioEstoqueComprometido(){
         <td>${_estoqueProdutoStatusHtml(row)}</td>
         <td>${_escHtml(row.grupo_nome || row.grupo_estoque || "-")}</td>
         <td>${_escHtml(cargas.join(" | ") || "Carga pendente")}</td>
-        <td>${_escHtml(_estoqueFormatPallet(row, atual))}</td>
-        <td><strong>${_escHtml(_estoqueFormatPallet(row, comprometido))}</strong></td>
-        <td>${_escHtml(_estoqueFormatPallet(row, row.saldo_remanescente))}</td>
+        <td>${_estoqueFormatPalletHtml(row, atual)}</td>
+        <td>${_estoqueFormatPalletHtml(row, comprometido)}</td>
+        <td>${_estoqueFormatPalletHtml(row, row.saldo_remanescente)}</td>
         <td>${_escHtml(`${_fmtNumber(percentual, 1)}%`)}</td>
       </tr>`;
     }).join("") : '<tr><td colspan="7">Nao ha estoque comprometido para os filtros selecionados.</td></tr>';
@@ -19671,9 +19681,9 @@ function renderSaldoEstoqueFiltrado(){
       <td>${_escHtml(_estoqueCodigoReferencia(r))}</td>
       <td>${_escHtml(_estoqueFornecedorResumo(r))}</td>
       <td>${_escHtml(_estoqueCategoriaFornecedorResumo(r))}</td>
-      <td>${_escHtml(_estoqueFormatPallet(r, r.entradas_total))}</td>
-      <td>${_escHtml(_estoqueFormatPallet(r, r.saidas_total))}</td>
-      <td>${_escHtml(_estoqueFormatPallet(r, r.quantidade_atual))}</td>
+      <td>${_estoqueFormatPalletHtml(r, r.entradas_total)}</td>
+      <td>${_estoqueFormatPalletHtml(r, r.saidas_total)}</td>
+      <td>${_estoqueFormatPalletHtml(r, r.quantidade_atual)}</td>
       <td>R$ ${_escHtml(_fmtMoney(r.ultimo_valor))}</td>
       <td>${_escHtml(_fmtDateBr(r.ultima_movimentacao))}</td>
     </tr>
@@ -19732,7 +19742,7 @@ function renderAcertoEstoque(){
     const volumeLabel = _acertoEstoqueVolumeLabel(produto);
     return `<tr data-produto-id="${Number(produto.id || 0)}">
       <td><strong>${_escHtml(produto.produto_base_nome || produto.nome_produto || "-")}</strong><br><small>${_escHtml(produto.codigo_barras || produto.codigo_produto_nfe || "Sem codigo")}</small></td>
-      <td>${_escHtml(_estoqueFormatPallet({ ...produto, pallet_meta: meta }, v.saldo))}</td>
+      <td>${_estoqueFormatPalletHtml({ ...produto, pallet_meta: meta }, v.saldo)}</td>
       <td><input type="number" min="0" step="1" data-field="pallets" value="${v.pallets}" oninput="_acertoEstoqueTotalLinha(${produto.id})"${palletDisabled}></td>
       <td><input type="number" min="0" step="1" data-field="volumes" value="${v.volumes}" title="${_escAttr(volumeLabel)}" oninput="_acertoEstoqueTotalLinha(${produto.id})"${volumeDisabled}><small>${_escHtml(volumeLabel)}${v.porVolume > 0 ? ` x ${_escHtml(_estoqueFormatQtd(v.porVolume))}` : ""}</small></td>
       <td><input type="number" min="0" step="0.001" data-field="unidades" value="${v.unidades}" oninput="_acertoEstoqueTotalLinha(${produto.id})"></td>

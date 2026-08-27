@@ -2313,6 +2313,23 @@ body.estoque-import-modal-open{
   flex-wrap:wrap;
 }
 
+.estoque-saldo-formatado{
+  display:flex;
+  flex-direction:column;
+  gap:2px;
+  line-height:1.25;
+}
+
+.estoque-saldo-logistica{
+  font-weight:700;
+}
+
+.estoque-saldo-unidades{
+  display:block;
+  color:#64748b;
+  font-weight:500;
+}
+
 .estoque-pack-hint{
   display:inline-flex;
   align-items:center;

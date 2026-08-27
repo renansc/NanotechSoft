@@ -447,6 +447,16 @@ class EstoqueTaxonomiaBebidasTests(unittest.TestCase):
         self.assertIn('if (embalagem.startsWith("CX")) return "caixas";', script)
         self.assertIn("fatoresEmbalagem.length === 1", script)
 
+    def test_saldo_exibe_logistica_em_cima_e_total_de_unidades_abaixo(self):
+        raiz = Path(__file__).resolve().parents[1]
+        script = (raiz / "script.js").read_text(encoding="utf-8")
+        style = (raiz / "style.css").read_text(encoding="utf-8")
+        self.assertIn('partes.join(" e ")', script)
+        self.assertIn('class="estoque-saldo-logistica"', script)
+        self.assertIn('class="estoque-saldo-unidades">Total:', script)
+        self.assertNotIn('${_estoqueFormatQtd(restante)} unidades', script)
+        self.assertIn(".estoque-saldo-formatado", style)
+
     def test_dashboard_exibe_somente_produtos_ativos_e_cadastrados(self):
         rows = [
             {"produto_id": 1, "produto_cadastrado": True, "produto_ativo": True, "exibir_dashboard": True, "grupo_estoque": "GFA", "quantidade_comprometida": 5},
