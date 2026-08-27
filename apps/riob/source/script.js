@@ -15634,7 +15634,7 @@ function _estoqueFormatPalletPartes(item = {}, valor = 0){
   const meta = item?.pallet_meta || {};
   const porPallet = Number(meta.unidades_por_pallet || 0);
   const porVolume = Number(meta.unidades_por_volume || 0);
-  const total = `${_estoqueFormatQtd(quantidade)} unidades`;
+  const total = `${_estoqueFormatQtd(quantidade)} uni`;
   if (!(porPallet > 0) || !(porVolume > 0)) {
     const fatoresEmbalagem = [...new Set((Array.isArray(item?.fatores_embalagem_origem)
       ? item.fatores_embalagem_origem : [])
@@ -15645,7 +15645,8 @@ function _estoqueFormatPalletPartes(item = {}, valor = 0){
       const sinal = quantidade < 0 ? "-" : "";
       const absoluta = Math.abs(quantidade);
       const volumes = Math.floor((absoluta + 1e-9) / fator);
-      const rotulo = _acertoEstoqueVolumeLabel(item);
+      const rotuloBase = _acertoEstoqueVolumeLabel(item);
+      const rotulo = rotuloBase === "caixas" ? "cx" : rotuloBase;
       return { logistica: `${sinal}${volumes} ${rotulo}`, total };
     }
     return { logistica: "Saldo em unidades", total };
@@ -15655,7 +15656,8 @@ function _estoqueFormatPalletPartes(item = {}, valor = 0){
   const pallets = Math.floor((restante + 1e-9) / porPallet);
   restante -= pallets * porPallet;
   const volumes = Math.floor((restante + 1e-9) / porVolume);
-  const rotulo = String(meta.rotulo_volume || "volumes");
+  const rotuloBase = String(meta.rotulo_volume || "volumes");
+  const rotulo = rotuloBase === "caixas" ? "cx" : rotuloBase;
   const partes = [];
   if (pallets > 0) partes.push(`${sinal}${pallets} pallet${pallets === 1 ? "" : "s"}`);
   if (volumes > 0 || !partes.length) partes.push(`${sinal && !partes.length ? sinal : ""}${volumes} ${rotulo}`);

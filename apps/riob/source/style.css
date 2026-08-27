@@ -2322,12 +2322,14 @@ body.estoque-import-modal-open{
 
 .estoque-saldo-logistica{
   font-weight:700;
+  white-space:nowrap;
 }
 
 .estoque-saldo-unidades{
   display:block;
   color:#64748b;
   font-weight:500;
+  white-space:nowrap;
 }
 
 .estoque-pack-hint{

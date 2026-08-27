@@ -454,8 +454,11 @@ class EstoqueTaxonomiaBebidasTests(unittest.TestCase):
         self.assertIn('partes.join(" e ")', script)
         self.assertIn('class="estoque-saldo-logistica"', script)
         self.assertIn('class="estoque-saldo-unidades">Total:', script)
+        self.assertIn('const total = `${_estoqueFormatQtd(quantidade)} uni`;', script)
+        self.assertIn('rotuloBase === "caixas" ? "cx" : rotuloBase', script)
         self.assertNotIn('${_estoqueFormatQtd(restante)} unidades', script)
         self.assertIn(".estoque-saldo-formatado", style)
+        self.assertIn("white-space:nowrap", style)
 
     def test_dashboard_exibe_somente_produtos_ativos_e_cadastrados(self):
         rows = [

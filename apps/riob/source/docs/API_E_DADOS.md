@@ -579,7 +579,9 @@ Regras:
 - as telas de estoque apresentam o saldo em duas linhas: a primeira mostra
   somente pallets e volumes intermediarios (pacotes ou caixas), ligados por
   `e`; a segunda mostra o total canonico integral em unidades. As unidades que
-  nao completam um volume nao sao acrescentadas a primeira linha. Capacidades:
+  nao completam um volume nao sao acrescentadas a primeira linha. Para manter
+  cada linha compacta, a interface abrevia caixas como `cx` e unidades como
+  `uni`. Capacidades:
   agua 150 pacotes x 12,
   PET 600 ml 132 x 12, GFA 600 ml 35 caixas x 24, PET 2 L 80 x 6,
   PET 200 ml 304 x 12, GFA 200 ml CX48 48 x 48 e CX24 60 x 24
