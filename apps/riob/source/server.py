@@ -15474,25 +15474,30 @@ def _build_estoque_comprometido_pdf(relatorio):
         ), styles["Normal"]),
         Spacer(1, 10),
     ]
-    tabela = [["Produto", "Grupo", "Cargas / datas", "Estoque atual", "Comprometido", "Disponivel", "%"]]
+    tabela = [["Produto", "Grupo", "Carga / data / qtd.", "Estoque atual", "Comprometido", "Disponivel", "%"]]
     for row in relatorio.get("rows") or []:
-        cargas = " | ".join(
-            f"{_as_str(item.get('carga_nome')) or ('Carga #' + str(_as_int(item.get('carga_id'), 0)))}"
-            f" ({_as_str(item.get('data_comprometimento')) or 'sem data'})"
-            for item in (row.get("comprometimentos") or [])
-        ) or "Carga pendente"
         atual = _as_float(row.get("quantidade_atual"), 0.0)
         comprometido = _as_float(row.get("quantidade_comprometida"), 0.0)
         percentual = (comprometido / atual * 100) if atual > 0 else 100.0
-        tabela.append([
-            Paragraph(_pdf_escape(row.get("nome_produto")), body_style),
-            Paragraph(_pdf_escape(row.get("grupo_nome") or row.get("grupo_estoque")), body_style),
-            Paragraph(_pdf_escape(cargas), body_style),
-            _fmt_decimal_br(atual, 3),
-            _fmt_decimal_br(comprometido, 3),
-            _fmt_decimal_br(row.get("saldo_remanescente"), 3),
-            f"{_fmt_decimal_br(percentual, 1)}%",
-        ])
+        compromissos = row.get("comprometimentos") or [{}]
+        for compromisso in compromissos:
+            carga_nome = _as_str(compromisso.get("carga_nome")) or (
+                "Carga #" + str(_as_int(compromisso.get("carga_id"), 0))
+            )
+            carga = (
+                f"{carga_nome} "
+                f"({_as_str(compromisso.get('data_comprometimento')) or 'sem data'}) - "
+                f"{_fmt_decimal_br(compromisso.get('quantidade'), 3)}"
+            )
+            tabela.append([
+                Paragraph(_pdf_escape(row.get("nome_produto")), body_style),
+                Paragraph(_pdf_escape(row.get("grupo_nome") or row.get("grupo_estoque")), body_style),
+                Paragraph(_pdf_escape(carga), body_style),
+                _fmt_decimal_br(atual, 3),
+                _fmt_decimal_br(comprometido, 3),
+                _fmt_decimal_br(row.get("saldo_remanescente"), 3),
+                f"{_fmt_decimal_br(percentual, 1)}%",
+            ])
     if len(tabela) == 1:
         tabela.append([Paragraph("Nenhum estoque comprometido para os filtros selecionados.", body_style), "", "", "", "", "", ""])
     tabela_pdf = Table(tabela, repeatRows=1, colWidths=[155, 70, 250, 72, 72, 72, 45])

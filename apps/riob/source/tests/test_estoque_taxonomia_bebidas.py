@@ -602,6 +602,34 @@ class EstoqueTaxonomiaBebidasTests(unittest.TestCase):
         self.assertEqual(24, compromisso["quantidade"])
         self.assertEqual("vendas_diario", compromisso["origem"])
 
+    def test_pdf_comprometido_quebra_produto_com_muitas_cargas_em_linhas(self):
+        compromissos = [
+            {
+                "carga_id": indice,
+                "carga_nome": f"Carga mapa {indice}",
+                "data_comprometimento": "2026-08-27",
+                "quantidade": 6,
+            }
+            for indice in range(1, 151)
+        ]
+        arquivo = server._build_estoque_comprometido_pdf({
+            "filtros": {},
+            "meta": {"itens_comprometidos": 1, "quantidade_comprometida_total": 900},
+            "rows": [{
+                "nome_produto": "GUARANA PET 2L",
+                "grupo_estoque": "PET",
+                "quantidade_atual": 1000,
+                "quantidade_comprometida": 900,
+                "saldo_remanescente": 100,
+                "comprometimentos": compromissos,
+            }],
+        })
+        caminho = Path(arquivo)
+        try:
+            self.assertGreater(caminho.stat().st_size, 0)
+        finally:
+            caminho.unlink(missing_ok=True)
+
     def test_exclusao_de_produto_preserva_historico_e_desativa_cadastro(self):
         fonte = Path(server.__file__).read_text(encoding="utf-8")
         self.assertIn("UPDATE estoque_produtos SET ativo=0 WHERE id=%s", fonte)
