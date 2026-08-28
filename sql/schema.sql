@@ -140,6 +140,55 @@ CREATE TABLE IF NOT EXISTS tecnologia_alertas_recursos (
     FOREIGN KEY (dispositivo_id) REFERENCES tecnologia_dispositivos(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS tecnologia_backups (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    nome VARCHAR(160) NOT NULL,
+    maquina VARCHAR(160) NOT NULL,
+    agente_id VARCHAR(80) NOT NULL UNIQUE,
+    agente_token_hash CHAR(64) NOT NULL,
+    banco_tipo VARCHAR(24) NOT NULL DEFAULT 'MYSQL',
+    banco_host VARCHAR(253) NOT NULL,
+    banco_porta INT NOT NULL DEFAULT 3306,
+    banco_nome VARCHAR(160) NOT NULL,
+    banco_usuario VARCHAR(160) NOT NULL,
+    senha_variavel VARCHAR(160) NOT NULL DEFAULT 'NANOTECH_BACKUP_DB_PASSWORD',
+    origens_path JSON NULL,
+    destino_path VARCHAR(1000) NOT NULL,
+    nuvem_path VARCHAR(1000) NOT NULL DEFAULT '',
+    horarios JSON NOT NULL,
+    timezone VARCHAR(80) NOT NULL DEFAULT 'America/Sao_Paulo',
+    retencao_diaria_dias INT NOT NULL DEFAULT 7,
+    retencao_semanal_semanas INT NOT NULL DEFAULT 5,
+    retencao_mensal_meses INT NOT NULL DEFAULT 12,
+    ativo TINYINT(1) NOT NULL DEFAULT 1,
+    ultimo_contato_em DATETIME(3) NULL,
+    agente_versao VARCHAR(40) NOT NULL DEFAULT '',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_tecnologia_backups_ativo_contato (ativo, ultimo_contato_em)
+);
+
+CREATE TABLE IF NOT EXISTS tecnologia_backup_execucoes (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    backup_id INT NOT NULL,
+    execucao_id VARCHAR(120) NOT NULL,
+    horario_programado VARCHAR(5) NOT NULL DEFAULT '',
+    status VARCHAR(20) NOT NULL,
+    iniciado_em DATETIME(3) NULL,
+    concluido_em DATETIME(3) NULL,
+    arquivo_path VARCHAR(1200) NOT NULL DEFAULT '',
+    tamanho_bytes BIGINT NULL,
+    sha256 CHAR(64) NOT NULL DEFAULT '',
+    camadas VARCHAR(120) NOT NULL DEFAULT '',
+    mensagem VARCHAR(1000) NOT NULL DEFAULT '',
+    detalhes JSON NULL,
+    recebido_em DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    UNIQUE KEY uq_tecnologia_backup_execucao (backup_id, execucao_id),
+    INDEX idx_tecnologia_backup_execucoes_data (backup_id, recebido_em),
+    INDEX idx_tecnologia_backup_execucoes_status (status, recebido_em),
+    FOREIGN KEY (backup_id) REFERENCES tecnologia_backups(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS chamados (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     protocolo VARCHAR(32) NOT NULL UNIQUE,

@@ -229,3 +229,127 @@ confirmada localmente ou por inventário de um agente.
 - `POST /apps/tecnologia/api/discover-computers`: descoberta manual de estações (admin).
 
 O login é sempre o do portal. Não existe autenticação própria no módulo.
+
+## Backups externos
+
+A aba **Backup** mantém os planos executados por máquinas locais. O portal não
+executa dumps durante startup, deploy ou atualização: cada plano possui um
+agente independente, autenticado por token, que consulta a configuração e
+reporta suas execuções em JSON.
+
+O cadastro informa banco MySQL/MariaDB, máquina executora, pasta externa,
+horários, fuso e retenções. A senha do banco não é armazenada nem devolvida pelo
+portal; o agente lê a variável de ambiente indicada em `passwordEnv` na própria
+máquina. Ao criar um plano, o navegador baixa uma única vez um JSON com o token.
+O botão **Novo JSON** rotaciona o token e invalida o arquivo anterior.
+
+O tipo **Arquivos e pastas** recebe até 20 caminhos locais, um por linha, e não
+solicita host, banco, usuário ou senha. O agente reúne as origens em um
+`.tar.gz`, preservando a árvore de diretórios, calcula o SHA-256 e aplica a mesma
+retenção. No Windows, use caminhos como `C:\CTA\DADOS`. No Linux, um destino SMB
+precisa estar montado antes e deve ser informado como `/mnt/...`; caminhos
+`//servidor/share` não são tratados como montagem pelo sistema de arquivos.
+
+O agente versionado fica em `tools/technology_backup_agent.py`. Na máquina
+executora, instale Python 3 e `mysqldump`, copie o agente e o JSON baixado e
+proteja o arquivo para que somente a conta do serviço consiga lê-lo. Exemplo:
+
+```bash
+export NANOTECH_BACKUP_DB_PASSWORD='senha-local-do-usuario-de-backup'
+python3 technology_backup_agent.py --config nanotech-backup-backup-xxxx.json --validate
+python3 technology_backup_agent.py --config nanotech-backup-backup-xxxx.json
+```
+
+Cada ambiente deve definir no seu próprio `.env`, não versionado, uma URL do
+portal alcançável pelas máquinas executoras. Endereços de Rio Branco,
+NanotechSoft, laboratório e cloud não devem ser copiados entre ambientes:
+
+```dotenv
+TECH_BACKUP_AGENT_BASE_URL=http://IP-LOCAL-DO-PORTAL:5600
+```
+
+Quando a variável fica vazia, o portal usa o mesmo protocolo, host e porta da
+requisição atual. Depois de alterar a URL, gere um **Novo JSON** para o plano.
+Em rede local, a comunicação HTTP não depende da CA interna, mas a porta deve
+ficar restrita no firewall às máquinas executoras, pois o token do agente
+trafega nesse canal. O agente aceita HTTP somente para IP privado, loopback ou
+nome `.local`; não publique esse canal na internet. Em cloud ou acesso público,
+use a URL HTTPS própria daquele ambiente. `--ca-file` ou a variável
+`NANOTECH_BACKUP_CA_FILE` permite informar uma CA interna sem ignorar a
+validação TLS.
+
+Planos, tokens, senhas, montagens e unidades de serviço também pertencem ao
+ambiente onde foram criados. Eles não são iniciados por `up.sh`, `update.sh` ou
+outro deploy comum do portal; o agente é instalado separadamente em cada host.
+Assim, publicar o mesmo código em outro cliente não executa nem recebe a
+configuração de backup deste servidor.
+
+No Windows, instale também o pacote de fusos com `python -m pip install tzdata`,
+defina a variável no ambiente da conta do serviço e use o mesmo comando com
+`python`. O caminho do HDD pode ser UNC, por exemplo
+`\\192.168.200.10\e\backup Nanotechsoft`, desde que o compartilhamento `e`
+exista e a conta do serviço tenha permissão de gravação. Mapas como `E:` podem
+não existir para serviços; por isso UNC é preferível. No Linux, monte primeiro
+o compartilhamento e configure o caminho montado.
+
+O agente consulta o portal a cada 60 segundos e mantém a última configuração
+válida em seu arquivo local de estado para continuar protegendo o banco durante
+uma indisponibilidade temporária do portal. Para testar uma execução real fora
+do horário, use `--run-now`; `--once` executa apenas o horário já vencido e
+encerra. Instale o comando contínuo como serviço do sistema operacional, não
+como parte dos comandos canônicos de deploy do repositório.
+
+### Inicialização automática
+
+No Linux, instale uma unidade `systemd` com `After=network-online.target`,
+`Restart=always` e `WantedBy=multi-user.target`. Quando o destino usa
+`x-systemd.automount` com tempo de inatividade, não use `RequiresMountsFor=`: o
+acesso ao caminho já aciona a montagem e uma dependência rígida encerraria o
+agente quando o CIFS fosse desmontado por ociosidade. A senha do banco fica em
+um `EnvironmentFile` com permissão `600`; planos do tipo arquivos não precisam
+dessa variável.
+
+No Windows, crie uma tarefa no Agendador de Tarefas acionada **Ao iniciar o
+computador**, executando `python.exe technology_backup_agent.py --config
+plano.json`. Configure reinício automático em caso de falha e execute pela conta
+que tenha leitura nas origens COBOL e gravação no compartilhamento de destino.
+O botão **Instalador Windows** baixa o PowerShell que automatiza essa instalação.
+Abra o PowerShell como administrador e execute, na pasta dos três arquivos:
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+.\install_technology_backup_windows.ps1 -Agent .\technology_backup_agent.py -Config .\nanotech-backup-backup-xxxx.json
+```
+
+O instalador pede a credencial da conta do serviço sem gravá-la no plano, copia
+o agente para `C:\ProgramData\NanotechSoft\Backup`, restringe o token a SYSTEM e
+administradores, valida o JSON e inicia uma tarefa com gatilho de boot e reinício
+automático.
+
+### Organização e retenção
+
+- `diario/YYYY-MM-DD`: todas as execuções, como 08:00, 12:00 e 17:00;
+- `semana/AAAA-Wnn`: cópia do último backup de cada dia;
+- `mes/AAAA-MM`: cópia do último backup de domingo de cada semana;
+- pasta de nuvem opcional: recebe somente a promoção mensal.
+
+Quando `diario`, `semana` e `mes` pertencem ao mesmo volume, o agente tenta usar
+hard links nas promoções. As pastas continuam apresentando arquivos completos,
+mas as camadas não ocupam o espaço novamente. Se o volume não suportar hard
+links, o agente faz uma cópia normal. A pasta de nuvem sempre recebe uma cópia
+independente.
+
+Cada dump é comprimido como `.sql.gz`, calculado com SHA-256 e só então
+reportado como concluído. A retenção remove arquivos expirados apenas dentro das
+três pastas gerenciadas. Excluir um plano no portal não remove arquivos do HDD.
+O plano registra a produção do backup, mas testes periódicos de restauração
+continuam sendo uma operação separada e explicitamente autorizada.
+
+Rotas administrativas e do agente:
+
+- `GET|POST /apps/tecnologia/api/backup/jobs`;
+- `PUT|DELETE /apps/tecnologia/api/backup/jobs/<id>`;
+- `POST /apps/tecnologia/api/backup/jobs/<id>/rotate-token`;
+- `GET /apps/tecnologia/api/backup/agent-script`;
+- `GET /apps/tecnologia/api/backup/agent/<agent_id>/config` com Bearer token;
+- `POST /apps/tecnologia/api/backup/agent/<agent_id>/report` com Bearer token e JSON.

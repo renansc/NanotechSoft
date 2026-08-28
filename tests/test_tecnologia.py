@@ -11,6 +11,7 @@ from unittest import mock
 
 import app as portal
 from apps.tecnologia import monitor
+from tools import technology_backup_agent
 
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
@@ -520,6 +521,182 @@ class TecnologiaMonitorTests(unittest.TestCase):
 
 
 class TecnologiaIntegrationTests(unittest.TestCase):
+    def test_backup_schedule_normalization_and_next_run(self):
+        payload = portal.normalize_technology_backup_payload({
+            "name": "Banco principal", "machine": "Servidor Windows",
+            "databaseHost": "127.0.0.1", "databaseName": "notechsoft",
+            "databaseUser": "backup_read", "passwordEnv": "BACKUP_DB_PASSWORD",
+            "destinationPath": r"\\192.168.200.10\e\backup Nanotechsoft",
+            "times": ["17:00", "08:00", "12:00", "08:00"],
+        })
+
+        self.assertEqual(["08:00", "12:00", "17:00"], json.loads(payload["horarios"]))
+        next_run = portal.technology_backup_next_run(
+            ["08:00", "12:00", "17:00"], "America/Sao_Paulo",
+            now=dt.datetime(2026, 8, 27, 14, 30, tzinfo=dt.UTC),
+        )
+        self.assertEqual("2026-08-27T12:00-03:00", next_run)
+        self.assertEqual('"senha\\\\com\\\"aspas"', technology_backup_agent.mysql_option_value('senha\\com"aspas'))
+
+    def test_backup_agent_promotes_last_daily_and_sunday_backup(self):
+        times = ["08:00", "12:00", "17:00"]
+
+        self.assertEqual(["diario"], technology_backup_agent.promotion_tiers(
+            "12:00", times, dt.date(2026, 8, 30), "C:/Nuvem",
+        ))
+        self.assertEqual(["diario", "semana"], technology_backup_agent.promotion_tiers(
+            "17:00", times, dt.date(2026, 8, 31), "C:/Nuvem",
+        ))
+        self.assertEqual(["diario", "semana", "mes", "nuvem"], technology_backup_agent.promotion_tiers(
+            "17:00", times, dt.date(2026, 8, 30), "C:/Nuvem",
+        ))
+
+    def test_backup_agent_promotions_use_hardlinks_on_same_volume(self):
+        with tempfile.TemporaryDirectory(prefix="tecnologia-promotions-") as temp_dir:
+            root = Path(temp_dir)
+            daily = root / "diario" / "2026-08-31" / "arquivos.tar.gz"
+            daily.parent.mkdir(parents=True)
+            daily.write_bytes(b"backup")
+
+            tiers = technology_backup_agent.copy_promotions({
+                "destinationPath": str(root), "times": ["08:00", "17:00"],
+                "cloudSyncPath": "",
+            }, daily, "17:00", dt.date(2026, 8, 31))
+
+            weekly = next((root / "semana").rglob("*.tar.gz"))
+            self.assertEqual(["diario", "semana"], tiers)
+            self.assertEqual(daily.stat().st_ino, weekly.stat().st_ino)
+
+    def test_backup_agent_requires_local_password_variable(self):
+        with (
+            tempfile.TemporaryDirectory(prefix="tecnologia-backup-") as temp_dir,
+            mock.patch.dict(portal.os.environ, {}, clear=True),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "BACKUP_SECRET"):
+                technology_backup_agent.create_dump({
+                    "passwordEnv": "BACKUP_SECRET", "databaseHost": "127.0.0.1",
+                    "databasePort": 3306, "databaseUser": "backup",
+                    "databaseName": "notechsoft",
+                }, Path(temp_dir) / "dump.sql.gz")
+
+    def test_backup_agent_compresses_dump_without_password_in_command(self):
+        captured = {}
+
+        def fake_run(command, stdout, **_kwargs):
+            captured["command"] = command
+            stdout.write(b"CREATE DATABASE `notechsoft`;\n")
+            return mock.Mock(returncode=0, stderr=b"")
+
+        with (
+            tempfile.TemporaryDirectory(prefix="tecnologia-backup-") as temp_dir,
+            mock.patch.dict(portal.os.environ, {"BACKUP_SECRET": 'senha\\com"aspas'}, clear=False),
+            mock.patch.object(technology_backup_agent.subprocess, "run", side_effect=fake_run),
+        ):
+            output = Path(temp_dir) / "dump.sql.gz"
+            technology_backup_agent.create_dump({
+                "passwordEnv": "BACKUP_SECRET", "databaseHost": "127.0.0.1",
+                "databasePort": 3306, "databaseUser": "backup",
+                "databaseName": "notechsoft",
+            }, output)
+            with technology_backup_agent.gzip.open(output, "rb") as handle:
+                self.assertEqual(b"CREATE DATABASE `notechsoft`;\n", handle.read())
+
+        self.assertFalse(any("senha" in argument for argument in captured["command"]))
+
+    def test_backup_agent_loads_explicit_internal_ca(self):
+        context = object()
+        with (
+            tempfile.TemporaryDirectory(prefix="tecnologia-ca-") as temp_dir,
+            mock.patch.object(technology_backup_agent.ssl, "create_default_context", return_value=context) as create,
+        ):
+            ca_path = Path(temp_dir) / "riobranco-ca.pem"
+            ca_path.write_text("CA de teste", encoding="utf-8")
+            loaded = technology_backup_agent.backup_ssl_context(ca_path)
+
+        self.assertIs(context, loaded)
+        create.assert_called_once_with(cafile=str(ca_path))
+
+    def test_backup_agent_allows_private_http_and_rejects_public_http(self):
+        origin = technology_backup_agent.validate_transport_url(
+            "http://192.168.200.254:5600/apps/tecnologia/api/backup/agent/id/config"
+        )
+
+        self.assertEqual(("http", "192.168.200.254", 5600), origin)
+        with self.assertRaisesRegex(ValueError, "privado/local"):
+            technology_backup_agent.validate_transport_url(
+                "http://example.com/apps/tecnologia/api/backup/agent/id/config"
+            )
+
+    def test_backup_setup_uses_configured_local_http_base(self):
+        with (
+            portal.app.test_request_context("/apps/tecnologia"),
+            mock.patch.dict(portal.os.environ, {
+                "TECH_BACKUP_AGENT_BASE_URL": "http://192.168.200.254:5600",
+            }, clear=False),
+        ):
+            setup = portal.technology_backup_setup({"agente_id": "backup-teste"}, "token-teste")
+
+        self.assertEqual(
+            "http://192.168.200.254:5600/apps/tecnologia/api/backup/agent/backup-teste/config",
+            setup["bootstrap"]["configUrl"],
+        )
+
+    def test_backup_setup_uses_current_request_when_base_is_not_configured(self):
+        with (
+            portal.app.test_request_context(
+                "/apps/tecnologia",
+                base_url="https://portal-cliente.example",
+            ),
+            mock.patch.dict(portal.os.environ, {
+                "TECH_BACKUP_AGENT_BASE_URL": "",
+            }, clear=False),
+        ):
+            setup = portal.technology_backup_setup({"agente_id": "backup-teste"}, "token-teste")
+
+        self.assertEqual(
+            "https://portal-cliente.example/apps/tecnologia/api/backup/agent/backup-teste/config",
+            setup["bootstrap"]["configUrl"],
+        )
+
+    def test_file_backup_does_not_require_database_credentials(self):
+        payload = portal.normalize_technology_backup_payload({
+            "name": "Arquivos COBOL", "machine": "192.168.200.121",
+            "databaseType": "FILES", "sourcePaths": [r"C:\CTA\DADOS", r"C:\CTA\CONFIG"],
+            "destinationPath": r"E:\Backups\CtaSistemas",
+            "times": ["08:00", "11:30", "16:30"],
+        })
+
+        self.assertEqual("FILES", payload["banco_tipo"])
+        self.assertEqual("", payload["banco_usuario"])
+        self.assertEqual([r"C:\CTA\DADOS", r"C:\CTA\CONFIG"], json.loads(payload["origens_path"]))
+
+    def test_file_backup_agent_creates_tar_gz_without_database_password(self):
+        with tempfile.TemporaryDirectory(prefix="tecnologia-files-") as temp_dir:
+            root = Path(temp_dir)
+            source = root / "COBOL"
+            source.mkdir()
+            (source / "dados.dat").write_text("registro COBOL", encoding="utf-8")
+            output = root / "destino" / "arquivos.tar.gz"
+
+            checksum = technology_backup_agent.create_file_archive({
+                "databaseType": "FILES", "sourcePaths": [str(source)],
+                "destinationPath": str(output.parent),
+            }, output)
+
+            with technology_backup_agent.tarfile.open(output, "r:gz") as archive:
+                self.assertIn("COBOL/dados.dat", archive.getnames())
+            self.assertEqual(technology_backup_agent.sha256_file(output), checksum)
+
+    def test_backup_agent_repairs_read_only_destination_directory(self):
+        with tempfile.TemporaryDirectory(prefix="tecnologia-permission-") as temp_dir:
+            destination = Path(temp_dir) / "somente-leitura"
+            destination.mkdir()
+            destination.chmod(0o555)
+
+            technology_backup_agent.ensure_writable_directory(destination)
+
+            self.assertTrue(destination.stat().st_mode & technology_backup_agent.stat.S_IWUSR)
+
     def test_registered_device_hosts_include_additional_interfaces(self):
         rows = [{
             "id": 13,
@@ -829,6 +1006,14 @@ class TecnologiaIntegrationTests(unittest.TestCase):
         self.assertIn("POST", routes["/apps/tecnologia/api/devices"])
         self.assertIn("DELETE", routes["/apps/tecnologia/api/devices/<int:device_id>"])
         self.assertIn("GET", routes["/apps/tecnologia/api/devices/<int:device_id>/print-usage"])
+        backup_job_methods = set().union(*(
+            rule.methods for rule in portal.app.url_map.iter_rules()
+            if rule.rule == "/apps/tecnologia/api/backup/jobs"
+        ))
+        self.assertIn("GET", backup_job_methods)
+        self.assertIn("POST", backup_job_methods)
+        self.assertIn("POST", routes["/apps/tecnologia/api/backup/agent/<agent_id>/report"])
+        self.assertIn("GET", routes["/apps/tecnologia/api/backup/agent/<agent_id>/config"])
 
     def test_static_app_is_integrated(self):
         self.assertIn("tecnologia", portal.STATIC_APP_DIRS)
@@ -845,6 +1030,9 @@ class TecnologiaIntegrationTests(unittest.TestCase):
         self.assertIn("deviceDetailsModal", html)
         self.assertIn("Atualizar agora", html)
         self.assertIn("Alertas por e-mail", html)
+        self.assertIn("Backups configurados", html)
+        self.assertIn("08:00, 12:00, 17:00", html)
+        self.assertIn("/backup/jobs", javascript)
         self.assertIn("Enviar e-mail de teste", html)
         self.assertIn("Remetente:", javascript)
         self.assertIn("identityName: button.dataset.computerName", javascript)

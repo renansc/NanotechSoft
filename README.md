@@ -193,6 +193,12 @@ de e-mail já configurada no RioB e `TECH_ALERT_EMAIL_TO` define somente o
 destinatário; a substituição opcional por `SMTP_*` fica documentada no README
 do módulo. Consulte
 `apps/tecnologia/README.md` para os limites do diagnóstico de Wi-Fi e a operação.
+O mesmo módulo possui uma seção de backups externos: o portal configura
+periodicidade e retenção, enquanto um agente instalado na máquina responsável
+gera dumps MySQL/MariaDB e troca configurações e resultados em JSON. Essa rotina
+é independente de `up.sh` e `update.sh`; senhas permanecem somente na máquina
+executora. A instalação e o fluxo diário/semanal/mensal estão documentados no
+README do módulo.
 
 O módulo **Chamados** registra requisições e manutenções de TI, predial,
 elétrica e outras áreas. Ele reutiliza os usuários do portal e os equipamentos

@@ -137,6 +137,22 @@
 .protocolFlow span { flex: 1; border: 1px solid var(--tech-line); border-radius: 10px; padding: 12px; text-align: center; font-weight: 750; }
 .protocolFlow small { color: var(--tech-muted); font-weight: 500; }
 
+.backupKpis { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.backupKpis .kpi strong { font-size: 1.45rem; }
+.backupInfoGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+.backupInfoGrid h2 { margin: 5px 0 14px; font-size: 1.08rem; }
+.backupFlow { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.backupFlow div { position: relative; border: 1px solid var(--tech-line); border-radius: 10px; padding: 12px; background: #f8fbfa; }
+.backupFlow div:not(:last-child)::after { content: "›"; position: absolute; z-index: 1; top: 50%; right: -8px; width: 16px; height: 16px; margin-top: -8px; border-radius: 50%; color: #fff; background: var(--tech-primary); text-align: center; line-height: 14px; }
+.backupFlow strong, .backupFlow span { display: block; }
+.backupFlow strong { color: var(--tech-primary-dark); font-size: .8rem; text-transform: uppercase; }
+.backupFlow span { margin-top: 5px; color: var(--tech-muted); font-size: .7rem; line-height: 1.35; }
+.agentInstallPanel ol { margin: 0 0 14px; padding-left: 21px; color: var(--tech-muted); font-size: .8rem; line-height: 1.65; }
+.agentInstallPanel code { border-radius: 5px; padding: 2px 5px; color: var(--tech-primary-dark); background: #e7f2ee; font-size: .72rem; }
+.backupPath { display: inline-block; max-width: 320px; color: var(--tech-primary-dark); font: 700 .72rem ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+.backupTier { display: inline-flex; margin: 2px; border-radius: 999px; padding: 4px 7px; color: var(--tech-primary-dark); background: #e5f2ee; font-size: .65rem; font-weight: 800; }
+.backupModalCard { width: min(840px, 100%) !important; }
+
 .techApp .status { display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; padding: 5px 8px; font-size: .68rem; font-weight: 850; letter-spacing: .03em; }
 .techApp .status::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
 .techApp .status.online { color: #0d704e; background: #dcf3ea; }
@@ -240,6 +256,7 @@
   .resourceLine { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .detailResources, .detailIdentity { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .emailAlertSummary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .backupInfoGrid { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 680px) {
@@ -261,4 +278,6 @@
   .detailEndpoint { grid-template-columns: 1fr; }
   .printerUsageSummary { grid-template-columns: 1fr; }
   .emailAlertSummary { grid-template-columns: 1fr; }
+  .backupKpis, .backupFlow { grid-template-columns: 1fr; }
+  .backupFlow div:not(:last-child)::after { content: "⌄"; top: auto; right: 50%; bottom: -8px; margin: 0 -8px 0 0; }
 }

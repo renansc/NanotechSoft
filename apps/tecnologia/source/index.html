@@ -24,6 +24,7 @@
       <button class="tab active" data-view="dashboard" type="button">Visão geral</button>
       <button class="tab" data-view="equipamentos" type="button">Equipamentos</button>
       <button class="tab" data-view="protocolos" type="button">Agentes e protocolos</button>
+      <button class="tab" data-view="backup" type="button">Backup</button>
       <button class="tab" data-view="historico" type="button">Histórico</button>
     </nav>
 
@@ -176,6 +177,55 @@
           </div>
         </section>
       </section>
+
+      <section class="techView hidden" data-page="backup">
+        <div class="kpiGrid backupKpis">
+          <article class="kpi"><span>Planos ativos</span><strong id="backupKpiActive">0</strong><small>configurações em execução</small></article>
+          <article class="kpi warning"><span>Exigem atenção</span><strong id="backupKpiWarning">0</strong><small>agente sem contato ou falha</small></article>
+          <article class="kpi speed"><span>Último sucesso</span><strong id="backupKpiLastSuccess">—</strong><small>execução confirmada pelo agente</small></article>
+        </div>
+
+        <section class="panel">
+          <div class="panelHead">
+            <div><span class="eyebrow">Cópias externas</span><h2>Backups configurados</h2></div>
+            <button class="btn primary" id="newBackup" type="button">Novo plano de backup</button>
+          </div>
+          <div class="tableWrap">
+            <table>
+              <thead><tr><th>Plano e máquina</th><th>Periodicidade</th><th>Destino</th><th>Agente</th><th>Última execução</th><th></th></tr></thead>
+              <tbody id="backupTable"><tr><td colspan="6" class="muted">Carregando backups...</td></tr></tbody>
+            </table>
+          </div>
+        </section>
+
+        <div class="backupInfoGrid">
+          <section class="panel">
+            <span class="eyebrow">Retenção em camadas</span>
+            <h2>Diário → semana → mês → nuvem</h2>
+            <div class="backupFlow">
+              <div><strong>diario</strong><span>Todas as execuções programadas</span></div>
+              <div><strong>semana</strong><span>Último backup de cada dia</span></div>
+              <div><strong>mes</strong><span>Último backup de cada domingo</span></div>
+              <div><strong>nuvem</strong><span>Cópia opcional somente da camada mensal</span></div>
+            </div>
+          </section>
+          <section class="panel agentInstallPanel">
+            <div class="panelHead"><div><span class="eyebrow">Máquina executora</span><h2>Instalar o agente</h2></div><div class="tableActions"><a class="btn" href="/apps/tecnologia/api/backup/agent-script">Baixar agente Python</a><a class="btn" href="/apps/tecnologia/api/backup/windows-installer">Instalador Windows</a></div></div>
+            <ol>
+              <li>Cadastre o plano e salve o JSON baixado em uma pasta protegida.</li>
+              <li>Para banco, defina a variável local da senha; backup de arquivos não usa credencial de banco.</li>
+              <li>Instale Python 3. O cliente <code>mysqldump</code> é necessário somente para MySQL/MariaDB.</li>
+              <li>Instale o agente como serviço automático no boot; o JSON usa o HTTP local na porta 5600.</li>
+            </ol>
+            <p class="scopeWarning">O token fica no JSON da máquina e trafega pelo HTTP local. Restrinja a porta 5600 no firewall às máquinas executoras. Gerar um novo JSON invalida imediatamente o anterior.</p>
+          </section>
+        </div>
+
+        <section class="panel">
+          <div class="panelHead"><div><span class="eyebrow">Auditoria</span><h2>Execuções recentes</h2></div><button class="btn" id="refreshBackups" type="button">Atualizar</button></div>
+          <div class="tableWrap"><table><thead><tr><th>Data</th><th>Plano</th><th>Status</th><th>Camadas</th><th>Tamanho</th><th>Mensagem</th></tr></thead><tbody id="backupRunsTable"></tbody></table></div>
+        </section>
+      </section>
     </main>
 
     <div class="modal hidden" id="deviceDetailsModal" role="dialog" aria-modal="true" aria-labelledby="deviceDetailsTitle">
@@ -217,6 +267,33 @@
         </div>
         <div class="checkRow"><label><input id="deviceCritical" type="checkbox"> Equipamento crítico</label><label><input id="deviceActive" type="checkbox" checked> Monitoramento ativo</label></div>
         <div class="modalActions"><button class="btn" id="cancelDevice" type="button">Cancelar</button><button class="btn primary" type="submit">Salvar</button></div>
+      </form>
+    </div>
+
+    <div class="modal hidden" id="backupModal" role="dialog" aria-modal="true" aria-labelledby="backupModalTitle">
+      <form class="modalCard backupModalCard" id="backupForm">
+        <div class="panelHead"><div><span class="eyebrow">Plano externo</span><h2 id="backupModalTitle">Novo plano de backup</h2></div><button class="iconButton" id="closeBackupModal" type="button" aria-label="Fechar">×</button></div>
+        <input id="backupId" type="hidden">
+        <div class="formGrid">
+          <label>Nome do plano<input id="backupName" maxlength="160" required value="Backup banco NanotechSoft"></label>
+          <label>Máquina executora<input id="backupMachine" maxlength="160" required placeholder="Servidor Windows"></label>
+          <label>Tipo do backup<select id="backupDatabaseType"><option value="MYSQL">Banco MySQL</option><option value="MARIADB">Banco MariaDB</option><option value="FILES">Arquivos e pastas</option></select></label>
+          <label class="wide hidden" data-backup-files>Arquivos ou pastas de origem<textarea id="backupSourcePaths" rows="4" placeholder="C:\CTA\DADOS&#10;C:\CTA\CONFIG"></textarea><small>Um caminho local por linha. O agente cria um arquivo .tar.gz; não exige usuário nem senha de banco.</small></label>
+          <label data-backup-database>Host do banco<input id="backupDatabaseHost" data-backup-db-required maxlength="253" required value="127.0.0.1"></label>
+          <label data-backup-database>Porta<input id="backupDatabasePort" data-backup-db-required type="number" min="1" max="65535" required value="3306"></label>
+          <label data-backup-database>Nome do banco<input id="backupDatabaseName" data-backup-db-required maxlength="160" required value="notechsoft"></label>
+          <label data-backup-database>Usuário do banco<input id="backupDatabaseUser" data-backup-db-required maxlength="160" required placeholder="backup_read"></label>
+          <label data-backup-database>Variável local da senha<input id="backupPasswordEnv" data-backup-db-required maxlength="160" required value="NANOTECH_BACKUP_DB_PASSWORD"><small>A senha não é gravada no portal.</small></label>
+          <label class="wide">Pasta no HDD externo<input id="backupDestination" maxlength="1000" required placeholder="\\192.168.200.10\e\backup Nanotechsoft"><small>Use um compartilhamento UNC no Windows ou um caminho já montado no Linux.</small></label>
+          <label class="wide">Pasta sincronizada na nuvem (opcional)<input id="backupCloudPath" maxlength="1000" placeholder="C:\Nuvem\Backup Nanotechsoft\mes"><small>Recebe somente o último backup de cada semana.</small></label>
+          <label>Horários diários<input id="backupTimes" required value="08:00, 12:00, 17:00"><small>Formato 24 horas, separados por vírgula.</small></label>
+          <label>Fuso horário<input id="backupTimezone" maxlength="80" required value="America/Sao_Paulo"></label>
+          <label>Reter diário por dias<input id="backupDailyRetention" type="number" min="1" max="365" value="7" required></label>
+          <label>Reter semana por semanas<input id="backupWeeklyRetention" type="number" min="1" max="260" value="5" required></label>
+          <label>Reter mês por meses<input id="backupMonthlyRetention" type="number" min="1" max="120" value="12" required></label>
+        </div>
+        <div class="checkRow"><label><input id="backupActive" type="checkbox" checked> Plano ativo</label></div>
+        <div class="modalActions"><button class="btn" id="cancelBackup" type="button">Cancelar</button><button class="btn primary" type="submit">Salvar plano</button></div>
       </form>
     </div>
     <div id="toast" class="toast hidden" role="status"></div>

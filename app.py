@@ -10,6 +10,8 @@ import os
 from pathlib import Path
 import re
 import mimetypes
+import hmac
+import secrets
 import smtplib
 import ssl
 import socket
@@ -497,6 +499,14 @@ def ensure_database():
         cur.execute(f"SHOW COLUMNS FROM tecnologia_dispositivos LIKE '{column_name}'")
         if not cur.fetchone():
             cur.execute(f"ALTER TABLE tecnologia_dispositivos ADD COLUMN {column_name} {column_ddl}")
+
+    technology_backup_columns = {
+        "origens_path": "JSON NULL AFTER senha_variavel",
+    }
+    for column_name, column_ddl in technology_backup_columns.items():
+        cur.execute(f"SHOW COLUMNS FROM tecnologia_backups LIKE '{column_name}'")
+        if not cur.fetchone():
+            cur.execute(f"ALTER TABLE tecnologia_backups ADD COLUMN {column_name} {column_ddl}")
 
     seed_rio_branco = configured_client_id() == "rio-branco"
     cur.execute("SELECT COUNT(*) FROM tecnologia_dispositivos")
@@ -1623,6 +1633,7 @@ def app_visible_to_user(app_item, usuario):
 PUBLIC_APP_PATH_PREFIXES = (
     "/apps/zap/webhooks/whatsapp",
     "/apps/zap/public/uploads/",
+    "/apps/tecnologia/api/backup/agent/",
 )
 
 
@@ -6844,6 +6855,511 @@ def technology_admin_or_error():
     if not usuario or not user_is_admin(usuario):
         return jsonify({"erro": "somente administradores podem alterar o monitoramento"}), 403
     return None
+
+
+TECHNOLOGY_BACKUP_STATUSES = {"RUNNING", "SUCCESS", "FAILED", "SKIPPED"}
+
+
+def technology_backup_times(value):
+    if isinstance(value, str):
+        value = [part.strip() for part in value.split(",")]
+    if not isinstance(value, list):
+        raise ValueError("horários devem ser uma lista JSON")
+    times = []
+    for item in value:
+        text = str(item or "").strip()
+        if not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", text):
+            raise ValueError(f"horário inválido: {text or '(vazio)'}")
+        if text not in times:
+            times.append(text)
+    if not times or len(times) > 12:
+        raise ValueError("informe entre 1 e 12 horários por dia")
+    return sorted(times)
+
+
+def normalize_technology_backup_payload(payload):
+    data = payload if isinstance(payload, dict) else {}
+
+    def required(name, label, maximum):
+        value = str(data.get(name) or "").strip()
+        if not value:
+            raise ValueError(f"{label} é obrigatório")
+        if len(value) > maximum:
+            raise ValueError(f"{label} excede {maximum} caracteres")
+        return value
+
+    timezone_name = str(data.get("timezone") or "America/Sao_Paulo").strip()
+    try:
+        ZoneInfo(timezone_name)
+    except (KeyError, ValueError) as exc:
+        raise ValueError("fuso horário inválido") from exc
+    password_env = str(data.get("passwordEnv") or "NANOTECH_BACKUP_DB_PASSWORD").strip()
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,159}", password_env):
+        raise ValueError("variável da senha inválida")
+
+    def integer(name, default, minimum, maximum):
+        try:
+            value = int(data.get(name, default))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{name} inválido") from exc
+        if value < minimum or value > maximum:
+            raise ValueError(f"{name} deve ficar entre {minimum} e {maximum}")
+        return value
+
+    db_type = str(data.get("databaseType") or "MYSQL").strip().upper()
+    if db_type not in {"MYSQL", "MARIADB", "FILES"}:
+        raise ValueError("tipo de backup deve ser MySQL, MariaDB ou arquivos")
+    source_paths = data.get("sourcePaths") or []
+    if isinstance(source_paths, str):
+        source_paths = [line.strip() for line in source_paths.splitlines() if line.strip()]
+    if not isinstance(source_paths, list):
+        raise ValueError("origens de arquivos devem ser uma lista JSON")
+    source_paths = list(dict.fromkeys(str(item or "").strip() for item in source_paths if str(item or "").strip()))
+    if any(len(path) > 1000 or "\0" in path for path in source_paths):
+        raise ValueError("caminho de origem inválido")
+    if db_type == "FILES":
+        if not source_paths or len(source_paths) > 20:
+            raise ValueError("informe entre 1 e 20 arquivos ou pastas de origem")
+        database_host = str(data.get("databaseHost") or "").strip()
+        database_name = str(data.get("databaseName") or "").strip()
+        database_user = str(data.get("databaseUser") or "").strip()
+    else:
+        source_paths = []
+        database_host = required("databaseHost", "host do banco", 253)
+        database_name = required("databaseName", "nome do banco", 160)
+        database_user = required("databaseUser", "usuário do banco", 160)
+        if not re.fullmatch(r"[A-Za-z0-9_.:-]+", database_host):
+            raise ValueError("host do banco inválido")
+        if not re.fullmatch(r"[A-Za-z0-9_]+", database_name):
+            raise ValueError("nome do banco inválido")
+        if not re.fullmatch(r"[A-Za-z0-9_.@-]+", database_user):
+            raise ValueError("usuário do banco inválido")
+    return {
+        "nome": required("name", "nome", 160),
+        "maquina": required("machine", "máquina executora", 160),
+        "banco_tipo": db_type,
+        "banco_host": database_host,
+        "banco_porta": integer("databasePort", 3306, 1, 65535),
+        "banco_nome": database_name,
+        "banco_usuario": database_user,
+        "senha_variavel": password_env,
+        "origens_path": json.dumps(source_paths, ensure_ascii=False),
+        "destino_path": required("destinationPath", "pasta de destino", 1000),
+        "nuvem_path": str(data.get("cloudSyncPath") or "").strip()[:1000],
+        "horarios": json.dumps(technology_backup_times(data.get("times") or []), ensure_ascii=False),
+        "timezone": timezone_name,
+        "retencao_diaria_dias": integer("dailyRetentionDays", 7, 1, 365),
+        "retencao_semanal_semanas": integer("weeklyRetentionWeeks", 5, 1, 260),
+        "retencao_mensal_meses": integer("monthlyRetentionMonths", 12, 1, 120),
+        "ativo": 1 if data.get("active", True) else 0,
+    }
+
+
+def technology_backup_next_run(times, timezone_name, now=None):
+    schedule = technology_backup_times(times)
+    zone = ZoneInfo(timezone_name)
+    current = now or dt.datetime.now(dt.UTC)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=dt.UTC)
+    local_now = current.astimezone(zone)
+    for day_offset in (0, 1):
+        day = local_now.date() + dt.timedelta(days=day_offset)
+        for item in schedule:
+            hour, minute = (int(part) for part in item.split(":"))
+            candidate = dt.datetime.combine(day, dt.time(hour, minute), zone)
+            if candidate > local_now:
+                return candidate.isoformat(timespec="minutes")
+    return ""
+
+
+def technology_backup_json_list(value):
+    if isinstance(value, list):
+        return value
+    try:
+        parsed = json.loads(value or "[]")
+    except (TypeError, ValueError):
+        return []
+    return parsed if isinstance(parsed, list) else []
+
+
+def technology_public_backup(row):
+    times = technology_backup_json_list(row.get("horarios"))
+    last_seen = row.get("ultimo_contato_em")
+    last_status = str(row.get("ultima_status") or "")
+    if not row.get("ativo"):
+        health = "DISABLED"
+    elif not last_seen:
+        health = "WAITING"
+    elif dt.datetime.now() - last_seen > dt.timedelta(minutes=10):
+        health = "OFFLINE"
+    elif last_status == "FAILED":
+        health = "WARNING"
+    else:
+        health = "ONLINE"
+    return {
+        "id": int(row["id"]),
+        "name": row.get("nome") or "",
+        "machine": row.get("maquina") or "",
+        "agentId": row.get("agente_id") or "",
+        "databaseType": row.get("banco_tipo") or "MYSQL",
+        "databaseHost": row.get("banco_host") or "",
+        "databasePort": int(row.get("banco_porta") or 3306),
+        "databaseName": row.get("banco_nome") or "",
+        "databaseUser": row.get("banco_usuario") or "",
+        "passwordEnv": row.get("senha_variavel") or "NANOTECH_BACKUP_DB_PASSWORD",
+        "sourcePaths": technology_backup_json_list(row.get("origens_path")),
+        "destinationPath": row.get("destino_path") or "",
+        "cloudSyncPath": row.get("nuvem_path") or "",
+        "times": times,
+        "timezone": row.get("timezone") or "America/Sao_Paulo",
+        "dailyRetentionDays": int(row.get("retencao_diaria_dias") or 7),
+        "weeklyRetentionWeeks": int(row.get("retencao_semanal_semanas") or 5),
+        "monthlyRetentionMonths": int(row.get("retencao_mensal_meses") or 12),
+        "active": bool(row.get("ativo")),
+        "health": health,
+        "lastSeenAt": technology_db_timestamp_iso(last_seen) if last_seen else "",
+        "agentVersion": row.get("agente_versao") or "",
+        "nextRunAt": technology_backup_next_run(times, row.get("timezone") or "America/Sao_Paulo") if row.get("ativo") else "",
+        "lastRun": ({
+            "status": last_status,
+            "completedAt": technology_db_timestamp_iso(row.get("ultima_conclusao")) if row.get("ultima_conclusao") else "",
+            "filePath": row.get("ultimo_arquivo") or "",
+            "sizeBytes": int(row["ultimo_tamanho"]) if row.get("ultimo_tamanho") is not None else None,
+            "message": row.get("ultima_mensagem") or "",
+        } if row.get("ultima_execucao_id") else None),
+    }
+
+
+def get_technology_backups():
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    cur.execute(
+        """
+        SELECT b.*, e.execucao_id AS ultima_execucao_id, e.status AS ultima_status,
+               e.concluido_em AS ultima_conclusao, e.arquivo_path AS ultimo_arquivo,
+               e.tamanho_bytes AS ultimo_tamanho, e.mensagem AS ultima_mensagem
+        FROM tecnologia_backups b
+        LEFT JOIN tecnologia_backup_execucoes e ON e.id = (
+            SELECT x.id FROM tecnologia_backup_execucoes x
+            WHERE x.backup_id=b.id ORDER BY x.recebido_em DESC, x.id DESC LIMIT 1
+        )
+        ORDER BY b.ativo DESC, b.nome ASC, b.id ASC
+        """
+    )
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    return rows
+
+
+def technology_backup_setup(row, token):
+    agent_id = row.get("agente_id") or row.get("agentId")
+    base = technology_backup_agent_base_url()
+    return {
+        "fileName": f"nanotech-backup-{agent_id}.json",
+        "bootstrap": {
+            "schemaVersion": 1,
+            "configUrl": f"{base}/apps/tecnologia/api/backup/agent/{agent_id}/config",
+            "reportUrl": f"{base}/apps/tecnologia/api/backup/agent/{agent_id}/report",
+            "agentId": agent_id,
+            "agentToken": token,
+            "pollSeconds": 60,
+        },
+    }
+
+
+def technology_backup_agent_base_url():
+    configured = str(os.environ.get("TECH_BACKUP_AGENT_BASE_URL") or "").strip()
+    if configured:
+        parsed = urllib.parse.urlsplit(configured)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.query or parsed.fragment:
+            raise ValueError("TECH_BACKUP_AGENT_BASE_URL deve ser uma URL HTTP(S) válida")
+        return configured.rstrip("/")
+    return request.host_url.rstrip("/")
+
+
+def technology_backup_find(backup_id):
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    cur.execute("SELECT * FROM tecnologia_backups WHERE id=%s LIMIT 1", (backup_id,))
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+    return row
+
+
+def technology_backup_agent_or_error(agent_id):
+    authorization = str(request.headers.get("Authorization") or "")
+    token = authorization[7:].strip() if authorization.lower().startswith("bearer ") else ""
+    token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest() if token else ""
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    cur.execute("SELECT * FROM tecnologia_backups WHERE agente_id=%s LIMIT 1", (agent_id,))
+    row = cur.fetchone()
+    if not row or not token_hash or not hmac.compare_digest(token_hash, str(row.get("agente_token_hash") or "")):
+        cur.close()
+        conn.close()
+        return None, None, (jsonify({"erro": "agente ou token inválido"}), 401)
+    return conn, cur, row
+
+
+def technology_backup_parse_timestamp(value):
+    if not value:
+        return None
+    try:
+        parsed = dt.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("data do relatório inválida") from exc
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(dt.UTC).replace(tzinfo=None)
+    return parsed
+
+
+@app.route("/apps/tecnologia/api/backup/jobs")
+@login_required
+def tecnologia_backup_jobs_api():
+    rows = get_technology_backups()
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    cur.execute(
+        """
+        SELECT e.*, b.nome AS backup_nome, b.maquina
+        FROM tecnologia_backup_execucoes e
+        JOIN tecnologia_backups b ON b.id=e.backup_id
+        ORDER BY e.recebido_em DESC, e.id DESC LIMIT 100
+        """
+    )
+    executions = cur.fetchall()
+    cur.close()
+    conn.close()
+    return jsonify({
+        "jobs": [technology_public_backup(row) for row in rows],
+        "executions": [{
+            "id": int(row["id"]), "jobId": int(row["backup_id"]),
+            "jobName": row.get("backup_nome") or "", "machine": row.get("maquina") or "",
+            "executionId": row.get("execucao_id") or "", "scheduledTime": row.get("horario_programado") or "",
+            "status": row.get("status") or "", "startedAt": technology_db_timestamp_iso(row.get("iniciado_em")) if row.get("iniciado_em") else "",
+            "completedAt": technology_db_timestamp_iso(row.get("concluido_em")) if row.get("concluido_em") else "",
+            "filePath": row.get("arquivo_path") or "", "sizeBytes": int(row["tamanho_bytes"]) if row.get("tamanho_bytes") is not None else None,
+            "sha256": row.get("sha256") or "", "tiers": [item for item in str(row.get("camadas") or "").split(",") if item],
+            "message": row.get("mensagem") or "",
+        } for row in executions],
+    })
+
+
+@app.route("/apps/tecnologia/api/backup/jobs", methods=["POST"])
+@login_required
+def tecnologia_backup_create_api():
+    denied = technology_admin_or_error()
+    if denied:
+        return denied
+    try:
+        data = normalize_technology_backup_payload(request.get_json(silent=True) or {})
+    except (TypeError, ValueError) as exc:
+        return jsonify({"erro": str(exc)}), 400
+    token = secrets.token_urlsafe(32)
+    data.update({
+        "agente_id": f"backup-{secrets.token_hex(8)}",
+        "agente_token_hash": hashlib.sha256(token.encode("utf-8")).hexdigest(),
+    })
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        INSERT INTO tecnologia_backups
+            (nome, maquina, agente_id, agente_token_hash, banco_tipo, banco_host,
+             banco_porta, banco_nome, banco_usuario, senha_variavel, origens_path, destino_path,
+             nuvem_path, horarios, timezone, retencao_diaria_dias,
+             retencao_semanal_semanas, retencao_mensal_meses, ativo)
+        VALUES (%(nome)s, %(maquina)s, %(agente_id)s, %(agente_token_hash)s,
+                %(banco_tipo)s, %(banco_host)s, %(banco_porta)s, %(banco_nome)s,
+                %(banco_usuario)s, %(senha_variavel)s, %(origens_path)s, %(destino_path)s,
+                %(nuvem_path)s, %(horarios)s, %(timezone)s,
+                %(retencao_diaria_dias)s, %(retencao_semanal_semanas)s,
+                %(retencao_mensal_meses)s, %(ativo)s)
+        """,
+        data,
+    )
+    backup_id = int(cur.lastrowid)
+    conn.commit()
+    cur.close()
+    conn.close()
+    row = technology_backup_find(backup_id)
+    return jsonify({"job": technology_public_backup(row), "setup": technology_backup_setup(row, token)}), 201
+
+
+@app.route("/apps/tecnologia/api/backup/jobs/<int:backup_id>", methods=["PUT", "DELETE"])
+@login_required
+def tecnologia_backup_job_api(backup_id):
+    denied = technology_admin_or_error()
+    if denied:
+        return denied
+    conn = get_conn()
+    cur = conn.cursor()
+    if request.method == "DELETE":
+        cur.execute("DELETE FROM tecnologia_backups WHERE id=%s", (backup_id,))
+        changed = cur.rowcount
+        conn.commit()
+        cur.close()
+        conn.close()
+        return ("", 204) if changed else (jsonify({"erro": "plano de backup não encontrado"}), 404)
+    if not technology_backup_find(backup_id):
+        cur.close()
+        conn.close()
+        return jsonify({"erro": "plano de backup não encontrado"}), 404
+    try:
+        data = normalize_technology_backup_payload(request.get_json(silent=True) or {})
+    except (TypeError, ValueError) as exc:
+        cur.close()
+        conn.close()
+        return jsonify({"erro": str(exc)}), 400
+    data["id"] = backup_id
+    cur.execute(
+        """
+        UPDATE tecnologia_backups SET nome=%(nome)s, maquina=%(maquina)s,
+            banco_tipo=%(banco_tipo)s, banco_host=%(banco_host)s,
+            banco_porta=%(banco_porta)s, banco_nome=%(banco_nome)s,
+            banco_usuario=%(banco_usuario)s, senha_variavel=%(senha_variavel)s,
+            origens_path=%(origens_path)s, destino_path=%(destino_path)s, nuvem_path=%(nuvem_path)s,
+            horarios=%(horarios)s, timezone=%(timezone)s,
+            retencao_diaria_dias=%(retencao_diaria_dias)s,
+            retencao_semanal_semanas=%(retencao_semanal_semanas)s,
+            retencao_mensal_meses=%(retencao_mensal_meses)s, ativo=%(ativo)s
+        WHERE id=%(id)s
+        """,
+        data,
+    )
+    conn.commit()
+    cur.close()
+    conn.close()
+    return jsonify({"job": technology_public_backup(technology_backup_find(backup_id))})
+
+
+@app.route("/apps/tecnologia/api/backup/jobs/<int:backup_id>/rotate-token", methods=["POST"])
+@login_required
+def tecnologia_backup_rotate_token_api(backup_id):
+    denied = technology_admin_or_error()
+    if denied:
+        return denied
+    row = technology_backup_find(backup_id)
+    if not row:
+        return jsonify({"erro": "plano de backup não encontrado"}), 404
+    token = secrets.token_urlsafe(32)
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        "UPDATE tecnologia_backups SET agente_token_hash=%s, ultimo_contato_em=NULL WHERE id=%s",
+        (hashlib.sha256(token.encode("utf-8")).hexdigest(), backup_id),
+    )
+    conn.commit()
+    cur.close()
+    conn.close()
+    return jsonify({"setup": technology_backup_setup(row, token)})
+
+
+@app.route("/apps/tecnologia/api/backup/agent-script")
+@login_required
+def tecnologia_backup_agent_script_api():
+    denied = technology_admin_or_error()
+    if denied:
+        return denied
+    return send_file(
+        BASE_DIR / "tools" / "technology_backup_agent.py",
+        mimetype="text/x-python",
+        as_attachment=True,
+        download_name="technology_backup_agent.py",
+    )
+
+
+@app.route("/apps/tecnologia/api/backup/windows-installer")
+@login_required
+def tecnologia_backup_windows_installer_api():
+    denied = technology_admin_or_error()
+    if denied:
+        return denied
+    return send_file(
+        BASE_DIR / "tools" / "install_technology_backup_windows.ps1",
+        mimetype="text/plain",
+        as_attachment=True,
+        download_name="install_technology_backup_windows.ps1",
+    )
+
+
+@app.route("/apps/tecnologia/api/backup/agent/<agent_id>/config")
+def tecnologia_backup_agent_config_api(agent_id):
+    conn, cur, row_or_error = technology_backup_agent_or_error(agent_id)
+    if conn is None:
+        return row_or_error
+    row = row_or_error
+    version = str(request.headers.get("X-Backup-Agent-Version") or "")[:40]
+    cur.execute(
+        "UPDATE tecnologia_backups SET ultimo_contato_em=UTC_TIMESTAMP(3), agente_versao=%s WHERE id=%s",
+        (version, row["id"]),
+    )
+    conn.commit()
+    cur.close()
+    conn.close()
+    job = technology_public_backup(row)
+    for private_field in ("id", "health", "lastSeenAt", "agentVersion", "nextRunAt", "lastRun"):
+        job.pop(private_field, None)
+    return jsonify({"schemaVersion": 1, "serverTime": dt.datetime.now(dt.UTC).isoformat(), "job": job})
+
+
+@app.route("/apps/tecnologia/api/backup/agent/<agent_id>/report", methods=["POST"])
+def tecnologia_backup_agent_report_api(agent_id):
+    conn, cur, row_or_error = technology_backup_agent_or_error(agent_id)
+    if conn is None:
+        return row_or_error
+    row = row_or_error
+    payload = request.get_json(silent=True) or {}
+    status = str(payload.get("status") or "").upper()
+    execution_id = str(payload.get("executionId") or "").strip()
+    if status not in TECHNOLOGY_BACKUP_STATUSES or not execution_id or len(execution_id) > 120:
+        cur.close()
+        conn.close()
+        return jsonify({"erro": "relatório de execução inválido"}), 400
+    try:
+        started_at = technology_backup_parse_timestamp(payload.get("startedAt"))
+        completed_at = technology_backup_parse_timestamp(payload.get("completedAt"))
+        size_bytes = None if payload.get("sizeBytes") is None else max(0, int(payload.get("sizeBytes")))
+    except (TypeError, ValueError) as exc:
+        cur.close()
+        conn.close()
+        return jsonify({"erro": str(exc)}), 400
+    sha256 = str(payload.get("sha256") or "").lower().strip()
+    if sha256 and not re.fullmatch(r"[a-f0-9]{64}", sha256):
+        cur.close()
+        conn.close()
+        return jsonify({"erro": "checksum SHA-256 inválido"}), 400
+    tiers = payload.get("tiers") if isinstance(payload.get("tiers"), list) else []
+    cur.execute(
+        """
+        INSERT INTO tecnologia_backup_execucoes
+            (backup_id, execucao_id, horario_programado, status, iniciado_em,
+             concluido_em, arquivo_path, tamanho_bytes, sha256, camadas, mensagem, detalhes)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ON DUPLICATE KEY UPDATE status=VALUES(status), iniciado_em=VALUES(iniciado_em),
+            concluido_em=VALUES(concluido_em), arquivo_path=VALUES(arquivo_path),
+            tamanho_bytes=VALUES(tamanho_bytes), sha256=VALUES(sha256),
+            camadas=VALUES(camadas), mensagem=VALUES(mensagem),
+            detalhes=VALUES(detalhes), recebido_em=UTC_TIMESTAMP(3)
+        """,
+        (
+            row["id"], execution_id, str(payload.get("scheduledTime") or "")[:5], status,
+            started_at, completed_at, str(payload.get("filePath") or "")[:1200], size_bytes,
+            sha256, ",".join(str(item)[:30] for item in tiers[:5]),
+            str(payload.get("message") or "")[:1000],
+            json.dumps(payload.get("details") if isinstance(payload.get("details"), dict) else {}, ensure_ascii=False),
+        ),
+    )
+    cur.execute(
+        "UPDATE tecnologia_backups SET ultimo_contato_em=UTC_TIMESTAMP(3), agente_versao=%s WHERE id=%s",
+        (str(request.headers.get("X-Backup-Agent-Version") or "")[:40], row["id"]),
+    )
+    conn.commit()
+    cur.close()
+    conn.close()
+    return jsonify({"ok": True})
 
 
 @app.route("/apps/tecnologia/api/overview")

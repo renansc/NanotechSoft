@@ -2,8 +2,9 @@
   "use strict";
 
   const API = "/apps/tecnologia/api";
-  const state = { devices: [], diagnosis: [], emailAlerts: null, monitorIntervalSeconds: 60, speed: null, metrics: [], speedMetrics: [], printerUsage: {} };
+  const state = { devices: [], diagnosis: [], emailAlerts: null, monitorIntervalSeconds: 60, speed: null, metrics: [], speedMetrics: [], printerUsage: {}, backups: [], backupRuns: [] };
   let editingId = null;
+  let editingBackupId = null;
   let detailDeviceId = null;
   let toastTimer = null;
 
@@ -457,13 +458,160 @@
     }
   }
 
+  const backupHealthLabel = {
+    ONLINE: "Conectado", WARNING: "Atenção", OFFLINE: "Sem contato",
+    WAITING: "Aguardando agente", DISABLED: "Inativo",
+  };
+  const backupRunLabel = { RUNNING: "Executando", SUCCESS: "Concluído", FAILED: "Falhou", SKIPPED: "Ignorado" };
+  const backupStatusClass = (value) => ({ ONLINE: "online", SUCCESS: "online", WARNING: "degradado", RUNNING: "degradado", OFFLINE: "offline", FAILED: "offline", WAITING: "pending", DISABLED: "pending", SKIPPED: "pending" })[value] || "pending";
+  const backupBadge = (value, labels = backupHealthLabel) => `<span class="status ${backupStatusClass(value)}">${esc(labels[value] || value || "Aguardando")}</span>`;
+
+  function downloadJson(fileName, payload) {
+    const blob = new Blob([`${JSON.stringify(payload, null, 2)}\n`], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = fileName;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  function renderBackups() {
+    const active = state.backups.filter((job) => job.active);
+    const warning = active.filter((job) => ["WARNING", "OFFLINE", "WAITING"].includes(job.health));
+    const successes = state.backupRuns.filter((run) => run.status === "SUCCESS" && run.completedAt);
+    $("#backupKpiActive").textContent = active.length;
+    $("#backupKpiWarning").textContent = warning.length;
+    $("#backupKpiLastSuccess").textContent = successes.length ? dateTime(successes[0].completedAt) : "—";
+    $("#backupTable").innerHTML = state.backups.map((job) => `<tr>
+      <td><strong>${esc(job.name)}</strong><br><small class="muted">${esc(job.machine)} · ${job.databaseType === "FILES" ? `Arquivos: ${(job.sourcePaths || []).map(esc).join(", ")}` : `${esc(job.databaseType)} ${esc(job.databaseHost)}:${Number(job.databasePort)}/${esc(job.databaseName)}`}</small></td>
+      <td><strong>${job.times.map(esc).join(" · ")}</strong><br><small class="muted">Próximo: ${esc(dateTime(job.nextRunAt))}</small></td>
+      <td><span class="backupPath">${esc(job.destinationPath)}</span>${job.cloudSyncPath ? `<br><small class="muted">Nuvem: ${esc(job.cloudSyncPath)}</small>` : ""}</td>
+      <td>${backupBadge(job.health)}<br><small class="muted">${job.lastSeenAt ? `Contato: ${esc(dateTime(job.lastSeenAt))}` : esc(job.agentId)}</small></td>
+      <td>${job.lastRun ? `${backupBadge(job.lastRun.status, backupRunLabel)}<br><small class="muted">${esc(dateTime(job.lastRun.completedAt))} · ${esc(bytes(job.lastRun.sizeBytes))}</small>` : '<span class="muted">Nenhuma execução</span>'}</td>
+      <td><div class="tableActions"><button class="smallButton" data-backup-edit="${job.id}" type="button">Editar</button><button class="smallButton" data-backup-token="${job.id}" type="button">Novo JSON</button><button class="smallButton danger" data-backup-delete="${job.id}" type="button">Excluir</button></div></td>
+    </tr>`).join("") || '<tr><td colspan="6" class="muted">Nenhum plano de backup configurado.</td></tr>';
+    $("#backupRunsTable").innerHTML = state.backupRuns.map((run) => `<tr>
+      <td>${esc(dateTime(run.completedAt || run.startedAt))}</td><td><strong>${esc(run.jobName)}</strong><br><small class="muted">${esc(run.machine)}</small></td>
+      <td>${backupBadge(run.status, backupRunLabel)}</td><td>${run.tiers.length ? run.tiers.map((tier) => `<span class="backupTier">${esc(tier)}</span>`).join(" ") : "—"}</td>
+      <td>${esc(bytes(run.sizeBytes))}</td><td title="${esc(run.filePath)}">${esc(run.message || "—")}</td>
+    </tr>`).join("") || '<tr><td colspan="6" class="muted">O agente ainda não reportou execuções.</td></tr>';
+  }
+
+  async function loadBackups(options = {}) {
+    try {
+      const data = await request("/backup/jobs");
+      state.backups = data.jobs || [];
+      state.backupRuns = data.executions || [];
+      renderBackups();
+    } catch (error) {
+      if (!options.quiet) showToast(error.message, true);
+    }
+  }
+
+  function openBackup(job = null) {
+    editingBackupId = job?.id || null;
+    $("#backupModalTitle").textContent = job ? "Editar plano de backup" : "Novo plano de backup";
+    $("#backupId").value = job?.id || "";
+    $("#backupName").value = job?.name || "Backup banco NanotechSoft";
+    $("#backupMachine").value = job?.machine || "";
+    $("#backupDatabaseType").value = job?.databaseType || "MYSQL";
+    $("#backupDatabaseHost").value = job?.databaseHost || "127.0.0.1";
+    $("#backupDatabasePort").value = job?.databasePort || 3306;
+    $("#backupDatabaseName").value = job?.databaseName || "notechsoft";
+    $("#backupDatabaseUser").value = job?.databaseUser || "";
+    $("#backupPasswordEnv").value = job?.passwordEnv || "NANOTECH_BACKUP_DB_PASSWORD";
+    $("#backupSourcePaths").value = (job?.sourcePaths || []).join("\n");
+    $("#backupDestination").value = job?.destinationPath || "";
+    $("#backupCloudPath").value = job?.cloudSyncPath || "";
+    $("#backupTimes").value = (job?.times || ["08:00", "12:00", "17:00"]).join(", ");
+    $("#backupTimezone").value = job?.timezone || "America/Sao_Paulo";
+    $("#backupDailyRetention").value = job?.dailyRetentionDays || 7;
+    $("#backupWeeklyRetention").value = job?.weeklyRetentionWeeks || 5;
+    $("#backupMonthlyRetention").value = job?.monthlyRetentionMonths || 12;
+    $("#backupActive").checked = job ? Boolean(job.active) : true;
+    toggleBackupFields();
+    $("#backupModal").classList.remove("hidden");
+    $("#backupName").focus();
+  }
+
+  function toggleBackupFields() {
+    const files = $("#backupDatabaseType").value === "FILES";
+    $$('[data-backup-files]').forEach((element) => element.classList.toggle("hidden", !files));
+    $$('[data-backup-database]').forEach((element) => element.classList.toggle("hidden", files));
+    $$('[data-backup-db-required]').forEach((element) => { element.required = !files; });
+    $("#backupSourcePaths").required = files;
+  }
+
+  function closeBackup() {
+    $("#backupModal").classList.add("hidden");
+    editingBackupId = null;
+  }
+
+  async function saveBackup(event) {
+    event.preventDefault();
+    const payload = {
+      name: $("#backupName").value, machine: $("#backupMachine").value,
+      databaseType: $("#backupDatabaseType").value, databaseHost: $("#backupDatabaseHost").value,
+      databasePort: Number($("#backupDatabasePort").value), databaseName: $("#backupDatabaseName").value,
+      databaseUser: $("#backupDatabaseUser").value, passwordEnv: $("#backupPasswordEnv").value,
+      sourcePaths: $("#backupSourcePaths").value.split(/\r?\n/).map((item) => item.trim()).filter(Boolean),
+      destinationPath: $("#backupDestination").value, cloudSyncPath: $("#backupCloudPath").value,
+      times: $("#backupTimes").value.split(",").map((item) => item.trim()).filter(Boolean),
+      timezone: $("#backupTimezone").value,
+      dailyRetentionDays: Number($("#backupDailyRetention").value),
+      weeklyRetentionWeeks: Number($("#backupWeeklyRetention").value),
+      monthlyRetentionMonths: Number($("#backupMonthlyRetention").value),
+      active: $("#backupActive").checked,
+    };
+    try {
+      const data = await request(editingBackupId ? `/backup/jobs/${editingBackupId}` : "/backup/jobs", {
+        method: editingBackupId ? "PUT" : "POST", body: JSON.stringify(payload),
+      });
+      if (data.setup) {
+        downloadJson(data.setup.fileName, data.setup.bootstrap);
+        showToast("Plano salvo. O JSON confidencial do agente foi baixado.");
+      } else {
+        showToast("Plano de backup atualizado.");
+      }
+      closeBackup();
+      await loadBackups({ quiet: true });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  }
+
+  async function rotateBackupToken(id) {
+    const job = state.backups.find((item) => item.id === id);
+    if (!job || !window.confirm(`Gerar um novo JSON para ${job.name}? O token anterior deixará de funcionar.`)) return;
+    try {
+      const data = await request(`/backup/jobs/${id}/rotate-token`, { method: "POST", body: "{}" });
+      downloadJson(data.setup.fileName, data.setup.bootstrap);
+      await loadBackups({ quiet: true });
+      showToast("Novo JSON baixado; substitua o arquivo na máquina executora.");
+    } catch (error) { showToast(error.message, true); }
+  }
+
+  async function deleteBackup(id) {
+    const job = state.backups.find((item) => item.id === id);
+    if (!job || !window.confirm(`Excluir o plano ${job.name} e seu histórico? Os arquivos já gravados não serão removidos.`)) return;
+    try {
+      await request(`/backup/jobs/${id}`, { method: "DELETE" });
+      await loadBackups({ quiet: true });
+      showToast("Plano excluído; os arquivos externos foram preservados.");
+    } catch (error) { showToast(error.message, true); }
+  }
+
   function setView(view, updateHash = true) {
-    const known = ["dashboard", "equipamentos", "protocolos", "historico"];
+    const known = ["dashboard", "equipamentos", "protocolos", "backup", "historico"];
     if (!known.includes(view)) view = "dashboard";
     $$(".techView").forEach((element) => element.classList.toggle("hidden", element.dataset.page !== view));
     $$(".tab").forEach((element) => element.classList.toggle("active", element.dataset.view === view));
     if (updateHash) history.replaceState(null, "", view === "dashboard" ? location.pathname : `#${view}`);
     if (view === "historico") loadHistory();
+    if (view === "backup") loadBackups();
   }
 
   function openDevice(device = null) {
@@ -735,6 +883,13 @@
   $("#speedTest").addEventListener("click", runSpeedTest);
   $("#testAlertEmail").addEventListener("click", testAlertEmail);
   $("#newDevice").addEventListener("click", () => openDevice());
+  $("#newBackup").addEventListener("click", () => openBackup());
+  $("#refreshBackups").addEventListener("click", () => loadBackups());
+  $("#backupForm").addEventListener("submit", saveBackup);
+  $("#backupDatabaseType").addEventListener("change", toggleBackupFields);
+  $("#closeBackupModal").addEventListener("click", closeBackup);
+  $("#cancelBackup").addEventListener("click", closeBackup);
+  $("#backupModal").addEventListener("click", (event) => { if (event.target.id === "backupModal") closeBackup(); });
   $("#deviceForm").addEventListener("submit", saveDevice);
   $("#closeDeviceModal").addEventListener("click", closeDevice);
   $("#cancelDevice").addEventListener("click", closeDevice);
@@ -785,10 +940,19 @@
     $("#historyDevice").value = item.dataset.historyDevice;
     setView("historico");
   });
+  $("#backupTable").addEventListener("click", (event) => {
+    const edit = event.target.closest("[data-backup-edit]");
+    const rotate = event.target.closest("[data-backup-token]");
+    const remove = event.target.closest("[data-backup-delete]");
+    if (edit) return openBackup(state.backups.find((job) => job.id === Number(edit.dataset.backupEdit)));
+    if (rotate) return rotateBackupToken(Number(rotate.dataset.backupToken));
+    if (remove) return deleteBackup(Number(remove.dataset.backupDelete));
+  });
   window.addEventListener("hashchange", () => setView(location.hash.slice(1) || "dashboard", false));
-  window.addEventListener("keydown", (event) => { if (event.key === "Escape") { closeDevice(); closeDeviceDetails(); } });
+  window.addEventListener("keydown", (event) => { if (event.key === "Escape") { closeDevice(); closeDeviceDetails(); closeBackup(); } });
 
   setView(location.hash.slice(1) || "dashboard", false);
   loadOverview();
   window.setInterval(() => loadOverview({ quiet: true }), 15000);
+  window.setInterval(() => { if (location.hash === "#backup") loadBackups({ quiet: true }); }, 30000);
 })();

@@ -1,7 +1,7 @@
 {
   "app_key": "tecnologia",
   "nome": "Tecnologia",
-  "descricao": "Monitoramento de internet, rede, servidores, roteadores e impressoras.",
+  "descricao": "Monitoramento de internet, rede, servidores e backups externos.",
   "url": "/apps/tecnologia",
   "standalone_url": "/apps/tecnologia/original",
   "icone": "network",
@@ -40,6 +40,11 @@
         "nome": "Tecnologia - Monitoramento",
         "url": "/apps/tecnologia#equipamentos",
         "recurso": "equipamentos"
+      },
+      {
+        "nome": "Tecnologia - Backup",
+        "url": "/apps/tecnologia#backup",
+        "recurso": "backup"
       }
     ]
   }
