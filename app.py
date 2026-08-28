@@ -510,7 +510,8 @@ def ensure_database():
 
     seed_rio_branco = configured_client_id() == "rio-branco"
     cur.execute("SELECT COUNT(*) FROM tecnologia_dispositivos")
-    if seed_rio_branco and int((cur.fetchone() or [0])[0]) == 0:
+    technology_device_count = int((cur.fetchone() or [0])[0])
+    if seed_rio_branco and technology_device_count == 0:
         cur.executemany(
             """
             INSERT INTO tecnologia_dispositivos

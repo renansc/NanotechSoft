@@ -69,6 +69,57 @@ class CloudReadOnlyTests(unittest.TestCase):
 
 
 class DeploymentProfileTests(unittest.TestCase):
+    def test_nanotech_bootstrap_consumes_device_count_query(self):
+        class FakeCursor:
+            def __init__(self):
+                self.pending = None
+
+            def execute(self, statement, params=None):
+                if self.pending is not None:
+                    raise AssertionError("resultado anterior nao consumido")
+                normalized = " ".join(statement.split()).upper()
+                if normalized.startswith("SHOW COLUMNS"):
+                    self.pending = [("existing_column",)]
+                elif normalized == "SELECT COUNT(*) FROM TECNOLOGIA_DISPOSITIVOS":
+                    self.pending = [(1,)]
+                elif normalized.startswith("SELECT ID FROM USUARIOS"):
+                    self.pending = [(1,)]
+
+            def fetchone(self):
+                row = self.pending[0] if self.pending else None
+                self.pending = None
+                return row
+
+            def close(self):
+                if self.pending is not None:
+                    raise AssertionError("resultado pendente ao fechar cursor")
+
+        class FakeConnection:
+            def __init__(self, cursor):
+                self._cursor = cursor
+
+            def cursor(self):
+                return self._cursor
+
+            def commit(self):
+                pass
+
+            def close(self):
+                pass
+
+        server_cursor = FakeCursor()
+        portal_cursor = FakeCursor()
+        with (
+            mock.patch.object(portal, "CLOUD_READ_ONLY", False),
+            mock.patch.object(portal, "_db_ready", False),
+            mock.patch.object(portal, "configured_client_id", return_value="nanotech"),
+            mock.patch.object(portal, "get_server_conn", return_value=FakeConnection(server_cursor)),
+            mock.patch.object(portal, "get_conn", return_value=FakeConnection(portal_cursor)),
+            mock.patch.object(portal, "generate_password_hash", return_value="hash"),
+        ):
+            portal.ensure_database()
+            self.assertTrue(portal._db_ready)
+
     def test_profiles_cover_each_local_environment_and_render(self):
         payload = json.loads((PROJECT_DIR / "deploy/profiles.json").read_text(encoding="utf-8"))
         profiles = {item["id"]: item for item in payload["profiles"]}
