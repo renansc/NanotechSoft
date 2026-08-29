@@ -2072,6 +2072,19 @@ def _agent_llm_timeout() -> float:
         return 90.0
 
 
+def _agent_llm_context_mode() -> str:
+    mode = (os.environ.get("RB_AGENT_LLM_CONTEXT_MODE") or "full").strip().lower()
+    return mode if mode in {"full", "compact"} else "full"
+
+
+def _agent_llm_int_option(name: str, default: int, minimum: int, maximum: int) -> int:
+    try:
+        value = int((os.environ.get(name) or str(default)).strip())
+    except ValueError:
+        value = default
+    return max(minimum, min(maximum, value))
+
+
 def _agent_web_enabled() -> bool:
     return (os.environ.get("RB_AGENT_WEB_ENABLED") or "1").strip().lower() not in {"0", "false", "no", "off"}
 
@@ -2095,16 +2108,38 @@ def _agent_web_budget() -> float:
 def _agent_llm_history_messages(history: object) -> list[dict]:
     if not isinstance(history, list):
         return []
+    compact = _agent_llm_context_mode() == "compact"
+    history_limit = 4 if compact else LLM_HISTORY_LIMIT
+    content_limit = 800 if compact else LLM_MAX_TOKENS
     messages: list[dict] = []
-    for item in history[-LLM_HISTORY_LIMIT:]:
+    for item in history[-history_limit:]:
         if not isinstance(item, dict):
             continue
         role = str(item.get("role") or "").strip().lower()
         content = str(item.get("content") or item.get("text") or "").strip()
         if role not in {"user", "assistant", "system"} or not content:
             continue
-        messages.append({"role": role, "content": content[:LLM_MAX_TOKENS]})
+        messages.append({"role": role, "content": content[:content_limit]})
     return messages
+
+
+def _agent_llm_context_messages(message: str) -> list[dict]:
+    context_messages: list[dict] = []
+    env_context = _agent_environment_context_message()
+    if env_context:
+        limit = 3000 if _agent_llm_context_mode() == "compact" else len(env_context)
+        context_messages.append({"role": "system", "content": env_context[:limit]})
+
+    if _agent_llm_context_mode() == "compact":
+        return context_messages
+
+    repo_manifest = _agent_repo_manifest_message()
+    if repo_manifest:
+        context_messages.append({"role": "system", "content": repo_manifest})
+    repo_context = _agent_repo_context_message(message)
+    if repo_context:
+        context_messages.append({"role": "system", "content": repo_context})
+    return context_messages
 
 
 def _chat_mode(payload: dict | None) -> str:
@@ -7078,6 +7113,8 @@ def _agent_llm_request(messages: list[dict]) -> str | None:
         "format": "json",
         "options": {
             "temperature": _agent_llm_temperature(),
+            "num_ctx": _agent_llm_int_option("RB_AGENT_OLLAMA_NUM_CTX", 8192, 2048, 32768),
+            "num_predict": _agent_llm_int_option("RB_AGENT_OLLAMA_NUM_PREDICT", 512, 64, 2048),
         },
     }
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -7113,6 +7150,8 @@ def _agent_llm_request_stream(messages: list[dict]):
         "format": "json",
         "options": {
             "temperature": _agent_llm_temperature(),
+            "num_ctx": _agent_llm_int_option("RB_AGENT_OLLAMA_NUM_CTX", 8192, 2048, 32768),
+            "num_predict": _agent_llm_int_option("RB_AGENT_OLLAMA_NUM_PREDICT", 512, 64, 2048),
         },
     }
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -7353,15 +7392,7 @@ def _handle_chat_with_llm(payload: dict) -> dict | None:
 
     history = _agent_llm_history_messages(payload.get("history"))
     messages = [{"role": "system", "content": _agent_llm_system_prompt(persona_name, chat_mode)}]
-    env_context = _agent_environment_context_message()
-    if env_context:
-        messages.append({"role": "system", "content": env_context})
-    repo_manifest = _agent_repo_manifest_message()
-    if repo_manifest:
-        messages.append({"role": "system", "content": repo_manifest})
-    repo_context = _agent_repo_context_message(message)
-    if repo_context:
-        messages.append({"role": "system", "content": repo_context})
+    messages.extend(_agent_llm_context_messages(message))
     messages.extend(history)
     messages.append({"role": "user", "content": message[:LLM_MAX_TOKENS]})
 
@@ -7432,15 +7463,7 @@ def _handle_chat_with_llm_stream(payload: dict):
 
     history = _agent_llm_history_messages(payload.get("history"))
     messages = [{"role": "system", "content": _agent_llm_system_prompt(persona_name, chat_mode)}]
-    env_context = _agent_environment_context_message()
-    if env_context:
-        messages.append({"role": "system", "content": env_context})
-    repo_manifest = _agent_repo_manifest_message()
-    if repo_manifest:
-        messages.append({"role": "system", "content": repo_manifest})
-    repo_context = _agent_repo_context_message(message)
-    if repo_context:
-        messages.append({"role": "system", "content": repo_context})
+    messages.extend(_agent_llm_context_messages(message))
     messages.extend(history)
     messages.append({"role": "user", "content": message[:LLM_MAX_TOKENS]})
 

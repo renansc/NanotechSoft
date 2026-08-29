@@ -882,6 +882,9 @@ RB_AGENT_OLLAMA_URL=http://ollama:11434
 RB_AGENT_OLLAMA_MODEL=qwen2.5:3b
 RB_AGENT_LLM_PROVIDER=ollama
 RB_AGENT_OLLAMA_TIMEOUT=120
+RB_AGENT_LLM_CONTEXT_MODE=compact
+RB_AGENT_OLLAMA_NUM_CTX=4096
+RB_AGENT_OLLAMA_NUM_PREDICT=512
 RB_OPEN_WEBUI_IMAGE=ghcr.io/open-webui/open-webui:v0.9.6
 RB_OPEN_WEBUI_COMPAT_IMAGE=riob-open-webui:v0.9.6-numpy2.2.6
 RB_OPEN_WEBUI_NUMPY_VERSION=2.2.6
@@ -944,6 +947,11 @@ no Chrome/Edge em `pt-BR`. A transcrição aparece no campo para conferência an
 do envio ao backend e ao Ollama. O navegador precisa acessar o portal por HTTPS
 e ter permissão para usar o microfone. Esse fluxo não instala Whisper nem envia
 áudio ao backend; somente o texto reconhecido pelo navegador é enviado.
+
+Para servidores com 4 GB de RAM, configure também
+`RB_AGENT_LLM_CONTEXT_MODE=compact` e `RB_AGENT_OLLAMA_NUM_CTX=4096`. Esse modo
+reduz o manifesto, os trechos de repositório e o histórico enviados ao modelo,
+mantendo as ações operacionais e as consultas estruturadas no backend local.
 
 ## 20. Migracao dos combustiveis da frota
 

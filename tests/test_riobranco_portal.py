@@ -81,6 +81,8 @@ class RioBrancoPortalTests(unittest.TestCase):
         self.assertIn("RB_AGENT_LLM_PROVIDER: ${RB_AGENT_LLM_PROVIDER:-off}", compose)
         self.assertIn("RB_AGENT_OLLAMA_URL: ${RB_AGENT_OLLAMA_URL:-http://host.docker.internal:11434}", compose)
         self.assertIn("RB_AGENT_OLLAMA_MODEL: ${RB_AGENT_OLLAMA_MODEL:-qwen2.5:3b}", compose)
+        self.assertIn("RB_AGENT_LLM_CONTEXT_MODE: ${RB_AGENT_LLM_CONTEXT_MODE:-full}", compose)
+        self.assertIn("RB_AGENT_OLLAMA_NUM_CTX: ${RB_AGENT_OLLAMA_NUM_CTX:-8192}", compose)
 
     def test_user_configuration_uses_the_wide_responsive_layout(self):
         html = (PROJECT_DIR / "templates/config.html").read_text(encoding="utf-8")

@@ -70,6 +70,9 @@ RB_OLLAMA_REMOVE_MODELS=qwen2.5:7b
 RB_AGENT_OLLAMA_MODEL=qwen2.5:3b
 RB_AGENT_LLM_PROVIDER=ollama
 RB_AGENT_OLLAMA_TIMEOUT=120
+RB_AGENT_LLM_CONTEXT_MODE=compact
+RB_AGENT_OLLAMA_NUM_CTX=4096
+RB_AGENT_OLLAMA_NUM_PREDICT=512
 RB_OPEN_WEBUI_PORT=3000
 RB_OPEN_WEBUI_SECRET_KEY=gere-com-openssl-rand-hex-32
 ```
@@ -220,6 +223,11 @@ e Edge por meio do botão **Falar**. O navegador transcreve a fala para o campo
 de texto; confira o resultado antes de clicar em **Enviar**. O texto é então
 interpretado pelo Ollama configurado em `RB_AGENT_OLLAMA_URL`. A captura do
 microfone exige HTTPS e permissão do usuário no navegador.
+
+Em servidores com 4 GB de RAM, use `RB_AGENT_LLM_CONTEXT_MODE=compact` e
+`RB_AGENT_OLLAMA_NUM_CTX=4096`. O modo compacto mantém o contexto operacional e
+as ações do Agent IA, mas evita enviar o manifesto e trechos extensos do
+repositório em toda pergunta. Ambientes com mais memória podem manter `full`.
 
 Tambem existe um app independente em HTML, servido localmente por Python:
 

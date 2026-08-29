@@ -45,6 +45,26 @@ class _FakeConnection:
 
 
 class RioBrancoAgentWebTests(unittest.TestCase):
+    def test_compact_llm_context_omits_large_repository_sections(self):
+        with mock.patch.dict(agent_web.os.environ, {"RB_AGENT_LLM_CONTEXT_MODE": "compact"}), \
+            mock.patch.object(agent_web, "_agent_environment_context_message", return_value="ambiente"), \
+            mock.patch.object(agent_web, "_agent_repo_manifest_message") as manifest, \
+            mock.patch.object(agent_web, "_agent_repo_context_message") as context:
+            messages = agent_web._agent_llm_context_messages("listar cargas")
+
+        self.assertEqual(messages, [{"role": "system", "content": "ambiente"}])
+        manifest.assert_not_called()
+        context.assert_not_called()
+
+    def test_compact_llm_history_limits_messages_and_content(self):
+        history = [{"role": "user", "content": "x" * 1000} for _ in range(8)]
+
+        with mock.patch.dict(agent_web.os.environ, {"RB_AGENT_LLM_CONTEXT_MODE": "compact"}):
+            messages = agent_web._agent_llm_history_messages(history)
+
+        self.assertEqual(len(messages), 4)
+        self.assertTrue(all(len(item["content"]) == 800 for item in messages))
+
     def test_handle_chat_uses_llm_reply_when_available(self):
         with mock.patch.object(agent_web, "_agent_llm_request", return_value='{"type":"reply","reply":"Oi"}'), \
             mock.patch.object(agent_web, "_agent_llm_enabled", return_value=True):
