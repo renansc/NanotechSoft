@@ -107,7 +107,7 @@
     </div>
     <div class="menu-item" onclick="showTab('devolucoes',this)">Devoluções</div>
     <div class="menu-item has-submenu" data-tab="gestaofrota" onclick="toggleGestaoFrotaSubmenu(event)">Gestao Frota <span class="submenu-caret">&#9662;</span><div class="submenu" id="submenuGestaoFrota"><div class="submenu-item active" onclick="openGestaoFrotaView(event,'registrar')">Registrar</div><div class="submenu-item" onclick="openGestaoFrotaView(event,'lista')">Lista</div><div class="submenu-item" onclick="openGestaoFrotaView(event,'relatorios')">Relatorios</div><div class="submenu-item" onclick="openGestaoFrotaCargas(event)">Cadastro Cargas</div><div class="submenu-item" onclick="openGestaoFrotaEscala(event)">Escala</div></div></div>
-    <div class="menu-item has-submenu" data-tab="vendas" onclick="toggleVendasSubmenu(event)">Vendas <span class="submenu-caret">&#9662;</span><div class="submenu" id="submenuVendas"><div class="submenu-item active" data-vendas-view="relatorio" onclick="openVendasView(event,'relatorio')">Relatório</div><div class="submenu-item" data-vendas-view="pontosvenda" onclick="openVendasView(event,'pontosvenda')">Pontos de Venda</div></div></div>
+    <div class="menu-item has-submenu" data-tab="vendas" onclick="toggleVendasSubmenu(event)">Vendas <span class="submenu-caret">&#9662;</span><div class="submenu" id="submenuVendas"><div class="submenu-item active" data-vendas-view="relatorio" onclick="openVendasView(event,'relatorio')">Relatório</div><div class="submenu-item" data-vendas-view="orcamento" onclick="openVendasView(event,'orcamento')">Orçamento</div><div class="submenu-item" data-vendas-view="pontosvenda" onclick="openVendasView(event,'pontosvenda')">Pontos de Venda</div></div></div>
     <div class="menu-item has-submenu" data-tab="monitor" onclick="toggleMonitorSubmenu(event)">Monitor <span class="submenu-caret">&#9662;</span><div class="submenu" id="submenuMonitor"><div class="submenu-item active" data-monitor-view="esxi" onclick="openMonitorView(event,'esxi')">ESXi</div><div class="submenu-item" data-monitor-view="cameras" onclick="openMonitorView(event,'cameras')">Cameras</div><div class="submenu-item" data-monitor-view="automacao" onclick="openMonitorView(event,'automacao')">Automacao</div><div class="submenu-item" data-monitor-view="gestor_emails" onclick="openMonitorView(event,'gestor_emails')">Gestor de E-mails</div><div class="submenu-item" data-monitor-view="comunicacao" onclick="openMonitorComunicacao(event)">Comunicacao</div></div></div>
     <div class="menu-item" onclick="showTab('agentia',this); iniciarAgentIa()">Agent IA</div>
     <div class="menu-item has-submenu" data-tab="config" onclick="toggleConfigSubmenu(event)">Config <span class="submenu-caret">&#9662;</span><div class="submenu" id="submenuConfig"><div class="submenu-item active" onclick="openConfigView(event,'status')">Status</div><div class="submenu-item" onclick="openConfigView(event,'logs')">Logs</div><div class="submenu-item" onclick="openConfigView(event,'cameras')">Cameras</div><div class="submenu-item" onclick="openConfigView(event,'sip')">SIP</div><div class="submenu-item" onclick="openConfigView(event,'nfe')">NF-e</div><div class="submenu-item" onclick="openConfigView(event,'vendas')">Vendas</div><div class="submenu-item" onclick="openDocsPortal(event)">Docs</div></div></div>
@@ -1386,7 +1386,7 @@
               <tr>
                 <th>Produto</th>
                 <th>Grupo</th>
-                <th>Cargas / Datas</th>
+                <th class="relatorio-estoque-periodo">Período das cargas</th>
                 <th>Estoque Atual</th>
                 <th>Comprometido</th>
                 <th>Disponível</th>
@@ -2382,16 +2382,55 @@
   </section>
 
   <section id="vendas" class="section">
-    <div class="vendas-section-head">
+    <div class="vendas-section-head" id="vendasRelatorioHeader">
       <h2>Vendas</h2>
       <div id="vendasRelArquivoInfo" class="hint vendas-arquivo-info">Aguardando leitura e processamento do relatorio em Relatorios.</div>
     </div>
 
-    <div class="vendas-relatorio-tabs">
+    <div class="vendas-relatorio-tabs" id="vendasRelatorioTabs">
       <button type="button" class="active" id="vendasRelTabBonificacoes" onclick="setVendasRelatorioModo('bonificacoes')">Bonificações</button>
       <button type="button" id="vendasRelTabVariacao" onclick="setVendasRelatorioModo('variacao_preco')">Variação de Preço</button>
       <button type="button" id="vendasRelTabMix" onclick="setVendasRelatorioModo('grupos_embalagem')">Grupos Embalagem</button>
       <button type="button" id="vendasRelTabPrecoMedio" onclick="setVendasRelatorioModo('preco_medio')">Preço Médio</button>
+    </div>
+
+    <div id="vendasViewOrcamento" class="dash-view hidden">
+      <div class="boxFrota vendas-orcamento-form">
+        <div class="vendas-box-head">
+          <div>
+            <h3 id="vendasOrcamentoTitulo">Novo pedido / orçamento</h3>
+            <small class="hint">Os preços e percentuais são carregados de Config &gt; Vendas. O vendedor é identificado pelo acesso ao portal.</small>
+          </div>
+          <div class="vendas-toolbar">
+            <button type="button" class="btn-secondary" onclick="limparOrcamentoVendas()">Limpar</button>
+            <button type="button" id="vendasOrcamentoCancelarBtn" class="btn-secondary hidden" onclick="limparOrcamentoVendas()">Cancelar edição</button>
+            <button type="button" id="vendasOrcamentoSalvarBtn" onclick="salvarOrcamentoVendas()">Salvar e abrir PDF</button>
+          </div>
+        </div>
+        <div class="vendas-orcamento-dados">
+          <label>Cliente *<input type="text" id="vendasOrcamentoCliente" maxlength="255" placeholder="Nome do cliente"></label>
+          <label>Cidade<input type="text" id="vendasOrcamentoCidade" maxlength="180" placeholder="Cidade"></label>
+          <label>Data *<input type="date" id="vendasOrcamentoData"></label>
+          <label class="vendas-orcamento-observacao">Observação<input type="text" id="vendasOrcamentoObservacao" maxlength="2000" placeholder="Condição ou observação do pedido"></label>
+        </div>
+        <div id="vendasOrcamentoStatus" class="hint">Carregando produtos e parâmetros...</div>
+        <div id="vendasOrcamentoProdutos" class="vendas-orcamento-grupos"></div>
+        <h3>Cálculo do pedido</h3>
+        <div id="vendasOrcamentoCalculo" class="vendas-orcamento-calculo"></div>
+      </div>
+
+      <div class="boxFrota">
+        <div class="vendas-box-head">
+          <h3>Orçamentos emitidos</h3>
+          <button type="button" class="btn-secondary" onclick="carregarListaOrcamentosVendas()">Atualizar</button>
+        </div>
+        <div class="vendas-orcamento-tabela-wrap">
+          <table>
+            <thead><tr><th>Número</th><th>Data</th><th>Cliente</th><th>Cidade</th><th>Vendedor</th><th>Valor real</th><th>Ações</th></tr></thead>
+            <tbody id="vendasOrcamentosBody"><tr><td colspan="7">Carregando...</td></tr></tbody>
+          </table>
+        </div>
+      </div>
     </div>
 
     <div id="vendasViewRelatorio" class="dash-view">
@@ -3128,6 +3167,30 @@
               </tbody>
             </table>
           </div>
+        </div>
+      </div>
+
+      <div class="boxFrota vendas-orcamento-config">
+        <div class="vendas-box-head">
+          <div>
+            <h4>Pedido / Orçamento</h4>
+            <small class="hint">Valores baseados na planilha CalculoVendas.xlsx. Somente administradores podem salvar alterações.</small>
+          </div>
+          <button type="button" onclick="salvarConfigOrcamentoVendas()">Salvar parâmetros e produtos</button>
+        </div>
+        <div class="vendas-orcamento-parametros">
+          <label>Bonificação (%)<input type="number" id="vendasOrcCfgPctBonificacao" min="0" max="100" step="0.01"></label>
+          <label>Terço (%)<input type="number" id="vendasOrcCfgPctTerco" min="0" max="100" step="0.01"></label>
+          <label>Preço bonificação (R$)<input type="number" id="vendasOrcCfgPrecoBonificacao" min="0" step="0.01"></label>
+          <label>Preço seco retornável (R$)<input type="number" id="vendasOrcCfgPrecoSecoRet" min="0" step="0.01"></label>
+          <label>Preço seco PET (R$)<input type="number" id="vendasOrcCfgPrecoSecoPet" min="0" step="0.01"></label>
+        </div>
+        <div id="vendasOrcConfigStatus" class="hint">Carregando parâmetros do orçamento...</div>
+        <div class="vendas-orcamento-tabela-wrap vendas-orcamento-config-tabela">
+          <table>
+            <thead><tr><th>Usar</th><th>Produto do cadastro</th><th>Categoria</th><th>Preço unitário</th><th>Ordem</th></tr></thead>
+            <tbody id="vendasOrcConfigProdutosBody"><tr><td colspan="5">Carregando...</td></tr></tbody>
+          </table>
         </div>
       </div>
 

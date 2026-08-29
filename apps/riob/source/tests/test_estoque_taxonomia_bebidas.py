@@ -537,6 +537,7 @@ class EstoqueTaxonomiaBebidasTests(unittest.TestCase):
             "comprometimentos": [
                 {"carga_id": 1, "carga_nome": "Carga antiga", "data_comprometimento": "2026-08-01", "quantidade": 15},
                 {"carga_id": 2, "carga_nome": "Carga atual", "data_comprometimento": "2026-08-20", "quantidade": 25},
+                {"carga_id": 3, "carga_nome": "Carga seguinte", "data_comprometimento": "2026-08-25", "quantidade": 5},
             ],
         }]
         with mock.patch.object(
@@ -551,9 +552,11 @@ class EstoqueTaxonomiaBebidasTests(unittest.TestCase):
                 produto_id=10,
             )
         self.assertEqual(1, len(relatorio["rows"]))
-        self.assertEqual(25, relatorio["rows"][0]["quantidade_comprometida"])
-        self.assertEqual(75, relatorio["rows"][0]["saldo_remanescente"])
-        self.assertEqual(25, relatorio["meta"]["quantidade_comprometida_total"])
+        self.assertEqual(30, relatorio["rows"][0]["quantidade_comprometida"])
+        self.assertEqual(70, relatorio["rows"][0]["saldo_remanescente"])
+        self.assertEqual("2026-08-20", relatorio["rows"][0]["data_comprometimento_inicio"])
+        self.assertEqual("2026-08-25", relatorio["rows"][0]["data_comprometimento_fim"])
+        self.assertEqual(30, relatorio["meta"]["quantidade_comprometida_total"])
 
     def test_comprometido_usa_txt_sem_duplicar_pdf_e_converte_unidade_base(self):
         class Cursor:
@@ -615,7 +618,7 @@ class EstoqueTaxonomiaBebidasTests(unittest.TestCase):
         self.assertEqual(24, compromisso["quantidade"])
         self.assertEqual("vendas_diario", compromisso["origem"])
 
-    def test_pdf_comprometido_quebra_produto_com_muitas_cargas_em_linhas(self):
+    def test_pdf_comprometido_consolida_produto_com_muitas_cargas_em_uma_linha(self):
         compromissos = [
             {
                 "carga_id": indice,
@@ -634,6 +637,8 @@ class EstoqueTaxonomiaBebidasTests(unittest.TestCase):
                 "quantidade_atual": 1000,
                 "quantidade_comprometida": 900,
                 "saldo_remanescente": 100,
+                "data_comprometimento_inicio": "2026-08-27",
+                "data_comprometimento_fim": "2026-08-27",
                 "comprometimentos": compromissos,
             }],
         })

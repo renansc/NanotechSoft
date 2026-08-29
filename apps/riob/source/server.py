@@ -7,6 +7,7 @@ import csv
 import io
 import tarfile
 import tempfile
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from collections import Counter, defaultdict
 from difflib import SequenceMatcher
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image, Table, TableStyle, PageBreak
@@ -1168,6 +1169,136 @@ def ensure_schema():
             INDEX (nome_produto),
             INDEX (grupo_estoque),
             INDEX (produto_base_nome)
+        )
+        """)
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS vendas_orcamento_parametros (
+            id TINYINT NOT NULL PRIMARY KEY,
+            percentual_bonificacao DECIMAL(9,4) NOT NULL DEFAULT 15.0000,
+            percentual_terco DECIMAL(9,4) NOT NULL DEFAULT 33.0000,
+            preco_bonificacao DECIMAL(14,4) NOT NULL DEFAULT 46.6000,
+            preco_seco_retornavel DECIMAL(14,4) NOT NULL DEFAULT 44.0000,
+            preco_seco_pet DECIMAL(14,4) NOT NULL DEFAULT 30.0000,
+            atualizado_por VARCHAR(180) DEFAULT '',
+            atualizado_em DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        )
+        """)
+        cur.execute("""
+        INSERT IGNORE INTO vendas_orcamento_parametros
+            (id, percentual_bonificacao, percentual_terco, preco_bonificacao,
+             preco_seco_retornavel, preco_seco_pet)
+        VALUES (1, 15.0000, 33.0000, 46.6000, 44.0000, 30.0000)
+        """)
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS vendas_orcamento_produtos (
+            produto_id INT NOT NULL PRIMARY KEY,
+            categoria VARCHAR(30) NOT NULL,
+            preco_unitario DECIMAL(14,4) NOT NULL DEFAULT 0,
+            ordem INT NOT NULL DEFAULT 100,
+            ativo TINYINT(1) NOT NULL DEFAULT 1,
+            atualizado_por VARCHAR(180) DEFAULT '',
+            atualizado_em DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            INDEX idx_vendas_orc_produtos_categoria (categoria, ativo, ordem),
+            CONSTRAINT fk_vendas_orc_produto
+                FOREIGN KEY (produto_id) REFERENCES estoque_produtos(id)
+                ON UPDATE CASCADE ON DELETE CASCADE
+        )
+        """)
+        cur.execute("""
+        INSERT IGNORE INTO vendas_orcamento_produtos
+            (produto_id, categoria, preco_unitario, ordem, ativo)
+        SELECT
+            p.id,
+            CASE
+                WHEN UPPER(TRIM(COALESCE(p.grupo_estoque, '')))='GFA' THEN 'RETORNAVEL'
+                WHEN UPPER(CONCAT(COALESCE(p.produto_base_nome, ''), ' ', COALESCE(p.nome_produto, ''))) REGEXP '(^|[^0-9])600[[:space:]]*ML' THEN 'PET_600ML'
+                WHEN UPPER(CONCAT(COALESCE(p.produto_base_nome, ''), ' ', COALESCE(p.nome_produto, ''))) REGEXP '(^|[^0-9])200[[:space:]]*ML' THEN 'PET_200ML'
+                ELSE 'PET_2L'
+            END,
+            CASE
+                WHEN UPPER(TRIM(COALESCE(p.grupo_estoque, '')))='GFA' THEN 46.6000
+                WHEN UPPER(CONCAT(COALESCE(p.produto_base_nome, ''), ' ', COALESCE(p.nome_produto, ''))) REGEXP '(^|[^0-9])(600|200)[[:space:]]*ML' THEN 0
+                ELSE 32.4500
+            END,
+            p.id,
+            1
+        FROM estoque_produtos p
+        WHERE p.ativo=1 AND UPPER(TRIM(COALESCE(p.grupo_estoque, ''))) IN ('GFA', 'PET')
+        """)
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS vendas_orcamentos (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            data_ref DATE NOT NULL,
+            cliente_nome VARCHAR(255) NOT NULL,
+            cidade VARCHAR(180) DEFAULT '',
+            observacao TEXT NULL,
+            vendedor_usuario_id INT NULL,
+            vendedor_login VARCHAR(120) DEFAULT '',
+            vendedor_nome VARCHAR(180) DEFAULT '',
+            vendedor_identificacao VARCHAR(255) DEFAULT '',
+            status VARCHAR(30) NOT NULL DEFAULT 'emitido',
+            percentual_bonificacao DECIMAL(9,4) NOT NULL DEFAULT 0,
+            percentual_terco DECIMAL(9,4) NOT NULL DEFAULT 0,
+            preco_bonificacao DECIMAL(14,4) NOT NULL DEFAULT 0,
+            preco_seco_retornavel DECIMAL(14,4) NOT NULL DEFAULT 0,
+            preco_seco_pet DECIMAL(14,4) NOT NULL DEFAULT 0,
+            quantidade_retornavel DECIMAL(14,3) NOT NULL DEFAULT 0,
+            quantidade_pet DECIMAL(14,3) NOT NULL DEFAULT 0,
+            quantidade_total DECIMAL(14,3) NOT NULL DEFAULT 0,
+            quantidade_bonificacao DECIMAL(14,3) NOT NULL DEFAULT 0,
+            valor_bruto DECIMAL(16,2) NOT NULL DEFAULT 0,
+            valor_bonificacao DECIMAL(16,2) NOT NULL DEFAULT 0,
+            valor_terco DECIMAL(16,2) NOT NULL DEFAULT 0,
+            valor_liquido DECIMAL(16,2) NOT NULL DEFAULT 0,
+            valor_real DECIMAL(16,2) NOT NULL DEFAULT 0,
+            valor_seco DECIMAL(16,2) NOT NULL DEFAULT 0,
+            diferenca_total_real DECIMAL(16,2) NOT NULL DEFAULT 0,
+            percentual_total_real DECIMAL(12,4) NOT NULL DEFAULT 0,
+            criado_em DATETIME DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_vendas_orcamentos_data (data_ref, id),
+            INDEX idx_vendas_orcamentos_cliente (cliente_nome)
+        )
+        """)
+        try:
+            cur.execute(
+                "ALTER TABLE vendas_orcamentos ADD COLUMN diferenca_total_real DECIMAL(16,2) NOT NULL DEFAULT 0 AFTER valor_seco"
+            )
+        except Exception:
+            pass
+        try:
+            cur.execute(
+                "ALTER TABLE vendas_orcamentos ADD COLUMN percentual_total_real DECIMAL(12,4) NOT NULL DEFAULT 0 AFTER diferenca_total_real"
+            )
+        except Exception:
+            pass
+        cur.execute("""
+            UPDATE vendas_orcamentos
+            SET diferenca_total_real=ROUND(valor_seco - valor_real, 2),
+                percentual_total_real=CASE
+                    WHEN valor_seco<>0
+                    THEN ROUND(100 - ((valor_real * 100) / valor_seco), 4)
+                    ELSE 0
+                END
+        """)
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS vendas_orcamento_itens (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            orcamento_id BIGINT NOT NULL,
+            produto_id INT NULL,
+            produto_nome VARCHAR(255) NOT NULL,
+            categoria VARCHAR(30) NOT NULL,
+            unidade VARCHAR(30) DEFAULT '',
+            quantidade DECIMAL(14,3) NOT NULL DEFAULT 0,
+            preco_unitario DECIMAL(14,4) NOT NULL DEFAULT 0,
+            valor_total DECIMAL(16,2) NOT NULL DEFAULT 0,
+            ordem INT NOT NULL DEFAULT 100,
+            INDEX idx_vendas_orc_itens_orcamento (orcamento_id, ordem, id),
+            CONSTRAINT fk_vendas_orc_item_orcamento
+                FOREIGN KEY (orcamento_id) REFERENCES vendas_orcamentos(id)
+                ON UPDATE CASCADE ON DELETE CASCADE,
+            CONSTRAINT fk_vendas_orc_item_produto
+                FOREIGN KEY (produto_id) REFERENCES estoque_produtos(id)
+                ON UPDATE CASCADE ON DELETE SET NULL
         )
         """)
         cur.execute("""
@@ -5192,6 +5323,15 @@ def _fmt_date(v):
     if isinstance(v, datetime.date):
         return v.strftime("%Y-%m-%d")
     return _as_str(v)[:10] or None
+
+def _fmt_date_br(v):
+    data = _fmt_date(v)
+    if not data:
+        return ""
+    try:
+        return datetime.datetime.strptime(data, "%Y-%m-%d").strftime("%d/%m/%Y")
+    except ValueError:
+        return data
 
 def _json_list_or_empty(s):
     try:
@@ -12499,7 +12639,7 @@ def _fmt_preco_litro_br(value):
     n = _as_float(value, 0.0)
     return f"R$ {n:,.3f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
-def _build_report_header(styles):
+def _build_report_header(styles, content_width=692):
     logo_cell = ""
     logo_path = os.path.join(BASE_DIR, "logo.png")
     if os.path.isfile(logo_path):
@@ -12516,7 +12656,10 @@ def _build_report_header(styles):
         Paragraph("E-mail: contato@refrigeranteriobranco.com.br", styles["Normal"]),
     ]
 
-    cabecalho = Table([[logo_cell, dados_empresa]], colWidths=[72, 620])
+    cabecalho = Table(
+        [[logo_cell, dados_empresa]],
+        colWidths=[72, max(100, _as_float(content_width, 692) - 72)],
+    )
     cabecalho.setStyle(TableStyle([
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
         ("LEFTPADDING", (0, 0), (-1, -1), 0),
@@ -15404,9 +15547,16 @@ def _estoque_relatorio_comprometido_data(
         if quantidade_comprometida <= 0:
             continue
         quantidade_atual = round(_as_float(row.get("quantidade_atual"), 0.0), 3)
+        datas_comprometimentos = sorted(
+            data for data in (
+                _parse_data_br(item.get("data_comprometimento")) for item in compromissos
+            ) if data
+        )
         linhas.append({
             **row,
             "comprometimentos": compromissos,
+            "data_comprometimento_inicio": _fmt_date(datas_comprometimentos[0]) if datas_comprometimentos else "",
+            "data_comprometimento_fim": _fmt_date(datas_comprometimentos[-1]) if datas_comprometimentos else "",
             "quantidade_comprometida": quantidade_comprometida,
             "saldo_remanescente": round(quantidade_atual - quantidade_comprometida, 3),
         })
@@ -15474,33 +15624,31 @@ def _build_estoque_comprometido_pdf(relatorio):
         ), styles["Normal"]),
         Spacer(1, 10),
     ]
-    tabela = [["Produto", "Grupo", "Carga / data / qtd.", "Estoque atual", "Comprometido", "Disponivel", "%"]]
+    tabela = [["Produto", "Grupo", "Periodo das cargas", "Estoque atual", "Comprometido", "Disponivel", "%"]]
     for row in relatorio.get("rows") or []:
         atual = _as_float(row.get("quantidade_atual"), 0.0)
         comprometido = _as_float(row.get("quantidade_comprometida"), 0.0)
         percentual = (comprometido / atual * 100) if atual > 0 else 100.0
-        compromissos = row.get("comprometimentos") or [{}]
-        for compromisso in compromissos:
-            carga_nome = _as_str(compromisso.get("carga_nome")) or (
-                "Carga #" + str(_as_int(compromisso.get("carga_id"), 0))
-            )
-            carga = (
-                f"{carga_nome} "
-                f"({_as_str(compromisso.get('data_comprometimento')) or 'sem data'}) - "
-                f"{_fmt_decimal_br(compromisso.get('quantidade'), 3)}"
-            )
-            tabela.append([
-                Paragraph(_pdf_escape(row.get("nome_produto")), body_style),
-                Paragraph(_pdf_escape(row.get("grupo_nome") or row.get("grupo_estoque")), body_style),
-                Paragraph(_pdf_escape(carga), body_style),
-                _fmt_decimal_br(atual, 3),
-                _fmt_decimal_br(comprometido, 3),
-                _fmt_decimal_br(row.get("saldo_remanescente"), 3),
-                f"{_fmt_decimal_br(percentual, 1)}%",
-            ])
+        data_inicio = _as_str(row.get("data_comprometimento_inicio"))
+        data_fim = _as_str(row.get("data_comprometimento_fim"))
+        if data_inicio and data_fim and data_inicio != data_fim:
+            periodo = f"{_fmt_date_br(data_inicio)} a {_fmt_date_br(data_fim)}"
+        elif data_inicio or data_fim:
+            periodo = _fmt_date_br(data_inicio or data_fim)
+        else:
+            periodo = "Sem data"
+        tabela.append([
+            Paragraph(_pdf_escape(row.get("nome_produto")), body_style),
+            Paragraph(_pdf_escape(row.get("grupo_nome") or row.get("grupo_estoque")), body_style),
+            periodo,
+            _fmt_decimal_br(atual, 3),
+            _fmt_decimal_br(comprometido, 3),
+            _fmt_decimal_br(row.get("saldo_remanescente"), 3),
+            f"{_fmt_decimal_br(percentual, 1)}%",
+        ])
     if len(tabela) == 1:
         tabela.append([Paragraph("Nenhum estoque comprometido para os filtros selecionados.", body_style), "", "", "", "", "", ""])
-    tabela_pdf = Table(tabela, repeatRows=1, colWidths=[155, 70, 250, 72, 72, 72, 45])
+    tabela_pdf = Table(tabela, repeatRows=1, colWidths=[190, 75, 110, 82, 82, 82, 45])
     tabela_pdf.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f59e0b")),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.black),
@@ -35183,6 +35331,619 @@ def vendas_diario_vendedores_api():
             vistos.add(codigo)
             vendedores.append({"codigo": codigo, "nome": _as_str(row.get("nome"))})
         return jsonify({"vendedores": vendedores})
+    finally:
+        cur.close()
+        conn.close()
+
+
+_VENDAS_ORCAMENTO_CATEGORIAS = {
+    "RETORNAVEL": "Retornáveis",
+    "PET_2L": "PET 2 L",
+    "PET_600ML": "PET 600 ml",
+    "PET_200ML": "PET 200 ml",
+}
+
+
+def _vendas_orcamento_decimal(value, campo="valor", minimo=None, maximo=None):
+    texto = _as_str(value).replace(" ", "")
+    if isinstance(value, Decimal):
+        numero = value
+    else:
+        if "," in texto and "." in texto:
+            texto = texto.replace(".", "").replace(",", ".")
+        elif "," in texto:
+            texto = texto.replace(",", ".")
+        try:
+            numero = Decimal(texto or "0")
+        except (InvalidOperation, ValueError):
+            raise ValueError(f"{campo} inválido")
+    if not numero.is_finite():
+        raise ValueError(f"{campo} inválido")
+    if minimo is not None and numero < Decimal(str(minimo)):
+        raise ValueError(f"{campo} deve ser maior ou igual a {minimo}")
+    if maximo is not None and numero > Decimal(str(maximo)):
+        raise ValueError(f"{campo} deve ser menor ou igual a {maximo}")
+    return numero
+
+
+def _vendas_orcamento_qtd(value):
+    return _vendas_orcamento_decimal(value, "quantidade", 0).quantize(
+        Decimal("0.001"), rounding=ROUND_HALF_UP
+    )
+
+
+def _vendas_orcamento_money(value):
+    return _vendas_orcamento_decimal(value).quantize(
+        Decimal("0.01"), rounding=ROUND_HALF_UP
+    )
+
+
+def _vendas_orcamento_numero_publico(value, casas=2):
+    numero = _vendas_orcamento_decimal(value)
+    quantizador = Decimal("1").scaleb(-casas)
+    return float(numero.quantize(quantizador, rounding=ROUND_HALF_UP))
+
+
+def _calcular_orcamento_vendas(itens, parametros):
+    """Reproduz a memória de cálculo da planilha CalculoVendas.xlsx."""
+    pct_bonificacao = _vendas_orcamento_decimal(
+        parametros.get("percentual_bonificacao"), "percentual de bonificação", 0, 100
+    )
+    pct_terco = _vendas_orcamento_decimal(
+        parametros.get("percentual_terco"), "percentual do terço", 0, 100
+    )
+    preco_bonificacao = _vendas_orcamento_decimal(
+        parametros.get("preco_bonificacao"), "preço da bonificação", 0
+    )
+    preco_seco_retornavel = _vendas_orcamento_decimal(
+        parametros.get("preco_seco_retornavel"), "preço seco retornável", 0
+    )
+    preco_seco_pet = _vendas_orcamento_decimal(
+        parametros.get("preco_seco_pet"), "preço seco PET", 0
+    )
+
+    quantidade_retornavel = Decimal("0")
+    quantidade_pet = Decimal("0")
+    valor_bruto = Decimal("0")
+    linhas = []
+    for item in itens or []:
+        categoria = _as_str(item.get("categoria")).upper()
+        if categoria not in _VENDAS_ORCAMENTO_CATEGORIAS:
+            raise ValueError("categoria de produto inválida")
+        quantidade = _vendas_orcamento_qtd(item.get("quantidade"))
+        preco = _vendas_orcamento_decimal(
+            item.get("preco_unitario"), "preço unitário", 0
+        ).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+        total = _vendas_orcamento_money(quantidade * preco)
+        if quantidade > 0 and preco <= 0:
+            raise ValueError(
+                f"configure o preço de {_as_str(item.get('produto_nome')) or 'um produto selecionado'}"
+            )
+        if categoria == "RETORNAVEL":
+            quantidade_retornavel += quantidade
+        else:
+            quantidade_pet += quantidade
+        valor_bruto += total
+        linhas.append({**item, "quantidade": float(quantidade), "preco_unitario": float(preco), "valor_total": float(total)})
+
+    quantidade_total = quantidade_retornavel + quantidade_pet
+    quantidade_bonificacao = (quantidade_pet * pct_bonificacao / Decimal("100")).quantize(
+        Decimal("0.001"), rounding=ROUND_HALF_UP
+    )
+    valor_bonificacao = _vendas_orcamento_money(quantidade_bonificacao * preco_bonificacao)
+    valor_terco = _vendas_orcamento_money(valor_bonificacao * pct_terco / Decimal("100"))
+    valor_liquido = _vendas_orcamento_money(valor_bruto - valor_bonificacao)
+    valor_real = _vendas_orcamento_money(valor_liquido + valor_terco)
+    valor_seco = _vendas_orcamento_money(
+        quantidade_retornavel * preco_seco_retornavel + quantidade_pet * preco_seco_pet
+    )
+    diferenca_total_real = _vendas_orcamento_money(valor_seco - valor_real)
+    percentual_total_real = Decimal("0")
+    if valor_seco:
+        percentual_total_real = (
+            Decimal("100") - (valor_real * Decimal("100") / valor_seco)
+        ).quantize(
+            Decimal("0.0001"), rounding=ROUND_HALF_UP
+        )
+
+    return {
+        "itens": linhas,
+        "quantidade_retornavel": float(quantidade_retornavel),
+        "quantidade_pet": float(quantidade_pet),
+        "quantidade_total": float(quantidade_total),
+        "quantidade_bonificacao": float(quantidade_bonificacao),
+        "valor_bruto": float(_vendas_orcamento_money(valor_bruto)),
+        "valor_bonificacao": float(valor_bonificacao),
+        "valor_terco": float(valor_terco),
+        "valor_liquido": float(valor_liquido),
+        "valor_real": float(valor_real),
+        "valor_seco": float(valor_seco),
+        "diferenca_total_real": float(diferenca_total_real),
+        "percentual_total_real": float(percentual_total_real),
+    }
+
+
+def _vendas_orcamento_categoria_produto(row):
+    categoria = _as_str(row.get("categoria")).upper()
+    if categoria in _VENDAS_ORCAMENTO_CATEGORIAS:
+        return categoria
+    grupo = _as_str(row.get("grupo_estoque")).upper()
+    if grupo == "GFA":
+        return "RETORNAVEL"
+    texto = _produto_nome_normalizado(
+        " ".join((_as_str(row.get("produto_base_nome")), _as_str(row.get("nome_produto"))))
+    )
+    if re.search(r"(^|\s)600\s*ML($|\s)", texto):
+        return "PET_600ML"
+    if re.search(r"(^|\s)200\s*ML($|\s)", texto):
+        return "PET_200ML"
+    return "PET_2L"
+
+
+def _vendas_orcamento_parametros_cur(cur):
+    cur.execute("SELECT * FROM vendas_orcamento_parametros WHERE id=1")
+    row = cur.fetchone() or {}
+    defaults = {
+        "percentual_bonificacao": 15,
+        "percentual_terco": 33,
+        "preco_bonificacao": 46.60,
+        "preco_seco_retornavel": 44,
+        "preco_seco_pet": 30,
+    }
+    return {
+        chave: _vendas_orcamento_numero_publico(row.get(chave, valor), 4)
+        for chave, valor in defaults.items()
+    }
+
+
+def _vendas_orcamento_produtos_cur(cur, somente_ativos=False):
+    cur.execute("""
+        SELECT p.id produto_id, p.nome_produto, p.produto_base_nome,
+               p.grupo_estoque, p.unidade, p.ativo produto_ativo,
+               c.categoria, c.preco_unitario, c.ordem, c.ativo
+        FROM estoque_produtos p
+        LEFT JOIN vendas_orcamento_produtos c ON c.produto_id=p.id
+        WHERE p.ativo=1
+          AND UPPER(TRIM(COALESCE(p.grupo_estoque, ''))) IN ('GFA', 'PET')
+        ORDER BY COALESCE(c.ordem, p.id), p.nome_produto
+    """)
+    produtos = []
+    for row in cur.fetchall() or []:
+        categoria = _vendas_orcamento_categoria_produto(row)
+        preco_default = 46.60 if categoria == "RETORNAVEL" else (32.45 if categoria == "PET_2L" else 0)
+        produto = {
+            "produto_id": _as_int(row.get("produto_id"), 0),
+            "nome_produto": _as_str(row.get("nome_produto")),
+            "produto_base_nome": _as_str(row.get("produto_base_nome")),
+            "grupo_estoque": _as_str(row.get("grupo_estoque")),
+            "unidade": _as_str(row.get("unidade")) or "UN",
+            "categoria": categoria,
+            "categoria_nome": _VENDAS_ORCAMENTO_CATEGORIAS[categoria],
+            "preco_unitario": _vendas_orcamento_numero_publico(
+                row.get("preco_unitario") if row.get("preco_unitario") is not None else preco_default, 4
+            ),
+            "ordem": _as_int(row.get("ordem"), _as_int(row.get("produto_id"), 100)),
+            "ativo": bool(_as_int(row.get("ativo"), 1)),
+        }
+        if not somente_ativos or produto["ativo"]:
+            produtos.append(produto)
+    produtos.sort(key=lambda item: (
+        list(_VENDAS_ORCAMENTO_CATEGORIAS).index(item["categoria"]),
+        item["ordem"], item["nome_produto"],
+    ))
+    return produtos
+
+
+def _vendas_orcamento_codigo(orcamento_id, data_ref=None):
+    ano = _fmt_date(data_ref)[:4] if _fmt_date(data_ref) else str(datetime.date.today().year)
+    return f"ORC-{ano}-{_as_int(orcamento_id, 0):06d}"
+
+
+def _vendas_orcamento_editavel(row):
+    if _usuario_portal_admin():
+        return True
+    usuario_id = _as_int(request.headers.get("X-Usuario-Id"), 0)
+    vendedor_id = _as_int((row or {}).get("vendedor_usuario_id"), 0)
+    if usuario_id and vendedor_id and usuario_id == vendedor_id:
+        return True
+    login = _as_str(request.headers.get("X-Usuario-Login")).strip().casefold()
+    vendedor_login = _as_str((row or {}).get("vendedor_login")).strip().casefold()
+    return bool(login and vendedor_login and login == vendedor_login)
+
+
+def _vendas_orcamento_preparar_cur(cur, data):
+    data = data if isinstance(data, dict) else {}
+    cliente = _as_str(data.get("cliente_nome"))[:255]
+    cidade = _as_str(data.get("cidade"))[:180]
+    data_ref = _as_date(data.get("data_ref")) or datetime.date.today()
+    observacao = _as_str(data.get("observacao"))[:2000]
+    if not cliente:
+        raise ValueError("informe o cliente")
+
+    produtos = {
+        item["produto_id"]: item
+        for item in _vendas_orcamento_produtos_cur(cur, somente_ativos=True)
+    }
+    itens = []
+    for entrada in data.get("itens") or []:
+        quantidade = _vendas_orcamento_qtd(entrada.get("quantidade"))
+        if quantidade <= 0:
+            continue
+        produto = produtos.get(_as_int(entrada.get("produto_id"), 0))
+        if not produto:
+            raise ValueError("produto inativo ou não configurado para orçamento")
+        itens.append({
+            "produto_id": produto["produto_id"],
+            "produto_nome": produto["nome_produto"],
+            "categoria": produto["categoria"],
+            "unidade": produto["unidade"],
+            "quantidade": quantidade,
+            "preco_unitario": produto["preco_unitario"],
+            "ordem": produto["ordem"],
+        })
+    if not itens:
+        raise ValueError("informe ao menos um produto com quantidade")
+
+    parametros = _vendas_orcamento_parametros_cur(cur)
+    return {
+        "cliente": cliente,
+        "cidade": cidade,
+        "data_ref": data_ref,
+        "observacao": observacao,
+        "parametros": parametros,
+        "calculo": _calcular_orcamento_vendas(itens, parametros),
+    }
+
+
+def _vendas_orcamento_inserir_itens_cur(cur, orcamento_id, itens):
+    for item in itens:
+        cur.execute("""
+            INSERT INTO vendas_orcamento_itens
+                (orcamento_id, produto_id, produto_nome, categoria, unidade,
+                 quantidade, preco_unitario, valor_total, ordem)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, (
+            orcamento_id, item["produto_id"], item["produto_nome"], item["categoria"],
+            item["unidade"], item["quantidade"], item["preco_unitario"],
+            item["valor_total"], item["ordem"],
+        ))
+
+
+def _vendas_orcamento_detalhe_cur(cur, orcamento_id):
+    cur.execute("SELECT * FROM vendas_orcamentos WHERE id=%s", (orcamento_id,))
+    row = cur.fetchone()
+    if not row:
+        return None
+    cur.execute("""
+        SELECT produto_id, produto_nome, categoria, unidade, quantidade,
+               preco_unitario, valor_total, ordem
+        FROM vendas_orcamento_itens
+        WHERE orcamento_id=%s
+        ORDER BY ordem, id
+    """, (orcamento_id,))
+    itens = []
+    for item in cur.fetchall() or []:
+        itens.append({
+            **item,
+            "produto_id": _as_int(item.get("produto_id"), 0),
+            "quantidade": _vendas_orcamento_numero_publico(item.get("quantidade"), 3),
+            "preco_unitario": _vendas_orcamento_numero_publico(item.get("preco_unitario"), 4),
+            "valor_total": _vendas_orcamento_numero_publico(item.get("valor_total"), 2),
+        })
+    campos_numericos = (
+        "percentual_bonificacao", "percentual_terco", "preco_bonificacao",
+        "preco_seco_retornavel", "preco_seco_pet", "quantidade_retornavel",
+        "quantidade_pet", "quantidade_total", "quantidade_bonificacao", "valor_bruto",
+        "valor_bonificacao", "valor_terco", "valor_liquido", "valor_real", "valor_seco",
+        "diferenca_total_real", "percentual_total_real",
+    )
+    publico = dict(row)
+    for campo in campos_numericos:
+        publico[campo] = _vendas_orcamento_numero_publico(row.get(campo), 4 if "percentual" in campo or "preco_" in campo else (3 if "quantidade" in campo else 2))
+    publico["id"] = _as_int(row.get("id"), 0)
+    publico["codigo"] = _vendas_orcamento_codigo(publico["id"], row.get("data_ref"))
+    publico["data_ref"] = _fmt_date(row.get("data_ref"))
+    publico["criado_em"] = _fmt_dt(row.get("criado_em"))
+    publico["editavel"] = _vendas_orcamento_editavel(row)
+    publico["itens"] = itens
+    return publico
+
+
+def _vendas_orcamento_pdf_bytes(orcamento):
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=A4, rightMargin=32, leftMargin=32, topMargin=30, bottomMargin=44,
+        title=f"Orçamento {orcamento.get('codigo') or ''}",
+    )
+    styles = getSampleStyleSheet()
+    body = styles["BodyText"]
+    body.fontSize = 8
+    body.leading = 10
+    elementos = [
+        _build_report_header(styles, doc.width),
+        Spacer(1, 12),
+        Paragraph("<b>RIO BRANCO - PEDIDO / ORÇAMENTO</b>", styles["Title"]),
+        Spacer(1, 8),
+        Paragraph(
+            _pdf_escape(
+                f"{orcamento.get('codigo') or '-'} | Data: {_fmt_date_br(orcamento.get('data_ref')) or '-'} | "
+                f"Vendedor: {orcamento.get('vendedor_nome') or orcamento.get('vendedor_identificacao') or '-'}"
+            ),
+            styles["Normal"],
+        ),
+        Paragraph(_pdf_escape(f"Cliente: {orcamento.get('cliente_nome') or '-'} | Cidade: {orcamento.get('cidade') or '-'}"), styles["Normal"]),
+        Spacer(1, 12),
+    ]
+    linhas = [[Paragraph(f"<b>{_pdf_escape(h)}</b>", body) for h in ("Produto", "Grupo", "Qtd.", "Preço", "Total")]]
+    for item in orcamento.get("itens") or []:
+        linhas.append([
+            Paragraph(_pdf_escape(item.get("produto_nome")), body),
+            Paragraph(_pdf_escape(_VENDAS_ORCAMENTO_CATEGORIAS.get(item.get("categoria"), item.get("categoria"))), body),
+            Paragraph(_fmt_decimal_br(item.get("quantidade"), 3), body),
+            Paragraph(_fmt_money_br(item.get("preco_unitario")), body),
+            Paragraph(_fmt_money_br(item.get("valor_total")), body),
+        ])
+    tabela = Table(linhas, colWidths=[210, 90, 48, 72, 78], repeatRows=1)
+    tabela.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#184e77")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#9aa5b1")),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("ALIGN", (2, 1), (-1, -1), "RIGHT"),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f4f7f9")]),
+    ]))
+    elementos.extend([tabela, Spacer(1, 14), Paragraph("<b>Memória de cálculo</b>", styles["Heading2"])])
+    calculo = [
+        ("Volumes retornáveis", _fmt_decimal_br(orcamento.get("quantidade_retornavel"), 3)),
+        ("Volumes PET", _fmt_decimal_br(orcamento.get("quantidade_pet"), 3)),
+        ("Total de volumes", _fmt_decimal_br(orcamento.get("quantidade_total"), 3)),
+        (f"Bonificação ({_fmt_decimal_br(orcamento.get('percentual_bonificacao'), 2)}%)", f"{_fmt_decimal_br(orcamento.get('quantidade_bonificacao'), 3)} vol. x {_fmt_money_br(orcamento.get('preco_bonificacao'))} = {_fmt_money_br(orcamento.get('valor_bonificacao'))}"),
+        ("Preço seco", f"Retornável {_fmt_money_br(orcamento.get('preco_seco_retornavel'))} | PET {_fmt_money_br(orcamento.get('preco_seco_pet'))}"),
+        ("Valor bruto do pedido", _fmt_money_br(orcamento.get("valor_bruto"))),
+        ("Valor líquido (bruto - bonificação)", _fmt_money_br(orcamento.get("valor_liquido"))),
+        (f"Terço da bonificação ({_fmt_decimal_br(orcamento.get('percentual_terco'), 2)}%)", _fmt_money_br(orcamento.get("valor_terco"))),
+        ("Preço real (líquido + terço)", _fmt_money_br(orcamento.get("valor_real"))),
+        ("Preço total", _fmt_money_br(orcamento.get("valor_seco"))),
+        ("Diferença entre preço total e real", _fmt_money_br(orcamento.get("diferenca_total_real"))),
+        ("Percentual", f"{_fmt_decimal_br(orcamento.get('percentual_total_real'), 2)}%"),
+    ]
+    linhas_destaque = {3, 8, 9, 11}
+    tabela_calculo = Table([
+        [
+            Paragraph(_pdf_escape(rotulo), body),
+            Paragraph(
+                f"<b>{_pdf_escape(valor)}</b>" if indice in linhas_destaque else _pdf_escape(valor),
+                body,
+            ),
+        ]
+        for indice, (rotulo, valor) in enumerate(calculo)
+    ], colWidths=[245, 253])
+    tabela_calculo.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#9aa5b1")),
+        ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#edf2f4")),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("ALIGN", (1, 0), (1, -1), "RIGHT"),
+    ]))
+    elementos.append(tabela_calculo)
+    if _as_str(orcamento.get("observacao")):
+        elementos.extend([Spacer(1, 10), Paragraph(f"<b>Observação:</b> {_pdf_escape(orcamento.get('observacao'))}", styles["Normal"])])
+    elementos.extend([Spacer(1, 28), Paragraph("Assinatura do cliente: ______________________________________________", styles["Normal"])])
+    doc.build(
+        elementos,
+        onFirstPage=lambda canvas_obj, doc_obj: _draw_report_footer(
+            canvas_obj, doc_obj, "Pedido / Orçamento de Vendas"
+        ),
+        onLaterPages=lambda canvas_obj, doc_obj: _draw_report_footer(
+            canvas_obj, doc_obj, "Pedido / Orçamento de Vendas"
+        ),
+    )
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
+@app.route("/api/vendas/orcamentos/config", methods=["GET", "PUT"])
+def vendas_orcamentos_config_api():
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    try:
+        if request.method == "GET":
+            return jsonify({
+                "parametros": _vendas_orcamento_parametros_cur(cur),
+                "produtos": _vendas_orcamento_produtos_cur(cur),
+                "categorias": [{"codigo": k, "nome": v} for k, v in _VENDAS_ORCAMENTO_CATEGORIAS.items()],
+            })
+        negado = _exigir_admin_portal()
+        if negado:
+            return negado
+        data = request.get_json(silent=True) or {}
+        params = data.get("parametros") or {}
+        valores = {
+            "percentual_bonificacao": _vendas_orcamento_decimal(params.get("percentual_bonificacao"), "percentual de bonificação", 0, 100),
+            "percentual_terco": _vendas_orcamento_decimal(params.get("percentual_terco"), "percentual do terço", 0, 100),
+            "preco_bonificacao": _vendas_orcamento_decimal(params.get("preco_bonificacao"), "preço da bonificação", 0),
+            "preco_seco_retornavel": _vendas_orcamento_decimal(params.get("preco_seco_retornavel"), "preço seco retornável", 0),
+            "preco_seco_pet": _vendas_orcamento_decimal(params.get("preco_seco_pet"), "preço seco PET", 0),
+        }
+        usuario = _usuario_ator_req()
+        cur.execute("""
+            UPDATE vendas_orcamento_parametros
+            SET percentual_bonificacao=%s, percentual_terco=%s, preco_bonificacao=%s,
+                preco_seco_retornavel=%s, preco_seco_pet=%s, atualizado_por=%s
+            WHERE id=1
+        """, (
+            valores["percentual_bonificacao"], valores["percentual_terco"], valores["preco_bonificacao"],
+            valores["preco_seco_retornavel"], valores["preco_seco_pet"], usuario,
+        ))
+        elegiveis = {item["produto_id"] for item in _vendas_orcamento_produtos_cur(cur)}
+        for ordem_padrao, item in enumerate(data.get("produtos") or [], start=1):
+            produto_id = _as_int(item.get("produto_id"), 0)
+            categoria = _as_str(item.get("categoria")).upper()
+            if produto_id not in elegiveis:
+                raise ValueError("produto inválido para orçamento")
+            if categoria not in _VENDAS_ORCAMENTO_CATEGORIAS:
+                raise ValueError("categoria de produto inválida")
+            preco = _vendas_orcamento_decimal(item.get("preco_unitario"), "preço unitário", 0)
+            cur.execute("""
+                INSERT INTO vendas_orcamento_produtos
+                    (produto_id, categoria, preco_unitario, ordem, ativo, atualizado_por)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                ON DUPLICATE KEY UPDATE categoria=VALUES(categoria), preco_unitario=VALUES(preco_unitario),
+                    ordem=VALUES(ordem), ativo=VALUES(ativo), atualizado_por=VALUES(atualizado_por)
+            """, (produto_id, categoria, preco, _as_int(item.get("ordem"), ordem_padrao), 1 if _as_bool(item.get("ativo"), True) else 0, usuario))
+        conn.commit()
+        return jsonify({
+            "ok": True,
+            "parametros": _vendas_orcamento_parametros_cur(cur),
+            "produtos": _vendas_orcamento_produtos_cur(cur),
+        })
+    except ValueError as exc:
+        conn.rollback()
+        return jsonify({"erro": str(exc)}), 400
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.route("/api/vendas/orcamentos", methods=["GET", "POST"])
+def vendas_orcamentos_api():
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    try:
+        if request.method == "GET":
+            limite = max(1, min(_as_int(request.args.get("limite"), 50), 200))
+            cur.execute("""
+                SELECT id, data_ref, cliente_nome, cidade, vendedor_usuario_id,
+                       vendedor_login, vendedor_nome,
+                       vendedor_identificacao, valor_bruto, valor_liquido, valor_real, criado_em
+                FROM vendas_orcamentos
+                ORDER BY id DESC LIMIT %s
+            """, (limite,))
+            rows = []
+            for row in cur.fetchall() or []:
+                publico = {
+                    **row,
+                    "id": _as_int(row.get("id"), 0),
+                    "codigo": _vendas_orcamento_codigo(row.get("id"), row.get("data_ref")),
+                    "data_ref": _fmt_date(row.get("data_ref")),
+                    "criado_em": _fmt_dt(row.get("criado_em")),
+                    "valor_bruto": _vendas_orcamento_numero_publico(row.get("valor_bruto"), 2),
+                    "valor_liquido": _vendas_orcamento_numero_publico(row.get("valor_liquido"), 2),
+                    "valor_real": _vendas_orcamento_numero_publico(row.get("valor_real"), 2),
+                    "editavel": _vendas_orcamento_editavel(row),
+                }
+                publico.pop("vendedor_usuario_id", None)
+                rows.append(publico)
+            return jsonify({"orcamentos": rows})
+
+        data = request.get_json(silent=True) or {}
+        preparado = _vendas_orcamento_preparar_cur(cur, data)
+        parametros = preparado["parametros"]
+        calculo = preparado["calculo"]
+        uid = _as_int(request.headers.get("X-Usuario-Id"), 0) or None
+        login = _as_str(request.headers.get("X-Usuario-Login"))[:120]
+        nome = _as_str(request.headers.get("X-Usuario-Nome"))[:180]
+        identificacao = _usuario_ator_req()[:255]
+        cur.execute("""
+            INSERT INTO vendas_orcamentos
+                (data_ref, cliente_nome, cidade, observacao, vendedor_usuario_id, vendedor_login,
+                 vendedor_nome, vendedor_identificacao, percentual_bonificacao, percentual_terco,
+                 preco_bonificacao, preco_seco_retornavel, preco_seco_pet, quantidade_retornavel,
+                 quantidade_pet, quantidade_total, quantidade_bonificacao, valor_bruto,
+                 valor_bonificacao, valor_terco, valor_liquido, valor_real, valor_seco,
+                 diferenca_total_real, percentual_total_real)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, (
+            preparado["data_ref"], preparado["cliente"], preparado["cidade"], preparado["observacao"],
+            uid, login, nome, identificacao,
+            parametros["percentual_bonificacao"], parametros["percentual_terco"], parametros["preco_bonificacao"],
+            parametros["preco_seco_retornavel"], parametros["preco_seco_pet"], calculo["quantidade_retornavel"],
+            calculo["quantidade_pet"], calculo["quantidade_total"], calculo["quantidade_bonificacao"],
+            calculo["valor_bruto"], calculo["valor_bonificacao"], calculo["valor_terco"], calculo["valor_liquido"],
+            calculo["valor_real"], calculo["valor_seco"], calculo["diferenca_total_real"], calculo["percentual_total_real"],
+        ))
+        orcamento_id = cur.lastrowid
+        _vendas_orcamento_inserir_itens_cur(cur, orcamento_id, calculo["itens"])
+        conn.commit()
+        return jsonify({"ok": True, "orcamento": _vendas_orcamento_detalhe_cur(cur, orcamento_id)}), 201
+    except ValueError as exc:
+        conn.rollback()
+        return jsonify({"erro": str(exc)}), 400
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.route("/api/vendas/orcamentos/<int:orcamento_id>", methods=["GET", "PUT"])
+def vendas_orcamento_detalhe_api(orcamento_id):
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    try:
+        if request.method == "GET":
+            orcamento = _vendas_orcamento_detalhe_cur(cur, orcamento_id)
+            if not orcamento:
+                return jsonify({"erro": "orçamento não encontrado"}), 404
+            return jsonify({"orcamento": orcamento})
+
+        cur.execute("SELECT * FROM vendas_orcamentos WHERE id=%s FOR UPDATE", (orcamento_id,))
+        atual = cur.fetchone()
+        if not atual:
+            return jsonify({"erro": "orçamento não encontrado"}), 404
+        if not _vendas_orcamento_editavel(atual):
+            return jsonify({"erro": "somente o vendedor responsável ou um administrador pode editar este pedido"}), 403
+
+        preparado = _vendas_orcamento_preparar_cur(cur, request.get_json(silent=True) or {})
+        parametros = preparado["parametros"]
+        calculo = preparado["calculo"]
+        cur.execute("""
+            UPDATE vendas_orcamentos
+            SET data_ref=%s, cliente_nome=%s, cidade=%s, observacao=%s,
+                percentual_bonificacao=%s, percentual_terco=%s, preco_bonificacao=%s,
+                preco_seco_retornavel=%s, preco_seco_pet=%s,
+                quantidade_retornavel=%s, quantidade_pet=%s, quantidade_total=%s,
+                quantidade_bonificacao=%s, valor_bruto=%s, valor_bonificacao=%s,
+                valor_terco=%s, valor_liquido=%s, valor_real=%s, valor_seco=%s,
+                diferenca_total_real=%s, percentual_total_real=%s,
+                diferenca_seco_liquido=%s, percentual_seco_real=%s
+            WHERE id=%s
+        """, (
+            preparado["data_ref"], preparado["cliente"], preparado["cidade"], preparado["observacao"],
+            parametros["percentual_bonificacao"], parametros["percentual_terco"], parametros["preco_bonificacao"],
+            parametros["preco_seco_retornavel"], parametros["preco_seco_pet"],
+            calculo["quantidade_retornavel"], calculo["quantidade_pet"], calculo["quantidade_total"],
+            calculo["quantidade_bonificacao"], calculo["valor_bruto"], calculo["valor_bonificacao"],
+            calculo["valor_terco"], calculo["valor_liquido"], calculo["valor_real"], calculo["valor_seco"],
+            calculo["diferenca_total_real"], calculo["percentual_total_real"],
+            calculo["diferenca_total_real"], calculo["percentual_total_real"], orcamento_id,
+        ))
+        cur.execute("DELETE FROM vendas_orcamento_itens WHERE orcamento_id=%s", (orcamento_id,))
+        _vendas_orcamento_inserir_itens_cur(cur, orcamento_id, calculo["itens"])
+        conn.commit()
+        return jsonify({
+            "ok": True,
+            "orcamento": _vendas_orcamento_detalhe_cur(cur, orcamento_id),
+        })
+    except ValueError as exc:
+        conn.rollback()
+        return jsonify({"erro": str(exc)}), 400
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.route("/api/vendas/orcamentos/<int:orcamento_id>/pdf", methods=["GET"])
+def vendas_orcamento_pdf_api(orcamento_id):
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    try:
+        orcamento = _vendas_orcamento_detalhe_cur(cur, orcamento_id)
+        if not orcamento:
+            return jsonify({"erro": "orçamento não encontrado"}), 404
+        arquivo = io.BytesIO(_vendas_orcamento_pdf_bytes(orcamento))
+        return send_file(
+            arquivo, mimetype="application/pdf", as_attachment=False,
+            download_name=f"{orcamento['codigo']}.pdf",
+        )
     finally:
         cur.close()
         conn.close()

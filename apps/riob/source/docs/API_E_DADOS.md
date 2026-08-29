@@ -206,6 +206,48 @@ Observacoes:
 - o endpoint `PUT /api/vendas/cache/<id>/ativar` define qual import passa a ser usado pelo relatorio de vendas
 - `GET /api/vendas/config` tambem devolve `regras_importacao`, usado pela tela `Config -> Vendas` para documentar no proprio sistema quais grupos e descartes estao ativos
 
+### 5.1.1 Pedido / orcamento de vendas
+
+Endpoints:
+
+- `GET /api/vendas/orcamentos/config`: parametros e produtos PET/GFA do cadastro canonico
+- `PUT /api/vendas/orcamentos/config`: altera percentuais, precos, categorias e produtos ativos; exige perfil `admin` do portal
+- `GET /api/vendas/orcamentos`: lista as emissoes recentes
+- `POST /api/vendas/orcamentos`: recalcula no backend, grava o pedido e os valores historicos
+- `GET /api/vendas/orcamentos/<id>`: consulta o pedido completo
+- `PUT /api/vendas/orcamentos/<id>`: edita e recalcula o mesmo pedido; permitido ao vendedor responsavel ou a um administrador do portal
+- `GET /api/vendas/orcamentos/<id>/pdf`: abre o PDF imprimivel com pedido e memoria de calculo
+
+Parametros iniciais migrados de `CalculoVendas.xlsx`:
+
+- bonificacao PET: `15%`
+- terco da bonificacao: `33%`
+- preco da bonificacao: `R$ 46,60`
+- preco seco retornavel: `R$ 44,00`
+- preco seco PET: `R$ 30,00`
+- preco inicial de venda retornavel: `R$ 46,60`
+- preco inicial de venda PET 2 L: `R$ 32,45`
+- PET 600 ml e PET 200 ml iniciam sem preco porque a planilha de origem nao os informa; precisam ser preenchidos antes de usar esses itens
+
+Memoria de calculo:
+
+- `quantidade_pet = PET 2 L + PET 600 ml + PET 200 ml`
+- `quantidade_bonificacao = quantidade_pet * percentual_bonificacao`
+- `valor_bonificacao = quantidade_bonificacao * preco_bonificacao`
+- `valor_terco = valor_bonificacao * percentual_terco`
+- `valor_liquido = valor_bruto - valor_bonificacao`
+- `valor_real = valor_liquido + valor_terco`
+- `valor_seco = quantidade_retornavel * preco_seco_retornavel + quantidade_pet * preco_seco_pet`
+- `diferenca_total_real = valor_seco - valor_real`; no exemplo, `38.040,00 - 36.442,03 = 1.597,97`
+- `percentual_total_real = 100 - ((valor_real * 100) / valor_seco)`; no exemplo da planilha, `100 - ((36.442,03 * 100) / 38.040,00) = 4,20%`
+
+Regras de persistencia:
+
+- o vendedor vem exclusivamente dos cabecalhos `X-Usuario-*` enviados pelo portal; nao existe login proprio no RioB
+- os produtos sao referencias a `estoque_produtos`; nao ha segundo cadastro mestre
+- cada emissao copia nome, categoria, unidade, preco, parametros e totais para que mudancas futuras em `Config -> Vendas` nao alterem PDFs antigos
+- o frontend calcula para resposta imediata, mas o valor oficial sempre e recalculado pelo backend com arredondamento financeiro
+
 ## 5.2 Estoque, NF-e e OCR por foto
 
 Endpoints:
@@ -543,7 +585,10 @@ Regras:
   card atual permanece comprometido durante importacao/conferencia e, depois de
   enviado ao frete, enquanto o frete estiver em `chegada`, `descarregado`,
   `liberado`, `carregando` ou `carregado`. As datas usam a data da carga PDF;
-  no legado, `created_at` e a contingencia
+  no legado, `created_at` e a contingencia. Cada produto inclui
+  `data_comprometimento_inicio` e `data_comprometimento_fim`; a tela e o PDF
+  usam esse intervalo compacto em uma unica linha, mantendo o detalhamento em
+  `comprometimentos`
 - quando um card do Vendas Diario combina TXT e PDF da mesma carga, o relatorio
   usa apenas os itens do TXT; o PDF e usado somente quando nao existe TXT ativo.
   Quantidades `CX`, `DZ`, `PT` e `UN` sao convertidas para a unidade canonica do
@@ -1290,6 +1335,33 @@ Campos relevantes:
 - `nome_origem`
 - `ativo`
 - a combinacao `origem_tipo + codigo_norm` e unica
+
+### `vendas_orcamento_parametros`
+
+- registro unico `id=1`
+- `percentual_bonificacao`
+- `percentual_terco`
+- `preco_bonificacao`
+- `preco_seco_retornavel`
+- `preco_seco_pet`
+- `atualizado_por`
+
+### `vendas_orcamento_produtos`
+
+- `produto_id`, ligado a `estoque_produtos`
+- `categoria`: `RETORNAVEL`, `PET_2L`, `PET_600ML` ou `PET_200ML`
+- `preco_unitario`
+- `ordem`
+- `ativo`
+
+### `vendas_orcamentos` e `vendas_orcamento_itens`
+
+- cabecalho do cliente, cidade, data, observacao e identidade do vendedor
+- copia dos cinco parametros usados na emissao
+- quantidades e valores consolidados da memoria de calculo
+- itens com copia do nome, categoria, unidade, quantidade, preco e total da linha
+- o numero exibido e derivado como `ORC-AAAA-000000`
+- a edicao preserva o numero e o vendedor original, substitui os itens e recalcula os totais com a configuracao vigente
 
 ### `estoque_conferencias`
 

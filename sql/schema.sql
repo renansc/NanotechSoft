@@ -156,6 +156,7 @@ CREATE TABLE IF NOT EXISTS tecnologia_backups (
     destino_path VARCHAR(1000) NOT NULL,
     nuvem_path VARCHAR(1000) NOT NULL DEFAULT '',
     horarios JSON NOT NULL,
+    janelas_execucao JSON NULL,
     timezone VARCHAR(80) NOT NULL DEFAULT 'America/Sao_Paulo',
     retencao_diaria_dias INT NOT NULL DEFAULT 7,
     retencao_semanal_semanas INT NOT NULL DEFAULT 5,

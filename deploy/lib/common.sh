@@ -505,6 +505,7 @@ menu_sections = set(getattr(portal, "MENU_SECTIONS", (
     "compras",
     "estoque",
     "financeiro",
+    "vendas",
     "relatorios",
     "import_export",
 ))) if portal else {
@@ -516,6 +517,7 @@ menu_sections = set(getattr(portal, "MENU_SECTIONS", (
     "compras",
     "estoque",
     "financeiro",
+    "vendas",
     "relatorios",
     "import_export",
 }

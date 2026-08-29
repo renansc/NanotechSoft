@@ -205,7 +205,7 @@
             <div class="backupFlow">
               <div><strong>diario</strong><span>Todas as execuções programadas</span></div>
               <div><strong>semana</strong><span>Último backup de cada dia</span></div>
-              <div><strong>mes</strong><span>Último backup de cada domingo</span></div>
+              <div><strong>mes</strong><span>Último backup do último dia programado da semana</span></div>
               <div><strong>nuvem</strong><span>Cópia opcional somente da camada mensal</span></div>
             </div>
           </section>
@@ -223,7 +223,7 @@
 
         <section class="panel">
           <div class="panelHead"><div><span class="eyebrow">Auditoria</span><h2>Execuções recentes</h2></div><button class="btn" id="refreshBackups" type="button">Atualizar</button></div>
-          <div class="tableWrap"><table><thead><tr><th>Data</th><th>Plano</th><th>Status</th><th>Camadas</th><th>Tamanho</th><th>Mensagem</th></tr></thead><tbody id="backupRunsTable"></tbody></table></div>
+          <div class="tableWrap"><table><thead><tr><th>Data</th><th>Plano</th><th>Status</th><th>Camadas</th><th>Gravado</th><th>Mensagem</th></tr></thead><tbody id="backupRunsTable"></tbody></table></div>
         </section>
       </section>
     </main>
@@ -278,7 +278,7 @@
           <label>Nome do plano<input id="backupName" maxlength="160" required value="Backup banco NanotechSoft"></label>
           <label>Máquina executora<input id="backupMachine" maxlength="160" required placeholder="Servidor Windows"></label>
           <label>Tipo do backup<select id="backupDatabaseType"><option value="MYSQL">Banco MySQL</option><option value="MARIADB">Banco MariaDB</option><option value="FILES">Arquivos e pastas</option></select></label>
-          <label class="wide hidden" data-backup-files>Arquivos ou pastas de origem<textarea id="backupSourcePaths" rows="4" placeholder="C:\CTA\DADOS&#10;C:\CTA\CONFIG"></textarea><small>Um caminho local por linha. O agente cria um arquivo .tar.gz; não exige usuário nem senha de banco.</small></label>
+          <label class="wide hidden" data-backup-files>Arquivos ou pastas de origem<textarea id="backupSourcePaths" rows="4" placeholder="C:\CTA\DADOS&#10;C:\CTA\CONFIG"></textarea><small>Um caminho local por linha. O primeiro backup copia tudo; os próximos armazenam somente arquivos novos ou alterados. Não exige usuário nem senha de banco.</small></label>
           <label data-backup-database>Host do banco<input id="backupDatabaseHost" data-backup-db-required maxlength="253" required value="127.0.0.1"></label>
           <label data-backup-database>Porta<input id="backupDatabasePort" data-backup-db-required type="number" min="1" max="65535" required value="3306"></label>
           <label data-backup-database>Nome do banco<input id="backupDatabaseName" data-backup-db-required maxlength="160" required value="notechsoft"></label>
@@ -286,8 +286,21 @@
           <label data-backup-database>Variável local da senha<input id="backupPasswordEnv" data-backup-db-required maxlength="160" required value="NANOTECH_BACKUP_DB_PASSWORD"><small>A senha não é gravada no portal.</small></label>
           <label class="wide">Pasta no HDD externo<input id="backupDestination" maxlength="1000" required placeholder="\\192.168.200.10\e\backup Nanotechsoft"><small>Use um compartilhamento UNC no Windows ou um caminho já montado no Linux.</small></label>
           <label class="wide">Pasta sincronizada na nuvem (opcional)<input id="backupCloudPath" maxlength="1000" placeholder="C:\Nuvem\Backup Nanotechsoft\mes"><small>Recebe somente o último backup de cada semana.</small></label>
-          <label>Horários diários<input id="backupTimes" required value="08:00, 12:00, 17:00"><small>Formato 24 horas, separados por vírgula.</small></label>
+          <label>Horários diários<input id="backupTimes" required value="08:00, 12:00, 16:00"><small>Formato 24 horas, separados por vírgula. O agente só inicia dentro da janela do dia.</small></label>
           <label>Fuso horário<input id="backupTimezone" maxlength="80" required value="America/Sao_Paulo"></label>
+          <fieldset class="wide backupOperatingWindows" id="backupOperatingWindows">
+            <legend>Dias e janelas permitidas</legend>
+            <small>Se o servidor ou agente voltar depois do encerramento, o backup vencido não será iniciado fora do expediente.</small>
+            <div class="backupWindowGrid">
+              <label data-backup-weekday="0"><span><input type="checkbox" data-backup-day-enabled> Segunda</span><input type="time" data-backup-day-start value="07:00"><input type="time" data-backup-day-end value="17:00"></label>
+              <label data-backup-weekday="1"><span><input type="checkbox" data-backup-day-enabled> Terça</span><input type="time" data-backup-day-start value="07:00"><input type="time" data-backup-day-end value="17:00"></label>
+              <label data-backup-weekday="2"><span><input type="checkbox" data-backup-day-enabled> Quarta</span><input type="time" data-backup-day-start value="07:00"><input type="time" data-backup-day-end value="17:00"></label>
+              <label data-backup-weekday="3"><span><input type="checkbox" data-backup-day-enabled> Quinta</span><input type="time" data-backup-day-start value="07:00"><input type="time" data-backup-day-end value="17:00"></label>
+              <label data-backup-weekday="4"><span><input type="checkbox" data-backup-day-enabled> Sexta</span><input type="time" data-backup-day-start value="07:00"><input type="time" data-backup-day-end value="17:00"></label>
+              <label data-backup-weekday="5"><span><input type="checkbox" data-backup-day-enabled> Sábado</span><input type="time" data-backup-day-start value="07:00"><input type="time" data-backup-day-end value="11:00"></label>
+              <label data-backup-weekday="6"><span><input type="checkbox" data-backup-day-enabled> Domingo</span><input type="time" data-backup-day-start value="07:00"><input type="time" data-backup-day-end value="11:00"></label>
+            </div>
+          </fieldset>
           <label>Reter diário por dias<input id="backupDailyRetention" type="number" min="1" max="365" value="7" required></label>
           <label>Reter semana por semanas<input id="backupWeeklyRetention" type="number" min="1" max="260" value="5" required></label>
           <label>Reter mês por meses<input id="backupMonthlyRetention" type="number" min="1" max="120" value="12" required></label>

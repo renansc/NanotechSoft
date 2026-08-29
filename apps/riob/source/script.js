@@ -81,6 +81,14 @@ let vendasState = {
   mes: "",
   tipoRelatorio: "bonificacoes",
 };
+let vendasOrcamentoState = {
+  parametros: null,
+  produtos: [],
+  produtosConfig: [],
+  categorias: [],
+  carregado: false,
+  editandoId: 0,
+};
 let dashboardVendasPainelState = {
   view: "bonificacoes",
   payload: null,
@@ -3015,7 +3023,7 @@ function openVendasView(ev, view){
   }
   const menu = document.querySelector('.menu-item.has-submenu[data-tab="vendas"]');
   document.querySelectorAll("#submenuVendas .submenu-item").forEach((x) => x.classList.remove("active"));
-  const targetView = rawView === "pontosvenda" ? "pontosvenda" : "relatorio";
+  const targetView = rawView === "pontosvenda" ? "pontosvenda" : (rawView === "orcamento" ? "orcamento" : "relatorio");
   const itemAtivo = document.querySelector(`#submenuVendas .submenu-item[data-vendas-view="${targetView}"]`);
 
   if (targetView === "pontosvenda") {
@@ -3044,11 +3052,17 @@ function setVendasView(view){
     openWorkflowView(null, "vendas_diario");
     return;
   }
-  const target = raw === "pontosvenda" ? "pontosvenda" : "relatorio";
+  const target = raw === "pontosvenda" ? "pontosvenda" : (raw === "orcamento" ? "orcamento" : "relatorio");
   window.__vendasView = target;
   vendasState.view = target;
   const rel = document.getElementById("vendasViewRelatorio");
   if (rel) rel.classList.toggle("hidden", target !== "relatorio");
+  const orcamento = document.getElementById("vendasViewOrcamento");
+  if (orcamento) orcamento.classList.toggle("hidden", target !== "orcamento");
+  const relHeader = document.getElementById("vendasRelatorioHeader");
+  const relTabs = document.getElementById("vendasRelatorioTabs");
+  if (relHeader) relHeader.classList.toggle("hidden", target !== "relatorio");
+  if (relTabs) relTabs.classList.toggle("hidden", target !== "relatorio");
   ["vendasViewRelatorioVariacao", "vendasViewRelatorioMix", "vendasViewRelatorioPrecoMedio"].forEach((id) => {
     const element = document.getElementById(id);
     if (element && target !== "relatorio") element.classList.add("hidden");
@@ -3056,6 +3070,264 @@ function setVendasView(view){
   if (target === "relatorio") {
     setVendasRelatorioModo(window.__vendasRelatorioModo || "bonificacoes");
   }
+  if (target === "orcamento") {
+    carregarOrcamentoVendas().catch((erro) => {
+      const status = document.getElementById("vendasOrcamentoStatus");
+      if (status) status.textContent = erro?.message || "Falha ao carregar o orçamento.";
+    });
+  }
+}
+
+function _vendasOrcamentoHoje(){
+  const hoje = new Date();
+  const local = new Date(hoje.getTime() - hoje.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 10);
+}
+
+function _vendasOrcamentoNumero(valor){
+  const numero = Number(String(valor ?? "").replace(",", "."));
+  return Number.isFinite(numero) ? numero : 0;
+}
+
+function _vendasOrcamentoArredondar(valor, casas = 2){
+  const fator = 10 ** casas;
+  return Math.round((_vendasOrcamentoNumero(valor) + Number.EPSILON) * fator) / fator;
+}
+
+function _vendasOrcamentoItensDigitados(){
+  return vendasOrcamentoState.produtos.map((produto) => {
+    const input = document.querySelector(`[data-vendas-orc-qtd="${Number(produto.produto_id) || 0}"]`);
+    const quantidade = _vendasOrcamentoArredondar(Math.max(0, _vendasOrcamentoNumero(input?.value)), 3);
+    const preco = Math.max(0, _vendasOrcamentoNumero(produto.preco_unitario));
+    return {...produto, quantidade, valor_total: _vendasOrcamentoArredondar(quantidade * preco, 2)};
+  });
+}
+
+function calcularOrcamentoVendasTela(){
+  const params = vendasOrcamentoState.parametros || {};
+  const itens = _vendasOrcamentoItensDigitados();
+  let quantidadeRetornavel = 0;
+  let quantidadePet = 0;
+  let valorBruto = 0;
+  itens.forEach((item) => {
+    if (item.categoria === "RETORNAVEL") quantidadeRetornavel += item.quantidade;
+    else quantidadePet += item.quantidade;
+    valorBruto += item.valor_total;
+    const total = document.querySelector(`[data-vendas-orc-total="${Number(item.produto_id) || 0}"]`);
+    if (total) total.textContent = _fmtMoneyVendas(item.valor_total);
+  });
+  const quantidadeTotal = quantidadeRetornavel + quantidadePet;
+  valorBruto = _vendasOrcamentoArredondar(valorBruto, 2);
+  const quantidadeBonificacao = _vendasOrcamentoArredondar(quantidadePet * _vendasOrcamentoNumero(params.percentual_bonificacao) / 100, 3);
+  const valorBonificacao = _vendasOrcamentoArredondar(quantidadeBonificacao * _vendasOrcamentoNumero(params.preco_bonificacao), 2);
+  const valorTerco = _vendasOrcamentoArredondar(valorBonificacao * _vendasOrcamentoNumero(params.percentual_terco) / 100, 2);
+  const valorLiquido = _vendasOrcamentoArredondar(valorBruto - valorBonificacao, 2);
+  const valorReal = _vendasOrcamentoArredondar(valorLiquido + valorTerco, 2);
+  const valorSeco = _vendasOrcamentoArredondar(quantidadeRetornavel * _vendasOrcamentoNumero(params.preco_seco_retornavel)
+    + quantidadePet * _vendasOrcamentoNumero(params.preco_seco_pet), 2);
+  const diferenca = _vendasOrcamentoArredondar(valorSeco - valorReal, 2);
+  const percentual = valorSeco ? 100 - (valorReal * 100 / valorSeco) : 0;
+  const calculo = document.getElementById("vendasOrcamentoCalculo");
+  if (calculo) calculo.innerHTML = `
+    <div class="vendas-resumo-cards vendas-resumo-cards--wide">
+      ${_renderCardsVendasResumo([
+        ["Volumes retornáveis", _fmtNumVendas(quantidadeRetornavel, 3)],
+        ["Volumes PET", _fmtNumVendas(quantidadePet, 3)],
+        ["Total de volumes", _fmtNumVendas(quantidadeTotal, 3)],
+        ["Valor bruto", _fmtMoneyVendas(valorBruto)],
+        ["Valor líquido", _fmtMoneyVendas(valorLiquido)],
+        ["Valor real", _fmtMoneyVendas(valorReal)],
+      ])}
+    </div>
+    <div class="vendas-orcamento-tabela-wrap"><table><tbody>
+      <tr><th>Bonificação (${_escHtml(_fmtNumVendas(params.percentual_bonificacao || 0, 2))}%)</th><td>${_escHtml(_fmtNumVendas(quantidadeBonificacao, 3))} vol. x ${_escHtml(_fmtMoneyVendas(params.preco_bonificacao || 0))}</td><td>${_escHtml(_fmtMoneyVendas(valorBonificacao))}</td></tr>
+      <tr><th>Terço da bonificação (${_escHtml(_fmtNumVendas(params.percentual_terco || 0, 2))}%)</th><td></td><td>${_escHtml(_fmtMoneyVendas(valorTerco))}</td></tr>
+      <tr><th>Preço total</th><td>Preço seco: Retornável ${_escHtml(_fmtMoneyVendas(params.preco_seco_retornavel || 0))} | PET ${_escHtml(_fmtMoneyVendas(params.preco_seco_pet || 0))}</td><td>${_escHtml(_fmtMoneyVendas(valorSeco))}</td></tr>
+      <tr><th>Diferença entre preço total e real</th><td></td><td>${_escHtml(_fmtMoneyVendas(diferenca))}</td></tr>
+      <tr><th>Percentual</th><td>100 - ((real x 100) / total)</td><td>${_escHtml(_fmtNumVendas(percentual, 2))}%</td></tr>
+    </tbody></table></div>`;
+}
+
+function renderizarProdutosOrcamentoVendas(){
+  const container = document.getElementById("vendasOrcamentoProdutos");
+  if (!container) return;
+  const categorias = Array.isArray(vendasOrcamentoState.categorias) ? vendasOrcamentoState.categorias : [];
+  container.innerHTML = categorias.map((categoria) => {
+    const produtos = vendasOrcamentoState.produtos.filter((item) => item.categoria === categoria.codigo && item.ativo);
+    if (!produtos.length) return "";
+    return `<section class="vendas-orcamento-grupo"><h4>${_escHtml(categoria.nome)}</h4>
+      <div class="vendas-orcamento-tabela-wrap"><table><thead><tr><th>Produto</th><th>Preço</th><th>Quantidade</th><th>Total</th></tr></thead><tbody>
+      ${produtos.map((produto) => `<tr>
+        <td>${_escHtml(produto.nome_produto || produto.produto_base_nome || "-")}</td>
+        <td>${_escHtml(_fmtMoneyVendas(produto.preco_unitario || 0))}</td>
+        <td><input class="vendas-orcamento-qtd" type="number" min="0" step="1" value="0" data-vendas-orc-qtd="${Number(produto.produto_id) || 0}" oninput="calcularOrcamentoVendasTela()"></td>
+        <td data-vendas-orc-total="${Number(produto.produto_id) || 0}">${_escHtml(_fmtMoneyVendas(0))}</td>
+      </tr>`).join("")}</tbody></table></div></section>`;
+  }).join("");
+  calcularOrcamentoVendasTela();
+}
+
+async function carregarOrcamentoVendas(){
+  const dataInput = document.getElementById("vendasOrcamentoData");
+  if (dataInput && !dataInput.value) dataInput.value = _vendasOrcamentoHoje();
+  const status = document.getElementById("vendasOrcamentoStatus");
+  if (!vendasOrcamentoState.carregado) {
+    if (status) status.textContent = "Carregando produtos e parâmetros...";
+    const resp = await apiFetch("/api/vendas/orcamentos/config");
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data?.erro || "Falha ao carregar produtos do orçamento.");
+    vendasOrcamentoState.parametros = data?.parametros || {};
+    vendasOrcamentoState.produtos = Array.isArray(data?.produtos) ? data.produtos.filter((item) => item.ativo) : [];
+    vendasOrcamentoState.categorias = Array.isArray(data?.categorias) ? data.categorias : [];
+    vendasOrcamentoState.carregado = true;
+    renderizarProdutosOrcamentoVendas();
+  }
+  const semPreco = vendasOrcamentoState.produtos.filter((item) => item.ativo && _vendasOrcamentoNumero(item.preco_unitario) <= 0).length;
+  if (status) status.textContent = semPreco
+    ? `${semPreco} produto(s) ainda estão sem preço e precisam ser ajustados em Config > Vendas antes do uso.`
+    : `${vendasOrcamentoState.produtos.length} produto(s) disponíveis. Preencha as quantidades desejadas.`;
+  await carregarListaOrcamentosVendas();
+}
+
+function limparOrcamentoVendas(){
+  const cliente = document.getElementById("vendasOrcamentoCliente");
+  const cidade = document.getElementById("vendasOrcamentoCidade");
+  const data = document.getElementById("vendasOrcamentoData");
+  const observacao = document.getElementById("vendasOrcamentoObservacao");
+  if (cliente) cliente.value = "";
+  if (cidade) cidade.value = "";
+  if (data) data.value = _vendasOrcamentoHoje();
+  if (observacao) observacao.value = "";
+  document.querySelectorAll("[data-vendas-orc-qtd]").forEach((input) => { input.value = "0"; });
+  vendasOrcamentoState.editandoId = 0;
+  atualizarModoEdicaoOrcamentoVendas();
+  calcularOrcamentoVendasTela();
+}
+
+function atualizarModoEdicaoOrcamentoVendas(orcamento = null){
+  const id = Number(vendasOrcamentoState.editandoId) || 0;
+  const titulo = document.getElementById("vendasOrcamentoTitulo");
+  const botao = document.getElementById("vendasOrcamentoSalvarBtn");
+  const cancelar = document.getElementById("vendasOrcamentoCancelarBtn");
+  if (titulo) titulo.textContent = id
+    ? `Editar ${orcamento?.codigo || `ORC-${id}`}`
+    : "Novo pedido / orçamento";
+  if (botao) botao.textContent = id ? "Atualizar e abrir PDF" : "Salvar e abrir PDF";
+  if (cancelar) cancelar.classList.toggle("hidden", !id);
+}
+
+async function editarOrcamentoVendas(id){
+  const orcamentoId = Number(id) || 0;
+  if (!orcamentoId) return;
+  await carregarOrcamentoVendas();
+  const status = document.getElementById("vendasOrcamentoStatus");
+  if (status) status.textContent = "Carregando pedido para edição...";
+  const resp = await apiFetch(`/api/vendas/orcamentos/${orcamentoId}`);
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw new Error(data?.erro || "Falha ao carregar o pedido.");
+  const orcamento = data?.orcamento || {};
+  if (!orcamento.editavel) throw new Error("Este pedido não pode ser editado pelo usuário atual.");
+
+  limparOrcamentoVendas();
+  const cliente = document.getElementById("vendasOrcamentoCliente");
+  const cidade = document.getElementById("vendasOrcamentoCidade");
+  const dataRef = document.getElementById("vendasOrcamentoData");
+  const observacao = document.getElementById("vendasOrcamentoObservacao");
+  if (cliente) cliente.value = orcamento.cliente_nome || "";
+  if (cidade) cidade.value = orcamento.cidade || "";
+  if (dataRef) dataRef.value = orcamento.data_ref || _vendasOrcamentoHoje();
+  if (observacao) observacao.value = orcamento.observacao || "";
+
+  let itensIndisponiveis = 0;
+  (Array.isArray(orcamento.itens) ? orcamento.itens : []).forEach((item) => {
+    const input = document.querySelector(`[data-vendas-orc-qtd="${Number(item.produto_id) || 0}"]`);
+    if (input) input.value = String(_vendasOrcamentoNumero(item.quantidade));
+    else if (_vendasOrcamentoNumero(item.quantidade) > 0) itensIndisponiveis += 1;
+  });
+  vendasOrcamentoState.editandoId = orcamentoId;
+  atualizarModoEdicaoOrcamentoVendas(orcamento);
+  calcularOrcamentoVendasTela();
+  if (status) status.textContent = itensIndisponiveis
+    ? `${orcamento.codigo || "Pedido"} carregado, mas ${itensIndisponiveis} item(ns) inativo(s) não podem ser alterados.`
+    : `${orcamento.codigo || "Pedido"} carregado para edição. Ao atualizar, os valores serão recalculados.`;
+  document.querySelector(".vendas-orcamento-form")?.scrollIntoView({behavior: "smooth", block: "start"});
+}
+
+async function salvarOrcamentoVendas(){
+  const itens = _vendasOrcamentoItensDigitados()
+    .filter((item) => item.quantidade > 0)
+    .map((item) => ({produto_id: item.produto_id, quantidade: item.quantidade}));
+  const payload = {
+    cliente_nome: (document.getElementById("vendasOrcamentoCliente")?.value || "").trim(),
+    cidade: (document.getElementById("vendasOrcamentoCidade")?.value || "").trim(),
+    data_ref: document.getElementById("vendasOrcamentoData")?.value || _vendasOrcamentoHoje(),
+    observacao: (document.getElementById("vendasOrcamentoObservacao")?.value || "").trim(),
+    itens,
+  };
+  if (!payload.cliente_nome) { alert("Informe o cliente."); return; }
+  if (!itens.length) { alert("Informe ao menos um produto com quantidade."); return; }
+  const botao = document.getElementById("vendasOrcamentoSalvarBtn");
+  const status = document.getElementById("vendasOrcamentoStatus");
+  const editandoId = Number(vendasOrcamentoState.editandoId) || 0;
+  const janelaPdf = window.open("", "_blank");
+  if (botao) botao.disabled = true;
+  if (status) status.textContent = editandoId
+    ? "Atualizando pedido e preparando PDF..."
+    : "Salvando orçamento e preparando PDF...";
+  try {
+    const resp = await apiFetch(editandoId ? `/api/vendas/orcamentos/${editandoId}` : "/api/vendas/orcamentos", {
+      method: editandoId ? "PUT" : "POST",
+      headers: {"Content-Type": "application/json"}, body: JSON.stringify(payload),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data?.erro || `Falha ao ${editandoId ? "atualizar" : "salvar"} o orçamento.`);
+    const id = Number(data?.orcamento?.id) || 0;
+    if (status) status.textContent = `${data?.orcamento?.codigo || "Orçamento"} ${editandoId ? "atualizado" : "salvo"} com sucesso.`;
+    if (id) await abrirPdfOrcamentoVendas(id, janelaPdf);
+    limparOrcamentoVendas();
+    await carregarListaOrcamentosVendas();
+  } catch (erro) {
+    if (janelaPdf) janelaPdf.close();
+    if (status) status.textContent = erro?.message || "Falha ao salvar o orçamento.";
+    alert(erro?.message || "Falha ao salvar o orçamento.");
+  } finally {
+    if (botao) botao.disabled = false;
+  }
+}
+
+async function abrirPdfOrcamentoVendas(id, janelaExistente = null){
+  const resp = await apiFetch(`/api/vendas/orcamentos/${Number(id) || 0}/pdf`);
+  if (!resp.ok) {
+    const data = await resp.json().catch(() => ({}));
+    throw new Error(data?.erro || "Falha ao gerar PDF do orçamento.");
+  }
+  const blob = await resp.blob();
+  const url = URL.createObjectURL(blob);
+  const janela = janelaExistente || window.open("", "_blank");
+  if (janela) janela.location.href = url;
+  else {
+    const link = document.createElement("a");
+    link.href = url; link.download = `orcamento-${Number(id) || 0}.pdf`; link.click();
+  }
+  window.setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+
+async function carregarListaOrcamentosVendas(){
+  const body = document.getElementById("vendasOrcamentosBody");
+  if (!body) return;
+  const resp = await apiFetch("/api/vendas/orcamentos?limite=50");
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) { body.innerHTML = `<tr><td colspan="7">${_escHtml(data?.erro || "Falha ao carregar.")}</td></tr>`; return; }
+  const rows = Array.isArray(data?.orcamentos) ? data.orcamentos : [];
+  body.innerHTML = rows.length ? rows.map((item) => `<tr>
+    <td>${_escHtml(item.codigo || "-")}</td><td>${_escHtml(_fmtDataCurtaBr(item.data_ref) || item.data_ref || "-")}</td>
+    <td>${_escHtml(item.cliente_nome || "-")}</td><td>${_escHtml(item.cidade || "-")}</td>
+    <td>${_escHtml(item.vendedor_nome || item.vendedor_identificacao || "-")}</td><td>${_escHtml(_fmtMoneyVendas(item.valor_real || 0))}</td>
+    <td><div class="vendas-orcamento-acoes">
+      ${item.editavel ? `<button type="button" class="btn-secondary" onclick="editarOrcamentoVendas(${Number(item.id) || 0}).catch(e=>alert(e.message))">Editar</button>` : ""}
+      <button type="button" onclick="abrirPdfOrcamentoVendas(${Number(item.id) || 0}).catch(e=>alert(e.message))">Abrir PDF</button>
+    </div></td>
+  </tr>`).join("") : '<tr><td colspan="7">Nenhum orçamento emitido.</td></tr>';
 }
 
 async function carregarVendasDiario(){
@@ -5816,6 +6088,87 @@ async function carregarConfigVendas(){
   });
 }
 
+function preencherConfigOrcamentoVendas(data = {}){
+  const params = data?.parametros || {};
+  vendasOrcamentoState.produtosConfig = Array.isArray(data?.produtos) ? data.produtos : [];
+  vendasOrcamentoState.categorias = Array.isArray(data?.categorias) && data.categorias.length
+    ? data.categorias
+    : [
+      {codigo: "RETORNAVEL", nome: "Retornáveis"}, {codigo: "PET_2L", nome: "PET 2 L"},
+      {codigo: "PET_600ML", nome: "PET 600 ml"}, {codigo: "PET_200ML", nome: "PET 200 ml"},
+    ];
+  const campos = {
+    vendasOrcCfgPctBonificacao: params.percentual_bonificacao,
+    vendasOrcCfgPctTerco: params.percentual_terco,
+    vendasOrcCfgPrecoBonificacao: params.preco_bonificacao,
+    vendasOrcCfgPrecoSecoRet: params.preco_seco_retornavel,
+    vendasOrcCfgPrecoSecoPet: params.preco_seco_pet,
+  };
+  Object.entries(campos).forEach(([id, valor]) => {
+    const input = document.getElementById(id);
+    if (input) input.value = valor ?? "";
+  });
+  const body = document.getElementById("vendasOrcConfigProdutosBody");
+  if (body) body.innerHTML = vendasOrcamentoState.produtosConfig.length
+    ? vendasOrcamentoState.produtosConfig.map((produto) => `<tr data-vendas-orc-cfg-produto="${Number(produto.produto_id) || 0}">
+      <td><input type="checkbox" data-campo="ativo" ${produto.ativo ? "checked" : ""}></td>
+      <td>${_escHtml(produto.nome_produto || produto.produto_base_nome || "-")}</td>
+      <td><select data-campo="categoria">${vendasOrcamentoState.categorias.map((categoria) => `<option value="${_escAttr(categoria.codigo)}"${produto.categoria === categoria.codigo ? " selected" : ""}>${_escHtml(categoria.nome)}</option>`).join("")}</select></td>
+      <td><input type="number" data-campo="preco_unitario" min="0" step="0.01" value="${_escAttr(produto.preco_unitario ?? 0)}"></td>
+      <td><input type="number" data-campo="ordem" min="0" step="1" value="${Number(produto.ordem) || 0}"></td>
+    </tr>`).join("")
+    : '<tr><td colspan="5">Nenhum produto PET ou retornável encontrado no cadastro de estoque.</td></tr>';
+  const status = document.getElementById("vendasOrcConfigStatus");
+  if (status) status.textContent = `${vendasOrcamentoState.produtosConfig.length} produto(s) disponíveis para configuração.`;
+}
+
+async function carregarConfigOrcamentoVendas(){
+  const status = document.getElementById("vendasOrcConfigStatus");
+  if (status) status.textContent = "Carregando parâmetros do orçamento...";
+  const resp = await apiFetch("/api/vendas/orcamentos/config");
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    if (status) status.textContent = data?.erro || "Falha ao carregar a configuração do orçamento.";
+    return;
+  }
+  preencherConfigOrcamentoVendas(data);
+}
+
+async function salvarConfigOrcamentoVendas(){
+  const numero = (id) => _vendasOrcamentoNumero(document.getElementById(id)?.value);
+  const produtos = Array.from(document.querySelectorAll("[data-vendas-orc-cfg-produto]")).map((row) => ({
+    produto_id: Number(row.dataset.vendasOrcCfgProduto) || 0,
+    ativo: !!row.querySelector('[data-campo="ativo"]')?.checked,
+    categoria: row.querySelector('[data-campo="categoria"]')?.value || "",
+    preco_unitario: _vendasOrcamentoNumero(row.querySelector('[data-campo="preco_unitario"]')?.value),
+    ordem: Number(row.querySelector('[data-campo="ordem"]')?.value) || 0,
+  }));
+  const payload = {
+    parametros: {
+      percentual_bonificacao: numero("vendasOrcCfgPctBonificacao"),
+      percentual_terco: numero("vendasOrcCfgPctTerco"),
+      preco_bonificacao: numero("vendasOrcCfgPrecoBonificacao"),
+      preco_seco_retornavel: numero("vendasOrcCfgPrecoSecoRet"),
+      preco_seco_pet: numero("vendasOrcCfgPrecoSecoPet"),
+    },
+    produtos,
+  };
+  const status = document.getElementById("vendasOrcConfigStatus");
+  if (status) status.textContent = "Salvando parâmetros e preços...";
+  const resp = await apiFetch("/api/vendas/orcamentos/config", {
+    method: "PUT", headers: {"Content-Type": "application/json"}, body: JSON.stringify(payload),
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    if (status) status.textContent = data?.erro || "Falha ao salvar a configuração.";
+    alert(data?.erro || "Falha ao salvar a configuração do orçamento.");
+    return;
+  }
+  vendasOrcamentoState.carregado = false;
+  preencherConfigOrcamentoVendas({...data, categorias: vendasOrcamentoState.categorias});
+  if (status) status.textContent = "Parâmetros e preços salvos com sucesso. Novos orçamentos já usarão estes valores.";
+}
+
 async function salvarConfigVendas(){
   const payload = {
     habilitado: !!document.getElementById("vendasConfigHabilitado")?.checked,
@@ -5973,7 +6326,9 @@ function setConfigView(view){
   }
   if (window.__configView === "sip") carregarConfigSip().catch(()=>{});
   if (window.__configView === "nfe") carregarConfigNfe().catch(()=>{});
-  if (window.__configView === "vendas") carregarConfigVendas().catch(()=>{});
+  if (window.__configView === "vendas") Promise.all([
+    carregarConfigVendas(), carregarConfigOrcamentoVendas(),
+  ]).catch(()=>{});
 }
 
 
@@ -15762,6 +16117,19 @@ function filtrarProdutosRelatorioEstoque(){
   if (produtos.some((produto) => String(produto.id) === String(valorAtual))) select.value = valorAtual;
 }
 
+function _periodoCargasRelatorioEstoque(row = {}){
+  const datasCompromissos = (Array.isArray(row.comprometimentos) ? row.comprometimentos : [])
+    .map((item) => String(item?.data_comprometimento || "").slice(0, 10))
+    .filter((data) => /^\d{4}-\d{2}-\d{2}$/.test(data))
+    .sort();
+  const inicio = String(row.data_comprometimento_inicio || datasCompromissos[0] || "").slice(0, 10);
+  const fim = String(row.data_comprometimento_fim || datasCompromissos[datasCompromissos.length - 1] || "").slice(0, 10);
+  if (!inicio && !fim) return "Sem data";
+  if (!inicio || inicio === fim) return _fmtDataCurtaBr(inicio || fim);
+  if (!fim) return _fmtDataCurtaBr(inicio);
+  return `${_fmtDataCurtaBr(inicio)} a ${_fmtDataCurtaBr(fim)}`;
+}
+
 async function carregarRelatorioEstoqueComprometido(){
   const body = document.getElementById("relatorioEstoqueComprometidoBody");
   const resumo = document.getElementById("relatorioEstoqueComprometidoResumo");
@@ -15792,18 +16160,14 @@ async function carregarRelatorioEstoqueComprometido(){
       `Quantidade comprometida: ${_estoqueFormatQtd(meta.quantidade_comprometida_total || 0)}`,
     ].join(" | ");
     body.innerHTML = rows.length ? rows.map((row) => {
-      const cargas = (Array.isArray(row.comprometimentos) ? row.comprometimentos : []).map((item) => {
-        const nome = item.carga_nome || `Carga #${item.carga_id || "-"}`;
-        const data = item.data_comprometimento ? _fmtDateBr(item.data_comprometimento) : "sem data";
-        return `${nome} - ${data} (${_estoqueFormatPallet(row, item.quantidade)})`;
-      });
+      const periodoCargas = _periodoCargasRelatorioEstoque(row);
       const atual = Number(row.quantidade_atual || 0);
       const comprometido = Number(row.quantidade_comprometida || 0);
       const percentual = atual > 0 ? (comprometido / atual) * 100 : 100;
       return `<tr>
         <td>${_estoqueProdutoStatusHtml(row)}</td>
         <td>${_escHtml(row.grupo_nome || row.grupo_estoque || "-")}</td>
-        <td>${_escHtml(cargas.join(" | ") || "Carga pendente")}</td>
+        <td class="relatorio-estoque-periodo">${_escHtml(periodoCargas)}</td>
         <td>${_estoqueFormatPalletHtml(row, atual)}</td>
         <td>${_estoqueFormatPalletHtml(row, comprometido)}</td>
         <td>${_estoqueFormatPalletHtml(row, row.saldo_remanescente)}</td>

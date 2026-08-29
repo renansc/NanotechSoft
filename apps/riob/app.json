@@ -53,6 +53,18 @@
         "grupo": "RioB"
       }
     ],
+    "vendas": [
+      {
+        "nome": "Orçamento RioB",
+        "url": "/apps/riob#vendas:orcamento",
+        "recurso": "vendas"
+      },
+      {
+        "nome": "Relatório RioB",
+        "url": "/apps/riob#vendas:relatorio",
+        "recurso": "vendas"
+      }
+    ],
     "workflow": [
       {
         "nome": "Vendas Diario RioB",
@@ -183,10 +195,6 @@
       {
         "nome": "Compras RioB",
         "url": "/apps/riob#relatorios:compras"
-      },
-      {
-        "nome": "Vendas RioB",
-        "url": "/apps/riob#vendas:relatorio"
       },
       {
         "nome": "Comissões",

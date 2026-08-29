@@ -62,6 +62,17 @@
     </div>
   {% endif %}
 
+  {% if menu.vendas %}
+    <div class="menu-item has-submenu {% if active_page == 'vendas' %}active{% endif %}" data-menu-section="vendas">
+      Vendas <span class="submenu-caret">▾</span>
+      <div class="submenu">
+        {% for item in menu.vendas %}
+          <a class="submenu-item" href="{{ item.url }}">{{ item.nome }}</a>
+        {% endfor %}
+      </div>
+    </div>
+  {% endif %}
+
   {% if menu.workflow %}
     <div class="menu-item has-submenu {% if active_page == 'workflow' %}active{% endif %}" data-menu-section="workflow">
       Workflow <span class="submenu-caret">▾</span>

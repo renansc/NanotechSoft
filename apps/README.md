@@ -52,4 +52,4 @@ Cada app deve ter todo o seu codigo dentro desta arvore `apps/`, normalmente em 
 - `standalone_url` e a entrada do card do app no portal; abre em outra aba e pode manter o menu original do app.
 - Todo tema e global. Mesmo em `standalone_url`, o app deve receber o tema ativo do portal.
 - Toda funcao que aparece no app original tambem deve aparecer em `menu_groups` ou `config_groups`, com o nome do app no rotulo do menu principal.
-- Ao importar um app, conferir as telas/rotas/abas do modo original e mapear todas para os menus principais: `dashboards`, `cadastros`, `workflow`, `compras`, `estoque`, `financeiro`, `relatorios`, `import_export` ou `config_groups`.
+- Ao importar um app, conferir as telas/rotas/abas do modo original e mapear todas para os menus principais: `dashboards`, `cadastros`, `workflow`, `compras`, `estoque`, `financeiro`, `vendas`, `relatorios`, `import_export` ou `config_groups`.

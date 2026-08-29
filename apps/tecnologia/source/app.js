@@ -463,8 +463,15 @@
     WAITING: "Aguardando agente", DISABLED: "Inativo",
   };
   const backupRunLabel = { RUNNING: "Executando", SUCCESS: "Concluído", FAILED: "Falhou", SKIPPED: "Ignorado" };
+  const backupWeekdayLabel = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"];
   const backupStatusClass = (value) => ({ ONLINE: "online", SUCCESS: "online", WARNING: "degradado", RUNNING: "degradado", OFFLINE: "offline", FAILED: "offline", WAITING: "pending", DISABLED: "pending", SKIPPED: "pending" })[value] || "pending";
   const backupBadge = (value, labels = backupHealthLabel) => `<span class="status ${backupStatusClass(value)}">${esc(labels[value] || value || "Aguardando")}</span>`;
+
+  function backupWindowSummary(windows) {
+    const entries = Object.entries(windows || {}).sort(([left], [right]) => Number(left) - Number(right));
+    if (!entries.length) return "Todos os dias, sem limite de janela";
+    return entries.map(([day, window]) => `${backupWeekdayLabel[Number(day)]}: ${window.start}–${window.end}`).join(" · ");
+  }
 
   function downloadJson(fileName, payload) {
     const blob = new Blob([`${JSON.stringify(payload, null, 2)}\n`], { type: "application/json" });
@@ -487,7 +494,7 @@
     $("#backupKpiLastSuccess").textContent = successes.length ? dateTime(successes[0].completedAt) : "—";
     $("#backupTable").innerHTML = state.backups.map((job) => `<tr>
       <td><strong>${esc(job.name)}</strong><br><small class="muted">${esc(job.machine)} · ${job.databaseType === "FILES" ? `Arquivos: ${(job.sourcePaths || []).map(esc).join(", ")}` : `${esc(job.databaseType)} ${esc(job.databaseHost)}:${Number(job.databasePort)}/${esc(job.databaseName)}`}</small></td>
-      <td><strong>${job.times.map(esc).join(" · ")}</strong><br><small class="muted">Próximo: ${esc(dateTime(job.nextRunAt))}</small></td>
+      <td><strong>${job.times.map(esc).join(" · ")}</strong><br><small class="muted">${esc(backupWindowSummary(job.operatingWindows))}</small><br><small class="muted">Próximo: ${esc(dateTime(job.nextRunAt))}</small></td>
       <td><span class="backupPath">${esc(job.destinationPath)}</span>${job.cloudSyncPath ? `<br><small class="muted">Nuvem: ${esc(job.cloudSyncPath)}</small>` : ""}</td>
       <td>${backupBadge(job.health)}<br><small class="muted">${job.lastSeenAt ? `Contato: ${esc(dateTime(job.lastSeenAt))}` : esc(job.agentId)}</small></td>
       <td>${job.lastRun ? `${backupBadge(job.lastRun.status, backupRunLabel)}<br><small class="muted">${esc(dateTime(job.lastRun.completedAt))} · ${esc(bytes(job.lastRun.sizeBytes))}</small>` : '<span class="muted">Nenhuma execução</span>'}</td>
@@ -526,12 +533,27 @@
     $("#backupSourcePaths").value = (job?.sourcePaths || []).join("\n");
     $("#backupDestination").value = job?.destinationPath || "";
     $("#backupCloudPath").value = job?.cloudSyncPath || "";
-    $("#backupTimes").value = (job?.times || ["08:00", "12:00", "17:00"]).join(", ");
+    $("#backupTimes").value = (job?.times || ["08:00", "12:00", "16:00"]).join(", ");
     $("#backupTimezone").value = job?.timezone || "America/Sao_Paulo";
     $("#backupDailyRetention").value = job?.dailyRetentionDays || 7;
     $("#backupWeeklyRetention").value = job?.weeklyRetentionWeeks || 5;
     $("#backupMonthlyRetention").value = job?.monthlyRetentionMonths || 12;
     $("#backupActive").checked = job ? Boolean(job.active) : true;
+    let windows = job?.operatingWindows || {};
+    if (job && !Object.keys(windows).length) {
+      windows = Object.fromEntries(backupWeekdayLabel.map((_label, day) => [String(day), {start: "00:00", end: "23:59"}]));
+    } else if (!job) {
+      windows = Object.fromEntries(backupWeekdayLabel.slice(0, 5).map((_label, day) => [String(day), {start: "07:00", end: "17:00"}]));
+      windows["5"] = {start: "07:00", end: "11:00"};
+    }
+    $$('[data-backup-weekday]').forEach((row) => {
+      const day = String(row.dataset.backupWeekday);
+      const window = windows[day];
+      row.querySelector('[data-backup-day-enabled]').checked = Boolean(window);
+      row.querySelector('[data-backup-day-start]').value = window?.start || (day === "5" ? "07:00" : "07:00");
+      row.querySelector('[data-backup-day-end]').value = window?.end || (day === "5" ? "11:00" : "17:00");
+    });
+    toggleBackupWindows();
     toggleBackupFields();
     $("#backupModal").classList.remove("hidden");
     $("#backupName").focus();
@@ -545,6 +567,14 @@
     $("#backupSourcePaths").required = files;
   }
 
+  function toggleBackupWindows() {
+    $$('[data-backup-weekday]').forEach((row) => {
+      const enabled = row.querySelector('[data-backup-day-enabled]').checked;
+      row.classList.toggle("disabled", !enabled);
+      row.querySelectorAll('input[type="time"]').forEach((input) => { input.disabled = !enabled; });
+    });
+  }
+
   function closeBackup() {
     $("#backupModal").classList.add("hidden");
     editingBackupId = null;
@@ -552,6 +582,14 @@
 
   async function saveBackup(event) {
     event.preventDefault();
+    const operatingWindows = {};
+    $$('[data-backup-weekday]').forEach((row) => {
+      if (!row.querySelector('[data-backup-day-enabled]').checked) return;
+      operatingWindows[String(row.dataset.backupWeekday)] = {
+        start: row.querySelector('[data-backup-day-start]').value,
+        end: row.querySelector('[data-backup-day-end]').value,
+      };
+    });
     const payload = {
       name: $("#backupName").value, machine: $("#backupMachine").value,
       databaseType: $("#backupDatabaseType").value, databaseHost: $("#backupDatabaseHost").value,
@@ -560,6 +598,7 @@
       sourcePaths: $("#backupSourcePaths").value.split(/\r?\n/).map((item) => item.trim()).filter(Boolean),
       destinationPath: $("#backupDestination").value, cloudSyncPath: $("#backupCloudPath").value,
       times: $("#backupTimes").value.split(",").map((item) => item.trim()).filter(Boolean),
+      operatingWindows,
       timezone: $("#backupTimezone").value,
       dailyRetentionDays: Number($("#backupDailyRetention").value),
       weeklyRetentionWeeks: Number($("#backupWeeklyRetention").value),
@@ -887,6 +926,7 @@
   $("#refreshBackups").addEventListener("click", () => loadBackups());
   $("#backupForm").addEventListener("submit", saveBackup);
   $("#backupDatabaseType").addEventListener("change", toggleBackupFields);
+  $("#backupOperatingWindows").addEventListener("change", toggleBackupWindows);
   $("#closeBackupModal").addEventListener("click", closeBackup);
   $("#cancelBackup").addEventListener("click", closeBackup);
   $("#backupModal").addEventListener("click", (event) => { if (event.target.id === "backupModal") closeBackup(); });

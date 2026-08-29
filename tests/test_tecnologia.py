@@ -538,6 +538,40 @@ class TecnologiaIntegrationTests(unittest.TestCase):
         self.assertEqual("2026-08-27T12:00-03:00", next_run)
         self.assertEqual('"senha\\\\com\\\"aspas"', technology_backup_agent.mysql_option_value('senha\\com"aspas'))
 
+    def test_backup_respects_business_windows_and_skips_sunday(self):
+        windows = {
+            **{str(day): {"start": "07:00", "end": "17:00"} for day in range(5)},
+            "5": {"start": "07:00", "end": "11:00"},
+        }
+        payload = portal.normalize_technology_backup_payload({
+            "name": "Arquivos CTA", "machine": "Servidor Ubuntu",
+            "databaseType": "FILES", "sourcePaths": ["/media/cta"],
+            "destinationPath": "/mnt/backup/cta", "times": ["07:00"],
+            "operatingWindows": windows,
+        })
+        self.assertEqual(windows, json.loads(payload["janelas_execucao"]))
+
+        next_run = portal.technology_backup_next_run(
+            ["07:00"], "America/Sao_Paulo",
+            now=dt.datetime(2026, 8, 29, 14, 5, tzinfo=dt.UTC),
+            operating_windows=windows,
+        )
+        self.assertEqual("2026-08-31T07:00-03:00", next_run)
+
+        job = {"timezone": "America/Sao_Paulo", "times": ["07:00"], "operatingWindows": windows}
+        slot, _local = technology_backup_agent.due_slot(
+            job, {}, now=dt.datetime(2026, 8, 29, 10, 5, tzinfo=dt.UTC),
+        )
+        self.assertEqual("07:00", slot)
+        slot_after_window, _local = technology_backup_agent.due_slot(
+            job, {}, now=dt.datetime(2026, 8, 29, 14, 5, tzinfo=dt.UTC),
+        )
+        self.assertIsNone(slot_after_window)
+        slot_sunday, _local = technology_backup_agent.due_slot(
+            job, {}, now=dt.datetime(2026, 8, 30, 10, 5, tzinfo=dt.UTC),
+        )
+        self.assertIsNone(slot_sunday)
+
     def test_backup_agent_promotes_last_daily_and_sunday_backup(self):
         times = ["08:00", "12:00", "17:00"]
 
@@ -549,6 +583,10 @@ class TecnologiaIntegrationTests(unittest.TestCase):
         ))
         self.assertEqual(["diario", "semana", "mes", "nuvem"], technology_backup_agent.promotion_tiers(
             "17:00", times, dt.date(2026, 8, 30), "C:/Nuvem",
+        ))
+        self.assertEqual(["diario", "semana", "mes", "nuvem"], technology_backup_agent.promotion_tiers(
+            "07:00", ["07:00"], dt.date(2026, 8, 29), "C:/Nuvem",
+            {**{str(day): {"start": "07:00", "end": "17:00"} for day in range(5)}, "5": {"start": "07:00", "end": "11:00"}},
         ))
 
     def test_backup_agent_promotions_use_hardlinks_on_same_volume(self):
@@ -602,6 +640,27 @@ class TecnologiaIntegrationTests(unittest.TestCase):
                 self.assertEqual(b"CREATE DATABASE `notechsoft`;\n", handle.read())
 
         self.assertFalse(any("senha" in argument for argument in captured["command"]))
+
+    def test_database_backup_keeps_the_full_dump_flow(self):
+        with tempfile.TemporaryDirectory(prefix="tecnologia-database-flow-") as temp_dir:
+            reports = []
+
+            def fake_dump(_job, output):
+                output.write_bytes(b"dump completo")
+
+            with (
+                mock.patch.object(technology_backup_agent, "create_dump", side_effect=fake_dump) as create_dump,
+                mock.patch.object(technology_backup_agent, "create_incremental_file_backup") as incremental,
+            ):
+                result = technology_backup_agent.run_backup({
+                    "databaseType": "MYSQL", "databaseName": "notechsoft",
+                    "destinationPath": temp_dir, "times": ["08:00"],
+                }, "08:00", dt.datetime(2026, 8, 31, 8, 0), "exec-database", reports.append)
+
+            self.assertEqual("SUCCESS", result["status"])
+            self.assertTrue(result["filePath"].endswith(".sql.gz"))
+            create_dump.assert_called_once()
+            incremental.assert_not_called()
 
     def test_backup_agent_loads_explicit_internal_ca(self):
         context = object()
@@ -670,22 +729,82 @@ class TecnologiaIntegrationTests(unittest.TestCase):
         self.assertEqual("", payload["banco_usuario"])
         self.assertEqual([r"C:\CTA\DADOS", r"C:\CTA\CONFIG"], json.loads(payload["origens_path"]))
 
-    def test_file_backup_agent_creates_tar_gz_without_database_password(self):
+    def test_file_backup_agent_reuses_unchanged_objects_and_restores_complete_point(self):
         with tempfile.TemporaryDirectory(prefix="tecnologia-files-") as temp_dir:
             root = Path(temp_dir)
             source = root / "COBOL"
             source.mkdir()
             (source / "dados.dat").write_text("registro COBOL", encoding="utf-8")
-            output = root / "destino" / "arquivos.tar.gz"
+            (source / "config.ini").write_text("empresa=CTA", encoding="utf-8")
+            destination = root / "destino"
+            first = destination / "diario" / "2026-08-28" / "arquivos_08-00.files.json.gz"
 
-            checksum = technology_backup_agent.create_file_archive({
+            first_checksum, first_stats = technology_backup_agent.create_incremental_file_backup({
                 "databaseType": "FILES", "sourcePaths": [str(source)],
-                "destinationPath": str(output.parent),
-            }, output)
+                "destinationPath": str(destination),
+            }, first)
 
-            with technology_backup_agent.tarfile.open(output, "r:gz") as archive:
-                self.assertIn("COBOL/dados.dat", archive.getnames())
-            self.assertEqual(technology_backup_agent.sha256_file(output), checksum)
+            self.assertEqual(2, first_stats["changedFiles"])
+            self.assertEqual(0, first_stats["unchangedFiles"])
+            self.assertEqual(technology_backup_agent.sha256_file(first), first_checksum)
+
+            (source / "dados.dat").write_text("registro COBOL alterado", encoding="utf-8")
+            second = destination / "diario" / "2026-08-28" / "arquivos_12-00.files.json.gz"
+            _checksum, second_stats = technology_backup_agent.create_incremental_file_backup({
+                "databaseType": "FILES", "sourcePaths": [str(source)],
+                "destinationPath": str(destination),
+            }, second)
+
+            self.assertEqual(1, second_stats["changedFiles"])
+            self.assertEqual(1, second_stats["unchangedFiles"])
+            self.assertEqual(1, second_stats["objectsWritten"])
+            restored = root / "restaurado"
+            result = technology_backup_agent.restore_incremental_file_backup(second, restored)
+            self.assertEqual(2, result["filesRestored"])
+            self.assertEqual("registro COBOL alterado", (restored / "COBOL" / "dados.dat").read_text(encoding="utf-8"))
+            self.assertEqual("empresa=CTA", (restored / "COBOL" / "config.ini").read_text(encoding="utf-8"))
+
+    def test_file_backup_cloud_promotion_and_gc_preserve_referenced_objects(self):
+        with tempfile.TemporaryDirectory(prefix="tecnologia-files-retention-") as temp_dir:
+            root = Path(temp_dir)
+            source = root / "SISTEMAS"
+            destination = root / "backup"
+            cloud = root / "nuvem"
+            source.mkdir()
+            (source / "mantido.dat").write_text("mantido", encoding="utf-8")
+            (source / "removido.dat").write_text("removido", encoding="utf-8")
+            job = {
+                "databaseType": "FILES", "sourcePaths": [str(source)],
+                "destinationPath": str(destination), "cloudSyncPath": str(cloud),
+                "times": ["08:00", "17:00"],
+            }
+            first = destination / "diario" / "2026-08-30" / "arquivos_08.files.json.gz"
+            technology_backup_agent.create_incremental_file_backup(job, first)
+            removed_digest = next(
+                item["object"] for item in technology_backup_agent.load_file_manifest(first)["entries"]
+                if item.get("path", "").endswith("removido.dat")
+            )
+            (source / "removido.dat").unlink()
+            second = destination / "diario" / "2026-08-30" / "arquivos_17.files.json.gz"
+            _checksum, statistics = technology_backup_agent.create_incremental_file_backup(job, second)
+
+            tiers = technology_backup_agent.copy_promotions(
+                job, second, "17:00", dt.date(2026, 8, 30),
+            )
+            cloud_manifest = next(cloud.rglob("*.files.json.gz"))
+            restored = root / "restaurado-nuvem"
+            technology_backup_agent.restore_incremental_file_backup(cloud_manifest, restored)
+
+            self.assertEqual(["diario", "semana", "mes", "nuvem"], tiers)
+            self.assertEqual(1, statistics["deletedFiles"])
+            self.assertEqual("mantido", (restored / "SISTEMAS" / "mantido.dat").read_text(encoding="utf-8"))
+            self.assertFalse((restored / "SISTEMAS" / "removido.dat").exists())
+            self.assertTrue(technology_backup_agent.file_object_path(destination, removed_digest).exists())
+
+            first.unlink()
+            collected = technology_backup_agent.remove_unreferenced_file_objects(destination)
+            self.assertEqual(1, collected["objectsRemoved"])
+            self.assertFalse(technology_backup_agent.file_object_path(destination, removed_digest).exists())
 
     def test_backup_agent_repairs_read_only_destination_directory(self):
         with tempfile.TemporaryDirectory(prefix="tecnologia-permission-") as temp_dir:
@@ -1031,7 +1150,9 @@ class TecnologiaIntegrationTests(unittest.TestCase):
         self.assertIn("Atualizar agora", html)
         self.assertIn("Alertas por e-mail", html)
         self.assertIn("Backups configurados", html)
-        self.assertIn("08:00, 12:00, 17:00", html)
+        self.assertIn("08:00, 12:00, 16:00", html)
+        self.assertIn("backupOperatingWindows", html)
+        self.assertIn("operatingWindows", javascript)
         self.assertIn("/backup/jobs", javascript)
         self.assertIn("Enviar e-mail de teste", html)
         self.assertIn("Remetente:", javascript)

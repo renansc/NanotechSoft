@@ -244,11 +244,32 @@ máquina. Ao criar um plano, o navegador baixa uma única vez um JSON com o toke
 O botão **Novo JSON** rotaciona o token e invalida o arquivo anterior.
 
 O tipo **Arquivos e pastas** recebe até 20 caminhos locais, um por linha, e não
-solicita host, banco, usuário ou senha. O agente reúne as origens em um
-`.tar.gz`, preservando a árvore de diretórios, calcula o SHA-256 e aplica a mesma
-retenção. No Windows, use caminhos como `C:\CTA\DADOS`. No Linux, um destino SMB
-precisa estar montado antes e deve ser informado como `/mnt/...`; caminhos
-`//servidor/share` não são tratados como montagem pelo sistema de arquivos.
+solicita host, banco, usuário ou senha. Esse tipo usa um repositório incremental:
+a primeira execução armazena todo o conteúdo e gera um manifesto
+`.files.json.gz`; as seguintes comparam tamanho e data de alteração com o último
+manifesto e gravam somente arquivos novos ou alterados. Arquivos inalterados
+reutilizam o objeto já existente, enquanto exclusões deixam de aparecer no novo
+ponto de recuperação. O manifesto preserva a árvore, metadados e SHA-256 de cada
+conteúdo. Planos MySQL/MariaDB não usam esse formato e continuam gerando um
+`mysqldump` completo em `.sql.gz`. No Windows, use caminhos como
+`C:\CTA\DADOS`. No Linux, um destino SMB precisa estar montado antes e deve ser
+informado como `/mnt/...`; caminhos `//servidor/share` não são tratados como
+montagem pelo sistema de arquivos.
+
+Backups de arquivos antigos em `.tar.gz` não são convertidos nem removidos na
+atualização do agente; eles vencem normalmente conforme a retenção do plano.
+Para restaurar um ponto incremental em uma pasta nova ou vazia, execute a
+operação separadamente e informe o manifesto desejado:
+
+```bash
+python3 technology_backup_agent.py \
+  --restore-manifest "/backup/diario/2026-08-28/arquivos_12-00-00.files.json.gz" \
+  --restore-to "/tmp/restaurado"
+```
+
+O agente valida o SHA-256 durante a restauração e não sobrescreve arquivos já
+existentes. A restauração continua exigindo autorização operacional explícita;
+ela nunca é chamada por execução comum, startup ou deploy.
 
 O agente versionado fica em `tools/technology_backup_agent.py`. Na máquina
 executora, instale Python 3 e `mysqldump`, copie o agente e o JSON baixado e
@@ -299,6 +320,16 @@ do horário, use `--run-now`; `--once` executa apenas o horário já vencido e
 encerra. Instale o comando contínuo como serviço do sistema operacional, não
 como parte dos comandos canônicos de deploy do repositório.
 
+Cada plano também define os dias e as janelas em que uma execução pode começar.
+Um horário vencido só é recuperado enquanto o agente ainda estiver dentro da
+janela daquele dia; depois do encerramento ele aguarda o próximo dia permitido.
+Isso evita iniciar uma cópia longa quando o servidor de origem já está perto de
+ser desligado. `--run-now` continua ignorando a janela por ser uma ação manual.
+Para o CTA, cuja primeira carga observada levou até 2h35, o plano operacional
+usa início às 07:00, janela de segunda a sexta 07:00–17:00, sábado 07:00–11:00
+e domingo sem execução. Backups de arquivos usam o repositório incremental;
+planos MySQL/MariaDB continuam com `mysqldump` completo.
+
 ### Inicialização automática
 
 No Linux, instale uma unidade `systemd` com `After=network-online.target`,
@@ -324,7 +355,9 @@ Set-ExecutionPolicy -Scope Process Bypass
 O instalador pede a credencial da conta do serviço sem gravá-la no plano, copia
 o agente para `C:\ProgramData\NanotechSoft\Backup`, restringe o token a SYSTEM e
 administradores, valida o JSON e inicia uma tarefa com gatilho de boot e reinício
-automático.
+automático. Ele também pode ser executado novamente para atualizar uma instalação:
+nesse caso, encerra a tarefa anterior antes de substituir o agente e a inicia com
+a nova versão ao final.
 
 ### Organização e retenção
 
@@ -334,16 +367,23 @@ automático.
 - pasta de nuvem opcional: recebe somente a promoção mensal.
 
 Quando `diario`, `semana` e `mes` pertencem ao mesmo volume, o agente tenta usar
-hard links nas promoções. As pastas continuam apresentando arquivos completos,
-mas as camadas não ocupam o espaço novamente. Se o volume não suportar hard
-links, o agente faz uma cópia normal. A pasta de nuvem sempre recebe uma cópia
-independente.
+hard links nas promoções. Para banco, as pastas continuam apresentando dumps
+completos. Para arquivos, cada pasta apresenta um manifesto completo que aponta
+para o depósito deduplicado `arquivos_incrementais/objetos`; objetos deixam de
+ser removidos enquanto algum manifesto retido ainda os referencia. Se o volume
+não suportar hard links, o agente faz uma cópia normal do manifesto. Na promoção
+mensal para nuvem, o primeiro envio copia os objetos necessários e os seguintes
+enviam somente objetos ainda ausentes, além do novo manifesto.
 
-Cada dump é comprimido como `.sql.gz`, calculado com SHA-256 e só então
-reportado como concluído. A retenção remove arquivos expirados apenas dentro das
-três pastas gerenciadas. Excluir um plano no portal não remove arquivos do HDD.
-O plano registra a produção do backup, mas testes periódicos de restauração
-continuam sendo uma operação separada e explicitamente autorizada.
+Cada dump é comprimido como `.sql.gz`; cada ponto de arquivos usa um manifesto
+comprimido `.files.json.gz`. Ambos são calculados com SHA-256 antes de serem
+reportados como concluídos. A retenção remove arquivos expirados apenas dentro
+das três pastas gerenciadas e, no modo incremental, coleta somente objetos que
+nenhum manifesto retido referencia. Se algum manifesto estiver ilegível, essa
+coleta é ignorada para não arriscar conteúdo ainda necessário. Excluir um plano
+no portal não remove arquivos do HDD. O plano registra a produção do backup,
+mas testes periódicos de restauração continuam sendo uma operação separada e
+explicitamente autorizada.
 
 Rotas administrativas e do agente:
 

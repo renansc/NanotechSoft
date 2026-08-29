@@ -282,6 +282,7 @@ MENU_SECTIONS = (
     "compras",
     "estoque",
     "financeiro",
+    "vendas",
     "relatorios",
     "import_export",
 )
@@ -502,6 +503,7 @@ def ensure_database():
 
     technology_backup_columns = {
         "origens_path": "JSON NULL AFTER senha_variavel",
+        "janelas_execucao": "JSON NULL AFTER horarios",
     }
     for column_name, column_ddl in technology_backup_columns.items():
         cur.execute(f"SHOW COLUMNS FROM tecnologia_backups LIKE '{column_name}'")
@@ -1175,6 +1177,7 @@ def menu_display_name(item, app_name, section=""):
         "compras": {"compra", "compras"},
         "estoque": {"estoque", "estoques"},
         "financeiro": {"financeiro", "financas", "finanças"},
+        "vendas": {"venda", "vendas"},
         "relatorios": {"relatorio", "relatorios", "relatório", "relatórios"},
         "import_export": {"import export", "importacao", "importação", "exportacao", "exportação"},
         "config": {"config", "configuracao", "configuração", "configuracoes", "configurações"},
@@ -1665,6 +1668,16 @@ def enforce_app_permission():
         return redirect(url_for("login_page"))
     if not app_visible_to_user({"app_key": app_key}, usuario):
         return jsonify({"erro": "app nao liberado para este usuario"}), 403
+
+    # Permissoes especificas do RioB tambem limitam as APIs acessiveis. O hash
+    # usado pelo menu nao e enviado ao servidor, portanto ocultar os demais
+    # atalhos, sozinho, nao impediria o acesso manual aos outros modulos.
+    if app_key == "riob" and not user_is_admin(usuario):
+        recursos = get_user_permissions(usuario).get("riob", set())
+        if "*" not in recursos and request.path.startswith("/apps/riob/api/"):
+            api_recurso = request.path.removeprefix("/apps/riob/api/").split("/", 1)[0]
+            if api_recurso not in recursos:
+                return jsonify({"erro": "recurso nao liberado para este usuario"}), 403
     return None
 
 
@@ -2768,11 +2781,20 @@ def riob_proxy_response(app_key="riob", subpath="", embedded=False):
 def riob_proxy(subpath=""):
     if request.method == "GET" and not subpath:
         usuario = current_user_or_logout()
+        frame_url = url_for("riob_proxy", subpath="embed")
+        active_page = "dashboards"
+        if (
+            usuario
+            and not user_is_admin(usuario)
+            and get_user_permissions(usuario).get("riob", set()) == {"vendas"}
+        ):
+            frame_url += "#vendas:orcamento"
+            active_page = "vendas"
         return render_template(
             "integrated_frame.html",
-            active_page="dashboards",
+            active_page=active_page,
             app_nome="Rio Branco",
-            frame_url=url_for("riob_proxy", subpath="embed"),
+            frame_url=frame_url,
             **portal_context(usuario),
         )
     if subpath == "embed":
@@ -6878,6 +6900,38 @@ def technology_backup_times(value):
     return sorted(times)
 
 
+def technology_backup_operating_windows(value, *, required=False):
+    if value in (None, "", {}):
+        if required:
+            raise ValueError("selecione ao menos um dia e uma janela de execução")
+        return {}
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("janelas de execução inválidas") from exc
+    if not isinstance(value, dict):
+        raise ValueError("janelas de execução devem ser um objeto JSON")
+    windows = {}
+    for raw_weekday, raw_window in value.items():
+        try:
+            weekday = int(raw_weekday)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("dia da semana inválido nas janelas de execução") from exc
+        if weekday < 0 or weekday > 6 or not isinstance(raw_window, dict):
+            raise ValueError("dia da semana inválido nas janelas de execução")
+        start = str(raw_window.get("start") or "").strip()
+        end = str(raw_window.get("end") or "").strip()
+        if not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", start):
+            raise ValueError(f"início inválido para o dia {weekday}")
+        if not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", end) or end <= start:
+            raise ValueError(f"fim inválido para o dia {weekday}")
+        windows[str(weekday)] = {"start": start, "end": end}
+    if required and not windows:
+        raise ValueError("selecione ao menos um dia e uma janela de execução")
+    return {key: windows[key] for key in sorted(windows, key=int)}
+
+
 def normalize_technology_backup_payload(payload):
     data = payload if isinstance(payload, dict) else {}
 
@@ -6935,6 +6989,22 @@ def normalize_technology_backup_payload(payload):
             raise ValueError("nome do banco inválido")
         if not re.fullmatch(r"[A-Za-z0-9_.@-]+", database_user):
             raise ValueError("usuário do banco inválido")
+    raw_operating_windows = data.get("operatingWindows")
+    if raw_operating_windows in (None, "", {}):
+        raw_operating_windows = {
+            str(day): {"start": "00:00", "end": "23:59"}
+            for day in range(7)
+        }
+    operating_windows = technology_backup_operating_windows(
+        raw_operating_windows, required=True
+    )
+    times = technology_backup_times(data.get("times") or [])
+    if not any(
+        window["start"] <= scheduled < window["end"]
+        for window in operating_windows.values()
+        for scheduled in times
+    ):
+        raise ValueError("nenhum horário programado está dentro das janelas de execução")
     return {
         "nome": required("name", "nome", 160),
         "maquina": required("machine", "máquina executora", 160),
@@ -6947,7 +7017,8 @@ def normalize_technology_backup_payload(payload):
         "origens_path": json.dumps(source_paths, ensure_ascii=False),
         "destino_path": required("destinationPath", "pasta de destino", 1000),
         "nuvem_path": str(data.get("cloudSyncPath") or "").strip()[:1000],
-        "horarios": json.dumps(technology_backup_times(data.get("times") or []), ensure_ascii=False),
+        "horarios": json.dumps(times, ensure_ascii=False),
+        "janelas_execucao": json.dumps(operating_windows, ensure_ascii=False),
         "timezone": timezone_name,
         "retencao_diaria_dias": integer("dailyRetentionDays", 7, 1, 365),
         "retencao_semanal_semanas": integer("weeklyRetentionWeeks", 5, 1, 260),
@@ -6956,16 +7027,22 @@ def normalize_technology_backup_payload(payload):
     }
 
 
-def technology_backup_next_run(times, timezone_name, now=None):
+def technology_backup_next_run(times, timezone_name, now=None, operating_windows=None):
     schedule = technology_backup_times(times)
+    windows = technology_backup_operating_windows(operating_windows)
     zone = ZoneInfo(timezone_name)
     current = now or dt.datetime.now(dt.UTC)
     if current.tzinfo is None:
         current = current.replace(tzinfo=dt.UTC)
     local_now = current.astimezone(zone)
-    for day_offset in (0, 1):
+    for day_offset in range(8):
         day = local_now.date() + dt.timedelta(days=day_offset)
+        window = windows.get(str(day.weekday())) if windows else None
+        if windows and not window:
+            continue
         for item in schedule:
+            if window and not (window["start"] <= item < window["end"]):
+                continue
             hour, minute = (int(part) for part in item.split(":"))
             candidate = dt.datetime.combine(day, dt.time(hour, minute), zone)
             if candidate > local_now:
@@ -6985,6 +7062,7 @@ def technology_backup_json_list(value):
 
 def technology_public_backup(row):
     times = technology_backup_json_list(row.get("horarios"))
+    operating_windows = technology_backup_operating_windows(row.get("janelas_execucao"))
     last_seen = row.get("ultimo_contato_em")
     last_status = str(row.get("ultima_status") or "")
     if not row.get("ativo"):
@@ -7012,6 +7090,7 @@ def technology_public_backup(row):
         "destinationPath": row.get("destino_path") or "",
         "cloudSyncPath": row.get("nuvem_path") or "",
         "times": times,
+        "operatingWindows": operating_windows,
         "timezone": row.get("timezone") or "America/Sao_Paulo",
         "dailyRetentionDays": int(row.get("retencao_diaria_dias") or 7),
         "weeklyRetentionWeeks": int(row.get("retencao_semanal_semanas") or 5),
@@ -7020,7 +7099,11 @@ def technology_public_backup(row):
         "health": health,
         "lastSeenAt": technology_db_timestamp_iso(last_seen) if last_seen else "",
         "agentVersion": row.get("agente_versao") or "",
-        "nextRunAt": technology_backup_next_run(times, row.get("timezone") or "America/Sao_Paulo") if row.get("ativo") else "",
+        "nextRunAt": technology_backup_next_run(
+            times,
+            row.get("timezone") or "America/Sao_Paulo",
+            operating_windows=operating_windows,
+        ) if row.get("ativo") else "",
         "lastRun": ({
             "status": last_status,
             "completedAt": technology_db_timestamp_iso(row.get("ultima_conclusao")) if row.get("ultima_conclusao") else "",
@@ -7170,12 +7253,12 @@ def tecnologia_backup_create_api():
         INSERT INTO tecnologia_backups
             (nome, maquina, agente_id, agente_token_hash, banco_tipo, banco_host,
              banco_porta, banco_nome, banco_usuario, senha_variavel, origens_path, destino_path,
-             nuvem_path, horarios, timezone, retencao_diaria_dias,
+             nuvem_path, horarios, janelas_execucao, timezone, retencao_diaria_dias,
              retencao_semanal_semanas, retencao_mensal_meses, ativo)
         VALUES (%(nome)s, %(maquina)s, %(agente_id)s, %(agente_token_hash)s,
                 %(banco_tipo)s, %(banco_host)s, %(banco_porta)s, %(banco_nome)s,
                 %(banco_usuario)s, %(senha_variavel)s, %(origens_path)s, %(destino_path)s,
-                %(nuvem_path)s, %(horarios)s, %(timezone)s,
+                %(nuvem_path)s, %(horarios)s, %(janelas_execucao)s, %(timezone)s,
                 %(retencao_diaria_dias)s, %(retencao_semanal_semanas)s,
                 %(retencao_mensal_meses)s, %(ativo)s)
         """,
@@ -7222,7 +7305,7 @@ def tecnologia_backup_job_api(backup_id):
             banco_porta=%(banco_porta)s, banco_nome=%(banco_nome)s,
             banco_usuario=%(banco_usuario)s, senha_variavel=%(senha_variavel)s,
             origens_path=%(origens_path)s, destino_path=%(destino_path)s, nuvem_path=%(nuvem_path)s,
-            horarios=%(horarios)s, timezone=%(timezone)s,
+            horarios=%(horarios)s, janelas_execucao=%(janelas_execucao)s, timezone=%(timezone)s,
             retencao_diaria_dias=%(retencao_diaria_dias)s,
             retencao_semanal_semanas=%(retencao_semanal_semanas)s,
             retencao_mensal_meses=%(retencao_mensal_meses)s, ativo=%(ativo)s

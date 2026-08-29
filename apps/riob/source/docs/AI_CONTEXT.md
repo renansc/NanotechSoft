@@ -154,6 +154,12 @@ If you need context fast, read these files first:
   the original document and audit history. Any future financial edit must update
   the canonical order/item rows and the audit log in the same transaction; never
   maintain a separate cached total that can diverge from card state.
+- Sales quotes under `Vendas > Orcamento` must reuse `estoque_produtos` as the
+  canonical product master. Editable prices and percentages belong under
+  `Config > Vendas`. Recalculate every issued quote on the backend and snapshot
+  its product names, categories, prices, parameters, seller identity, and totals
+  so later configuration changes never rewrite historical PDFs. Seller identity
+  comes only from the portal `X-Usuario-*` headers; never add RioB-local login.
 - TXT Daily Sales persistence contains only effective sales: `status=positiva`
   and `valor_total > 0`. Parse the full source file for structural validation,
   but never insert negative/zero visits in `vendas_diario_pedidos`, never retain

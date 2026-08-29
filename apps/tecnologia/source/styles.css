@@ -152,6 +152,13 @@
 .backupPath { display: inline-block; max-width: 320px; color: var(--tech-primary-dark); font: 700 .72rem ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
 .backupTier { display: inline-flex; margin: 2px; border-radius: 999px; padding: 4px 7px; color: var(--tech-primary-dark); background: #e5f2ee; font-size: .65rem; font-weight: 800; }
 .backupModalCard { width: min(840px, 100%) !important; }
+.backupOperatingWindows { margin: 0; border: 1px solid var(--tech-line); border-radius: 10px; padding: 12px; }
+.backupOperatingWindows legend { padding: 0 6px; color: var(--tech-primary-dark); font-size: .8rem; font-weight: 800; }
+.backupOperatingWindows > small { display: block; margin-bottom: 10px; color: var(--tech-muted); }
+.backupWindowGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+.backupWindowGrid label { grid-template-columns: minmax(90px, 1fr) 95px 95px; align-items: center; gap: 7px; border-radius: 8px; padding: 7px; background: #f4f8f7; }
+.backupWindowGrid label span { display: flex; align-items: center; gap: 6px; color: var(--tech-ink); }
+.backupWindowGrid label.disabled { opacity: .55; }
 
 .techApp .status { display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; padding: 5px 8px; font-size: .68rem; font-weight: 850; letter-spacing: .03em; }
 .techApp .status::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }

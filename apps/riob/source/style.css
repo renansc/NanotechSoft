@@ -1206,6 +1206,90 @@ button:hover{ background:#e68900; }
   color:#0f172a;
 }
 
+.vendas-orcamento-form,
+.vendas-orcamento-config{
+  margin-bottom:16px;
+}
+
+.vendas-orcamento-dados,
+.vendas-orcamento-parametros{
+  display:grid;
+  grid-template-columns:repeat(3, minmax(0, 1fr));
+  gap:12px;
+  margin-bottom:14px;
+}
+
+.vendas-orcamento-dados label,
+.vendas-orcamento-parametros label{
+  display:grid;
+  gap:6px;
+  color:#334155;
+  font-weight:700;
+}
+
+.vendas-orcamento-observacao{
+  grid-column:1 / -1;
+}
+
+.vendas-orcamento-grupos{
+  display:grid;
+  grid-template-columns:repeat(2, minmax(0, 1fr));
+  gap:14px;
+  margin:14px 0 18px;
+}
+
+.vendas-orcamento-grupo{
+  min-width:0;
+  border:1px solid #dbe3ef;
+  border-radius:12px;
+  background:#f8fafc;
+  padding:12px;
+}
+
+.vendas-orcamento-grupo h4{
+  margin:0 0 10px;
+  color:#184e77;
+}
+
+.vendas-orcamento-tabela-wrap{
+  overflow:auto;
+}
+
+.vendas-orcamento-tabela-wrap table{
+  width:100%;
+}
+
+.vendas-orcamento-qtd{
+  width:100px;
+  min-width:80px;
+  text-align:right;
+}
+
+.vendas-orcamento-acoes{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  white-space:nowrap;
+}
+
+.vendas-orcamento-calculo{
+  display:grid;
+  gap:12px;
+}
+
+.vendas-orcamento-calculo td:last-child{
+  text-align:right;
+  font-weight:700;
+}
+
+.vendas-orcamento-config-tabela{
+  max-height:480px;
+}
+
+.vendas-orcamento-config-tabela input[type="number"]{
+  width:120px;
+}
+
 #vendasRelVendedoresBody tr{
   cursor:pointer;
 }
@@ -1456,6 +1540,9 @@ button:hover{ background:#e68900; }
   }
   .vendas-resumo-cards--wide{
     grid-template-columns:repeat(2, minmax(0, 1fr));
+  }
+  .vendas-orcamento-grupos{
+    grid-template-columns:1fr;
   }
   .vendas-dashboard-cell{
     min-width:0;
@@ -3650,6 +3737,12 @@ body.estoque-import-modal-open{
   word-break:break-word;
 }
 .dash-table thead th{ background:#fff3e0; color: black}
+#relatorioEstoqueComprometidoTable .relatorio-estoque-periodo{
+  width:150px;
+  max-width:none;
+  white-space:nowrap;
+  word-break:normal;
+}
 .dash-row-ok-0{ background:#ff9800; }   /* laranja */
 .dash-row-ok-1{ background:#4caf50; }   /* verde */
 .dash-row-ok-2{ background:#ffffff; }   /* branco */
@@ -3710,7 +3803,9 @@ body.estoque-import-modal-open{
   .relatorio-frete-grid,
   .relatorio-frete-status-list,
   .vendas-filtros-grid,
-  .vendas-resumo-cards{
+  .vendas-resumo-cards,
+  .vendas-orcamento-dados,
+  .vendas-orcamento-parametros{
     grid-template-columns:1fr;
   }
 }

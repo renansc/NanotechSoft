@@ -48,6 +48,22 @@ $installDirectory = Join-Path $InstallRoot $agentId
 $agentTarget = Join-Path $installDirectory "technology_backup_agent.py"
 $configTarget = Join-Path $installDirectory "plan.json"
 $stateTarget = Join-Path $installDirectory "plan.state.json"
+$taskName = "NanotechSoft Backup $agentId"
+
+# Uma atualização precisa encerrar o processo anterior; substituir apenas o
+# arquivo .py não altera o código que o Python já carregou em memória.
+$existingTask = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+if ($existingTask -and $existingTask.State -eq "Running") {
+    Stop-ScheduledTask -TaskName $taskName
+    $deadline = (Get-Date).AddSeconds(15)
+    do {
+        Start-Sleep -Milliseconds 250
+        $existingTask = Get-ScheduledTask -TaskName $taskName
+    } while ($existingTask.State -eq "Running" -and (Get-Date) -lt $deadline)
+    if ($existingTask.State -eq "Running") {
+        throw "A tarefa existente não encerrou a tempo. Tente novamente após o backup atual terminar."
+    }
+}
 
 New-Item -ItemType Directory -Path $installDirectory -Force | Out-Null
 Copy-Item -LiteralPath $agentSource -Destination $agentTarget -Force
@@ -67,7 +83,6 @@ if ($LASTEXITCODE -ne 0) {
     throw "O agente não validou o JSON. A tarefa não foi criada."
 }
 
-$taskName = "NanotechSoft Backup $agentId"
 $taskArguments = (@($pythonPrefix) + @($agentTarget, "--config", $configTarget) |
     ForEach-Object { Quote-TaskArgument $_ }) -join " "
 $action = New-ScheduledTaskAction -Execute $pythonCommand.Source -Argument $taskArguments -WorkingDirectory $installDirectory
