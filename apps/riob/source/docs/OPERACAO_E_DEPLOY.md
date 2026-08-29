@@ -880,6 +880,8 @@ RB_OLLAMA_BIND=127.0.0.1
 RB_OLLAMA_PORT=11434
 RB_AGENT_OLLAMA_URL=http://ollama:11434
 RB_AGENT_OLLAMA_MODEL=qwen2.5:3b
+RB_AGENT_LLM_PROVIDER=ollama
+RB_AGENT_OLLAMA_TIMEOUT=120
 RB_OPEN_WEBUI_IMAGE=ghcr.io/open-webui/open-webui:v0.9.6
 RB_OPEN_WEBUI_COMPAT_IMAGE=riob-open-webui:v0.9.6-numpy2.2.6
 RB_OPEN_WEBUI_NUMPY_VERSION=2.2.6
@@ -936,6 +938,12 @@ Open WebUI para bloquear novos registros públicos.
 
 Evite instalações concorrentes do mesmo serviço de IA na mesma VM. Elas não
 fazem parte dos quatro comandos operacionais canônicos.
+
+No menu **Agent IA**, o botão **Falar** usa o reconhecimento de voz disponível
+no Chrome/Edge em `pt-BR`. A transcrição aparece no campo para conferência antes
+do envio ao backend e ao Ollama. O navegador precisa acessar o portal por HTTPS
+e ter permissão para usar o microfone. Esse fluxo não instala Whisper nem envia
+áudio ao backend; somente o texto reconhecido pelo navegador é enviado.
 
 ## 20. Migracao dos combustiveis da frota
 

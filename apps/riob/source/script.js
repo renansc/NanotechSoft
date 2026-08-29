@@ -6595,6 +6595,10 @@ const agentIaState = {
   messages: [],
   thinkingBox: null,
   thinkingTimer: null,
+  voiceRecognition: null,
+  voiceActive: false,
+  voiceBaseText: "",
+  voiceFinalText: "",
 };
 
 function agentIaEscape(value){
@@ -6765,6 +6769,104 @@ function agentIaSetBusy(busy){
   if (btn) {
     btn.disabled = !!busy;
     btn.textContent = busy ? "Enviando..." : "Enviar";
+  }
+  const voiceBtn = document.getElementById("agentIaVoiceBtn");
+  if (voiceBtn) voiceBtn.disabled = !!busy || !agentIaSpeechRecognitionClass();
+}
+
+function agentIaSpeechRecognitionClass(){
+  return window.SpeechRecognition || window.webkitSpeechRecognition || null;
+}
+
+function agentIaVoiceStatus(text, error = false){
+  const status = document.getElementById("agentIaVoiceStatus");
+  if (!status) return;
+  status.textContent = text || "";
+  status.classList.toggle("error", !!error);
+}
+
+function agentIaSetVoiceActive(active){
+  agentIaState.voiceActive = !!active;
+  const btn = document.getElementById("agentIaVoiceBtn");
+  if (!btn) return;
+  btn.classList.toggle("listening", !!active);
+  btn.setAttribute("aria-pressed", active ? "true" : "false");
+  btn.textContent = active ? "Parar" : "Falar";
+}
+
+function agentIaToggleVoz(){
+  if (agentIaState.busy) return;
+  if (agentIaState.voiceActive && agentIaState.voiceRecognition) {
+    agentIaState.voiceRecognition.stop();
+    return;
+  }
+
+  const Recognition = agentIaSpeechRecognitionClass();
+  if (!Recognition) {
+    agentIaVoiceStatus("Este navegador não oferece reconhecimento de voz. Use Chrome ou Edge atualizado.", true);
+    return;
+  }
+
+  const input = document.getElementById("agentIaInput");
+  if (!input) return;
+  const recognition = new Recognition();
+  agentIaState.voiceRecognition = recognition;
+  agentIaState.voiceBaseText = (input.value || "").trim();
+  agentIaState.voiceFinalText = "";
+  recognition.lang = "pt-BR";
+  recognition.continuous = false;
+  recognition.interimResults = true;
+  recognition.maxAlternatives = 1;
+
+  recognition.onstart = () => {
+    agentIaSetVoiceActive(true);
+    agentIaVoiceStatus("Ouvindo... fale o comando em português.");
+  };
+  recognition.onresult = (event) => {
+    let interim = "";
+    for (let index = event.resultIndex; index < event.results.length; index += 1) {
+      const transcript = String(event.results[index][0]?.transcript || "").trim();
+      if (!transcript) continue;
+      if (event.results[index].isFinal) {
+        agentIaState.voiceFinalText = `${agentIaState.voiceFinalText} ${transcript}`.trim();
+      } else {
+        interim = `${interim} ${transcript}`.trim();
+      }
+    }
+    input.value = [agentIaState.voiceBaseText, agentIaState.voiceFinalText, interim]
+      .filter(Boolean)
+      .join(" ")
+      .trim();
+    agentIaVoiceStatus(interim ? `Reconhecendo: ${interim}` : "Comando reconhecido. Confira e clique em Enviar.");
+  };
+  recognition.onerror = (event) => {
+    const messages = {
+      "not-allowed": "Permissão do microfone negada. Libere o microfone para este endereço.",
+      "service-not-allowed": "O serviço de reconhecimento de voz foi bloqueado pelo navegador.",
+      "no-speech": "Nenhuma fala foi reconhecida. Tente novamente mais perto do microfone.",
+      "audio-capture": "Nenhum microfone disponível no dispositivo.",
+      network: "O reconhecimento de voz do navegador está sem conexão.",
+    };
+    agentIaVoiceStatus(messages[event.error] || "Não foi possível reconhecer a fala.", true);
+  };
+  recognition.onend = () => {
+    agentIaSetVoiceActive(false);
+    agentIaState.voiceRecognition = null;
+    if (agentIaState.voiceFinalText) {
+      input.value = [agentIaState.voiceBaseText, agentIaState.voiceFinalText]
+        .filter(Boolean)
+        .join(" ")
+        .trim();
+      agentIaVoiceStatus("Comando reconhecido. Confira o texto e clique em Enviar.");
+      input.focus();
+    }
+  };
+
+  try {
+    recognition.start();
+  } catch (err) {
+    agentIaSetVoiceActive(false);
+    agentIaVoiceStatus(err?.message || "Não foi possível iniciar o microfone.", true);
   }
 }
 
@@ -7121,6 +7223,11 @@ function agentIaMenu(option){
 function iniciarAgentIa(){
   if (agentIaState.initialized) return;
   agentIaState.initialized = true;
+  const voiceBtn = document.getElementById("agentIaVoiceBtn");
+  if (voiceBtn && !agentIaSpeechRecognitionClass()) {
+    voiceBtn.disabled = true;
+    agentIaVoiceStatus("Reconhecimento de voz indisponível neste navegador. Use Chrome ou Edge atualizado.", true);
+  }
   const restored = agentIaLoadState();
   if (restored && agentIaState.messages.length) {
     agentIaRenderConversation();

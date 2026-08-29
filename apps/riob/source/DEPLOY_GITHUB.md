@@ -68,6 +68,8 @@ RB_MANAGED_OLLAMA=1
 RB_MANAGED_OLLAMA_MODEL=qwen2.5:3b
 RB_OLLAMA_REMOVE_MODELS=qwen2.5:7b
 RB_AGENT_OLLAMA_MODEL=qwen2.5:3b
+RB_AGENT_LLM_PROVIDER=ollama
+RB_AGENT_OLLAMA_TIMEOUT=120
 RB_OPEN_WEBUI_PORT=3000
 RB_OPEN_WEBUI_SECRET_KEY=gere-com-openssl-rand-hex-32
 ```
@@ -212,6 +214,12 @@ Como o HTTPS usa uma CA interna, cada computador cliente deve confiar nela.
 Baixe `http://192.168.200.254/api/ca/cert.crt` e instale o certificado em
 `Autoridades de Certificacao Raiz Confiaveis` antes de acessar
 `https://192.168.200.254`.
+
+O menu **Agent IA** aceita comandos falados em português nos navegadores Chrome
+e Edge por meio do botão **Falar**. O navegador transcreve a fala para o campo
+de texto; confira o resultado antes de clicar em **Enviar**. O texto é então
+interpretado pelo Ollama configurado em `RB_AGENT_OLLAMA_URL`. A captura do
+microfone exige HTTPS e permissão do usuário no navegador.
 
 Tambem existe um app independente em HTML, servido localmente por Python:
 

@@ -437,7 +437,11 @@
         <div id="agentIaChat" class="agentia-chat"></div>
 
         <form class="agentia-form" onsubmit="agentIaEnviarPergunta(event)">
-          <textarea id="agentIaInput" placeholder="Pergunte ou peça uma acao..."></textarea>
+          <div class="agentia-command-field">
+            <textarea id="agentIaInput" placeholder="Pergunte, digite ou fale um comando..."></textarea>
+            <small id="agentIaVoiceStatus" class="agentia-voice-status" aria-live="polite">Use o microfone, confira o texto reconhecido e clique em Enviar.</small>
+          </div>
+          <button id="agentIaVoiceBtn" class="agentia-voice-btn" type="button" onclick="agentIaToggleVoz()" aria-pressed="false" title="Falar comando em português">Falar</button>
           <button id="agentIaSendBtn" type="submit">Enviar</button>
         </form>
       </div>

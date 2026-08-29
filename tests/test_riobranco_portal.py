@@ -75,6 +75,13 @@ class RioBrancoPortalTests(unittest.TestCase):
 
         self.assertIn("CLIENTE_DEPLOY_ID: ${CLIENTE_DEPLOY_ID:-rio-branco}", compose)
 
+    def test_compose_allows_enabling_ollama_per_environment(self):
+        compose = (PROJECT_DIR / "docker-compose.yml").read_text(encoding="utf-8")
+
+        self.assertIn("RB_AGENT_LLM_PROVIDER: ${RB_AGENT_LLM_PROVIDER:-off}", compose)
+        self.assertIn("RB_AGENT_OLLAMA_URL: ${RB_AGENT_OLLAMA_URL:-http://host.docker.internal:11434}", compose)
+        self.assertIn("RB_AGENT_OLLAMA_MODEL: ${RB_AGENT_OLLAMA_MODEL:-qwen2.5:3b}", compose)
+
     def test_user_configuration_uses_the_wide_responsive_layout(self):
         html = (PROJECT_DIR / "templates/config.html").read_text(encoding="utf-8")
         css = (PROJECT_DIR / "static/style.css").read_text(encoding="utf-8")
