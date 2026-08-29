@@ -45,14 +45,24 @@ class _FakeConnection:
 
 
 class RioBrancoAgentWebTests(unittest.TestCase):
+    def test_explicit_spoken_status_uses_local_handler_before_llm(self):
+        with mock.patch.object(agent_web, "_handle_chat_legacy", return_value={"reply": "local"}) as legacy, \
+            mock.patch.object(agent_web, "_handle_chat_with_llm") as llm:
+            result = agent_web.handle_chat({"message": "ver status", "chat_mode": "ia"})
+
+        self.assertEqual(result, {"reply": "local"})
+        legacy.assert_called_once()
+        llm.assert_not_called()
+
     def test_compact_llm_context_omits_large_repository_sections(self):
         with mock.patch.dict(agent_web.os.environ, {"RB_AGENT_LLM_CONTEXT_MODE": "compact"}), \
-            mock.patch.object(agent_web, "_agent_environment_context_message", return_value="ambiente"), \
+            mock.patch.object(agent_web, "_agent_environment_context_message") as environment, \
             mock.patch.object(agent_web, "_agent_repo_manifest_message") as manifest, \
             mock.patch.object(agent_web, "_agent_repo_context_message") as context:
             messages = agent_web._agent_llm_context_messages("listar cargas")
 
-        self.assertEqual(messages, [{"role": "system", "content": "ambiente"}])
+        self.assertEqual(messages, [])
+        environment.assert_not_called()
         manifest.assert_not_called()
         context.assert_not_called()
 
@@ -62,8 +72,15 @@ class RioBrancoAgentWebTests(unittest.TestCase):
         with mock.patch.dict(agent_web.os.environ, {"RB_AGENT_LLM_CONTEXT_MODE": "compact"}):
             messages = agent_web._agent_llm_history_messages(history)
 
-        self.assertEqual(len(messages), 4)
-        self.assertTrue(all(len(item["content"]) == 800 for item in messages))
+        self.assertEqual(len(messages), 2)
+        self.assertTrue(all(len(item["content"]) == 400 for item in messages))
+
+    def test_compact_llm_prompt_delegates_execution_to_local_handler(self):
+        with mock.patch.dict(agent_web.os.environ, {"RB_AGENT_LLM_CONTEXT_MODE": "compact"}):
+            prompt = agent_web._agent_llm_system_prompt("", "ia")
+
+        self.assertIn("Nao execute acoes", prompt)
+        self.assertLess(len(prompt), 120)
 
     def test_handle_chat_uses_llm_reply_when_available(self):
         with mock.patch.object(agent_web, "_agent_llm_request", return_value='{"type":"reply","reply":"Oi"}'), \

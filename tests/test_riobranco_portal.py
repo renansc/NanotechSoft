@@ -84,6 +84,13 @@ class RioBrancoPortalTests(unittest.TestCase):
         self.assertIn("RB_AGENT_LLM_CONTEXT_MODE: ${RB_AGENT_LLM_CONTEXT_MODE:-full}", compose)
         self.assertIn("RB_AGENT_OLLAMA_NUM_CTX: ${RB_AGENT_OLLAMA_NUM_CTX:-8192}", compose)
 
+    def test_compose_exposes_ollama_only_through_optional_ai_profile(self):
+        compose = (PROJECT_DIR / "docker-compose.yml").read_text(encoding="utf-8")
+
+        self.assertIn('profiles: ["ai"]', compose)
+        self.assertIn("ollama_data:/root/.ollama", compose)
+        self.assertNotIn("11434:11434", compose)
+
     def test_user_configuration_uses_the_wide_responsive_layout(self):
         html = (PROJECT_DIR / "templates/config.html").read_text(encoding="utf-8")
         css = (PROJECT_DIR / "static/style.css").read_text(encoding="utf-8")

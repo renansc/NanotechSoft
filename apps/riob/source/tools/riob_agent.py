@@ -18,7 +18,15 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PROJECT_ROOT = ROOT.parents[2]
+
+
+def resolve_project_root(app_root: Path) -> Path:
+    """Resolve a raiz do monorepo sem falhar na imagem, onde o app fica em /app."""
+    parents = list(app_root.parents)
+    return parents[2] if len(parents) > 2 else app_root
+
+
+PROJECT_ROOT = resolve_project_root(ROOT)
 TOOLS_DIR = Path(__file__).resolve().parent
 if str(TOOLS_DIR) not in sys.path:
     sys.path.insert(0, str(TOOLS_DIR))
@@ -244,9 +252,11 @@ def health_check(timeout: int = 12) -> None:
 
 
 def do_status(args: argparse.Namespace) -> None:
-    need_program("git")
-    log("status Git")
-    run(["git", "status", "--short", "--branch"], dry_run=args.dry_run)
+    if shutil.which("git"):
+        log("status Git")
+        run(["git", "status", "--short", "--branch"], dry_run=args.dry_run)
+    else:
+        log("git nao encontrado na imagem; pulando status do repositorio")
 
     if shutil.which("docker"):
         log("containers principais")

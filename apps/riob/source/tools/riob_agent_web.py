@@ -1950,6 +1950,10 @@ def wants_execution(text: str) -> bool:
     return bool(re.search(r"\b(execut|rodar|fazer|gerar|criar|enviar|subir|atualizar|deployar|listar|mostrar|ver|mover|alterar|trocar)\w*", words))
 
 
+def _explicit_local_action_request(text: str) -> bool:
+    return detect_option(text) is not None and wants_execution(text)
+
+
 def extract_commit_message(text: str) -> str:
     match = re.search(r"(?:mensagem|commit)\s*[:=-]\s*(.+)$", text, flags=re.IGNORECASE)
     if match:
@@ -2109,8 +2113,8 @@ def _agent_llm_history_messages(history: object) -> list[dict]:
     if not isinstance(history, list):
         return []
     compact = _agent_llm_context_mode() == "compact"
-    history_limit = 4 if compact else LLM_HISTORY_LIMIT
-    content_limit = 800 if compact else LLM_MAX_TOKENS
+    history_limit = 2 if compact else LLM_HISTORY_LIMIT
+    content_limit = 400 if compact else LLM_MAX_TOKENS
     messages: list[dict] = []
     for item in history[-history_limit:]:
         if not isinstance(item, dict):
@@ -2125,13 +2129,12 @@ def _agent_llm_history_messages(history: object) -> list[dict]:
 
 def _agent_llm_context_messages(message: str) -> list[dict]:
     context_messages: list[dict] = []
+    if _agent_llm_context_mode() == "compact":
+        return []
+
     env_context = _agent_environment_context_message()
     if env_context:
-        limit = 3000 if _agent_llm_context_mode() == "compact" else len(env_context)
-        context_messages.append({"role": "system", "content": env_context[:limit]})
-
-    if _agent_llm_context_mode() == "compact":
-        return context_messages
+        context_messages.append({"role": "system", "content": env_context})
 
     repo_manifest = _agent_repo_manifest_message()
     if repo_manifest:
@@ -2175,6 +2178,8 @@ def _agent_llm_system_prompt(persona_name: str = "", chat_mode: str = "agent") -
     intro = "Voce e o Agent IA do sistema RioBranco, embutido no chat da aplicacao."
     if persona:
         intro = f"Voce atende pelo nome {persona}, um membro da equipe RioBranco."
+    if _agent_llm_context_mode() == "compact":
+        return "Responda brevemente em portugues do Brasil, usando texto puro. Nao execute acoes nem invente dados."
     if mode == "ia":
         return (
             intro + " "
@@ -7110,13 +7115,14 @@ def _agent_llm_request(messages: list[dict]) -> str | None:
         "model": _agent_llm_model(),
         "messages": messages,
         "stream": False,
-        "format": "json",
         "options": {
             "temperature": _agent_llm_temperature(),
             "num_ctx": _agent_llm_int_option("RB_AGENT_OLLAMA_NUM_CTX", 8192, 2048, 32768),
             "num_predict": _agent_llm_int_option("RB_AGENT_OLLAMA_NUM_PREDICT", 512, 64, 2048),
         },
     }
+    if _agent_llm_context_mode() != "compact":
+        payload["format"] = "json"
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     request = urllib.request.Request(
         f"{_agent_llm_url()}/api/chat",
@@ -7147,13 +7153,14 @@ def _agent_llm_request_stream(messages: list[dict]):
         "model": _agent_llm_model(),
         "messages": messages,
         "stream": True,
-        "format": "json",
         "options": {
             "temperature": _agent_llm_temperature(),
             "num_ctx": _agent_llm_int_option("RB_AGENT_OLLAMA_NUM_CTX", 8192, 2048, 32768),
             "num_predict": _agent_llm_int_option("RB_AGENT_OLLAMA_NUM_PREDICT", 512, 64, 2048),
         },
     }
+    if _agent_llm_context_mode() != "compact":
+        payload["format"] = "json"
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     request = urllib.request.Request(
         f"{_agent_llm_url()}/api/chat",
@@ -7367,7 +7374,7 @@ def _handle_chat_with_llm(payload: dict) -> dict | None:
     persona_name = str(payload.get("persona_name") or "").strip()
     chat_mode = _chat_mode(payload)
     normalized = normalize(message)
-    prefer_llm_first = _prefer_llm_first_for_operational_query(message, chat_mode)
+    prefer_llm_first = _agent_llm_context_mode() != "compact" and _prefer_llm_first_for_operational_query(message, chat_mode)
 
     if chat_mode != "ia" and any(word in normalized for word in ["frete", "fretes", "carga", "cargas", "kanban", "devolucao", "devolucoes", "caminhao"]):
         if any(word in normalized for word in ["listar", "mostrar", "ver", "abrir", "mover", "alterar", "trocar", "lancar", "lançar", "registrar"]):
@@ -7412,7 +7419,7 @@ def _handle_chat_with_llm_stream(payload: dict):
         return
     persona_name = str(payload.get("persona_name") or "").strip()
     chat_mode = _chat_mode(payload)
-    prefer_llm_first = _prefer_llm_first_for_operational_query(message, chat_mode)
+    prefer_llm_first = _agent_llm_context_mode() != "compact" and _prefer_llm_first_for_operational_query(message, chat_mode)
 
     if _agent_web_intent(message, chat_mode):
         web_result = _agent_web_lookup_reply(message, chat_mode)
@@ -7483,7 +7490,7 @@ def _handle_chat_with_llm_stream(payload: dict):
         for event in stream:
             if event.get("type") == "delta":
                 content += str(event.get("chunk") or "")
-                preview = _agent_llm_extract_reply_preview(content)
+                preview = content.strip() if _agent_llm_context_mode() == "compact" else _agent_llm_extract_reply_preview(content)
                 if preview:
                     yield {"type": "delta", "reply": preview}
             elif event.get("type") == "done":
@@ -7664,7 +7671,9 @@ def handle_chat(payload: dict) -> dict:
     chat_mode = _chat_mode(payload)
     message = str(payload.get("message") or "")
     if not action:
-        if _prefer_llm_first_for_operational_query(message, chat_mode):
+        if _explicit_local_action_request(message):
+            return _handle_chat_legacy(payload)
+        if _agent_llm_context_mode() != "compact" and _prefer_llm_first_for_operational_query(message, chat_mode):
             llm_result = _handle_chat_with_llm(payload)
             if llm_result is not None:
                 return llm_result
@@ -7689,7 +7698,8 @@ def handle_chat(payload: dict) -> dict:
 
 def handle_chat_stream(payload: dict):
     action = (payload.get("action") or "").strip()
-    if action or not _agent_llm_enabled():
+    message = str(payload.get("message") or "")
+    if action or _explicit_local_action_request(message) or not _agent_llm_enabled():
         if not action:
             yield {"type": "status", "reply": "Consultando o Bot 1 local..."}
         yield {"type": "final", **handle_chat(payload)}

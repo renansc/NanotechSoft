@@ -72,7 +72,7 @@ RB_AGENT_LLM_PROVIDER=ollama
 RB_AGENT_OLLAMA_TIMEOUT=120
 RB_AGENT_LLM_CONTEXT_MODE=compact
 RB_AGENT_OLLAMA_NUM_CTX=4096
-RB_AGENT_OLLAMA_NUM_PREDICT=512
+RB_AGENT_OLLAMA_NUM_PREDICT=256
 RB_OPEN_WEBUI_PORT=3000
 RB_OPEN_WEBUI_SECRET_KEY=gere-com-openssl-rand-hex-32
 ```
@@ -224,10 +224,19 @@ de texto; confira o resultado antes de clicar em **Enviar**. O texto é então
 interpretado pelo Ollama configurado em `RB_AGENT_OLLAMA_URL`. A captura do
 microfone exige HTTPS e permissão do usuário no navegador.
 
-Em servidores com 4 GB de RAM, use `RB_AGENT_LLM_CONTEXT_MODE=compact` e
-`RB_AGENT_OLLAMA_NUM_CTX=4096`. O modo compacto mantém o contexto operacional e
-as ações do Agent IA, mas evita enviar o manifesto e trechos extensos do
-repositório em toda pergunta. Ambientes com mais memória podem manter `full`.
+O ambiente Nanotech `.10`, com 4 GB de RAM, não deve executar um Ollama local:
+mantenha `RB_AGENT_LLM_PROVIDER=off` e não ative o perfil `ai`. O RioB de
+produção e o Ollama pertencem ao servidor `.254`.
+
+No `.254`, o Xeon E5410 possui RAM suficiente, mas não possui AVX. Use o modelo
+homologado `qwen2.5:1.5b`, com `RB_AGENT_LLM_CONTEXT_MODE=compact`,
+`RB_AGENT_OLLAMA_NUM_CTX=4096` e `RB_AGENT_OLLAMA_NUM_PREDICT=256`. Na
+composição principal, inicie o serviço opcional separadamente:
+
+```bash
+docker compose --profile ai up -d ollama
+docker compose --profile ai exec ollama ollama pull qwen2.5:1.5b
+```
 
 Tambem existe um app independente em HTML, servido localmente por Python:
 

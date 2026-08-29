@@ -1,4 +1,20 @@
 services:
+  ollama:
+    profiles: ["ai"]
+    image: ${RB_OLLAMA_IMAGE:-ollama/ollama:latest}
+    restart: unless-stopped
+    environment:
+      OLLAMA_HOST: 0.0.0.0:11434
+      OLLAMA_KEEP_ALIVE: ${RB_OLLAMA_KEEP_ALIVE:-5m}
+    volumes:
+      - ollama_data:/root/.ollama
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+
   mysql:
     image: mariadb:10.11.16-jammy
     container_name: nanotechsoft-mysql
@@ -214,6 +230,7 @@ services:
 
 volumes:
   notechsoft_mysql:
+  ollama_data:
   riob_app_data:
     name: riob_app_data
   riob_cameras_data:

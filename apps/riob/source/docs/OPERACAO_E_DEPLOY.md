@@ -884,7 +884,7 @@ RB_AGENT_LLM_PROVIDER=ollama
 RB_AGENT_OLLAMA_TIMEOUT=120
 RB_AGENT_LLM_CONTEXT_MODE=compact
 RB_AGENT_OLLAMA_NUM_CTX=4096
-RB_AGENT_OLLAMA_NUM_PREDICT=512
+RB_AGENT_OLLAMA_NUM_PREDICT=256
 RB_OPEN_WEBUI_IMAGE=ghcr.io/open-webui/open-webui:v0.9.6
 RB_OPEN_WEBUI_COMPAT_IMAGE=riob-open-webui:v0.9.6-numpy2.2.6
 RB_OPEN_WEBUI_NUMPY_VERSION=2.2.6
@@ -948,10 +948,23 @@ do envio ao backend e ao Ollama. O navegador precisa acessar o portal por HTTPS
 e ter permissão para usar o microfone. Esse fluxo não instala Whisper nem envia
 áudio ao backend; somente o texto reconhecido pelo navegador é enviado.
 
-Para servidores com 4 GB de RAM, configure também
-`RB_AGENT_LLM_CONTEXT_MODE=compact` e `RB_AGENT_OLLAMA_NUM_CTX=4096`. Esse modo
-reduz o manifesto, os trechos de repositório e o histórico enviados ao modelo,
-mantendo as ações operacionais e as consultas estruturadas no backend local.
+O ambiente Nanotech `.10`, com 4 GB de RAM, não deve executar um Ollama local:
+mantenha `RB_AGENT_LLM_PROVIDER=off` e não ative o perfil `ai`. O RioB de
+produção e o Ollama pertencem ao servidor `.254`.
+
+No `.254`, o Xeon E5410 possui RAM suficiente, mas não possui AVX. Use o modelo
+homologado `qwen2.5:1.5b`, com `RB_AGENT_LLM_CONTEXT_MODE=compact`,
+`RB_AGENT_OLLAMA_NUM_CTX=4096` e `RB_AGENT_OLLAMA_NUM_PREDICT=256`. Na
+composição principal, inicie o serviço opcional separadamente:
+
+```bash
+docker compose --profile ai up -d ollama
+docker compose --profile ai exec ollama ollama pull qwen2.5:1.5b
+```
+
+O modo compacto reduz o manifesto, os trechos de repositório e o histórico
+enviados ao modelo, mantendo as ações operacionais e as consultas estruturadas
+no backend local.
 
 ## 20. Migracao dos combustiveis da frota
 
