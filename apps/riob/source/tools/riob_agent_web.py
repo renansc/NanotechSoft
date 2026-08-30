@@ -2103,6 +2103,11 @@ def _agent_llm_enabled() -> bool:
     return _agent_llm_provider() not in {"0", "false", "off", "none", "disabled"}
 
 
+def _agent_llm_ground_data_enabled() -> bool:
+    value = normalize(os.environ.get("RB_AGENT_LLM_GROUND_DATA") or "")
+    return value in {"1", "true", "yes", "sim", "on"}
+
+
 def _agent_llm_url() -> str:
     return (os.environ.get("RB_AGENT_OLLAMA_URL") or "http://127.0.0.1:11434").strip().rstrip("/")
 
@@ -4905,7 +4910,7 @@ def _filter_read_only_records(message: str, item: dict, rows: list[dict]) -> tup
 
 def _agent_grounded_records_reply(message: str, item: dict, rows: list[dict], fallback: str) -> str:
     normalized = normalize(message)
-    if not rows or not _agent_llm_enabled():
+    if not rows or not _agent_llm_enabled() or not _agent_llm_ground_data_enabled():
         return fallback
     if not any(term in normalized for term in ("qual", "quais", "quem", "quanto", "quantos", "quando", "onde", "como", "por que")):
         return fallback
@@ -5630,6 +5635,21 @@ def _message_time_request(normalized: str) -> dict | None:
             "label": "ultimo trimestre",
             "start": start,
             "end": today + datetime.timedelta(days=1),
+        }
+    if "hoje" in normalized:
+        return {
+            "mode": "range",
+            "label": "hoje",
+            "start": today,
+            "end": today + datetime.timedelta(days=1),
+        }
+    if "ontem" in normalized:
+        yesterday = today - datetime.timedelta(days=1)
+        return {
+            "mode": "range",
+            "label": "ontem",
+            "start": yesterday,
+            "end": today,
         }
     match = re.search(r"\bultimos?\s+(\d+)\s+dias?\b", normalized)
     if match:

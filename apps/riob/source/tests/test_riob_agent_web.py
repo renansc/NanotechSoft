@@ -2070,6 +2070,7 @@ class RioBrancoAgentWebTests(unittest.TestCase):
                     {"id": 2, "titulo": "Comprar tampas", "status": "solicitado", "produto_nome": "Tampa azul", "quantidade": 1000},
                 ]
             }), mock.patch.object(agent_web, "_agent_llm_enabled", return_value=True), \
+                mock.patch.object(agent_web, "_agent_llm_ground_data_enabled", return_value=True), \
                 mock.patch.object(agent_web, "_agent_llm_request", return_value="A compra de açúcar está aprovada para 500 unidades.") as llm:
                 result = agent_web.handle_chat({"message": "qual a situação da compra de açúcar?", "chat_mode": "ia"})
 
@@ -2080,6 +2081,29 @@ class RioBrancoAgentWebTests(unittest.TestCase):
             self.assertIn("Fontes:", result["reply"])
         finally:
             agent_web.reset_current_request_headers(token)
+
+    def test_structured_data_answers_today_without_waiting_for_ollama(self):
+        token = agent_web.set_current_request_headers({
+            "X-Usuario-Id": "1",
+            "X-Usuario-Perfil": "admin",
+            "X-Usuario-Recursos": "*",
+        })
+        today = datetime.datetime.now()
+        yesterday = today - datetime.timedelta(days=1)
+        try:
+            with mock.patch.object(agent_web, "system_api", return_value={
+                "orcamentos": [
+                    {"id": 1, "cliente_nome": "Cliente Hoje", "criado_em": today.strftime("%Y-%m-%d %H:%M:%S")},
+                    {"id": 2, "cliente_nome": "Cliente Ontem", "criado_em": yesterday.strftime("%Y-%m-%d %H:%M:%S")},
+                ]
+            }), mock.patch.object(agent_web, "_agent_llm_request") as llm:
+                result = agent_web.handle_chat({"message": "quais orcamentos foram feitos hoje?", "chat_mode": "ia"})
+        finally:
+            agent_web.reset_current_request_headers(token)
+
+        self.assertIn("1 registro(s)", result["reply"])
+        self.assertIn("hoje", agent_web.normalize(result["reply"]))
+        llm.assert_not_called()
 
     def test_catalog_answer_lists_only_datasets_allowed_to_user(self):
         token = agent_web.set_current_request_headers({

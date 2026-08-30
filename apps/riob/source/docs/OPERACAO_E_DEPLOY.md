@@ -997,6 +997,12 @@ perfil administrador, ou o recurso `*`, mantém acesso ao catálogo completo.
 Pergunte `quais dados a IA consegue consultar?` para listar somente as fontes
 liberadas para a sessão atual.
 
+As consultas estruturadas respondem pelo backend local sem aguardar uma segunda
+reformulação do Ollama, preservando desempenho no Xeon sem AVX. O modelo continua
+ativo para conversa e interpretação geral. Somente habilite
+`RB_AGENT_LLM_GROUND_DATA=true` se houver hardware suficiente para reformular
+também cada resposta de dados sem aumentar a latência operacional.
+
 ## 20. Migracao dos combustiveis da frota
 
 O cadastro de cada veiculo define o diesel padrao: `diesel_s10` ou
