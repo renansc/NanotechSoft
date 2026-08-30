@@ -948,6 +948,24 @@ do envio ao backend e ao Ollama. O navegador precisa acessar o portal por HTTPS
 e ter permissão para usar o microfone. Esse fluxo não instala Whisper nem envia
 áudio ao backend; somente o texto reconhecido pelo navegador é enviado.
 
+O botão global **Voz**, no cabeçalho, controla as telas diretamente pelos
+rótulos visíveis. Ele permite abrir menus, preencher ou limpar campos,
+selecionar opções, rolar a página e acionar botões. Exemplos:
+
+- `abrir orçamento`
+- `abrir estoque movimentar`
+- `preencher cliente com Mercado Central`
+- `selecionar status com carregado`
+- `clicar atualizar`
+- `clicar salvar`, seguido de `confirmar`
+
+Ações que salvam, registram, excluem, importam, enviam, movem ou publicam
+ficam pendentes por 30 segundos e exigem `confirmar`. O roteador não usa `eval`,
+não chama funções arbitrárias e só enxerga controles disponíveis na sessão
+do usuário. Seleção de arquivos, permissões de câmera/microfone e outras
+janelas protegidas pelo navegador continuam exigindo interação do operador.
+Comandos que não correspondem a um controle visível são enviados ao Agent IA.
+
 O ambiente Nanotech `.10`, com 4 GB de RAM, não deve executar um Ollama local:
 mantenha `RB_AGENT_LLM_PROVIDER=off` e não ative o perfil `ai`. O RioB de
 produção e o Ollama pertencem ao servidor `.254`.

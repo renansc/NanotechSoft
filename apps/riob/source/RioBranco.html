@@ -31,7 +31,23 @@
     <div class="menu-toggle" id="menuToggle">☰</div>
     <img id="logoSistema" src="logo.png" class="logo" alt="Logo">
     <h1>Sistema Rio Branco</h1>
+    <button id="voiceControlBtn" class="voice-control-btn" type="button" onclick="voiceControlToggle()" aria-pressed="false" title="Controlar o sistema por voz">🎙 Voz</button>
   </header>
+
+  <aside id="voiceControlPanel" class="voice-control-panel hidden" aria-label="Controle do sistema por voz">
+    <div class="voice-control-head">
+      <strong>Controle por voz</strong>
+      <button type="button" class="voice-control-close" onclick="voiceControlClose()" aria-label="Fechar controle por voz">×</button>
+    </div>
+    <div id="voiceControlStatus" class="voice-control-status" aria-live="polite">Diga “ajuda de voz” para ver exemplos.</div>
+    <div id="voiceControlTranscript" class="voice-control-transcript"></div>
+    <div class="voice-control-actions">
+      <button id="voiceControlListenBtn" type="button" onclick="voiceControlToggle()">Ouvir comando</button>
+      <button id="voiceControlConfirmBtn" class="btn-danger hidden" type="button" onclick="voiceControlConfirmPending()">Confirmar ação</button>
+      <button id="voiceControlCancelBtn" class="btn-secondary hidden" type="button" onclick="voiceControlCancelPending()">Cancelar</button>
+    </div>
+    <small>Exemplos: “abrir orçamento”, “preencher cliente com Mercado Central”, “clicar salvar”, “confirmar”.</small>
+  </aside>
 
   <!-- =====================================================
        MENU PRINCIPAL

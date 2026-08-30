@@ -6778,6 +6778,359 @@ function agentIaSpeechRecognitionClass(){
   return window.SpeechRecognition || window.webkitSpeechRecognition || null;
 }
 
+const voiceControlState = {
+  recognition: null,
+  listening: false,
+  finalText: "",
+  pendingAction: null,
+  pendingExpiresAt: 0,
+};
+
+function voiceControlNormalize(value){
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function voiceControlSetStatus(message, error = false){
+  const status = document.getElementById("voiceControlStatus");
+  if (!status) return;
+  status.textContent = message || "";
+  status.classList.toggle("error", !!error);
+}
+
+function voiceControlSetTranscript(message){
+  const transcript = document.getElementById("voiceControlTranscript");
+  if (transcript) transcript.textContent = message || "";
+}
+
+function voiceControlSetListening(active){
+  voiceControlState.listening = !!active;
+  const buttons = [document.getElementById("voiceControlBtn"), document.getElementById("voiceControlListenBtn")];
+  buttons.forEach((button) => {
+    if (!button) return;
+    button.classList.toggle("listening", !!active);
+    button.setAttribute("aria-pressed", active ? "true" : "false");
+  });
+  const listen = document.getElementById("voiceControlListenBtn");
+  if (listen) listen.textContent = active ? "Parar" : "Ouvir comando";
+}
+
+function voiceControlTogglePanel(force){
+  const panel = document.getElementById("voiceControlPanel");
+  if (!panel) return;
+  const shouldOpen = force === undefined ? panel.classList.contains("hidden") : !!force;
+  panel.classList.toggle("hidden", !shouldOpen);
+}
+
+function voiceControlClose(){
+  if (voiceControlState.recognition && voiceControlState.listening) {
+    try { voiceControlState.recognition.stop(); } catch {}
+  }
+  voiceControlTogglePanel(false);
+}
+
+function voiceControlElementLabel(element){
+  if (!element) return "";
+  const explicit = element.getAttribute?.("aria-label") || element.getAttribute?.("title") || "";
+  if (explicit.trim()) return explicit.trim();
+  if (element.matches?.("input, textarea, select")) {
+    const label = element.labels?.[0];
+    if (label) {
+      const clone = label.cloneNode(true);
+      clone.querySelectorAll("input, textarea, select, button").forEach((item) => item.remove());
+      const labelText = clone.textContent?.trim();
+      if (labelText) return labelText;
+    }
+    const cell = element.closest?.("td");
+    const row = element.closest?.("tr");
+    if (cell && row) {
+      const cells = Array.from(row.children || []);
+      const columnIndex = cells.indexOf(cell);
+      const header = row.closest("table")?.querySelectorAll("thead th")?.[columnIndex]?.textContent?.trim() || "";
+      const rowName = cells
+        .filter((item) => item !== cell)
+        .map((item) => String(item.textContent || "").replace(/\s+/g, " ").trim())
+        .find(Boolean) || "";
+      const tableLabel = `${header} ${rowName}`.trim();
+      if (tableLabel) return tableLabel;
+    }
+    return element.getAttribute("placeholder") || element.getAttribute("name") || element.id || "";
+  }
+  if (element.classList?.contains("menu-item")) {
+    return Array.from(element.childNodes)
+      .filter((node) => node.nodeType === Node.TEXT_NODE)
+      .map((node) => node.textContent || "")
+      .join(" ")
+      .trim();
+  }
+  if (element.classList?.contains("submenu-item")) {
+    const ownLabel = String(element.innerText || element.textContent || "").replace(/\s+/g, " ").trim();
+    const parent = element.closest?.(".menu-item");
+    const parentLabel = parent ? voiceControlElementLabel(parent) : "";
+    return `${parentLabel} ${ownLabel}`.trim();
+  }
+  return String(element.innerText || element.textContent || "").replace(/\s+/g, " ").trim();
+}
+
+function voiceControlIsAvailable(element, allowCollapsedMenu = false){
+  if (!element || element.disabled || element.classList?.contains("hidden")) return false;
+  if (element.style?.display === "none" || element.style?.visibility === "hidden") return false;
+  if (element.closest?.("[hidden], [aria-hidden='true'], .permission-hidden")) return false;
+  if (allowCollapsedMenu) return true;
+  const style = window.getComputedStyle ? window.getComputedStyle(element) : null;
+  if (style && (style.display === "none" || style.visibility === "hidden")) return false;
+  if (typeof element.getClientRects === "function" && element.getClientRects().length === 0) return false;
+  return true;
+}
+
+function voiceControlMatchScore(query, label){
+  const wanted = voiceControlNormalize(query);
+  const candidate = voiceControlNormalize(label);
+  if (!wanted || !candidate) return 0;
+  if (wanted === candidate) return 1000 + candidate.length;
+  const wantedTokens = new Set(wanted.split(" ").filter((token) => token.length > 1));
+  const candidateTokens = new Set(candidate.split(" ").filter((token) => token.length > 1));
+  const matches = Array.from(candidateTokens).filter((token) => wantedTokens.has(token)).length;
+  if (!matches) return 0;
+  const wantedCoverage = matches / Math.max(1, wantedTokens.size);
+  const candidateCoverage = matches / Math.max(1, candidateTokens.size);
+  const containmentBonus = candidate.includes(wanted) ? 100 : (wanted.includes(candidate) ? 50 : 0);
+  return Math.round(wantedCoverage * 500 + candidateCoverage * 300 + containmentBonus);
+}
+
+function voiceControlFindBest(query, elements, allowCollapsedMenu = false){
+  let best = null;
+  let bestScore = 0;
+  Array.from(elements || []).forEach((element) => {
+    if (!voiceControlIsAvailable(element, allowCollapsedMenu)) return;
+    const score = voiceControlMatchScore(query, voiceControlElementLabel(element));
+    if (score > bestScore) {
+      best = element;
+      bestScore = score;
+    }
+  });
+  return bestScore >= 100 ? best : null;
+}
+
+function voiceControlShowPending(active){
+  document.getElementById("voiceControlConfirmBtn")?.classList.toggle("hidden", !active);
+  document.getElementById("voiceControlCancelBtn")?.classList.toggle("hidden", !active);
+}
+
+function voiceControlQueueConfirmation(description, callback){
+  voiceControlState.pendingAction = { description, callback };
+  voiceControlState.pendingExpiresAt = Date.now() + 30000;
+  voiceControlShowPending(true);
+  voiceControlSetStatus(`Ação pendente: ${description}. Diga “confirmar” em até 30 segundos ou use o botão.`);
+}
+
+function voiceControlCancelPending(){
+  voiceControlState.pendingAction = null;
+  voiceControlState.pendingExpiresAt = 0;
+  voiceControlShowPending(false);
+  voiceControlSetStatus("Ação cancelada. Nenhuma alteração foi executada.");
+}
+
+function voiceControlConfirmPending(){
+  const pending = voiceControlState.pendingAction;
+  if (!pending || Date.now() > voiceControlState.pendingExpiresAt) {
+    voiceControlCancelPending();
+    voiceControlSetStatus("Não existe ação válida aguardando confirmação.", true);
+    return false;
+  }
+  voiceControlState.pendingAction = null;
+  voiceControlState.pendingExpiresAt = 0;
+  voiceControlShowPending(false);
+  try {
+    pending.callback();
+    voiceControlSetStatus(`Ação confirmada: ${pending.description}.`);
+    return true;
+  } catch (error) {
+    voiceControlSetStatus(error?.message || "A ação confirmada falhou.", true);
+    return false;
+  }
+}
+
+function voiceControlNeedsConfirmation(command, label){
+  const text = voiceControlNormalize(`${command} ${label}`);
+  return /\b(salvar|registrar|excluir|apagar|remover|importar|contabilizar|classificar|enviar|mover|alterar|trocar|unificar|separar|liberar|confirmar|finalizar|ligar|chamar|deploy|update|backup|git|commit|push)\b/.test(text);
+}
+
+function voiceControlNavigate(query){
+  const items = document.querySelectorAll(".menu-item, .submenu-item");
+  const target = voiceControlFindBest(query, items, true);
+  if (!target) return false;
+  target.click();
+  voiceControlSetStatus(`Tela aberta: ${voiceControlElementLabel(target)}.`);
+  return true;
+}
+
+function voiceControlFindField(query){
+  const fields = document.querySelectorAll("input:not([type='hidden']):not([type='file']), textarea, select");
+  return voiceControlFindBest(query, fields, false);
+}
+
+function voiceControlSetField(fieldQuery, rawValue){
+  const field = voiceControlFindField(fieldQuery);
+  if (!field) return false;
+  const value = String(rawValue || "").trim();
+  if (field.tagName === "SELECT") {
+    const option = voiceControlFindBest(value, field.options, true);
+    if (!option) {
+      voiceControlSetStatus(`Não encontrei a opção “${value}” em ${voiceControlElementLabel(field)}.`, true);
+      return true;
+    }
+    field.value = option.value;
+  } else if (field.type === "checkbox" || field.type === "radio") {
+    field.checked = !/\b(nao|desmarcar|desativar|falso)\b/.test(voiceControlNormalize(value));
+  } else {
+    field.value = value;
+  }
+  field.dispatchEvent(new Event("input", { bubbles: true }));
+  field.dispatchEvent(new Event("change", { bubbles: true }));
+  field.focus();
+  voiceControlSetStatus(`Campo ${voiceControlElementLabel(field)} preenchido. Confira antes de salvar.`);
+  return true;
+}
+
+function voiceControlClick(query, command){
+  const controls = document.querySelectorAll("button, a, [role='button'], input[type='button'], input[type='submit']");
+  const target = voiceControlFindBest(query, controls, false);
+  if (!target) return false;
+  const label = voiceControlElementLabel(target);
+  const execute = () => target.click();
+  if (voiceControlNeedsConfirmation(command, label)) {
+    voiceControlQueueConfirmation(`acionar “${label}”`, execute);
+  } else {
+    execute();
+    voiceControlSetStatus(`Comando executado: ${label}.`);
+  }
+  return true;
+}
+
+function voiceControlOpenAgent(message){
+  const menu = Array.from(document.querySelectorAll(".menu-item")).find((item) => voiceControlNormalize(voiceControlElementLabel(item)) === "agent ia");
+  showTab("agentia", menu || null);
+  iniciarAgentIa();
+  agentIaAddMessage("user", message);
+  agentIaChat({ message });
+  voiceControlSetStatus("Comando enviado ao Agent IA.");
+}
+
+function voiceControlHelp(){
+  voiceControlSetStatus("Você pode dizer: abrir orçamento; abrir estoque movimentar; preencher cliente com Mercado Central; selecionar status com carregado; clicar atualizar; clicar salvar e depois confirmar; rolar para baixo; fechar; ou fazer uma pergunta ao Agent IA.");
+}
+
+function voiceControlExecute(rawCommand){
+  const command = String(rawCommand || "").trim();
+  const normalized = voiceControlNormalize(command);
+  if (!normalized) return false;
+  voiceControlSetTranscript(command);
+
+  if (/^(confirmar|confirmo|sim confirmar|pode confirmar)$/.test(normalized)) return voiceControlConfirmPending();
+  if (/^(cancelar|cancela|nao cancelar|nao)$/.test(normalized) && voiceControlState.pendingAction) {
+    voiceControlCancelPending();
+    return true;
+  }
+  if (/\b(ajuda de voz|comandos de voz|o que posso falar)\b/.test(normalized)) {
+    voiceControlHelp();
+    return true;
+  }
+  const navigation = command.match(/^(?:abrir|ir para|mostrar tela|navegar para)\s+(.+)$/i);
+  if (navigation && voiceControlNavigate(navigation[1])) return true;
+
+  const fill = command.match(/^(?:preencher|digitar|informar|selecionar)\s+(?:campo\s+)?(.+?)\s+(?:com|valor|op[cç][aã]o)\s+(.+)$/i);
+  if (fill && voiceControlSetField(fill[1], fill[2])) return true;
+
+  const clear = command.match(/^limpar\s+(?:campo\s+)?(.+)$/i);
+  if (clear && voiceControlSetField(clear[1], "")) return true;
+
+  const click = command.match(/^(?:clicar|pressionar|acionar)\s+(?:em\s+)?(.+)$/i);
+  if (click && voiceControlClick(click[1], command)) return true;
+
+  if (/^(?:rolar|descer)(?: para)? baixo$/.test(normalized)) {
+    window.scrollBy({ top: Math.round(window.innerHeight * 0.8), behavior: "smooth" });
+    voiceControlSetStatus("Rolando para baixo.");
+    return true;
+  }
+  if (/^(?:rolar|subir)(?: para)? cima$/.test(normalized)) {
+    window.scrollBy({ top: -Math.round(window.innerHeight * 0.8), behavior: "smooth" });
+    voiceControlSetStatus("Rolando para cima.");
+    return true;
+  }
+  if (/^(fechar|voltar|cancelar)$/.test(normalized)) {
+    const target = voiceControlFindBest(normalized, document.querySelectorAll("button, a, [role='button']"), false);
+    if (target) {
+      target.click();
+      voiceControlSetStatus(`Comando executado: ${voiceControlElementLabel(target)}.`);
+      return true;
+    }
+  }
+
+  voiceControlOpenAgent(command);
+  return true;
+}
+
+function voiceControlToggle(){
+  voiceControlTogglePanel(true);
+  if (voiceControlState.listening && voiceControlState.recognition) {
+    voiceControlState.recognition.stop();
+    return;
+  }
+  const Recognition = agentIaSpeechRecognitionClass();
+  if (!Recognition) {
+    voiceControlSetStatus("Reconhecimento de voz indisponível. Use Chrome ou Edge atualizado.", true);
+    return;
+  }
+  const recognition = new Recognition();
+  voiceControlState.recognition = recognition;
+  voiceControlState.finalText = "";
+  recognition.lang = "pt-BR";
+  recognition.continuous = false;
+  recognition.interimResults = true;
+  recognition.maxAlternatives = 1;
+  recognition.onstart = () => {
+    voiceControlSetListening(true);
+    voiceControlSetStatus("Ouvindo o comando...");
+  };
+  recognition.onresult = (event) => {
+    let interim = "";
+    for (let index = event.resultIndex; index < event.results.length; index += 1) {
+      const text = String(event.results[index][0]?.transcript || "").trim();
+      if (!text) continue;
+      if (event.results[index].isFinal) voiceControlState.finalText = `${voiceControlState.finalText} ${text}`.trim();
+      else interim = `${interim} ${text}`.trim();
+    }
+    voiceControlSetTranscript([voiceControlState.finalText, interim].filter(Boolean).join(" "));
+  };
+  recognition.onerror = (event) => {
+    const errors = {
+      "not-allowed": "Permissão do microfone negada para este endereço.",
+      "service-not-allowed": "Reconhecimento de voz bloqueado pelo navegador.",
+      "no-speech": "Nenhum comando foi reconhecido.",
+      "audio-capture": "Nenhum microfone disponível.",
+      network: "Serviço de reconhecimento de voz sem conexão.",
+    };
+    voiceControlSetStatus(errors[event.error] || "Falha ao reconhecer o comando.", true);
+  };
+  recognition.onend = () => {
+    voiceControlSetListening(false);
+    voiceControlState.recognition = null;
+    const command = voiceControlState.finalText.trim();
+    if (command) voiceControlExecute(command);
+  };
+  try {
+    recognition.start();
+  } catch (error) {
+    voiceControlSetListening(false);
+    voiceControlSetStatus(error?.message || "Não foi possível iniciar o microfone.", true);
+  }
+}
+
 function agentIaVoiceStatus(text, error = false){
   const status = document.getElementById("agentIaVoiceStatus");
   if (!status) return;
