@@ -2018,6 +2018,130 @@ class RioBrancoAgentWebTests(unittest.TestCase):
         self.assertEqual(action["name"], "refresh_fretes")
         self.assertEqual(action["label"], "Listar cargas")
 
+    def test_read_only_catalog_covers_all_main_business_domains(self):
+        names = {item["name"] for item in agent_web.READ_ONLY_MODULES}
+
+        self.assertTrue({
+            "vendas_orcamentos", "vendas_diario", "estoque_saldo", "estoque_lotes",
+            "compras_solicitacoes", "compras_previsao", "processos", "fretes",
+            "devolucoes", "colaboradores", "veiculos", "abastecimentos_xml",
+        }.issubset(names))
+
+    def test_sales_user_can_query_quotes_but_not_stock(self):
+        token = agent_web.set_current_request_headers({
+            "X-Usuario-Id": "12",
+            "X-Usuario-Login": "lucimar",
+            "X-Usuario-Perfil": "usuario",
+            "X-Usuario-Recursos": "vendas",
+        })
+        try:
+            with mock.patch.object(agent_web, "system_api", return_value={
+                "orcamentos": [{
+                    "id": 8,
+                    "codigo": "ORC-2026-000008",
+                    "cliente_nome": "Mercado Central",
+                    "cidade": "Londrina",
+                    "valor_real": 36442.03,
+                }]
+            }) as api, mock.patch.object(agent_web, "_agent_llm_enabled", return_value=False):
+                quote = agent_web.handle_chat({"message": "qual orçamento do cliente Mercado Central?", "chat_mode": "ia"})
+
+            self.assertIn("Mercado Central", quote["reply"])
+            self.assertEqual("/api/vendas/orcamentos?limite=200", api.call_args.args[1])
+
+            with mock.patch.object(agent_web, "system_api") as blocked_api:
+                stock = agent_web.handle_chat({"message": "qual o saldo do açúcar?", "chat_mode": "ia"})
+
+            self.assertIn("nao possui permissao", agent_web.normalize(stock["reply"]))
+            blocked_api.assert_not_called()
+        finally:
+            agent_web.reset_current_request_headers(token)
+
+    def test_admin_data_question_is_grounded_with_authorized_records(self):
+        token = agent_web.set_current_request_headers({
+            "X-Usuario-Id": "1",
+            "X-Usuario-Perfil": "admin",
+            "X-Usuario-Recursos": "*",
+        })
+        try:
+            with mock.patch.object(agent_web, "system_api", return_value={
+                "rows": [
+                    {"id": 1, "titulo": "Comprar açúcar", "status": "aprovado", "produto_nome": "Açúcar", "quantidade": 500},
+                    {"id": 2, "titulo": "Comprar tampas", "status": "solicitado", "produto_nome": "Tampa azul", "quantidade": 1000},
+                ]
+            }), mock.patch.object(agent_web, "_agent_llm_enabled", return_value=True), \
+                mock.patch.object(agent_web, "_agent_llm_request", return_value="A compra de açúcar está aprovada para 500 unidades.") as llm:
+                result = agent_web.handle_chat({"message": "qual a situação da compra de açúcar?", "chat_mode": "ia"})
+
+            self.assertIn("500", result["reply"])
+            prompt = llm.call_args.args[0][-1]["content"]
+            self.assertIn("Comprar açúcar", prompt)
+            self.assertNotIn("Comprar tampas", prompt)
+            self.assertIn("Fontes:", result["reply"])
+        finally:
+            agent_web.reset_current_request_headers(token)
+
+    def test_catalog_answer_lists_only_datasets_allowed_to_user(self):
+        token = agent_web.set_current_request_headers({
+            "X-Usuario-Id": "12",
+            "X-Usuario-Perfil": "usuario",
+            "X-Usuario-Recursos": "vendas",
+        })
+        try:
+            result = agent_web.handle_chat({"message": "quais dados a IA consegue consultar?", "chat_mode": "ia"})
+        finally:
+            agent_web.reset_current_request_headers(token)
+
+        self.assertIn("pedidos e orcamentos de vendas", agent_web.normalize(result["reply"]))
+        self.assertNotIn("lotes do estoque", agent_web.normalize(result["reply"]))
+
+    def test_sales_user_cannot_inspect_server_storage_or_architecture(self):
+        token = agent_web.set_current_request_headers({
+            "X-Usuario-Id": "12",
+            "X-Usuario-Perfil": "usuario",
+            "X-Usuario-Recursos": "vendas",
+        })
+        try:
+            storage = agent_web.handle_chat({"message": "onde ficam armazenados os arquivos?", "chat_mode": "ia"})
+            overview = agent_web.handle_chat({"message": "qual a arquitetura do sistema?", "chat_mode": "ia"})
+        finally:
+            agent_web.reset_current_request_headers(token)
+
+        self.assertIn("nao possui permissao", agent_web.normalize(storage["reply"]))
+        self.assertIn("nao possui permissao", agent_web.normalize(overview["reply"]))
+
+    def test_internal_api_forwards_profile_and_allowed_resources(self):
+        captured = {}
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, traceback):
+                return False
+
+            def read(self):
+                return b"{}"
+
+        def fake_urlopen(request, **kwargs):
+            captured.update({key.lower(): value for key, value in request.header_items()})
+            return FakeResponse()
+
+        token = agent_web.set_current_request_headers({
+            "X-Usuario-Id": "12",
+            "X-Usuario-Perfil": "usuario",
+            "X-Usuario-Recursos": "vendas",
+        })
+        try:
+            with mock.patch.object(agent_web, "system_base_urls", return_value=["http://app.local"]), \
+                mock.patch.object(agent_web.urllib.request, "urlopen", side_effect=fake_urlopen):
+                agent_web.system_api("GET", "/api/vendas/orcamentos")
+        finally:
+            agent_web.reset_current_request_headers(token)
+
+        self.assertEqual("usuario", captured["x-usuario-perfil"])
+        self.assertEqual("vendas", captured["x-usuario-recursos"])
+
 
 if __name__ == "__main__":
     unittest.main()

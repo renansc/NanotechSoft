@@ -325,6 +325,10 @@ If you need context fast, read these files first:
   Flask routes, HTML callbacks, protocol handlers, library overrides or public
   integration entry points. Record newly discovered active resources in
   `docs/ROTAS_E_RECURSOS_COMPLEMENTARES.md`.
+- Agent IA data answers must use cataloged `GET` routes, explicit allowed fields,
+  the current Portal resource permissions, and bounded record samples. Never
+  expose arbitrary SQL, credentials, secrets, or full unfiltered payloads to the
+  language model.
 - If you need to plan a change, generate a brief first instead of guessing the files.
 - Prefer `./riob-agent brief "..."` when you need a concise, file-aware analysis before editing.
 - If a flow touches deploy, backup, or integrations, mention the operational impact explicitly.

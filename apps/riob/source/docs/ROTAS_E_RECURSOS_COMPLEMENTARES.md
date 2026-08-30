@@ -168,6 +168,11 @@ O pre-lancamento permite revisar, descartar ou devolver a NF-e ao estoque.
 - `GET /api/chat/mensagens/<mensagem_id>/anexo`
 - `GET /api/devolucoes/fotos/<filename>`
 - `POST /api/agent/chat`
+  - recebe do Portal `X-Usuario-Perfil` e `X-Usuario-Recursos`;
+  - permite a entrada de qualquer usuário que tenha ao menos um recurso RioB,
+    mas filtra internamente cada consulta conforme a permissão daquele recurso;
+  - responde perguntas de dados por um catálogo de rotas `GET` e campos
+    permitidos, sem liberar SQL arbitrário nem credenciais ao modelo.
 - `GET /docs/<filename>`
 
 `/api/me` recebe a identidade do portal; o RioB continua sem login proprio.

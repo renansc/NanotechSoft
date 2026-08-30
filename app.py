@@ -968,6 +968,17 @@ def allowed_resources_for_app(usuario, app_key):
     return sorted(get_user_permissions(usuario).get(app_key, set()))
 
 
+def user_identity_headers_for_app(usuario, app_key):
+    usuario = usuario or {}
+    return {
+        "X-Usuario-Id": str(usuario.get("id") or ""),
+        "X-Usuario-Nome": usuario.get("nome") or usuario.get("login") or "",
+        "X-Usuario-Login": usuario.get("login") or "",
+        "X-Usuario-Perfil": usuario.get("perfil") or "usuario",
+        "X-Usuario-Recursos": ",".join(allowed_resources_for_app(usuario, app_key)),
+    }
+
+
 def set_theme(theme_key):
     enabled_keys = {t["key"] for t in THEMES if t["enabled"]}
     if theme_key not in enabled_keys:
@@ -1676,7 +1687,11 @@ def enforce_app_permission():
         recursos = get_user_permissions(usuario).get("riob", set())
         if "*" not in recursos and request.path.startswith("/apps/riob/api/"):
             api_recurso = request.path.removeprefix("/apps/riob/api/").split("/", 1)[0]
-            if api_recurso not in recursos:
+            # O Agent IA recebe a lista completa de recursos abaixo e aplica a
+            # mesma autorizacao por conjunto de dados. Assim, qualquer usuario
+            # com ao menos um recurso RioB pode perguntar sobre o que ja possui,
+            # sem liberar as demais APIs do aplicativo.
+            if api_recurso != "agent" and api_recurso not in recursos:
                 return jsonify({"erro": "recurso nao liberado para este usuario"}), 403
     return None
 
@@ -2573,10 +2588,7 @@ def local_riob_proxy_response(app_key, subpath=""):
         if key.lower() in {"host", "connection", "content-length", "accept-encoding"}:
             continue
         headers[key] = value
-    headers["X-Usuario-Id"] = str(usuario["id"])
-    headers["X-Usuario-Nome"] = usuario.get("nome") or usuario.get("login") or ""
-    headers["X-Usuario-Login"] = usuario["login"]
-    headers["X-Usuario-Perfil"] = usuario.get("perfil") or "usuario"
+    headers.update(user_identity_headers_for_app(usuario, app_key))
     headers["X-Forwarded-Prefix"] = f"/apps/{app_key}"
     data = request.get_data() if request.method in {"POST", "PUT", "PATCH"} else None
     req = urllib.request.Request(upstream_url, data=data, headers=headers, method=request.method)
@@ -2682,10 +2694,7 @@ def riob_proxy_response(app_key="riob", subpath="", embedded=False):
         if lk in {"host", "connection", "content-length", "accept-encoding"}:
             continue
         headers[key] = value
-    headers["X-Usuario-Id"] = str(usuario["id"])
-    headers["X-Usuario-Nome"] = usuario.get("nome") or usuario.get("login") or ""
-    headers["X-Usuario-Login"] = usuario["login"]
-    headers["X-Usuario-Perfil"] = usuario.get("perfil") or "usuario"
+    headers.update(user_identity_headers_for_app(usuario, "riob"))
     headers["X-Forwarded-Prefix"] = "/apps/riob"
 
     data = request.get_data() if request.method in {"POST", "PUT", "PATCH"} else None

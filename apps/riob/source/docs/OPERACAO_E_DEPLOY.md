@@ -984,6 +984,19 @@ O modo compacto reduz o manifesto, os trechos de repositório e o histórico
 enviados ao modelo, mantendo as ações operacionais e as consultas estruturadas
 no backend local.
 
+O Agent IA consulta os dados operacionais por um catálogo de rotas `GET` do
+RioB. O catálogo cobre status, cadastros, vendas diárias, orçamentos, estoque,
+lotes, fretes, devoluções, frota, processos, compras, comissão e chat. Cada
+fonte possui uma lista explícita dos campos que podem ser enviados ao modelo;
+senhas, tokens, chaves e o payload integral não entram no contexto do Ollama.
+
+O Portal encaminha `X-Usuario-Perfil` e `X-Usuario-Recursos` ao RioB. O Agent
+aplica essas permissões antes de consultar cada fonte: um usuário de vendas pode
+consultar vendas e orçamentos, mas não estoque, compras ou infraestrutura. O
+perfil administrador, ou o recurso `*`, mantém acesso ao catálogo completo.
+Pergunte `quais dados a IA consegue consultar?` para listar somente as fontes
+liberadas para a sessão atual.
+
 ## 20. Migracao dos combustiveis da frota
 
 O cadastro de cada veiculo define o diesel padrao: `diesel_s10` ou

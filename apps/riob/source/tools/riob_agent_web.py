@@ -165,6 +165,80 @@ def current_request_headers() -> dict[str, str]:
     return dict(_current_request_headers_var.get({}) or {})
 
 
+def _current_request_header(name: str) -> str:
+    wanted = str(name or "").strip().lower()
+    for key, value in current_request_headers().items():
+        if str(key).strip().lower() == wanted:
+            return str(value or "").strip()
+    return ""
+
+
+def _agent_user_profile() -> str:
+    return normalize(_current_request_header("X-Usuario-Perfil"))
+
+
+def _agent_allowed_resources() -> set[str]:
+    raw = _current_request_header("X-Usuario-Recursos")
+    return {
+        normalize(item)
+        for item in re.split(r"[,;\s]+", raw)
+        if normalize(item)
+    }
+
+
+def _agent_has_request_identity() -> bool:
+    return bool(
+        _current_request_header("X-Usuario-Id")
+        or _current_request_header("X-Usuario-Login")
+        or _current_request_header("X-Usuario-Perfil")
+        or _current_request_header("X-Usuario-Recursos")
+    )
+
+
+AGENT_RESOURCE_ALIASES = {
+    "cadastros": {"cadastros"},
+    "chat": {"chat", "comunicacao", "workflow"},
+    "comissao": {"comissao", "comissoes", "workflow"},
+    "compras": {"compras", "workflow"},
+    "devolucoes": {"devolucoes", "workflow"},
+    "estoque": {"estoque"},
+    "fretes": {"fretes", "kanban", "workflow"},
+    "frota": {"frota", "gestaofrota", "workflow"},
+    "processos": {"processos", "workflow"},
+    "vendas": {"vendas"},
+}
+
+
+def _agent_can_access_resource(resource: str | None, require_admin: bool = False) -> bool:
+    headers = current_request_headers()
+    # O modo CLI/teste nao passa por uma requisicao HTTP e continua utilizavel.
+    # Em uma requisicao real, a identidade e as permissoes devem vir do Portal.
+    if not headers:
+        return True
+    profile = _agent_user_profile()
+    resources = _agent_allowed_resources()
+    if profile == "admin" or "*" in resources:
+        return True
+    if require_admin or resource == "*":
+        return False
+    if not _agent_has_request_identity():
+        return False
+    if not resource:
+        return True
+    wanted = normalize(resource)
+    aliases = AGENT_RESOURCE_ALIASES.get(wanted, {wanted})
+    return bool(resources.intersection(aliases))
+
+
+def _agent_permission_denied_reply(label: str) -> dict:
+    return {
+        "reply": (
+            f"Seu usuario nao possui permissao para consultar {label} pelo Agent IA. "
+            "A liberacao precisa ser feita no Portal; a IA nao contorna permissoes."
+        )
+    }
+
+
 def _agent_db_config() -> dict[str, object]:
     def _env(name: str, default: str = "") -> str:
         value = os.environ.get(name)
@@ -1044,7 +1118,10 @@ def system_api(method: str, path: str, payload: dict | None = None, timeout: int
         headers["Content-Type"] = "application/json"
 
     request_headers = current_request_headers()
-    for key in ("X-Usuario-Id", "X-Usuario-Login", "X-Usuario-Nome", "X-Usuario-Logado"):
+    for key in (
+        "X-Usuario-Id", "X-Usuario-Login", "X-Usuario-Nome", "X-Usuario-Logado",
+        "X-Usuario-Perfil", "X-Usuario-Recursos",
+    ):
         value = request_headers.get(key)
         if value:
             headers[key] = value
@@ -1552,6 +1629,8 @@ def is_devolucao_create_message(normalized: str) -> bool:
 
 
 def list_devolucoes_response() -> dict:
+    if not _agent_can_access_resource("devolucoes"):
+        return _agent_permission_denied_reply("devolucoes")
     rows = system_api("GET", "/api/devolucoes")
     rows = rows if isinstance(rows, list) else []
     lines = [f"Encontrei {len(rows)} devolucao(oes)."]
@@ -1567,6 +1646,8 @@ def list_devolucoes_response() -> dict:
 
 
 def create_devolucao_response(message: str) -> dict:
+    if not _agent_can_access_resource("devolucoes"):
+        return _agent_permission_denied_reply("devolucoes")
     # Check if this is a frete ID confirmation message (e.g., "frete 106" or "id 106")
     confirmed_frete_id = extract_devolucao_frete_id(message)
     pending_confirmation = _get_pending_devolucao_confirmation()
@@ -1873,6 +1954,8 @@ def fretes_workspace(cards: list[dict], selected_id=None, title: str = "Kanban /
 
 
 def list_fretes_response(filter_text: str = "") -> dict:
+    if not _agent_can_access_resource("fretes"):
+        return _agent_permission_denied_reply("fretes e cargas")
     cards = list_fretes(filter_text)
     if filter_text:
         reply = f"Encontrei {len(cards)} card(s) para \"{filter_text}\". Clique em um card para deixar ele visivel e mover status pelos botoes."
@@ -1889,6 +1972,8 @@ def list_fretes_response(filter_text: str = "") -> dict:
 
 
 def move_frete_prepare_response(message: str) -> dict:
+    if not _agent_can_access_resource("fretes"):
+        return _agent_permission_denied_reply("fretes e cargas")
     status = detect_frete_status(message)
     if not status:
         return {
@@ -1974,6 +2059,8 @@ def build_command(action: str, commit_message: str = "") -> list[str]:
 
 
 def run_agent(action: str, commit_message: str = "") -> dict:
+    if not _agent_can_access_resource("*", require_admin=True):
+        return _agent_permission_denied_reply("rotinas administrativas e operacionais do servidor")
     started = time.monotonic()
     command = build_command(action, commit_message)
     result = subprocess.run(
@@ -1995,6 +2082,17 @@ def run_agent(action: str, commit_message: str = "") -> dict:
         "output": output.strip(),
         "returncode": result.returncode,
     }
+
+
+def _agent_action_result_with_source(result: dict | None) -> dict | None:
+    if not isinstance(result, dict):
+        return result
+    reply = _as_str(result.get("reply"))
+    if not reply or "fonte:" in normalize(reply) or "fontes:" in normalize(reply):
+        return result
+    updated = dict(result)
+    updated["reply"] = f"{reply}\n\nFontes: tools/riob_agent.py"
+    return updated
 
 
 def _agent_llm_provider() -> str:
@@ -2355,6 +2453,8 @@ def _agent_system_overview_reply(message: str) -> dict | None:
     )
     if not any(phrase in normalized for phrase in broad_phrases):
         return None
+    if not _agent_can_access_resource("*", require_admin=True):
+        return _agent_permission_denied_reply("arquitetura e configuracao interna do sistema")
 
     overview = build_system_overview()
     text = format_system_overview(overview)
@@ -2425,6 +2525,8 @@ def _agent_environment_local_reply(message: str) -> dict | None:
 
     if not any(_has_term(term) for term in env_terms):
         return None
+    if not _agent_can_access_resource("*", require_admin=True):
+        return _agent_permission_denied_reply("infraestrutura e ambiente do servidor")
 
     inventory = build_environment_inventory()
     runtime = inventory.get("runtime") or {}
@@ -2508,7 +2610,7 @@ def _agent_data_lookup_reply(message: str) -> dict | None:
     entity_map = [
         ("veiculos", ["veiculo", "veiculos", "caminhao", "caminhoes", "caminhão", "caminhões"], "veiculo", ["id", "nome", "placa", "modelo"]),
         ("motoristas", ["motorista", "motoristas"], "motorista", ["id", "nome", "is_motorista", "is_entregador", "is_ajudante"]),
-        ("colaboradores", ["colaborador", "colaboradores", "funcionario", "funcionarios", "funcionário", "funcionários"], "colaborador", ["id", "nome", "login", "cpf"]),
+        ("colaboradores", ["colaborador", "colaboradores", "funcionario", "funcionarios", "funcionário", "funcionários"], "colaborador", ["id", "nome", "login"]),
         ("cargas", ["carga", "cargas", "frete", "fretes"], "carga/frete", ["id", "nome", "cidade", "veiculo_numero"]),
         ("devolucoes", ["devolucao", "devolucoes", "devolução", "devoluções"], "devolução", ["id", "frete_id", "veiculo_id", "created_at"]),
         ("abastecimentos", ["abastecimento", "abastecimentos"], "abastecimento", ["id", "veiculo_id", "km", "status"]),
@@ -2536,6 +2638,14 @@ def _agent_data_lookup_reply(message: str) -> dict | None:
         return None
 
     table, label, fields = matched
+    table_resources = {
+        "veiculos": "frota", "motoristas": "cadastros", "colaboradores": "cadastros",
+        "cargas": "fretes", "devolucoes": "devolucoes", "abastecimentos": "frota",
+        "usuarios": "*", "conferentes": "cadastros",
+    }
+    table_resource = table_resources.get(table, "*")
+    if not _agent_can_access_resource(table_resource, require_admin=table_resource == "*"):
+        return _agent_permission_denied_reply(f"cadastro de {label}")
     if wants_list and table in {"cargas", "devolucoes"}:
         db_hint_terms = {
             "cadastro",
@@ -2604,7 +2714,6 @@ def _agent_frete_status_lookup_reply(message: str) -> dict | None:
     normalized = normalize(message)
     if not normalized:
         return None
-
     count_terms = {
         "quantos",
         "quantas",
@@ -2679,6 +2788,8 @@ def _agent_frete_status_lookup_reply(message: str) -> dict | None:
 
     if status is None:
         return None
+    if not _agent_can_access_resource("fretes"):
+        return _agent_permission_denied_reply("fretes e cargas")
 
     wants_count = any(term in normalized for term in count_terms)
     route_hint = normalized
@@ -2874,10 +2985,11 @@ def _agent_frete_card_lookup_reply(message: str) -> dict | None:
     normalized = normalize(message)
     if not normalized:
         return None
-
     request = _frete_numeric_lookup_request(message, normalized)
     if not request:
         return None
+    if not _agent_can_access_resource("fretes"):
+        return _agent_permission_denied_reply("fretes e cargas")
 
     try:
         cards = list_fretes()
@@ -3715,6 +3827,8 @@ def _agent_storage_context_reply(message: str) -> dict | None:
     storage_terms = ("foto", "fotos", "anexo", "anexos", "upload", "uploads", "pasta", "diretorio", "armazen", "armazenadas", "arquivo", "arquivos")
     if not any(word in normalized for word in storage_terms):
         return None
+    if not _agent_can_access_resource("*", require_admin=True):
+        return _agent_permission_denied_reply("diretorios e armazenamento interno do servidor")
 
     server_text = ""
     compose_text = ""
@@ -3821,6 +3935,8 @@ def _agent_devolucao_lookup_reply(message: str) -> dict | None:
     normalized = normalize(message)
     if not normalized or not is_devolucao_message(normalized) or is_devolucao_create_message(normalized):
         return None
+    if not _agent_can_access_resource("devolucoes"):
+        return _agent_permission_denied_reply("devolucoes")
 
     frete_id = extract_devolucao_frete_id(message) or 0
     wants_missing = _message_wants_gap_analysis(normalized)
@@ -4080,6 +4196,8 @@ def _agent_backup_local_reply(message: str) -> dict | None:
     )
     if not any(term in normalized for term in info_terms):
         return None
+    if not _agent_can_access_resource("*", require_admin=True):
+        return _agent_permission_denied_reply("informacoes de backup")
 
     backup_dir = _agent_backup_dir()
     last = _agent_latest_backup_file()
@@ -4455,6 +4573,375 @@ READ_ONLY_MODULES = [
     },
 ]
 
+# Catalogo estruturado das demais fontes de leitura do RioB. Cada entrada usa
+# uma rota GET existente e uma lista explicita de campos que podem aparecer na
+# resposta da IA. O modelo nunca recebe SQL, credenciais ou o payload integral.
+READ_ONLY_MODULES.extend([
+    {
+        "name": "logs_exclusoes", "label": "logs de exclusoes", "resource": "*",
+        "keywords": ["logs de exclusao", "log de exclusao", "historico de exclusoes", "quem excluiu", "registros excluidos"],
+        "path": "/api/logs_exclusoes", "fields": ["id", "usuario", "tabela", "registro_id", "descricao", "criado_em"],
+    },
+    {
+        "name": "sip_usuario", "label": "telefonia do usuario", "resource": None,
+        "keywords": ["meu ramal", "meu sip", "minha telefonia", "ramal do usuario"],
+        "path": "/api/sip/me", "fields": ["id", "nome", "login", "sip_habilitado", "sip_usuario", "sip_ramal"],
+    },
+    {
+        "name": "estoque_saldo", "label": "saldos de estoque", "resource": "estoque",
+        "keywords": ["saldo de estoque", "saldos de estoque", "estoque atual", "quanto tem no estoque"],
+        "path": "/api/estoque/saldo", "records_key": "rows",
+        "fields": ["produto_id", "nome_produto", "grupo_estoque", "quantidade_atual", "quantidade_comprometida", "saldo_remanescente"],
+    },
+    {
+        "name": "estoque_posicao", "label": "posicao atual do estoque", "resource": "estoque",
+        "keywords": ["posicao atual do estoque", "posição atual do estoque", "posicao estoque", "estoque por grupo"],
+        "path": "/api/estoque/posicao", "records_key": "rows",
+        "fields": ["produto_id", "nome_produto", "grupo_estoque", "grupo_nome", "quantidade_atual", "quantidade_comprometida", "saldo_remanescente"],
+    },
+    {
+        "name": "estoque_grupos", "label": "grupos de estoque", "resource": "estoque",
+        "keywords": ["grupos de estoque", "grupo do estoque", "categorias de estoque", "grupo gfa", "grupo pet", "grupo agua"],
+        "path": "/api/estoque/grupos", "fields": ["id", "codigo", "nome", "estoque_area", "estoque_subgrupo", "exibir_dashboard", "ativo"],
+    },
+    {
+        "name": "estoque_lotes", "label": "lotes do estoque", "resource": "estoque",
+        "keywords": ["lotes do estoque", "lotes em estoque", "lote de produto", "validade do lote", "lotes vencendo"],
+        "path": "/api/estoque/lotes",
+        "fields": ["lote_codigo", "nome_produto", "codigo_barras", "notas", "quantidade_atual", "total_movimentos", "fretes_vinculados", "ultima_movimentacao"],
+    },
+    {
+        "name": "estoque_rastreabilidade", "label": "rastreabilidade de lotes", "resource": "estoque",
+        "keywords": ["rastreabilidade", "rastreio de lotes", "rastrear lote", "origem do lote", "destino do lote"],
+        "path": "/api/estoque/rastreabilidade/lotes", "records_key": "lotes",
+        "fields": ["data", "serial", "lote_codigo", "total", "entradas", "saidas", "notas", "produtos", "ultima_atualizacao"],
+    },
+    {
+        "name": "estoque_comprometido", "label": "estoque comprometido", "resource": "estoque",
+        "keywords": ["estoque comprometido", "produtos comprometidos", "saldo comprometido", "cargas pendentes estoque"],
+        "path": "/api/estoque/relatorio-comprometido", "records_key": "rows",
+        "fields": ["produto_id", "nome_produto", "grupo_estoque", "quantidade_atual", "quantidade_comprometida", "saldo_remanescente", "data_comprometimento_inicio", "data_comprometimento_fim"],
+    },
+    {
+        "name": "estoque_importacoes_xml", "label": "importacoes XML de estoque", "resource": "estoque",
+        "keywords": ["xml de estoque", "importacoes xml", "importações xml", "xml pendentes", "notas de entrada importadas"],
+        "path": "/api/estoque/importacoes-xml", "records_key": "rows",
+        "fields": ["id", "chave_acesso", "numero_nota", "emitente_nome", "status", "tipo_operacao", "importado_em"],
+    },
+    {
+        "name": "fretes", "label": "fretes e cargas do kanban", "resource": "fretes",
+        "keywords": ["fretes", "cargas do kanban", "cards do kanban", "viagens", "caminhoes em viagem"],
+        "path": "/api/fretes", "fields": ["id", "nome", "cidade", "status", "veiculo_nome", "veiculo_placa", "motorista_nome", "entregador_nome", "data_carga", "peso", "qtd_entregas"],
+    },
+    {
+        "name": "devolucoes", "label": "devolucoes", "resource": "devolucoes",
+        "keywords": ["devolucoes", "devoluções", "devolucao lancada", "retornos de embalagens"],
+        "path": "/api/devolucoes", "fields": ["id", "frete_id", "frete_nome", "veiculo_nome", "conferente_nome", "c24", "c48", "pet2l", "pet600", "pet200", "agua_com_gas", "agua_sem_gas", "created_at"],
+    },
+    {
+        "name": "cargas", "label": "cadastro de cargas", "resource": "fretes",
+        "keywords": ["cadastro de cargas", "cargas importadas", "mapas de carga", "mapa de carga"],
+        "path": "/api/cargas", "fields": ["id", "nome", "cidade", "rota", "veiculo_numero", "mapa_numero", "data_carga", "numero_entregas", "peso_total", "valor_total"],
+    },
+    {
+        "name": "cargas_rotas", "label": "rotas de cargas", "resource": "fretes",
+        "keywords": ["rotas de cargas", "cadastro de rotas", "cidades da rota", "rota cadastrada"],
+        "path": "/api/cargas/rotas", "fields": ["id", "nome", "cidades", "created_at", "updated_at"],
+    },
+    {
+        "name": "escala_regras", "label": "regras da escala", "resource": "frota",
+        "keywords": ["regras da escala", "sorteio da escala", "configuracao da escala", "escala de equipe"],
+        "path": "/api/escala/sorteio-regras", "fields": ["id", "nome", "tipo", "valor", "ativo", "created_at"],
+    },
+    {
+        "name": "colaboradores", "label": "colaboradores", "resource": "cadastros",
+        "keywords": ["colaboradores", "cadastro de colaboradores", "funcionarios", "motoristas e entregadores", "vendedores cadastrados"],
+        "path": "/api/colaboradores", "fields": ["id", "nome", "is_motorista", "is_entregador", "is_ajudante", "is_conferente", "is_vendedor", "usuario_id"],
+    },
+    {
+        "name": "motoristas", "label": "motoristas e equipe de entrega", "resource": "cadastros",
+        "keywords": ["motoristas cadastrados", "entregadores cadastrados", "ajudantes cadastrados", "equipe de entrega"],
+        "path": "/api/motoristas", "fields": ["id", "nome", "is_motorista", "is_entregador", "is_ajudante", "created_at"],
+    },
+    {
+        "name": "veiculos", "label": "veiculos cadastrados", "resource": "frota",
+        "keywords": ["veiculos cadastrados", "veículos cadastrados", "caminhoes cadastrados", "placas dos caminhoes", "cadastro da frota"],
+        "path": "/api/veiculos", "fields": ["id", "nome", "placa", "modelo", "km_atual", "combustivel_padrao", "intervalo_manut_km", "intervalo_oleo_km"],
+    },
+    {
+        "name": "abastecimentos_xml", "label": "importacoes XML de abastecimentos", "resource": "frota",
+        "keywords": ["xml de abastecimento", "importacoes de abastecimento", "abastecimentos pendentes do xml", "notas de combustivel"],
+        "path": "/api/abastecimentos/importacoes-xml", "records_key": "rows",
+        "fields": ["id", "numero_nota", "emitente_nome", "produto_nome", "veiculo_nome", "status", "importado_em"],
+    },
+    {
+        "name": "manutencoes_xml", "label": "importacoes XML de manutencao", "resource": "frota",
+        "keywords": ["xml de manutencao", "importacoes de manutencao", "manutencoes pendentes do xml", "notas de oficina"],
+        "path": "/api/manutencoes/importacoes-xml", "records_key": "rows",
+        "fields": ["id", "numero_nota", "emitente_nome", "produto_nome", "veiculo_nome", "status", "importado_em"],
+    },
+    {
+        "name": "vendas_diario", "label": "pedidos de vendas do dia", "resource": "vendas",
+        "keywords": ["vendas do dia", "pedidos do dia", "vendas diario", "vendas diário", "clientes positivos", "pedidos positivos", "quanto vendemos hoje", "quanto vendeu hoje", "vendas de hoje"],
+        "path": "/api/vendas/diario", "records_key": "pedidos",
+        "fields": ["id", "data_ref", "vendedor_codigo", "vendedor_nome", "cliente_codigo", "cliente_nome", "fantasia", "cidade", "valor_total", "valor_bonificacao", "valor_liquido", "peso_bruto"],
+    },
+    {
+        "name": "vendas_diario_dashboard", "label": "dashboard de vendas diarias", "resource": "vendas",
+        "keywords": ["dashboard vendas diario", "dashboard vendas diárias", "resumo das vendas do dia", "resultado diario por vendedor"],
+        "path": "/api/vendas/diario/dashboard", "records_key": "vendedores",
+        "fields": ["vendedor_codigo", "vendedor_nome", "clientes", "positivos", "valor_bruto", "valor_bonificacao", "valor_liquido", "volume_venda"],
+    },
+    {
+        "name": "vendas_diario_kanban", "label": "kanban de vendas diarias", "resource": "vendas",
+        "keywords": ["kanban de vendas", "cards de vendas", "cargas de vendas diario", "vendas aguardando frete"],
+        "path": "/api/vendas/diario/kanban", "records_key": "cards",
+        "fields": ["id", "data_ref", "vendedor_codigo", "vendedor_nome", "status", "frete_id", "nome_frete", "cidade", "rota", "mapa_numero", "peso_total", "qtd_entregas", "valor_total"],
+    },
+    {
+        "name": "vendas_cargas_semana", "label": "cargas semanais de vendas", "resource": "vendas",
+        "keywords": ["cargas da semana", "relatorio semanal de cargas", "pdfs de carga da semana", "mapas da semana"],
+        "path": "/api/vendas/diario/cargas-semana", "records_key": "cargas",
+        "fields": ["id", "data_ref", "mapa", "vendedor_nome", "cidade", "rota", "caminhao", "placa", "motorista", "entregador", "peso", "qtd_entregas", "status", "frete_id"],
+    },
+    {
+        "name": "vendas_referencias", "label": "referencias importadas de vendas", "resource": "vendas",
+        "keywords": ["referencias de vendas", "clientes importados", "rotas importadas", "arquivos de referencia vendas"],
+        "path": "/api/vendas/diario/referencias", "fields": ["clientes", "rotas", "sellout", "atualizado_em"],
+    },
+    {
+        "name": "vendas_vendedores", "label": "vendedores das vendas diarias", "resource": "vendas",
+        "keywords": ["vendedores das vendas diarias", "lista de vendedores", "codigos dos vendedores", "vendedor codigo"],
+        "path": "/api/vendas/diario/vendedores", "records_key": "vendedores",
+        "fields": ["codigo", "nome", "datas", "pedidos", "valor_total"],
+    },
+    {
+        "name": "vendas_orcamentos", "label": "pedidos e orcamentos de vendas", "resource": "vendas",
+        "keywords": ["orcamentos de vendas", "orçamentos de vendas", "pedidos de orcamento", "pedidos lançados", "orcamento do cliente", "orçamento do cliente"],
+        "path": "/api/vendas/orcamentos?limite=200", "records_key": "orcamentos",
+        "fields": ["id", "codigo", "data_ref", "cliente_nome", "cidade", "vendedor_login", "vendedor_nome", "valor_bruto", "valor_liquido", "valor_real", "criado_em", "editavel"],
+    },
+    {
+        "name": "vendas_orcamentos_config", "label": "parametros e precos dos orcamentos", "resource": "*",
+        "keywords": ["parametros do orcamento", "parâmetros do orçamento", "precos do orcamento", "percentual de bonificacao", "preco seco configurado"],
+        "path": "/api/vendas/orcamentos/config", "fields": ["parametros", "produtos", "categorias"],
+    },
+    {
+        "name": "processos", "label": "processos internos", "resource": "processos",
+        "keywords": ["processos internos", "kanban de processos", "tarefas internas", "processos atrasados", "responsavel do processo"],
+        "path": "/api/processos-internos", "records_key": "rows",
+        "fields": ["id", "titulo", "tipo_nome", "status", "prioridade", "responsavel_nome", "solicitante_nome", "prazo", "created_at", "updated_at"],
+    },
+    {
+        "name": "processos_tipos", "label": "tipos de processos internos", "resource": "processos",
+        "keywords": ["tipos de processos", "cadastro de tipos de processo", "sla dos processos", "classificacao de processos"],
+        "path": "/api/processos-internos/tipos", "fields": ["id", "nome", "descricao", "cor", "sla_dias", "ativo"],
+    },
+    {
+        "name": "processos_dashboard", "label": "dashboard de processos internos", "resource": "processos",
+        "keywords": ["dashboard de processos", "indicadores de processos", "resumo de processos", "processos por status"],
+        "path": "/api/dashboard_processos", "records_key": "rows",
+        "fields": ["id", "titulo", "tipo_nome", "status", "prioridade", "responsavel_nome", "prazo"],
+    },
+    {
+        "name": "compras_solicitacoes", "label": "solicitacoes e pedidos de compra", "resource": "compras",
+        "keywords": ["solicitacoes de compra", "solicitações de compra", "pedidos de compra", "compras abertas", "compras atrasadas", "compras estao atrasadas", "compras estão atrasadas", "situacao da compra", "situação da compra", "status da compra"],
+        "path": "/api/compras/solicitacoes", "records_key": "rows",
+        "fields": ["id", "titulo", "produto_nome", "fornecedor_nome", "status", "prioridade", "quantidade", "unidade", "valor_total_previsto", "data_necessidade", "responsavel_nome"],
+    },
+    {
+        "name": "compras_previsao", "label": "previsao e sugestao de compras", "resource": "compras",
+        "keywords": ["previsao de compras", "previsão de compras", "sugestao de compra", "o que comprar", "necessidade de compra", "preciso comprar", "precisamos comprar", "comprar agora"],
+        "path": "/api/compras/previsao", "records_key": "rows",
+        "fields": ["produto_id", "nome_produto", "grupo_nome", "fornecedor_nome", "quantidade_atual", "compras_abertas", "consumo_referencia", "estoque_seguranca", "sugestao_compra", "prazo_entrega_dias"],
+    },
+    {
+        "name": "compras_fornecedores", "label": "fornecedores de compras", "resource": "compras",
+        "keywords": ["fornecedor", "fornecedores", "cadastro de fornecedores", "contato do fornecedor", "prazo do fornecedor", "condicao de pagamento"],
+        "path": "/api/compras/fornecedores", "fields": ["id", "nome", "cnpj", "categoria", "emails", "representante_nome", "telefone", "prazo_entrega_dias", "pedido_minimo_valor", "condicao_pagamento"],
+    },
+    {
+        "name": "compras_dashboard", "label": "dashboard de compras", "resource": "compras",
+        "keywords": ["dashboard de compras", "indicadores de compras", "resumo de compras"],
+        "path": "/api/dashboard_compras", "records_key": "compras.rows",
+        "fields": ["id", "titulo", "produto_nome", "fornecedor_nome", "status", "quantidade", "valor_total_previsto", "data_necessidade"],
+    },
+    {
+        "name": "compras_relatorio", "label": "relatorio de compras", "resource": "compras",
+        "keywords": ["relatorio de compras", "relatório de compras", "historico de compras", "compras por fornecedor", "compras por status"],
+        "path": "/api/compras/relatorio", "records_key": "rows",
+        "fields": ["id", "titulo", "produto_nome", "fornecedor_nome", "status", "prioridade", "quantidade", "valor_total_previsto", "data_necessidade"],
+    },
+])
+
+
+def _read_only_module_resource(item: dict) -> str | None:
+    if "resource" in item:
+        return item.get("resource")
+    name = _as_str(item.get("name"))
+    if name in {"status_api", "usuario_logado", "sip_usuario"}:
+        return None
+    if name in {"sip_config", "nfe_config", "vendas_config", "dashboard"}:
+        return "*"
+    if name.startswith("estoque_") or name == "dashboard_estoque":
+        return "estoque"
+    if name.startswith("pontos_venda") or name.startswith("vendas_") or name.startswith("dashboard_vendas"):
+        return "vendas"
+    if name.startswith("comissao_"):
+        return "comissao"
+    if name.startswith(("abastecimentos", "manutencoes", "trocas_", "lavagens", "dashboard_frota", "frota_")):
+        return "frota"
+    if name.startswith(("chat_", "usuarios_chat")):
+        return "chat"
+    if name.startswith("carga_"):
+        return "fretes"
+    return "*"
+
+
+def _read_only_module_allowed(item: dict) -> bool:
+    resource = _read_only_module_resource(item)
+    return _agent_can_access_resource(resource, require_admin=resource == "*")
+
+
+def _read_only_catalog_reply(message: str) -> dict | None:
+    normalized = normalize(message)
+    catalog_terms = (
+        "quais dados", "que dados", "tipos de dados", "o que voce consegue consultar",
+        "o que a ia consegue consultar", "fontes de dados", "acesso aos dados",
+    )
+    if not any(term in normalized for term in catalog_terms):
+        return None
+    labels = []
+    for item in READ_ONLY_MODULES:
+        if not _read_only_module_allowed(item):
+            continue
+        label = _as_str(item.get("label"))
+        if label and label not in labels:
+            labels.append(label)
+    if not labels:
+        return {
+            "reply": (
+                "Nao encontrei conjuntos de dados liberados para este usuario. "
+                "Abra o RioB pelo Portal ou solicite a liberacao do recurso necessario."
+            )
+        }
+    return {
+        "reply": (
+            f"Seu usuario pode consultar {len(labels)} tipos de dados pelo Agent IA:\n- "
+            + "\n- ".join(labels)
+            + "\n\nA IA usa somente rotas de leitura e nao mostra senhas, tokens ou credenciais."
+        )
+    }
+
+
+def _payload_path_value(payload: object, dotted_path: str) -> object:
+    current = payload
+    for part in str(dotted_path or "").split("."):
+        if not part:
+            continue
+        if not isinstance(current, dict):
+            return None
+        current = current.get(part)
+    return current
+
+
+def _read_only_records(item: dict, payload: object) -> list[dict]:
+    records = payload
+    records_key = _as_str(item.get("records_key"))
+    if records_key:
+        records = _payload_path_value(payload, records_key)
+    if not isinstance(records, list):
+        return []
+    return [row for row in records if isinstance(row, dict)]
+
+
+AGENT_QUERY_STOP_WORDS = {
+    "a", "agora", "ao", "aos", "as", "com", "como", "da", "das", "de", "do", "dos",
+    "e", "em", "esta", "estao", "esse", "eu", "foi", "foram", "mais", "me", "meu", "minha",
+    "na", "nas", "no", "nos", "o", "os", "para", "por", "qual", "quais", "que", "quem",
+    "se", "sem", "sistema", "tem", "teve", "um", "uma", "ver", "voce",
+    "listar", "lista", "mostrar", "mostra", "consultar", "consulta", "dados", "detalhes", "resumo",
+}
+
+
+def _read_only_query_tokens(message: str, item: dict) -> list[str]:
+    ignored = set(AGENT_QUERY_STOP_WORDS)
+    source_terms = [_as_str(item.get("name")), _as_str(item.get("label")), *(item.get("keywords") or [])]
+    for source in source_terms:
+        ignored.update(token for token in re.findall(r"[a-z0-9]+", normalize(source)) if len(token) > 1)
+    tokens = re.findall(r"[a-z0-9]+", normalize(message))
+    return [token for token in tokens if len(token) >= 3 and token not in ignored]
+
+
+def _safe_record_preview(row: dict, fields: list[str]) -> dict:
+    safe: dict[str, object] = {}
+    for field in fields:
+        value = row.get(field)
+        if isinstance(value, bool) or value is None or isinstance(value, (int, float)):
+            safe[field] = value
+        elif isinstance(value, (str, datetime.date, datetime.datetime)):
+            safe[field] = str(value)[:300]
+    return safe
+
+
+def _filter_read_only_records(message: str, item: dict, rows: list[dict]) -> tuple[list[dict], bool]:
+    tokens = _read_only_query_tokens(message, item)
+    if not tokens:
+        return rows, False
+    fields = item.get("fields") or []
+    ranked: list[tuple[int, dict]] = []
+    for row in rows:
+        safe = _safe_record_preview(row, fields)
+        haystack = normalize(" ".join(str(value) for value in safe.values() if value not in (None, "")))
+        score = sum(1 for token in tokens if token in haystack)
+        if score:
+            ranked.append((score, row))
+    if not ranked:
+        return rows, False
+    ranked.sort(key=lambda pair: pair[0], reverse=True)
+    best_score = ranked[0][0]
+    return [row for score, row in ranked if score == best_score], True
+
+
+def _agent_grounded_records_reply(message: str, item: dict, rows: list[dict], fallback: str) -> str:
+    normalized = normalize(message)
+    if not rows or not _agent_llm_enabled():
+        return fallback
+    if not any(term in normalized for term in ("qual", "quais", "quem", "quanto", "quantos", "quando", "onde", "como", "por que")):
+        return fallback
+    fields = item.get("fields") or []
+    safe_rows = [_safe_record_preview(row, fields) for row in rows[:20]]
+    safe_rows = [row for row in safe_rows if row]
+    if not safe_rows:
+        return fallback
+    context = json.dumps({
+        "fonte": _as_str(item.get("label")),
+        "registros_encontrados": len(rows),
+        "amostra_limitada": safe_rows,
+        "resumo_calculado": fallback[:1600],
+    }, ensure_ascii=False, default=str)
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "Responda em portugues do Brasil usando exclusivamente os dados fornecidos. "
+                "Se a amostra nao bastar, diga que a consulta precisa de um filtro mais especifico. "
+                "Nao invente valores e nao mencione senhas ou credenciais."
+            ),
+        },
+        {"role": "user", "content": f"Pergunta: {message[:800]}\nDados autorizados: {context[:10000]}"},
+    ]
+    try:
+        content = _agent_llm_request(messages)
+    except Exception:
+        return fallback
+    parsed = _agent_llm_parse_response(content or "")
+    if isinstance(parsed, dict):
+        answer = _as_str(parsed.get("reply") or parsed.get("message") or parsed.get("content"))
+        if answer:
+            return answer
+    return _as_str(content) or fallback
+
 
 def _message_wants_count_or_summary(normalized: str) -> bool:
     return any(
@@ -4498,13 +4985,31 @@ def _read_only_module_match(message: str) -> dict | None:
     normalized = normalize(message)
     if not normalized:
         return None
+
+    def _root(token: str) -> str:
+        token = str(token or "")
+        if len(token) > 6 and token.endswith("es"):
+            return token[:-2]
+        if len(token) > 4 and token.endswith("s"):
+            return token[:-1]
+        return token
+
+    message_tokens = {_root(token) for token in re.findall(r"[a-z0-9]+", normalized)}
     best = None
     best_score = 0
     for item in READ_ONLY_MODULES:
         score = 0
         for keyword in item.get("keywords", []):
-            if normalize(keyword) in normalized:
-                score = max(score, len(normalize(keyword)))
+            candidate = normalize(keyword)
+            if candidate and candidate in normalized:
+                score = max(score, 1000 + len(candidate))
+        label_tokens = {
+            _root(token) for token in re.findall(r"[a-z0-9]+", normalize(_as_str(item.get("label"))))
+            if len(token) >= 4 and token not in AGENT_QUERY_STOP_WORDS
+        }
+        overlap = len(message_tokens.intersection(label_tokens))
+        if overlap:
+            score = max(score, overlap * 100 + round(100 * overlap / max(1, len(label_tokens))))
         if score > best_score:
             best = item
             best_score = score
@@ -6077,26 +6582,41 @@ def _agent_broad_system_read_reply(message: str) -> dict | None:
     if not item:
         return None
 
+    label = _as_str(item.get("label")) or _as_str(item.get("name")) or "dados do sistema"
+    if not _read_only_module_allowed(item):
+        return _agent_permission_denied_reply(label)
+
     path = _read_only_module_path(item, message)
     if not path:
         return _read_only_module_missing_reply(item)
 
     try:
         payload = system_api("GET", path)
+    except urllib.error.HTTPError as exc:
+        if exc.code in {401, 403}:
+            return _agent_permission_denied_reply(label)
+        return None
     except Exception:
         return None
 
-    label = _as_str(item.get("label")) or _as_str(item.get("name")) or "dados do sistema"
     fields = item.get("fields") or []
     special = _summarize_special_module(item, payload, normalized)
     if special:
         reply = special
-    elif isinstance(payload, list):
-        reply = _summarize_api_list(label, payload, fields, normalized)
-    elif isinstance(payload, dict):
-        reply = _summarize_api_dict(label, payload, fields)
     else:
-        reply = f"Consultei {label}, mas a resposta veio em formato inesperado."
+        records = _read_only_records(item, payload)
+        if records:
+            selected_records, filtered = _filter_read_only_records(message, item, records)
+            reply = _summarize_api_list(label, selected_records, fields, normalized)
+            if filtered and len(selected_records) != len(records):
+                reply += f"\nFiltro aplicado sobre {len(records)} registro(s) disponiveis."
+            reply = _agent_grounded_records_reply(message, item, selected_records, reply)
+        elif isinstance(payload, list):
+            reply = _summarize_api_list(label, payload, fields, normalized)
+        elif isinstance(payload, dict):
+            reply = _summarize_api_dict(label, payload, fields)
+        else:
+            reply = f"Consultei {label}, mas a resposta veio em formato inesperado."
 
     source_path = _as_str(item.get("path")) or path
     return {"reply": f"{reply}\n\nFontes: server.py, {source_path}"}
@@ -6121,6 +6641,8 @@ def _agent_frota_maintenance_reply(message: str) -> dict | None:
     )
     if not any(term in normalized for term in maintenance_terms):
         return None
+    if not _agent_can_access_resource("frota"):
+        return _agent_permission_denied_reply("frota e manutencoes")
     if "custo" in normalized and "km" in normalized:
         return None
 
@@ -6231,6 +6753,11 @@ def _agent_stock_lookup_reply(message: str) -> dict | None:
     if not normalized:
         return None
 
+    # Perguntas historicas pertencem ao catalogo de movimentos, que aplica
+    # janelas de data e comparacoes. Esta rotina trata somente saldo atual.
+    if "moviment" in normalized:
+        return None
+
     stock_terms = {
         "estoque",
         "saldo",
@@ -6245,6 +6772,8 @@ def _agent_stock_lookup_reply(message: str) -> dict | None:
     }
     if not any(term in normalized for term in stock_terms):
         return None
+    if not _agent_can_access_resource("estoque"):
+        return _agent_permission_denied_reply("estoque")
 
     try:
         payload = system_api("GET", "/api/estoque/saldo")
@@ -6481,7 +7010,24 @@ def _sales_group_aliases(group_code: str, label: str, category: str) -> list[str
 def _sales_group_catalog() -> list[dict[str, str | list[str]]]:
     config_path = ROOT / "Relatorios" / "config-rel-vendas"
     if not config_path.exists():
-        return []
+        defaults = (
+            ("001005", "PET 600ML", "Pet600Ml", "Descartaveis"),
+            ("001004", "PET 2L", "Pet2L", "Descartaveis"),
+            ("001006", "PET 200ML", "Pet200Ml", "Descartaveis"),
+            ("002001", "Agua", "Agua", "Descartaveis"),
+            ("001001", "Garrafa retornavel 600ML", "Grf600Ml", "Retornaveis"),
+            ("001003", "Garrafa retornavel 200ML", "Grf200Ml", "Retornaveis"),
+        )
+        return [
+            {
+                "key": normalize(raw_label).replace(" ", "") or code,
+                "label": label,
+                "group_code": code,
+                "category": category,
+                "aliases": _sales_group_aliases(code, raw_label, category),
+            }
+            for code, label, raw_label, category in defaults
+        ]
 
     catalog: list[dict[str, str | list[str]]] = []
     current_category = ""
@@ -6685,7 +7231,6 @@ def _agent_sales_mix_client_lookup_reply(message: str) -> dict | None:
     normalized = normalize(message)
     if not normalized:
         return None
-
     faixa = _sales_faixa_request(normalized)
     if not faixa:
         return None
@@ -6703,6 +7248,8 @@ def _agent_sales_mix_client_lookup_reply(message: str) -> dict | None:
         wants_ranking = True
     if not has_client_term and not (wants_list or wants_quantity or wants_ranking):
         return None
+    if not _agent_can_access_resource("vendas"):
+        return _agent_permission_denied_reply("vendas")
     metric_key, metric_label, metric_unit = _sales_quantity_metric_request(normalized)
     month_request = _sales_month_request(normalized)
 
@@ -6868,7 +7415,6 @@ def _agent_sales_lookup_reply(message: str) -> dict | None:
     normalized = normalize(message)
     if not normalized:
         return None
-
     if any(term in normalized for term in ("estoque", "saldo", "inventario", "inventário")):
         return None
 
@@ -6882,6 +7428,8 @@ def _agent_sales_lookup_reply(message: str) -> dict | None:
     wants_ranking = bool(re.search(r"\b(qual|quais|quem|top|mais|maior|ranking|lider|lidera|campeao)\b", normalized))
     if not wants_ranking and not has_seller_term:
         return None
+    if not _agent_can_access_resource("vendas"):
+        return _agent_permission_denied_reply("vendas")
 
     product_label = _as_str(product_alias.get("label"))
 
@@ -6992,6 +7540,10 @@ def _agent_local_context_reply(message: str) -> dict | None:
     if not normalized:
         return None
 
+    catalog_reply = _read_only_catalog_reply(message)
+    if catalog_reply is not None:
+        return catalog_reply
+
     storage_reply = _agent_storage_context_reply(message)
     if storage_reply is not None:
         return storage_reply
@@ -7024,10 +7576,6 @@ def _agent_local_context_reply(message: str) -> dict | None:
     if sales_reply is not None:
         return sales_reply
 
-    broad_read_reply = _agent_broad_system_read_reply(message)
-    if broad_read_reply is not None:
-        return broad_read_reply
-
     data_reply = _agent_data_lookup_reply(message)
     if data_reply is not None:
         return data_reply
@@ -7035,6 +7583,10 @@ def _agent_local_context_reply(message: str) -> dict | None:
     stock_reply = _agent_stock_lookup_reply(message)
     if stock_reply is not None:
         return stock_reply
+
+    broad_read_reply = _agent_broad_system_read_reply(message)
+    if broad_read_reply is not None:
+        return broad_read_reply
 
     env_reply = _agent_environment_local_reply(message)
     if env_reply is not None:
@@ -7335,6 +7887,8 @@ def _agent_llm_execute_action(action: str, parsed: dict, message: str, payload: 
         return list_fretes_response(query)
 
     if normalized_action == "move_frete":
+        if not _agent_can_access_resource("fretes"):
+            return _agent_permission_denied_reply("fretes e cargas")
         frete_id = _as_int(parsed.get("frete_id") or payload.get("frete_id"), 0)
         status = str(parsed.get("status") or payload.get("status") or "").strip()
         if frete_id > 0 and status in FRETE_STATUS:
@@ -7362,7 +7916,7 @@ def _agent_llm_execute_action(action: str, parsed: dict, message: str, payload: 
                 "reply": option_text(normalized_action) + "\n\nPara executar, preciso da mensagem do commit.",
                 "actions": actions_for(normalized_action, include_secondary=False),
             }
-        return run_agent(normalized_action, commit_message)
+        return _agent_action_result_with_source(run_agent(normalized_action, commit_message))
 
     return None
 
@@ -7528,6 +8082,8 @@ def _handle_chat_legacy(payload: dict) -> dict:
         if action == "list_devolucoes":
             return list_devolucoes_response()
         if action == "move_frete":
+            if not _agent_can_access_resource("fretes"):
+                return _agent_permission_denied_reply("fretes e cargas")
             frete_id = payload.get("frete_id")
             status = payload.get("status")
             if not frete_id or status not in FRETE_STATUS:
@@ -7546,7 +8102,7 @@ def _handle_chat_legacy(payload: dict) -> dict:
                 "reply": option_text(action) + "\n\nPara executar, preciso da mensagem do commit.",
                 "actions": actions_for(action, include_secondary=False),
             }
-        return run_agent(action, commit_message)
+        return _agent_action_result_with_source(run_agent(action, commit_message))
 
     normalized = normalize(message)
     if not normalized:
@@ -7581,6 +8137,16 @@ def _handle_chat_legacy(payload: dict) -> dict:
             ),
                 "actions": [{"name": "list_devolucoes", "label": "Listar devolucoes"}],
         }
+
+    if any(word in normalized for word in ["kanban", "card", "cards", "carga", "cargas", "frete", "fretes", "caminhao"]):
+        specialized_terms = ("historico", "detalhe", "status", "manutenc", "oleo", "abastec", "lavagem")
+        if (
+            any(word in normalized for word in ["listar", "mostrar", "ver", "abrir", "carregar"])
+            and not any(term in normalized for term in specialized_terms)
+        ):
+            query = re.sub(r"\b(listar|mostrar|ver|abrir|carregar|agora|cargas|carga|fretes|frete|kanban|card|cards|do|da|de)\b", " ", normalized)
+            query = re.sub(r"\s+", " ", query).strip()
+            return list_fretes_response(query)
 
     local_reply = _agent_local_context_reply(message)
     if local_reply is not None:
@@ -7627,7 +8193,7 @@ def _handle_chat_legacy(payload: dict) -> dict:
         }
 
     if option in {"brief", "validate"}:
-        return run_agent(option, message)
+        return _agent_action_result_with_source(run_agent(option, message))
 
     if wants_execution(message):
         if option == "kanban":
@@ -7637,7 +8203,7 @@ def _handle_chat_legacy(payload: dict) -> dict:
                 "reply": option_text(option) + "\n\nPara executar, clique no botao e informe a mensagem do commit.",
                 "actions": actions_for(option, include_secondary=True),
             }
-        return run_agent(option, commit_message)
+        return _agent_action_result_with_source(run_agent(option, commit_message))
 
     if option == "kanban":
         return {
@@ -7671,6 +8237,11 @@ def handle_chat(payload: dict) -> dict:
     chat_mode = _chat_mode(payload)
     message = str(payload.get("message") or "")
     if not action:
+        if _agent_web_intent(message, chat_mode):
+            web_result = _agent_web_lookup_reply(message, chat_mode)
+            if web_result is not None:
+                return web_result
+            return _web_no_answer_reply(message)
         if _explicit_local_action_request(message):
             return _handle_chat_legacy(payload)
         if _agent_llm_context_mode() != "compact" and _prefer_llm_first_for_operational_query(message, chat_mode):
@@ -7680,11 +8251,6 @@ def handle_chat(payload: dict) -> dict:
         local_reply = _agent_local_context_reply(message)
         if local_reply is not None:
             return local_reply
-        if _agent_web_intent(message, chat_mode):
-            web_result = _agent_web_lookup_reply(message, chat_mode)
-            if web_result is not None:
-                return web_result
-            return _web_no_answer_reply(message)
         llm_result = _handle_chat_with_llm(payload)
         if llm_result is not None:
             return llm_result

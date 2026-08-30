@@ -136,6 +136,36 @@ class PortalAppPermissionsTests(unittest.TestCase):
         self.assertEqual(403, status)
         self.assertEqual("recurso nao liberado para este usuario", response.get_json()["erro"])
 
+    def test_usuario_com_recurso_riob_pode_usar_agent_com_filtro_interno(self):
+        usuario = {
+            "id": 12,
+            "nome": "Lucimar",
+            "login": "lucimar",
+            "perfil": "usuario",
+            "ativo": 1,
+        }
+        with (
+            mock.patch.object(portal, "allowed_app_keys", return_value=None),
+            mock.patch.object(portal, "current_user_or_logout", return_value=usuario),
+            mock.patch.object(portal, "get_user_permissions", return_value={"riob": {"vendas"}}),
+            portal.app.test_request_context("/apps/riob/api/agent/chat", method="POST"),
+        ):
+            self.assertIsNone(portal.enforce_app_permission())
+
+    def test_proxy_encaminha_perfil_e_recursos_para_agent_ia(self):
+        usuario = {
+            "id": 12,
+            "nome": "Lucimar",
+            "login": "lucimar",
+            "perfil": "usuario",
+        }
+        with mock.patch.object(portal, "get_user_permissions", return_value={"riob": {"vendas"}}):
+            headers = portal.user_identity_headers_for_app(usuario, "riob")
+
+        self.assertEqual("12", headers["X-Usuario-Id"])
+        self.assertEqual("usuario", headers["X-Usuario-Perfil"])
+        self.assertEqual("vendas", headers["X-Usuario-Recursos"])
+
     def test_usuario_exclusivo_de_vendas_abre_direto_no_orcamento(self):
         usuario = {
             "id": 12,
