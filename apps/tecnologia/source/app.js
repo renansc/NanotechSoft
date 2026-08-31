@@ -2,11 +2,12 @@
   "use strict";
 
   const API = "/apps/tecnologia/api";
-  const state = { devices: [], diagnosis: [], emailAlerts: null, monitorIntervalSeconds: 60, speed: null, metrics: [], speedMetrics: [], printerUsage: {}, backups: [], backupRuns: [] };
+  const state = { devices: [], diagnosis: [], emailAlerts: null, alertConfiguration: null, linkUsage: null, monitorIntervalSeconds: 60, speed: null, metrics: [], speedMetrics: [], printerUsage: {}, backups: [], backupRuns: [] };
   let editingId = null;
   let editingBackupId = null;
   let detailDeviceId = null;
   let toastTimer = null;
+  let alertConfigDirty = false;
 
   const $ = (selector) => document.querySelector(selector);
   const $$ = (selector) => [...document.querySelectorAll(selector)];
@@ -170,6 +171,41 @@
     </div>${lastError}`;
   }
 
+  function renderAlertConfiguration() {
+    const config = state.alertConfiguration;
+    if (config && !alertConfigDirty) {
+      [
+        "notifyInternetDown", "notifyLinkSlow", "notifyLinkUsage", "notifyGateway",
+        "notifyCpu", "notifyMemory", "notifyDisk", "notifyDeviceNetwork", "includeConsumers",
+      ].forEach((key) => { $(`#${key}`).checked = Boolean(config[key]); });
+      $("#linkDownloadCapacity").value = Number(config.linkDownloadCapacityMbps || 0);
+      $("#linkUploadCapacity").value = Number(config.linkUploadCapacityMbps || 0);
+      $("#linkUsageThreshold").value = Number(config.linkUsageThresholdPct || 80);
+    }
+    const usage = state.linkUsage;
+    const summary = $("#linkUsageSummary");
+    const table = $("#linkConsumersTable");
+    if (!usage) {
+      summary.textContent = "Aguardando telemetria...";
+      return;
+    }
+    if (usage.usagePct == null) {
+      summary.innerHTML = '<span class="status pending">Sem percentual</span><small>Informe a capacidade do link</small>';
+    } else {
+      const direction = usage.direction === "upload" ? "upload" : "download";
+      const threshold = Number(config?.linkUsageThresholdPct || 80);
+      const status = Number(usage.usagePct) >= threshold ? "degradado" : "online";
+      summary.innerHTML = `<span class="status ${status}">${number(usage.usagePct)}%</span><small>maior ocupação no ${direction}</small>`;
+    }
+    table.innerHTML = (usage.contributors || []).map((item) => `<tr>
+      <td><strong>${esc(item.name)}</strong><br><small class="muted">${esc(item.host)}</small></td>
+      <td>${number(item.downloadMbps, 3)} Mbps</td>
+      <td>${number(item.uploadMbps, 3)} Mbps</td>
+      <td>${item.networkPct == null ? "—" : `${number(item.networkPct)}%`}</td>
+      <td>${esc(dateTime(item.measuredAt))}</td>
+    </tr>`).join("") || '<tr><td colspan="5" class="muted">Nenhum equipamento com exporter ou SNMP forneceu tráfego ainda.</td></tr>';
+  }
+
   function renderCards() {
     const active = state.devices.filter((device) => device.ativo);
     $("#deviceCards").innerHTML = active.length ? active.map((device) => {
@@ -241,6 +277,7 @@
     renderKpis();
     renderDiagnosis();
     renderEmailAlerts();
+    renderAlertConfiguration();
     renderCards();
     renderQualityTable();
     renderDeviceTable();
@@ -395,6 +432,8 @@
       state.diagnosis = data.diagnosis || [];
       state.speed = data.speed || null;
       state.emailAlerts = data.emailAlerts || null;
+      state.alertConfiguration = data.alertConfiguration || null;
+      state.linkUsage = data.linkUsage || null;
       state.monitorIntervalSeconds = data.monitorIntervalSeconds || 60;
       $("#monitorState").textContent = `Coleta automática a cada ${state.monitorIntervalSeconds}s`;
       renderAll();
@@ -437,6 +476,40 @@
     } finally {
       button.disabled = false;
       button.textContent = "Enviar e-mail de teste";
+    }
+  }
+
+  async function saveAlertConfiguration(event) {
+    event.preventDefault();
+    const button = $("#saveAlertConfig");
+    button.disabled = true;
+    button.textContent = "Salvando...";
+    const payload = {
+      notifyInternetDown: $("#notifyInternetDown").checked,
+      notifyLinkSlow: $("#notifyLinkSlow").checked,
+      notifyLinkUsage: $("#notifyLinkUsage").checked,
+      notifyGateway: $("#notifyGateway").checked,
+      notifyCpu: $("#notifyCpu").checked,
+      notifyMemory: $("#notifyMemory").checked,
+      notifyDisk: $("#notifyDisk").checked,
+      notifyDeviceNetwork: $("#notifyDeviceNetwork").checked,
+      includeConsumers: $("#includeConsumers").checked,
+      linkDownloadCapacityMbps: Number($("#linkDownloadCapacity").value || 0),
+      linkUploadCapacityMbps: Number($("#linkUploadCapacity").value || 0),
+      linkUsageThresholdPct: Number($("#linkUsageThreshold").value || 80),
+    };
+    try {
+      const data = await request("/alerts/config", { method: "PUT", body: JSON.stringify(payload) });
+      state.alertConfiguration = data.configuration;
+      state.linkUsage = data.linkUsage;
+      alertConfigDirty = false;
+      renderAlertConfiguration();
+      showToast("Configuração de alertas salva para este ambiente.");
+    } catch (error) {
+      showToast(error.message, true);
+    } finally {
+      button.disabled = false;
+      button.textContent = "Salvar configuração";
     }
   }
 
@@ -644,7 +717,7 @@
   }
 
   function setView(view, updateHash = true) {
-    const known = ["dashboard", "equipamentos", "protocolos", "backup", "historico"];
+    const known = ["dashboard", "equipamentos", "protocolos", "backup", "historico", "config"];
     if (!known.includes(view)) view = "dashboard";
     $$(".techView").forEach((element) => element.classList.toggle("hidden", element.dataset.page !== view));
     $$(".tab").forEach((element) => element.classList.toggle("active", element.dataset.view === view));
@@ -921,6 +994,8 @@
   $("#probeAll").addEventListener("click", probeAll);
   $("#speedTest").addEventListener("click", runSpeedTest);
   $("#testAlertEmail").addEventListener("click", testAlertEmail);
+  $("#alertConfigForm").addEventListener("submit", saveAlertConfiguration);
+  $("#alertConfigForm").addEventListener("input", () => { alertConfigDirty = true; });
   $("#newDevice").addEventListener("click", () => openDevice());
   $("#newBackup").addEventListener("click", () => openBackup());
   $("#refreshBackups").addEventListener("click", () => loadBackups());

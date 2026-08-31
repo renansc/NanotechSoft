@@ -140,6 +140,25 @@ CREATE TABLE IF NOT EXISTS tecnologia_alertas_recursos (
     FOREIGN KEY (dispositivo_id) REFERENCES tecnologia_dispositivos(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS tecnologia_alertas_config (
+    id INT PRIMARY KEY DEFAULT 1,
+    notificar_internet_queda TINYINT(1) NOT NULL DEFAULT 1,
+    notificar_link_lento TINYINT(1) NOT NULL DEFAULT 1,
+    notificar_uso_link TINYINT(1) NOT NULL DEFAULT 0,
+    notificar_gateway TINYINT(1) NOT NULL DEFAULT 1,
+    notificar_cpu TINYINT(1) NOT NULL DEFAULT 1,
+    notificar_memoria TINYINT(1) NOT NULL DEFAULT 1,
+    notificar_disco TINYINT(1) NOT NULL DEFAULT 1,
+    notificar_rede_equipamento TINYINT(1) NOT NULL DEFAULT 1,
+    uso_link_limite_pct DECIMAL(6,2) NOT NULL DEFAULT 80,
+    capacidade_download_mbps DECIMAL(12,2) NOT NULL DEFAULT 0,
+    capacidade_upload_mbps DECIMAL(12,2) NOT NULL DEFAULT 0,
+    incluir_consumidores TINYINT(1) NOT NULL DEFAULT 1,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+INSERT IGNORE INTO tecnologia_alertas_config (id) VALUES (1);
+
 CREATE TABLE IF NOT EXISTS tecnologia_backups (
     id INT AUTO_INCREMENT PRIMARY KEY,
     nome VARCHAR(160) NOT NULL,

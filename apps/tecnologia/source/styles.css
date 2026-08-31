@@ -107,6 +107,18 @@
 .emailAlertSummary strong { max-width: 100%; font-size: .82rem; overflow-wrap: anywhere; }
 .emailAlertError { display: grid; gap: 4px; border-radius: 10px; padding: 11px 13px; color: #842828; background: #fde9e9; font-size: .78rem; }
 
+.configIntro { margin: -5px 0 16px; color: var(--tech-muted); font-size: .86rem; line-height: 1.5; }
+.notificationGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-bottom: 16px; }
+.techApp .notificationOption { display: flex; align-items: flex-start; gap: 10px; border: 1px solid var(--tech-line); border-radius: 11px; padding: 13px; color: var(--tech-ink); background: #fbfdfc; }
+.techApp .notificationOption input { width: auto; margin-top: 2px; }
+.notificationOption span { display: grid; gap: 4px; }
+.notificationOption strong { font-size: .84rem; }
+.notificationOption small { color: var(--tech-muted); font-size: .72rem; font-weight: 500; line-height: 1.4; }
+.linkConfigBox { margin-bottom: 14px; border-radius: 12px; padding: 15px; background: #f1f6f4; }
+.linkConfigBox .notificationOption.compact { align-self: end; padding: 9px 11px; background: #fff; }
+.linkUsageSummary { display: flex; align-items: center; gap: 8px; }
+.linkUsageSummary small { color: var(--tech-muted); font-size: .72rem; }
+
 .deviceGrid { display: grid; grid-template-columns: repeat(4, minmax(230px, 1fr)); gap: 13px; }
 .deviceCard { border: 1px solid var(--tech-line); border-radius: 13px; padding: 15px; background: #fcfdfd; }
 .clickableDevice { cursor: pointer; transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease; }
@@ -285,6 +297,8 @@
   .detailEndpoint { grid-template-columns: 1fr; }
   .printerUsageSummary { grid-template-columns: 1fr; }
   .emailAlertSummary { grid-template-columns: 1fr; }
+  .notificationGrid { grid-template-columns: 1fr; }
+  .linkUsageSummary { align-items: flex-start; flex-direction: column; }
   .backupKpis, .backupFlow { grid-template-columns: 1fr; }
   .backupFlow div:not(:last-child)::after { content: "⌄"; top: auto; right: 50%; bottom: -8px; margin: 0 -8px 0 0; }
 }

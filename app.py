@@ -311,6 +311,17 @@ TECH_ALERT_RESOURCES = {
     "INTERNET_QUEDA": ("internetDownState", None, "link de internet", 1),
     "LINK_LENTO": ("linkSlowState", None, "velocidade do link", 1),
     "GATEWAY_FALHA": ("gatewayFailureState", None, "gateway", 1),
+    "LINK_USO": ("linkUsagePct", None, "ocupação estimada do link", 80),
+}
+TECH_ALERT_RESOURCE_CONFIG = {
+    "CPU": "notifyCpu",
+    "MEMORIA": "notifyMemory",
+    "DISCO": "notifyDisk",
+    "REDE": "notifyDeviceNetwork",
+    "INTERNET_QUEDA": "notifyInternetDown",
+    "LINK_LENTO": "notifyLinkSlow",
+    "GATEWAY_FALHA": "notifyGateway",
+    "LINK_USO": "notifyLinkUsage",
 }
 
 
@@ -6417,6 +6428,241 @@ def technology_clear_email_errors():
         conn.close()
 
 
+def technology_alert_config_defaults():
+    return {
+        "notifyInternetDown": True,
+        "notifyLinkSlow": True,
+        "notifyLinkUsage": False,
+        "notifyGateway": True,
+        "notifyCpu": True,
+        "notifyMemory": True,
+        "notifyDisk": True,
+        "notifyDeviceNetwork": True,
+        "linkUsageThresholdPct": 80.0,
+        "linkDownloadCapacityMbps": 0.0,
+        "linkUploadCapacityMbps": 0.0,
+        "includeConsumers": True,
+        "updatedAt": None,
+    }
+
+
+def technology_public_alert_config(row):
+    config = technology_alert_config_defaults()
+    if not row:
+        return config
+    config.update({
+        "notifyInternetDown": bool(row.get("notificar_internet_queda")),
+        "notifyLinkSlow": bool(row.get("notificar_link_lento")),
+        "notifyLinkUsage": bool(row.get("notificar_uso_link")),
+        "notifyGateway": bool(row.get("notificar_gateway")),
+        "notifyCpu": bool(row.get("notificar_cpu")),
+        "notifyMemory": bool(row.get("notificar_memoria")),
+        "notifyDisk": bool(row.get("notificar_disco")),
+        "notifyDeviceNetwork": bool(row.get("notificar_rede_equipamento")),
+        "linkUsageThresholdPct": float(row.get("uso_link_limite_pct") or 80),
+        "linkDownloadCapacityMbps": float(row.get("capacidade_download_mbps") or 0),
+        "linkUploadCapacityMbps": float(row.get("capacidade_upload_mbps") or 0),
+        "includeConsumers": bool(row.get("incluir_consumidores")),
+        "updatedAt": technology_db_timestamp_iso(row.get("updated_at")),
+    })
+    return config
+
+
+def get_technology_alert_config():
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute("SELECT * FROM tecnologia_alertas_config WHERE id=1")
+        return technology_public_alert_config(cur.fetchone())
+    finally:
+        cur.close()
+        conn.close()
+
+
+def normalize_technology_alert_config(payload, current=None):
+    if not isinstance(payload, dict):
+        raise ValueError("a configuração de alertas deve ser um objeto JSON")
+    current = dict(current or technology_alert_config_defaults())
+    boolean_keys = {
+        "notifyInternetDown", "notifyLinkSlow", "notifyLinkUsage", "notifyGateway",
+        "notifyCpu", "notifyMemory", "notifyDisk", "notifyDeviceNetwork", "includeConsumers",
+    }
+    config = dict(current)
+    for key in boolean_keys:
+        if key in payload:
+            raw_value = payload.get(key)
+            if isinstance(raw_value, bool):
+                config[key] = raw_value
+            elif isinstance(raw_value, (int, float)) and raw_value in {0, 1}:
+                config[key] = bool(raw_value)
+            elif isinstance(raw_value, str) and raw_value.strip().lower() in {"true", "false", "1", "0"}:
+                config[key] = raw_value.strip().lower() in {"true", "1"}
+            else:
+                raise ValueError(f"valor booleano inválido em {key}")
+
+    def numeric(key, minimum, maximum):
+        if key not in payload:
+            return float(config.get(key) or 0)
+        try:
+            value = float(payload.get(key))
+        except (TypeError, ValueError):
+            raise ValueError(f"valor inválido em {key}")
+        if value < minimum or value > maximum:
+            raise ValueError(f"{key} deve ficar entre {minimum:g} e {maximum:g}")
+        return value
+
+    config["linkUsageThresholdPct"] = numeric("linkUsageThresholdPct", 1, 100)
+    config["linkDownloadCapacityMbps"] = numeric("linkDownloadCapacityMbps", 0, 1_000_000)
+    config["linkUploadCapacityMbps"] = numeric("linkUploadCapacityMbps", 0, 1_000_000)
+    if config["notifyLinkUsage"] and (
+        config["linkDownloadCapacityMbps"] <= 0 or config["linkUploadCapacityMbps"] <= 0
+    ):
+        raise ValueError("informe as capacidades contratadas de download e upload para ativar o uso do link")
+    return config
+
+
+def save_technology_alert_config(payload):
+    config = normalize_technology_alert_config(payload, get_technology_alert_config())
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            UPDATE tecnologia_alertas_config
+            SET notificar_internet_queda=%s, notificar_link_lento=%s,
+                notificar_uso_link=%s, notificar_gateway=%s, notificar_cpu=%s,
+                notificar_memoria=%s, notificar_disco=%s,
+                notificar_rede_equipamento=%s, uso_link_limite_pct=%s,
+                capacidade_download_mbps=%s, capacidade_upload_mbps=%s,
+                incluir_consumidores=%s
+            WHERE id=1
+            """,
+            (
+                int(config["notifyInternetDown"]), int(config["notifyLinkSlow"]),
+                int(config["notifyLinkUsage"]), int(config["notifyGateway"]),
+                int(config["notifyCpu"]), int(config["notifyMemory"]),
+                int(config["notifyDisk"]), int(config["notifyDeviceNetwork"]),
+                config["linkUsageThresholdPct"], config["linkDownloadCapacityMbps"],
+                config["linkUploadCapacityMbps"], int(config["includeConsumers"]),
+            ),
+        )
+        disabled_resources = [
+            resource for resource, key in TECH_ALERT_RESOURCE_CONFIG.items()
+            if not config.get(key, True)
+        ]
+        if disabled_resources:
+            placeholders = ",".join(["%s"] * len(disabled_resources))
+            cur.execute(
+                f"""
+                UPDATE tecnologia_alertas_recursos
+                SET ativo=0, recuperado_em=NOW(), ultimo_erro=''
+                WHERE ativo=1 AND recurso IN ({placeholders})
+                """,
+                tuple(disabled_resources),
+            )
+        conn.commit()
+    finally:
+        cur.close()
+        conn.close()
+    return get_technology_alert_config()
+
+
+def technology_link_usage_snapshot(devices, results=None, config=None):
+    """Estima o uso do link somando interfaces dos endpoints monitorados."""
+    config = config or technology_alert_config_defaults()
+    contributors = []
+    for index, device in enumerate(devices or []):
+        if str(device.get("tipo") or "").upper() in {"INTERNET", "ROTEADOR"}:
+            continue
+        result = results[index] if results is not None and index < len(results) else None
+        if result is not None:
+            details = result.get("details") if isinstance(result.get("details"), dict) else {}
+            telemetry = details.get("telemetry") if isinstance(details.get("telemetry"), dict) else {}
+            measured_at = result.get("checkedAt")
+        elif "ultimaMetrica" in device:
+            metric = device.get("ultimaMetrica") if isinstance(device.get("ultimaMetrica"), dict) else {}
+            telemetry = metric.get("telemetry") if isinstance(metric.get("telemetry"), dict) else {}
+            measured_at = metric.get("checkedAt")
+        else:
+            details = technology_json_value(device.get("ultima_detalhes"))
+            telemetry = details.get("telemetry") if isinstance(details.get("telemetry"), dict) else {}
+            measured_at = technology_db_timestamp_iso(device.get("ultima_verificado_em"))
+        try:
+            download = max(0.0, float(telemetry.get("downloadMbps") or 0))
+            upload = max(0.0, float(telemetry.get("uploadMbps") or 0))
+        except (TypeError, ValueError):
+            continue
+        if telemetry.get("downloadMbps") is None and telemetry.get("uploadMbps") is None:
+            continue
+        network_pct = telemetry.get("networkPct")
+        contributors.append({
+            "deviceId": int(device["id"]),
+            "name": device.get("nome") or device.get("host") or "Equipamento",
+            "host": device.get("host") or "",
+            "downloadMbps": round(download, 3),
+            "uploadMbps": round(upload, 3),
+            "networkPct": round(float(network_pct), 2) if network_pct is not None else None,
+            "measuredAt": measured_at,
+            "totalMbps": round(download + upload, 3),
+        })
+    contributors.sort(key=lambda item: item["totalMbps"], reverse=True)
+    download_total = sum(item["downloadMbps"] for item in contributors)
+    upload_total = sum(item["uploadMbps"] for item in contributors)
+    download_capacity = float(config.get("linkDownloadCapacityMbps") or 0)
+    upload_capacity = float(config.get("linkUploadCapacityMbps") or 0)
+    download_pct = (download_total / download_capacity * 100) if download_capacity > 0 else None
+    upload_pct = (upload_total / upload_capacity * 100) if upload_capacity > 0 else None
+    percentages = [("download", download_pct), ("upload", upload_pct)]
+    available_percentages = [(direction, value) for direction, value in percentages if value is not None]
+    direction, usage_pct = max(available_percentages, key=lambda item: item[1]) if available_percentages else (None, None)
+    return {
+        "available": bool(contributors and usage_pct is not None),
+        "usagePct": round(usage_pct, 2) if usage_pct is not None else None,
+        "direction": direction,
+        "downloadMbps": round(download_total, 3),
+        "uploadMbps": round(upload_total, 3),
+        "downloadCapacityMbps": download_capacity,
+        "uploadCapacityMbps": upload_capacity,
+        "monitoredDeviceCount": len(contributors),
+        "contributors": contributors,
+        "exactWanAttribution": False,
+    }
+
+
+def technology_apply_link_usage_telemetry(devices, results, config):
+    snapshot = technology_link_usage_snapshot(devices, results, config)
+    target_index = next(
+        (index for index, device in enumerate(devices) if str(device.get("tipo") or "").upper() == "INTERNET"),
+        None,
+    )
+    if target_index is None or not snapshot["available"]:
+        return snapshot
+    if str(results[target_index].get("status") or "").upper() == "OFFLINE":
+        return snapshot
+    top = snapshot["contributors"][:5] if config.get("includeConsumers") else []
+    top_text = "; ".join(
+        f"{item['name']} ({item['host']}): {item['downloadMbps']:.1f} Mbps ↓ / {item['uploadMbps']:.1f} Mbps ↑"
+        for item in top
+    )
+    direction_label = "download" if snapshot["direction"] == "download" else "upload"
+    summary = (
+        f"uso estimado dos equipamentos monitorados em {snapshot['usagePct']:.1f}% no {direction_label}; "
+        f"total {snapshot['downloadMbps']:.1f} Mbps ↓ / {snapshot['uploadMbps']:.1f} Mbps ↑"
+    )
+    alert_description = f"{summary}; maiores consumidores: {top_text}" if top_text else summary
+    result = results[target_index]
+    details = result.get("details") if isinstance(result.get("details"), dict) else {}
+    telemetry = details.get("telemetry") if isinstance(details.get("telemetry"), dict) else {}
+    telemetry.update({
+        "linkUsagePct": snapshot["usagePct"],
+        "linkUsageAlertDescription": alert_description,
+        "linkUsageRecoveryDescription": f"ocupação estimada do link normalizada: {summary}",
+    })
+    details["telemetry"] = telemetry
+    result["details"] = details
+    return snapshot
+
+
 def technology_alert_email_body(actions, now=None):
     now = now or dt.datetime.now()
     lines = [
@@ -6480,6 +6726,7 @@ def technology_alert_telemetry(device, result):
 def process_technology_resource_alerts(devices, results, now=None):
     """Atualiza os limites e envia um único e-mail consolidado por coleta."""
     now = now or dt.datetime.now()
+    alert_config = get_technology_alert_config()
     try:
         reminder_hours = max(1, float(os.environ.get("TECH_ALERT_REMINDER_HOURS") or 6))
     except (TypeError, ValueError):
@@ -6497,12 +6744,17 @@ def process_technology_resource_alerts(devices, results, now=None):
         for device, result in zip(devices, results):
             telemetry = technology_alert_telemetry(device, result)
             for resource, (metric_key, limit_key, label, default_limit) in TECH_ALERT_RESOURCES.items():
+                if not alert_config.get(TECH_ALERT_RESOURCE_CONFIG[resource], True):
+                    continue
                 raw_value = telemetry.get(metric_key)
                 if raw_value is None:
                     continue
                 try:
                     value = float(raw_value)
-                    limit = float(device.get(limit_key) or default_limit) if limit_key else float(default_limit)
+                    if resource == "LINK_USO":
+                        limit = float(alert_config.get("linkUsageThresholdPct") or default_limit)
+                    else:
+                        limit = float(device.get(limit_key) or default_limit) if limit_key else float(default_limit)
                 except (TypeError, ValueError):
                     continue
                 cur.execute(
@@ -6567,6 +6819,7 @@ def process_technology_resource_alerts(devices, results, now=None):
                         "INTERNET_QUEDA": "internetDown",
                         "LINK_LENTO": "linkSlow",
                         "GATEWAY_FALHA": "gatewayFailure",
+                        "LINK_USO": "linkUsage",
                     }.get(resource)
                     if description_prefix:
                         description = str(
@@ -6823,6 +7076,10 @@ def collect_technology_metrics(device_ids=None):
         workers = min(16, len(rows))
         with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
             results = list(executor.map(probe_device, rows))
+        if not requested:
+            alert_config = get_technology_alert_config()
+            if alert_config.get("notifyLinkUsage"):
+                technology_apply_link_usage_telemetry(rows, results, alert_config)
         conn = get_conn()
         cur = conn.cursor()
         for device, result in zip(rows, results):
@@ -7461,14 +7718,37 @@ def tecnologia_overview_api():
     start_technology_monitor()
     devices = [technology_public_device(row) for row in get_technology_devices()]
     speed = get_latest_technology_speed()
+    alert_config = get_technology_alert_config()
     return jsonify({
         "devices": devices,
         "speed": speed,
         "emailAlerts": get_technology_alert_status(),
+        "alertConfiguration": alert_config,
+        "linkUsage": technology_link_usage_snapshot(devices, config=alert_config),
         "diagnosis": build_network_diagnosis(devices, speed),
         "monitorIntervalSeconds": max(15, int(os.environ.get("TECH_MONITOR_INTERVAL_SECONDS", "60"))),
         "speedIntervalSeconds": max(300, int(os.environ.get("TECH_SPEED_INTERVAL_SECONDS", "1800"))),
         "subnet": "192.168.200.0/24",
+    })
+
+
+@app.route("/apps/tecnologia/api/alerts/config", methods=["GET", "PUT"])
+@login_required
+def tecnologia_alert_config_api():
+    if request.method == "PUT":
+        denied = technology_admin_or_error()
+        if denied:
+            return denied
+        try:
+            config = save_technology_alert_config(request.get_json(silent=True) or {})
+        except ValueError as exc:
+            return jsonify({"erro": str(exc)}), 400
+    else:
+        config = get_technology_alert_config()
+    devices = [technology_public_device(row) for row in get_technology_devices()]
+    return jsonify({
+        "configuration": config,
+        "linkUsage": technology_link_usage_snapshot(devices, config=config),
     })
 
 
@@ -7487,7 +7767,7 @@ def tecnologia_alert_test_email_api():
                 f"Data: {now.strftime('%d/%m/%Y %H:%M:%S')}",
                 "",
                 "Este é um teste da configuração de e-mail.",
-                "Os alertas de CPU, memória RAM e disco estão habilitados.",
+                "Consulte Configuração no módulo Tecnologia para definir quais eventos este ambiente envia.",
             ]),
         )
     except Exception as exc:

@@ -26,6 +26,7 @@
       <button class="tab" data-view="protocolos" type="button">Agentes e protocolos</button>
       <button class="tab" data-view="backup" type="button">Backup</button>
       <button class="tab" data-view="historico" type="button">Histórico</button>
+      <button class="tab" data-view="config" type="button">Configuração</button>
     </nav>
 
     <main>
@@ -174,6 +175,49 @@
           </div>
           <div class="tableWrap">
             <table><thead><tr><th>Data</th><th>Status</th><th>Latência</th><th>Perda</th><th>Jitter</th><th>Serviço</th><th>Motivo</th></tr></thead><tbody id="historyTable"></tbody></table>
+          </div>
+        </section>
+      </section>
+
+      <section class="techView hidden" data-page="config">
+        <form class="panel" id="alertConfigForm">
+          <div class="panelHead">
+            <div><span class="eyebrow">Por ambiente</span><h2>O que será notificado</h2></div>
+            <button class="btn primary" id="saveAlertConfig" type="submit">Salvar configuração</button>
+          </div>
+          <p class="configIntro">Cada instalação mantém esta escolha no próprio banco. Desative todos os itens de internet nos ambientes onde o link não precisa ser acompanhado.</p>
+          <div class="notificationGrid">
+            <label class="notificationOption"><input id="notifyInternetDown" type="checkbox"><span><strong>Queda da internet</strong><small>O destino externo deixou de responder.</small></span></label>
+            <label class="notificationOption"><input id="notifyLinkSlow" type="checkbox"><span><strong>Link abaixo do mínimo</strong><small>O teste periódico mediu download ou upload abaixo do cadastro.</small></span></label>
+            <label class="notificationOption"><input id="notifyLinkUsage" type="checkbox"><span><strong>Ocupação do link</strong><small>A estimativa dos equipamentos monitorados atingiu o percentual definido.</small></span></label>
+            <label class="notificationOption"><input id="notifyGateway" type="checkbox"><span><strong>Gateway instável</strong><small>Roteador offline, com perda, latência ou porta indisponível.</small></span></label>
+            <label class="notificationOption"><input id="notifyCpu" type="checkbox"><span><strong>CPU</strong><small>Uso acima do limite de cada equipamento.</small></span></label>
+            <label class="notificationOption"><input id="notifyMemory" type="checkbox"><span><strong>Memória</strong><small>Uso acima do limite de cada equipamento.</small></span></label>
+            <label class="notificationOption"><input id="notifyDisk" type="checkbox"><span><strong>Disco</strong><small>Ocupação acima do limite de cada equipamento.</small></span></label>
+            <label class="notificationOption"><input id="notifyDeviceNetwork" type="checkbox"><span><strong>Interface de rede</strong><small>Interface do equipamento perto da própria capacidade.</small></span></label>
+          </div>
+
+          <div class="linkConfigBox">
+            <div class="formGrid">
+              <label>Capacidade contratada de download (Mbps)<input id="linkDownloadCapacity" type="number" min="0" max="1000000" step="0.1" required></label>
+              <label>Capacidade contratada de upload (Mbps)<input id="linkUploadCapacity" type="number" min="0" max="1000000" step="0.1" required></label>
+              <label>Notificar ao atingir (%)<input id="linkUsageThreshold" type="number" min="1" max="100" step="0.1" required></label>
+              <label class="notificationOption compact"><input id="includeConsumers" type="checkbox"><span><strong>Incluir maiores consumidores</strong><small>Lista até cinco equipamentos monitorados no e-mail.</small></span></label>
+            </div>
+          </div>
+          <p class="scopeWarning">Esta ocupação é uma estimativa: soma o tráfego das máquinas com exporter ou SNMP e pode incluir tráfego interno da rede. Identificação exata do consumo da internet por IP exige NetFlow, sFlow, IPFIX ou API do roteador.</p>
+        </form>
+
+        <section class="panel">
+          <div class="panelHead">
+            <div><span class="eyebrow">Última coleta</span><h2>Consumo dos equipamentos monitorados</h2></div>
+            <div id="linkUsageSummary" class="linkUsageSummary">Aguardando telemetria...</div>
+          </div>
+          <div class="tableWrap">
+            <table>
+              <thead><tr><th>Equipamento</th><th>Download</th><th>Upload</th><th>Interface</th><th>Medição</th></tr></thead>
+              <tbody id="linkConsumersTable"><tr><td colspan="5" class="muted">Nenhum equipamento com telemetria de rede.</td></tr></tbody>
+            </table>
           </div>
         </section>
       </section>

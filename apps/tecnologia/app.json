@@ -42,6 +42,11 @@
         "recurso": "equipamentos"
       },
       {
+        "nome": "Tecnologia - Alertas",
+        "url": "/apps/tecnologia#config",
+        "recurso": "config"
+      },
+      {
         "nome": "Tecnologia - Backup",
         "url": "/apps/tecnologia#backup",
         "recurso": "backup"

@@ -1065,6 +1065,74 @@ class TecnologiaIntegrationTests(unittest.TestCase):
     def test_network_resource_email_threshold_is_ninety_percent(self):
         self.assertEqual(("networkPct", None, "uso da rede", 90), portal.TECH_ALERT_RESOURCES["REDE"])
 
+    def test_link_usage_snapshot_sums_only_monitored_endpoints(self):
+        devices = [
+            {"id": 1, "nome": "Internet", "host": "1.1.1.1", "tipo": "INTERNET"},
+            {"id": 2, "nome": "Roteador", "host": "192.168.1.1", "tipo": "ROTEADOR"},
+            {"id": 3, "nome": "PC", "host": "192.168.1.10", "tipo": "COMPUTADOR"},
+            {"id": 4, "nome": "Servidor", "host": "192.168.1.20", "tipo": "SERVIDOR"},
+        ]
+        results = [
+            {"details": {"telemetry": {"downloadMbps": 500, "uploadMbps": 500}}},
+            {"details": {"telemetry": {"downloadMbps": 60, "uploadMbps": 18}}},
+            {"details": {"telemetry": {"downloadMbps": 40, "uploadMbps": 2, "networkPct": 4}}},
+            {"details": {"telemetry": {"downloadMbps": 20, "uploadMbps": 16, "networkPct": 8}}},
+        ]
+        config = {
+            **portal.technology_alert_config_defaults(),
+            "linkDownloadCapacityMbps": 100,
+            "linkUploadCapacityMbps": 20,
+        }
+
+        snapshot = portal.technology_link_usage_snapshot(devices, results, config)
+
+        self.assertTrue(snapshot["available"])
+        self.assertEqual(60, snapshot["downloadMbps"])
+        self.assertEqual(18, snapshot["uploadMbps"])
+        self.assertEqual(90, snapshot["usagePct"])
+        self.assertEqual("upload", snapshot["direction"])
+        self.assertEqual([3, 4], [item["deviceId"] for item in snapshot["contributors"]])
+
+    def test_link_usage_configuration_requires_capacities_when_enabled(self):
+        with self.assertRaisesRegex(ValueError, "capacidades contratadas"):
+            portal.normalize_technology_alert_config({
+                "notifyLinkUsage": True,
+                "linkUsageThresholdPct": 80,
+                "linkDownloadCapacityMbps": 0,
+                "linkUploadCapacityMbps": 0,
+            })
+
+        config = portal.normalize_technology_alert_config({
+            "notifyLinkUsage": True,
+            "linkUsageThresholdPct": 80,
+            "linkDownloadCapacityMbps": 600,
+            "linkUploadCapacityMbps": 300,
+        })
+        self.assertTrue(config["notifyLinkUsage"])
+        self.assertEqual(80, config["linkUsageThresholdPct"])
+
+    def test_link_usage_alert_lists_largest_monitored_consumers(self):
+        devices = [
+            {"id": 1, "nome": "Internet", "host": "1.1.1.1", "tipo": "INTERNET"},
+            {"id": 2, "nome": "Notebook", "host": "192.168.1.21", "tipo": "NOTEBOOK"},
+        ]
+        results = [
+            {"status": "ONLINE", "details": {}},
+            {"status": "ONLINE", "details": {"telemetry": {"downloadMbps": 85, "uploadMbps": 2}}},
+        ]
+        config = {
+            **portal.technology_alert_config_defaults(),
+            "notifyLinkUsage": True,
+            "linkDownloadCapacityMbps": 100,
+            "linkUploadCapacityMbps": 20,
+        }
+
+        portal.technology_apply_link_usage_telemetry(devices, results, config)
+
+        telemetry = results[0]["details"]["telemetry"]
+        self.assertEqual(85, telemetry["linkUsagePct"])
+        self.assertIn("Notebook (192.168.1.21)", telemetry["linkUsageAlertDescription"])
+
     def test_technology_resource_alert_transitions_have_cooldown_and_recovery_margin(self):
         now = portal.dt.datetime(2026, 8, 21, 10, 30)
         retry = portal.dt.timedelta(minutes=15)
@@ -1119,6 +1187,8 @@ class TecnologiaIntegrationTests(unittest.TestCase):
         self.assertIn("GET", routes["/apps/tecnologia/api/overview"])
         self.assertIn("POST", routes["/apps/tecnologia/api/probe"])
         self.assertIn("POST", routes["/apps/tecnologia/api/alerts/test-email"])
+        self.assertIn("GET", routes["/apps/tecnologia/api/alerts/config"])
+        self.assertIn("PUT", routes["/apps/tecnologia/api/alerts/config"])
         self.assertIn("POST", routes["/apps/tecnologia/api/speed-test"])
         self.assertIn("GET", routes["/apps/tecnologia/api/speed-history"])
         self.assertIn("POST", routes["/apps/tecnologia/api/discover-computers"])
@@ -1149,6 +1219,8 @@ class TecnologiaIntegrationTests(unittest.TestCase):
         self.assertIn("deviceDetailsModal", html)
         self.assertIn("Atualizar agora", html)
         self.assertIn("Alertas por e-mail", html)
+        self.assertIn("O que será notificado", html)
+        self.assertIn("Consumo dos equipamentos monitorados", html)
         self.assertIn("Backups configurados", html)
         self.assertIn("08:00, 12:00, 16:00", html)
         self.assertIn("backupOperatingWindows", html)
@@ -1156,6 +1228,7 @@ class TecnologiaIntegrationTests(unittest.TestCase):
         self.assertIn("/backup/jobs", javascript)
         self.assertIn("Enviar e-mail de teste", html)
         self.assertIn("Remetente:", javascript)
+        self.assertIn('request("/alerts/config"', javascript)
         self.assertIn("identityName: button.dataset.computerName", javascript)
         self.assertIn("Impressões da semana", javascript)
         self.assertIn("/print-usage", javascript)

@@ -116,10 +116,13 @@ de um servidor GLPI. O Zabbix Agent precisa de um servidor/proxy Zabbix. Nesta
 etapa o portal lê o formato aberto do ecossistema Prometheus sem exigir esses
 servidores adicionais.
 
-SNMP e exporters mostram tráfego total por interface. A identificação do IP
-local ou externo que causa o consumo exige que o roteador exporte NetFlow,
-sFlow, IPFIX ou ofereça uma API equivalente; isso não pode ser inferido apenas
-pelos contadores SNMP.
+SNMP e exporters mostram tráfego total por interface. A aba **Configuração**
+pode somar download e upload dos endpoints monitorados, comparar os totais com
+a capacidade contratada do link e listar os maiores consumidores no instante
+da coleta. Essa soma é uma estimativa: pode incluir tráfego interno e não cobre
+máquinas sem agente. A identificação exata do IP que consome a internet exige
+que o roteador exporte NetFlow, sFlow, IPFIX ou ofereça uma API equivalente;
+isso não pode ser inferido apenas pelos contadores SNMP.
 
 Alguns NVRs não implementam a tabela moderna `ifXTable`, embora respondam
 normalmente ao SNMP. Nesses casos, a coleta usa automaticamente a `ifTable`
@@ -136,7 +139,8 @@ download/upload abaixo dos mínimos e CPU, memória, disco ou tráfego acima dos
 limites do equipamento. Os eventos aparecem na visão geral e as amostras ficam
 no histórico por 90 dias.
 
-O e-mail é restrito aos eventos prioritários desta etapa:
+Na aba **Configuração**, o administrador escolhe separadamente quais eventos
+geram e-mail neste ambiente:
 
 - queda do equipamento cadastrado como `INTERNET`;
 - gateway offline ou instável por perda, latência ou porta indisponível;
@@ -144,6 +148,17 @@ O e-mail é restrito aos eventos prioritários desta etapa:
 - CPU, memória RAM ou disco no limite cadastrado (90% por padrão);
 - uso da capacidade da interface de rede em 90% ou mais, quando SNMP ou o
   exporter informar a velocidade da interface.
+- ocupação estimada do link no percentual configurado (80% como valor inicial),
+  usando as capacidades contratadas de download e upload. O aviso pode listar
+  até os cinco maiores consumidores monitorados com IP, download, upload e
+  horário da amostra.
+
+As preferências são salvas em `tecnologia_alertas_config`, no banco de cada
+ambiente. Portanto, é possível acompanhar internet, velocidade e ocupação em
+uma instalação e desativar todos os alertas de link em outra, sem variáveis ou
+alterações de código. O alerta de ocupação começa desligado e só pode ser
+ativado depois que as capacidades contratadas de download e upload forem
+informadas.
 
 Com exceção do gateway, quedas de equipamentos internos continuam visíveis no
 painel e no histórico, mas não enviam e-mail. O alerta não é reenviado a cada minuto:
