@@ -159,6 +159,11 @@ NS_CACHE_PROVIDER=alwaysdata
 RIOB_PROXY_ONLY=1
 ```
 
+Além do Blueprint, a aplicação reconhece `RENDER=true` e força
+`cloud-readonly`, `CLIENTE_DEPLOY_ID=cloud` e o provedor de cache padrão
+`alwaysdata`. Assim um serviço antigo não volta ao modo local por ausência de
+variáveis no painel.
+
 Defesas aplicadas pela aplicacao:
 
 - bloqueio de `POST`, `PUT`, `PATCH` e `DELETE` de negocio;

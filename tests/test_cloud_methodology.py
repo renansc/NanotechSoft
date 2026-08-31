@@ -69,6 +69,23 @@ class CloudReadOnlyTests(unittest.TestCase):
 
 
 class DeploymentProfileTests(unittest.TestCase):
+    def test_render_runtime_forces_cloud_read_only_defaults(self):
+        settings = portal.deployment_runtime_settings({"RENDER": "true"})
+
+        self.assertEqual("cloud-readonly", settings["mode"])
+        self.assertTrue(settings["readOnly"])
+        self.assertEqual("alwaysdata", settings["cacheProvider"])
+
+    def test_render_runtime_does_not_accept_local_mode_override(self):
+        settings = portal.deployment_runtime_settings({
+            "RENDER": "true",
+            "NS_DEPLOY_MODE": "local",
+            "NS_READ_ONLY": "0",
+        })
+
+        self.assertEqual("cloud-readonly", settings["mode"])
+        self.assertTrue(settings["readOnly"])
+
     def test_nanotech_bootstrap_consumes_device_count_query(self):
         class FakeCursor:
             def __init__(self):

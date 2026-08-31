@@ -105,9 +105,35 @@ def env_flag(name, default=False):
     return str(value).strip().lower() in {"1", "true", "yes", "sim", "on"}
 
 
-DEPLOY_MODE = str(os.environ.get("NS_DEPLOY_MODE") or "local").strip().lower()
-CLOUD_READ_ONLY = DEPLOY_MODE == "cloud-readonly" or env_flag("NS_READ_ONLY", False)
-CACHE_PROVIDER = str(os.environ.get("NS_CACHE_PROVIDER") or "").strip().lower()
+def deployment_runtime_settings(environ=None):
+    environ = os.environ if environ is None else environ
+    render_runtime = str(environ.get("RENDER") or "").strip().lower() == "true"
+    if render_runtime:
+        # O Render deste ecossistema nunca e um servidor operacional local. A
+        # plataforma define RENDER=true automaticamente; usa-lo como trava
+        # evita que um servico antigo perca as variaveis do Blueprint e volte
+        # a aceitar escrita ou a expor o contrato errado.
+        return {
+            "render": True,
+            "mode": "cloud-readonly",
+            "readOnly": True,
+            "cacheProvider": str(environ.get("NS_CACHE_PROVIDER") or "alwaysdata").strip().lower(),
+        }
+    mode = str(environ.get("NS_DEPLOY_MODE") or "local").strip().lower()
+    read_only_value = str(environ.get("NS_READ_ONLY") or "").strip().lower()
+    return {
+        "render": False,
+        "mode": mode,
+        "readOnly": mode == "cloud-readonly" or read_only_value in {"1", "true", "yes", "sim", "on"},
+        "cacheProvider": str(environ.get("NS_CACHE_PROVIDER") or "").strip().lower(),
+    }
+
+
+DEPLOYMENT_RUNTIME = deployment_runtime_settings()
+RENDER_RUNTIME = DEPLOYMENT_RUNTIME["render"]
+DEPLOY_MODE = DEPLOYMENT_RUNTIME["mode"]
+CLOUD_READ_ONLY = DEPLOYMENT_RUNTIME["readOnly"]
+CACHE_PROVIDER = DEPLOYMENT_RUNTIME["cacheProvider"]
 CACHE_MAX_AGE_SECONDS = max(60, int(os.environ.get("NS_CACHE_MAX_AGE_SECONDS", "900")))
 
 APPS_DIR = BASE_DIR / "apps"
@@ -1028,6 +1054,8 @@ def slugify(value):
 
 
 def configured_client_id():
+    if RENDER_RUNTIME:
+        return "cloud"
     for key in ("CLIENTE_DEPLOY_ID", "CLIENTE_ID", "NANOTECH_CLIENTE_ID"):
         value = os.environ.get(key)
         if value:

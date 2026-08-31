@@ -92,6 +92,10 @@ O perfil do Blueprint e fixo em `CLIENTE_DEPLOY_ID=cloud`,
 - o PACS aparece como atalho externo definido por `LABORATORIO_PACS_URL`;
   o Render nao encaminha requisicoes nem recebe dados do PACS por esse atalho.
 
+Como defesa adicional, `RENDER=true`, fornecido automaticamente pela
+plataforma, força o contrato `cloud` e o modo somente leitura mesmo em um
+serviço antigo criado fora do Blueprint.
+
 Cada cliente continua sendo a fonte oficial dos proprios dados. Um processo
 separado no cliente envia snapshots autorizados ao AlwaysData no sentido unico
 `local -> cache`. Esse processo nao faz parte de `up.sh` nem `update.sh`.
