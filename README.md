@@ -212,6 +212,11 @@ usando o SMTP local. Os cadastros automáticos de rede do Rio Branco são criado
 somente no perfil `rio-branco`, sem contaminar ambientes Nanotech novos. Consulte
 `apps/chamados/README.md` para o fluxo e as rotas.
 
+Em hosts migrados de outro nome de projeto Compose, mantenha
+`NOTECHSOFT_MYSQL_VOLUME_NAME` apontando para o volume MySQL existente. O update
+nao recria o banco; essa configuracao evita que um futuro `up.sh` selecione um
+volume vazio apenas por mudanca do nome do projeto.
+
 O arquivo `clientes-modulos.json` define os clientes e quais modulos cada um possui. No deploy local, `NANOTECH_DEPLOY_PROFILE` seleciona tambem o `CLIENTE_DEPLOY_ID`; configuracoes divergentes sao bloqueadas. Cada ambiente continua usando seu proprio banco via `NS_DB_NAME`/credenciais, sem misturar dados entre clientes. Modulos com `status=externo` usam a URL indicada por `hrefEnv`, como `LABORATORIO_PACS_URL`, sem copiar seu codigo para este repositorio. Enquanto a URL estiver vazia, o card permanece visivel e informa que falta a configuracao do destino.
 
 Se `CLIENTE_DEPLOY_ID` nao estiver configurado, o portal usa `apps_liberados.txt` como fallback local/legado.

@@ -230,6 +230,7 @@ services:
 
 volumes:
   notechsoft_mysql:
+    name: ${NOTECHSOFT_MYSQL_VOLUME_NAME:-nanotechsoft_notechsoft_mysql}
   ollama_data:
   riob_app_data:
     name: riob_app_data

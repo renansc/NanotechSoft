@@ -53,6 +53,10 @@ class EcosystemDeployTests(unittest.TestCase):
         self.assertTrue((PROJECT_DIR / "deploy/systemd/media-serverwin.automount.d/retry.conf").is_file())
         compose = (PROJECT_DIR / "docker-compose.yml").read_text(encoding="utf-8")
         self.assertIn("TZ: ${TZ:-America/Sao_Paulo}", compose)
+        self.assertIn(
+            "name: ${NOTECHSOFT_MYSQL_VOLUME_NAME:-nanotechsoft_notechsoft_mysql}",
+            compose,
+        )
 
     def test_local_deploy_stops_services_outside_profile_and_removes_orphans(self):
         common = (PROJECT_DIR / "deploy/lib/common.sh").read_text(encoding="utf-8")
