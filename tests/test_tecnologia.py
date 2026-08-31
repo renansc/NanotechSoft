@@ -1268,6 +1268,7 @@ class TecnologiaIntegrationTests(unittest.TestCase):
         self.assertEqual("Tecnologia", portal.STATIC_APP_NAMES["tecnologia"])
         html = (PROJECT_DIR / "apps/tecnologia/source/index.html").read_text(encoding="utf-8")
         javascript = (PROJECT_DIR / "apps/tecnologia/source/app.js").read_text(encoding="utf-8")
+        css = (PROJECT_DIR / "apps/tecnologia/source/styles.css").read_text(encoding="utf-8")
 
         self.assertIn("Monitoramento de Tecnologia", html)
         self.assertIn("Descobrir impressoras", html)
@@ -1294,6 +1295,16 @@ class TecnologiaIntegrationTests(unittest.TestCase):
         self.assertIn("Ocupação do link de internet", html)
         self.assertIn("/link-usage-history", javascript)
         self.assertIn('const API = "/apps/tecnologia/api"', javascript)
+        self.assertIn(".techApp { width: 100%; max-width: none;", css)
+        self.assertIn("grid-template-columns: repeat(5, minmax(0, 1fr));", css)
+        self.assertIn(
+            ".techApp .kpiGrid, .techApp .deviceGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }",
+            css,
+        )
+        self.assertIn(
+            ".techApp .kpiGrid, .techApp .deviceGrid, .techApp .formGrid, .protocolGrid { grid-template-columns: 1fr; }",
+            css,
+        )
 
     def test_javascript_has_valid_syntax_in_chrome(self):
         browser = shutil.which("google-chrome")

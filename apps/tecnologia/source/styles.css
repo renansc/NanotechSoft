@@ -21,7 +21,7 @@
 .techApp .hidden { display: none !important; }
 .techApp .muted { color: var(--tech-muted); }
 
-.techApp { max-width: 1500px; margin: 0 auto; padding: 26px; }
+.techApp { width: 100%; max-width: none; margin: 0 auto; padding: 26px; }
 .techHero {
   display: flex;
   align-items: center;
@@ -119,7 +119,7 @@
 .linkUsageSummary { display: flex; align-items: center; gap: 8px; }
 .linkUsageSummary small { color: var(--tech-muted); font-size: .72rem; }
 
-.deviceGrid { display: grid; grid-template-columns: repeat(4, minmax(230px, 1fr)); gap: 13px; }
+.deviceGrid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 13px; }
 .deviceCard { border: 1px solid var(--tech-line); border-radius: 13px; padding: 15px; background: #fcfdfd; }
 .clickableDevice { cursor: pointer; transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease; }
 .clickableDevice:hover, .clickableDevice:focus-visible { border-color: var(--tech-primary); box-shadow: 0 8px 24px rgba(18, 107, 84, .12); outline: none; }
