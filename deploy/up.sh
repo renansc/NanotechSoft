@@ -15,6 +15,7 @@ if local_database_enabled; then
   compose up -d "${DATABASE_SERVICES[@]}"
 fi
 ensure_riob_import_sources
+stop_services_outside_profile
 
 log "reconstruindo os servicos de aplicacao habilitados para teste..."
 if [[ "${NO_CACHE:-0}" == "1" ]]; then
@@ -22,7 +23,7 @@ if [[ "${NO_CACHE:-0}" == "1" ]]; then
 else
   compose build "${BUILD_SERVICES[@]}"
 fi
-compose up -d --no-deps "${RUNTIME_SERVICES[@]}"
+compose up -d --no-deps --remove-orphans "${RUNTIME_SERVICES[@]}"
 
 log "aguardando os servicos habilitados responderem..."
 if ! wait_for_app 45 2; then

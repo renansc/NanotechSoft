@@ -89,6 +89,8 @@ O perfil do Blueprint e fixo em `CLIENTE_DEPLOY_ID=cloud`,
 - o startup nao cria banco, nao aplica schema e nao semeia registros;
 - o modulo Tecnologia consulta o cache, mas nao inicia coletores;
 - `NS_DB_*` usa a credencial de leitura do cache AlwaysData.
+- o PACS aparece como atalho externo definido por `LABORATORIO_PACS_URL`;
+  o Render nao encaminha requisicoes nem recebe dados do PACS por esse atalho.
 
 Cada cliente continua sendo a fonte oficial dos proprios dados. Um processo
 separado no cliente envia snapshots autorizados ao AlwaysData no sentido unico
@@ -210,7 +212,7 @@ usando o SMTP local. Os cadastros automáticos de rede do Rio Branco são criado
 somente no perfil `rio-branco`, sem contaminar ambientes Nanotech novos. Consulte
 `apps/chamados/README.md` para o fluxo e as rotas.
 
-O arquivo `clientes-modulos.json` define os clientes e quais modulos cada um possui. No deploy local, `NANOTECH_DEPLOY_PROFILE` seleciona tambem o `CLIENTE_DEPLOY_ID`; configuracoes divergentes sao bloqueadas. Cada ambiente continua usando seu proprio banco via `NS_DB_NAME`/credenciais, sem misturar dados entre clientes. Modulos com `status=externo` usam a URL indicada por `hrefEnv`, como `LABORATORIO_PACS_URL`, sem copiar seu codigo para este repositorio.
+O arquivo `clientes-modulos.json` define os clientes e quais modulos cada um possui. No deploy local, `NANOTECH_DEPLOY_PROFILE` seleciona tambem o `CLIENTE_DEPLOY_ID`; configuracoes divergentes sao bloqueadas. Cada ambiente continua usando seu proprio banco via `NS_DB_NAME`/credenciais, sem misturar dados entre clientes. Modulos com `status=externo` usam a URL indicada por `hrefEnv`, como `LABORATORIO_PACS_URL`, sem copiar seu codigo para este repositorio. Enquanto a URL estiver vazia, o card permanece visivel e informa que falta a configuracao do destino.
 
 Se `CLIENTE_DEPLOY_ID` nao estiver configurado, o portal usa `apps_liberados.txt` como fallback local/legado.
 

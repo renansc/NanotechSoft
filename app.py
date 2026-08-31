@@ -1442,13 +1442,21 @@ def active_external_apps():
         if str(module.get("status") or "").lower() != "externo":
             continue
         href = resolved_module_href(module)
-        if not href:
-            continue
+        configured = bool(href)
+        if not configured:
+            # O modulo contratado deve continuar visivel ao administrador para
+            # diferenciar "nao contratado" de "URL ainda nao configurada".
+            # A rota generica exibe o aviso local e nunca tenta acessar a rede
+            # do ambiente externo.
+            href = f"/apps/{module['slug']}"
+        description = module.get("descricao") or "Modulo mantido em deploy proprio."
+        if not configured:
+            description = f"{description} URL externa ainda nao configurada neste ambiente."
         app_item = normalize_app(
             {
                 "app_key": module["slug"],
                 "nome": module.get("nome") or module["slug"],
-                "descricao": module.get("descricao") or "Modulo mantido em deploy proprio.",
+                "descricao": description,
                 "url": href,
                 "standalone_url": href,
                 "icone": "external-link",
@@ -6139,11 +6147,12 @@ def technology_printer_week_start(now=None):
 
 
 def technology_printer_page_usage(rows, now=None):
-    """Converte o contador acumulado do Printer-MIB em totais diários."""
+    """Converte o contador acumulado do Printer-MIB em quatro semanas de uso."""
     local_now, _ = technology_printer_week_start(now)
     today = local_now.date()
     week_start = today - dt.timedelta(days=(today.weekday() + 1) % 7)
-    dates = [week_start + dt.timedelta(days=offset) for offset in range((today - week_start).days + 1)]
+    history_start = week_start - dt.timedelta(weeks=3)
+    dates = [history_start + dt.timedelta(days=offset) for offset in range((today - history_start).days + 1)]
     totals = {day: 0 for day in dates}
     day_labels = ("Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom")
     previous_count = None
@@ -6180,8 +6189,10 @@ def technology_printer_page_usage(rows, now=None):
     return {
         "periodStart": week_start.isoformat(),
         "periodEnd": today.isoformat(),
+        "historyStart": history_start.isoformat(),
         "todayPages": totals.get(today, 0),
-        "weekPages": sum(totals.values()),
+        "weekPages": sum(pages for day, pages in totals.items() if day >= week_start),
+        "fourWeekPages": sum(totals.values()),
         "currentCounter": current_count,
         "hasComparisons": comparisons > 0,
         "coverageStartedAt": technology_db_timestamp_iso(coverage_started_at) if coverage_started_at else None,
@@ -6192,8 +6203,149 @@ def technology_printer_page_usage(rows, now=None):
         ),
         "days": [
             {"date": day.isoformat(), "label": day_labels[day.weekday()], "pages": totals[day]}
-            for day in dates
+            for day in dates if day >= week_start
         ],
+        "weeks": [
+            {
+                "start": start.isoformat(),
+                "end": min(today, start + dt.timedelta(days=6)).isoformat(),
+                "label": f"{start.strftime('%d/%m')}–{min(today, start + dt.timedelta(days=6)).strftime('%d/%m')}",
+                "pages": sum(
+                    totals.get(start + dt.timedelta(days=offset), 0)
+                    for offset in range(7)
+                ),
+                "current": start == week_start,
+            }
+            for start in (history_start + dt.timedelta(weeks=offset) for offset in range(4))
+        ],
+    }
+
+
+def technology_link_history_bucket_minutes(hours):
+    if hours <= 24:
+        return 5
+    if hours <= 168:
+        return 30
+    if hours <= 720:
+        return 120
+    return 360
+
+
+def technology_link_usage_history_report(rows, speed_rows, config, hours, bucket_minutes):
+    """Monta o relatório histórico a partir das médias agregadas pelo banco."""
+    download_capacity = float(config.get("linkDownloadCapacityMbps") or 0)
+    upload_capacity = float(config.get("linkUploadCapacityMbps") or 0)
+
+    def percentage(value, capacity):
+        return round(float(value or 0) / capacity * 100, 2) if capacity > 0 else None
+
+    devices = {}
+    samples = []
+    timeline = {}
+    for row in rows or []:
+        checked_at = row.get("bucket_at")
+        download = max(0.0, float(row.get("download_mbps") or 0))
+        upload = max(0.0, float(row.get("upload_mbps") or 0))
+        download_peak = max(download, float(row.get("download_peak_mbps") or download))
+        upload_peak = max(upload, float(row.get("upload_peak_mbps") or upload))
+        sample_count = max(1, int(row.get("sample_count") or 1))
+        device_id = int(row["device_id"])
+        checked_iso = technology_db_timestamp_iso(checked_at)
+        sample = {
+            "deviceId": device_id,
+            "name": row.get("nome") or row.get("host") or "Equipamento",
+            "host": row.get("host") or "",
+            "checkedAt": checked_iso,
+            "downloadMbps": round(download, 3),
+            "uploadMbps": round(upload, 3),
+            "downloadPct": percentage(download, download_capacity),
+            "uploadPct": percentage(upload, upload_capacity),
+            "sampleCount": sample_count,
+        }
+        samples.append(sample)
+        summary = devices.setdefault(device_id, {
+            "deviceId": device_id,
+            "name": sample["name"],
+            "host": sample["host"],
+            "weightedDownload": 0.0,
+            "weightedUpload": 0.0,
+            "peakDownloadMbps": 0.0,
+            "peakUploadMbps": 0.0,
+            "sampleCount": 0,
+            "lastMeasuredAt": checked_iso,
+        })
+        summary["weightedDownload"] += download * sample_count
+        summary["weightedUpload"] += upload * sample_count
+        summary["peakDownloadMbps"] = max(summary["peakDownloadMbps"], download_peak)
+        summary["peakUploadMbps"] = max(summary["peakUploadMbps"], upload_peak)
+        summary["sampleCount"] += sample_count
+        summary["lastMeasuredAt"] = checked_iso
+
+        point = timeline.setdefault(checked_iso, {
+            "checkedAt": checked_iso, "downloadMbps": 0.0, "uploadMbps": 0.0,
+            "monitoredDeviceCount": 0,
+        })
+        point["downloadMbps"] += download
+        point["uploadMbps"] += upload
+        point["monitoredDeviceCount"] += 1
+
+    device_summaries = []
+    for summary in devices.values():
+        count = summary.pop("sampleCount")
+        weighted_download = summary.pop("weightedDownload")
+        weighted_upload = summary.pop("weightedUpload")
+        average_download = weighted_download / count if count else 0
+        average_upload = weighted_upload / count if count else 0
+        summary.update({
+            "averageDownloadMbps": round(average_download, 3),
+            "averageUploadMbps": round(average_upload, 3),
+            "averageDownloadPct": percentage(average_download, download_capacity),
+            "averageUploadPct": percentage(average_upload, upload_capacity),
+            "peakDownloadMbps": round(summary["peakDownloadMbps"], 3),
+            "peakUploadMbps": round(summary["peakUploadMbps"], 3),
+            "peakDownloadPct": percentage(summary["peakDownloadMbps"], download_capacity),
+            "peakUploadPct": percentage(summary["peakUploadMbps"], upload_capacity),
+            "sampleCount": count,
+        })
+        device_summaries.append(summary)
+    device_summaries.sort(
+        key=lambda item: max(item.get("peakDownloadPct") or 0, item.get("peakUploadPct") or 0),
+        reverse=True,
+    )
+
+    speed_by_time = {}
+    for row in speed_rows or []:
+        checked_iso = technology_db_timestamp_iso(row.get("bucket_at"))
+        speed_by_time[checked_iso] = {
+            "internetDownloadMbps": round(float(row.get("download_mbps") or 0), 3),
+            "internetUploadMbps": round(float(row.get("upload_mbps") or 0), 3),
+        }
+    timeline_rows = []
+    for checked_iso, point in sorted(timeline.items()):
+        point["downloadMbps"] = round(point["downloadMbps"], 3)
+        point["uploadMbps"] = round(point["uploadMbps"], 3)
+        point["downloadPct"] = percentage(point["downloadMbps"], download_capacity)
+        point["uploadPct"] = percentage(point["uploadMbps"], upload_capacity)
+        point.update(speed_by_time.get(checked_iso, {}))
+        timeline_rows.append(point)
+
+    occupancy_values = [
+        max(point.get("downloadPct") or 0, point.get("uploadPct") or 0)
+        for point in timeline_rows
+        if point.get("downloadPct") is not None or point.get("uploadPct") is not None
+    ]
+    return {
+        "hours": hours,
+        "bucketMinutes": bucket_minutes,
+        "downloadCapacityMbps": download_capacity,
+        "uploadCapacityMbps": upload_capacity,
+        "capacityConfigured": download_capacity > 0 and upload_capacity > 0,
+        "averageUsagePct": round(sum(occupancy_values) / len(occupancy_values), 2) if occupancy_values else None,
+        "peakUsagePct": round(max(occupancy_values), 2) if occupancy_values else None,
+        "devices": device_summaries,
+        "timeline": timeline_rows,
+        "samples": samples,
+        "exactWanAttribution": False,
     }
 
 
@@ -7874,6 +8026,63 @@ def tecnologia_history_api():
     ]})
 
 
+@app.route("/apps/tecnologia/api/link-usage-history")
+@login_required
+def tecnologia_link_usage_history_api():
+    try:
+        hours = min(2160, max(1, int(request.args.get("hours") or 168)))
+    except (TypeError, ValueError):
+        return jsonify({"erro": "período inválido"}), 400
+    bucket_minutes = technology_link_history_bucket_minutes(hours)
+    bucket_seconds = bucket_minutes * 60
+    cutoff = technology_utc_cutoff(hours)
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    cur.execute(
+        """
+        SELECT d.id AS device_id, d.nome, d.host,
+               FROM_UNIXTIME(FLOOR(UNIX_TIMESTAMP(m.verificado_em) / %s) * %s) AS bucket_at,
+               AVG(CASE WHEN JSON_EXTRACT(m.detalhes, '$.telemetry.downloadMbps') IS NOT NULL
+                   THEN CAST(JSON_UNQUOTE(JSON_EXTRACT(m.detalhes, '$.telemetry.downloadMbps')) AS DECIMAL(20,6)) END) AS download_mbps,
+               AVG(CASE WHEN JSON_EXTRACT(m.detalhes, '$.telemetry.uploadMbps') IS NOT NULL
+                   THEN CAST(JSON_UNQUOTE(JSON_EXTRACT(m.detalhes, '$.telemetry.uploadMbps')) AS DECIMAL(20,6)) END) AS upload_mbps,
+               MAX(CASE WHEN JSON_EXTRACT(m.detalhes, '$.telemetry.downloadMbps') IS NOT NULL
+                   THEN CAST(JSON_UNQUOTE(JSON_EXTRACT(m.detalhes, '$.telemetry.downloadMbps')) AS DECIMAL(20,6)) END) AS download_peak_mbps,
+               MAX(CASE WHEN JSON_EXTRACT(m.detalhes, '$.telemetry.uploadMbps') IS NOT NULL
+                   THEN CAST(JSON_UNQUOTE(JSON_EXTRACT(m.detalhes, '$.telemetry.uploadMbps')) AS DECIMAL(20,6)) END) AS upload_peak_mbps,
+               COUNT(*) AS sample_count
+        FROM tecnologia_metricas m
+        JOIN tecnologia_dispositivos d ON d.id=m.dispositivo_id
+        WHERE m.verificado_em >= %s
+          AND d.tipo NOT IN ('INTERNET', 'ROTEADOR')
+          AND (JSON_EXTRACT(m.detalhes, '$.telemetry.downloadMbps') IS NOT NULL
+               OR JSON_EXTRACT(m.detalhes, '$.telemetry.uploadMbps') IS NOT NULL)
+        GROUP BY d.id, d.nome, d.host, bucket_at
+        ORDER BY bucket_at ASC, d.nome ASC
+        """,
+        (bucket_seconds, bucket_seconds, cutoff),
+    )
+    rows = cur.fetchall()
+    cur.execute(
+        """
+        SELECT FROM_UNIXTIME(FLOOR(UNIX_TIMESTAMP(verificado_em) / %s) * %s) AS bucket_at,
+               AVG(download_mbps) AS download_mbps,
+               AVG(upload_mbps) AS upload_mbps
+        FROM tecnologia_velocidade
+        WHERE verificado_em >= %s AND status='OK'
+        GROUP BY bucket_at
+        ORDER BY bucket_at ASC
+        """,
+        (bucket_seconds, bucket_seconds, cutoff),
+    )
+    speed_rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    return jsonify(technology_link_usage_history_report(
+        rows, speed_rows, get_technology_alert_config(), hours, bucket_minutes,
+    ))
+
+
 @app.route("/apps/tecnologia/api/devices/<int:device_id>/print-usage")
 @login_required
 def tecnologia_printer_usage_api(device_id):
@@ -7894,6 +8103,7 @@ def tecnologia_printer_usage_api(device_id):
         return jsonify({"erro": "o equipamento selecionado não é uma impressora"}), 400
 
     local_now, week_start_utc = technology_printer_week_start()
+    history_start_utc = week_start_utc - dt.timedelta(weeks=3)
     cur.execute(
         """
         SELECT verificado_em, detalhes
@@ -7904,7 +8114,7 @@ def tecnologia_printer_usage_api(device_id):
         ORDER BY verificado_em DESC, id DESC
         LIMIT 1
         """,
-        (device_id, week_start_utc),
+        (device_id, history_start_utc),
     )
     baseline = cur.fetchone()
     cur.execute(
@@ -7917,7 +8127,7 @@ def tecnologia_printer_usage_api(device_id):
         ORDER BY verificado_em ASC, id ASC
         LIMIT 15000
         """,
-        (device_id, week_start_utc),
+        (device_id, history_start_utc),
     )
     rows = cur.fetchall()
     cur.close()

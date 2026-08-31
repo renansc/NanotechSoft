@@ -907,6 +907,9 @@ class TecnologiaIntegrationTests(unittest.TestCase):
         self.assertEqual([5, 7, 0, 5], [day["pages"] for day in usage["days"]])
         self.assertEqual(5, usage["todayPages"])
         self.assertEqual(17, usage["weekPages"])
+        self.assertEqual("2026-07-26", usage["historyStart"])
+        self.assertEqual(17, usage["fourWeekPages"])
+        self.assertEqual([0, 0, 0, 17], [week["pages"] for week in usage["weeks"]])
         self.assertTrue(usage["hasComparisons"])
         self.assertTrue(usage["todayComplete"])
 
@@ -917,6 +920,25 @@ class TecnologiaIntegrationTests(unittest.TestCase):
         self.assertEqual(6, partial_today["todayPages"])
         self.assertFalse(partial_today["todayComplete"])
         self.assertEqual("2026-08-22T11:00:00.000Z", partial_today["coverageStartedAt"])
+
+    def test_printer_page_usage_groups_the_last_four_calendar_weeks(self):
+        def sample(checked_at, page_count):
+            return {
+                "verificado_em": checked_at,
+                "detalhes": json.dumps({"telemetry": {"pageCount": page_count}}),
+            }
+
+        usage = portal.technology_printer_page_usage([
+            sample(dt.datetime(2026, 7, 26, 2, 59), 100),
+            sample(dt.datetime(2026, 7, 27, 12, 0), 110),
+            sample(dt.datetime(2026, 8, 3, 12, 0), 125),
+            sample(dt.datetime(2026, 8, 10, 12, 0), 145),
+            sample(dt.datetime(2026, 8, 17, 12, 0), 170),
+        ], now=dt.datetime(2026, 8, 19, 15, 0, tzinfo=dt.UTC))
+
+        self.assertEqual([10, 15, 20, 25], [week["pages"] for week in usage["weeks"]])
+        self.assertEqual(70, usage["fourWeekPages"])
+        self.assertEqual(25, usage["weekPages"])
 
     def test_technology_public_metric_preserves_utc_timezone(self):
         metric = portal.technology_public_metric({
@@ -1133,6 +1155,42 @@ class TecnologiaIntegrationTests(unittest.TestCase):
         self.assertEqual(85, telemetry["linkUsagePct"])
         self.assertIn("Notebook (192.168.1.21)", telemetry["linkUsageAlertDescription"])
 
+    def test_link_usage_history_reports_each_device_against_total_capacity(self):
+        rows = [
+            {
+                "device_id": 2, "nome": "Notebook", "host": "192.168.1.21",
+                "bucket_at": dt.datetime(2026, 8, 31, 12, 0),
+                "download_mbps": 25, "upload_mbps": 4,
+                "download_peak_mbps": 40, "upload_peak_mbps": 6, "sample_count": 2,
+            },
+            {
+                "device_id": 3, "nome": "Servidor", "host": "192.168.1.22",
+                "bucket_at": dt.datetime(2026, 8, 31, 12, 0),
+                "download_mbps": 15, "upload_mbps": 6,
+                "download_peak_mbps": 20, "upload_peak_mbps": 8, "sample_count": 2,
+            },
+        ]
+        report = portal.technology_link_usage_history_report(rows, [], {
+            "linkDownloadCapacityMbps": 100,
+            "linkUploadCapacityMbps": 20,
+        }, 24, 5)
+
+        self.assertTrue(report["capacityConfigured"])
+        self.assertEqual(40, report["timeline"][0]["downloadPct"])
+        self.assertEqual(50, report["timeline"][0]["uploadPct"])
+        self.assertEqual(50, report["peakUsagePct"])
+        notebook = next(item for item in report["devices"] if item["deviceId"] == 2)
+        self.assertEqual(25, notebook["averageDownloadPct"])
+        self.assertEqual(40, notebook["peakDownloadPct"])
+        self.assertEqual(20, notebook["averageUploadPct"])
+        self.assertFalse(report["exactWanAttribution"])
+
+    def test_link_history_uses_coarser_buckets_for_long_periods(self):
+        self.assertEqual(5, portal.technology_link_history_bucket_minutes(24))
+        self.assertEqual(30, portal.technology_link_history_bucket_minutes(168))
+        self.assertEqual(120, portal.technology_link_history_bucket_minutes(720))
+        self.assertEqual(360, portal.technology_link_history_bucket_minutes(2160))
+
     def test_technology_resource_alert_transitions_have_cooldown_and_recovery_margin(self):
         now = portal.dt.datetime(2026, 8, 21, 10, 30)
         retry = portal.dt.timedelta(minutes=15)
@@ -1191,6 +1249,7 @@ class TecnologiaIntegrationTests(unittest.TestCase):
         self.assertIn("PUT", routes["/apps/tecnologia/api/alerts/config"])
         self.assertIn("POST", routes["/apps/tecnologia/api/speed-test"])
         self.assertIn("GET", routes["/apps/tecnologia/api/speed-history"])
+        self.assertIn("GET", routes["/apps/tecnologia/api/link-usage-history"])
         self.assertIn("POST", routes["/apps/tecnologia/api/discover-computers"])
         self.assertIn("POST", routes["/apps/tecnologia/api/devices"])
         self.assertIn("DELETE", routes["/apps/tecnologia/api/devices/<int:device_id>"])
@@ -1230,8 +1289,10 @@ class TecnologiaIntegrationTests(unittest.TestCase):
         self.assertIn("Remetente:", javascript)
         self.assertIn('request("/alerts/config"', javascript)
         self.assertIn("identityName: button.dataset.computerName", javascript)
-        self.assertIn("Impressões da semana", javascript)
+        self.assertIn("Impressões das últimas 4 semanas", javascript)
         self.assertIn("/print-usage", javascript)
+        self.assertIn("Ocupação do link de internet", html)
+        self.assertIn("/link-usage-history", javascript)
         self.assertIn('const API = "/apps/tecnologia/api"', javascript)
 
     def test_javascript_has_valid_syntax_in_chrome(self):

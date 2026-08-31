@@ -23,10 +23,14 @@ PACS evoluindo separadamente.
 | Nanotech | Portal, perfil `nanotech` | todos os apps publicados e PACS externo |
 | Laboratório | PACS | somente a stack do `RisPacsFull` |
 | Senhor | Portal, perfil `senhor` | NanoStore; atualizar somente após 18h |
-| Render | Portal, perfil `render` | cache em nuvem somente leitura |
+| Render | Portal, perfil `render` | cache em nuvem somente leitura e atalho web externo para o PACS |
 
 Endereços, usuários, senhas, chaves SSH e arquivos `.env` são configuração
 local e nunca entram nessa matriz ou no Git.
+
+No Render, `LABORATORIO_PACS_URL` deve apontar para a publicacao HTTPS do
+cockpit PACS. O portal apenas entrega o link ao navegador: nao faz proxy, nao
+entra na Tailscale e nao recebe banco, exames ou imagens do laboratorio.
 
 ## Regras que evitam conflito entre clientes
 
@@ -39,6 +43,8 @@ local e nunca entram nessa matriz ou no Git.
    Git.
 5. Cada atualização usa o comando do componente indicado na matriz. Atualizar
    código não autoriza restore, migração ou sincronização de banco.
+6. O update local encerra serviços RioB quando o perfil não os possui e remove
+   containers órfãos do mesmo projeto, sem apagar volumes ou bancos.
 
 ## Fluxo de publicação
 

@@ -144,12 +144,56 @@ class DeploymentProfileTests(unittest.TestCase):
         self.assertEqual("externo", external["pacs"]["status"])
         self.assertEqual("LABORATORIO_PACS_URL", external["pacs"]["hrefEnv"])
 
+    def test_contracts_keep_the_environment_module_boundaries(self):
+        payload = json.loads((PROJECT_DIR / "clientes-modulos.json").read_text(encoding="utf-8"))
+        clients = {item["id"]: item for item in payload["clients"]}
+
+        self.assertEqual(
+            {"nanostore"},
+            {item["slug"] for item in clients["senhor"]["modules"]},
+        )
+        self.assertEqual(
+            {"pacs"},
+            {item["slug"] for item in clients["laboratorio"]["modules"]},
+        )
+        self.assertTrue(clients["nanotech"]["allModules"])
+        self.assertTrue(
+            {"pacs", "tatoo", "bpa", "gpsmusical"}.isdisjoint(
+                {item["slug"] for item in clients["rio-branco"]["modules"]}
+            )
+        )
+
+    def test_cloud_contract_includes_external_pacs(self):
+        payload = json.loads((PROJECT_DIR / "clientes-modulos.json").read_text(encoding="utf-8"))
+        cloud = next(item for item in payload["clients"] if item["id"] == "cloud")
+        modules = {item["slug"]: item for item in cloud["modules"]}
+
+        self.assertEqual("externo", modules["pacs"]["status"])
+        self.assertEqual("LABORATORIO_PACS_URL", modules["pacs"]["hrefEnv"])
+
+    def test_external_pacs_remains_visible_while_url_is_not_configured(self):
+        cloud = next(
+            item
+            for item in portal.read_client_contracts()["clients"]
+            if item["id"] == "cloud"
+        )
+        with (
+            mock.patch.object(portal, "active_client_contract", return_value=cloud),
+            mock.patch.dict(os.environ, {}, clear=False),
+        ):
+            os.environ.pop("LABORATORIO_PACS_URL", None)
+            apps = {item["app_key"]: item for item in portal.active_external_apps()}
+
+        self.assertEqual("/apps/pacs", apps["pacs"]["url"])
+        self.assertIn("ainda nao configurada", apps["pacs"]["descricao"])
+
     def test_render_blueprint_is_read_only_and_uses_cloud_contract(self):
         blueprint = (PROJECT_DIR / "render.yaml").read_text(encoding="utf-8")
 
         self.assertIn("value: cloud", blueprint)
         self.assertIn("value: cloud-readonly", blueprint)
         self.assertIn("value: alwaysdata", blueprint)
+        self.assertIn("- key: LABORATORIO_PACS_URL", blueprint)
         self.assertNotIn("- key: RIOB_BASE_URL", blueprint)
 
     def test_external_pacs_uses_environment_url_without_local_source(self):

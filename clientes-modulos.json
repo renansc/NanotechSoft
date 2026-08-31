@@ -156,6 +156,13 @@
           "slug": "tecnologia",
           "nome": "Tecnologia",
           "status": "cache-leitura"
+        },
+        {
+          "slug": "pacs",
+          "nome": "PACS",
+          "descricao": "Atalho para o PACS web publicado em ambiente proprio, sem acesso do Render ao banco ou a rede local.",
+          "hrefEnv": "LABORATORIO_PACS_URL",
+          "status": "externo"
         }
       ]
     }

@@ -31,6 +31,7 @@ else
 fi
 
 ensure_riob_import_sources
+stop_services_outside_profile
 
 log "perfil ativo: ${DEPLOY_PROFILE_ID} (${DEPLOY_MODE}), cliente ${CLIENTE_DEPLOY_ID}"
 log "recriando somente os servicos de aplicacao habilitados; nenhum banco sera operado..."
@@ -39,7 +40,7 @@ if [[ "${NO_CACHE:-0}" == "1" ]]; then
 else
   compose build "${BUILD_SERVICES[@]}"
 fi
-compose up -d --no-deps "${RUNTIME_SERVICES[@]}"
+compose up -d --no-deps --remove-orphans "${RUNTIME_SERVICES[@]}"
 
 if ! wait_for_app 45 2; then
   compose logs --tail=120 "$APP_SERVICE" >&2 || true

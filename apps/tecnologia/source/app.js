@@ -2,7 +2,7 @@
   "use strict";
 
   const API = "/apps/tecnologia/api";
-  const state = { devices: [], diagnosis: [], emailAlerts: null, alertConfiguration: null, linkUsage: null, monitorIntervalSeconds: 60, speed: null, metrics: [], speedMetrics: [], printerUsage: {}, backups: [], backupRuns: [] };
+  const state = { devices: [], diagnosis: [], emailAlerts: null, alertConfiguration: null, linkUsage: null, linkUsageReport: null, monitorIntervalSeconds: 60, speed: null, metrics: [], speedMetrics: [], printerUsage: {}, backups: [], backupRuns: [] };
   let editingId = null;
   let editingBackupId = null;
   let detailDeviceId = null;
@@ -78,11 +78,11 @@
   };
 
   function renderPrinterUsage(usage) {
-    if (!usage || usage.loading) return '<div class="detailSection printerUsage"><h3>Impressões da semana</h3><p class="muted">Calculando páginas impressas...</p></div>';
-    if (usage.error) return `<div class="detailSection printerUsage"><h3>Impressões da semana</h3><div class="detailNotice warning"><span>${esc(usage.error)}</span></div></div>`;
-    if (!usage.hasComparisons) return '<div class="detailSection printerUsage"><h3>Impressões da semana</h3><p class="muted">Aguardando pelo menos duas leituras do contador de páginas.</p></div>';
+    if (!usage || usage.loading) return '<div class="detailSection printerUsage"><h3>Impressões das últimas 4 semanas</h3><p class="muted">Calculando páginas impressas...</p></div>';
+    if (usage.error) return `<div class="detailSection printerUsage"><h3>Impressões das últimas 4 semanas</h3><div class="detailNotice warning"><span>${esc(usage.error)}</span></div></div>`;
+    if (!usage.hasComparisons) return '<div class="detailSection printerUsage"><h3>Impressões das últimas 4 semanas</h3><p class="muted">Aguardando pelo menos duas leituras do contador de páginas.</p></div>';
 
-    const days = usage.days || [];
+    const weeks = usage.weeks || [];
     const chartWidth = 640;
     const chartHeight = 150;
     const left = 34;
@@ -91,33 +91,34 @@
     const bottom = 42;
     const plotWidth = chartWidth - left - right;
     const plotHeight = chartHeight - top - bottom;
-    const maximum = Math.max(1, ...days.map((day) => Number(day.pages || 0)));
-    const points = days.map((day, index) => {
-      const x = days.length === 1 ? left + (plotWidth / 2) : left + ((plotWidth * index) / (days.length - 1));
-      const y = top + plotHeight - ((Number(day.pages || 0) / maximum) * plotHeight);
-      return { ...day, x, y };
+    const maximum = Math.max(1, ...weeks.map((week) => Number(week.pages || 0)));
+    const points = weeks.map((week, index) => {
+      const x = weeks.length === 1 ? left + (plotWidth / 2) : left + ((plotWidth * index) / (weeks.length - 1));
+      const y = top + plotHeight - ((Number(week.pages || 0) / maximum) * plotHeight);
+      return { ...week, x, y };
     });
     const polyline = points.map((point) => `${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(" ");
-    const period = `${new Date(`${usage.periodStart}T12:00:00`).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })} a ${new Date(`${usage.periodEnd}T12:00:00`).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })}`;
+    const period = `${new Date(`${usage.historyStart || usage.periodStart}T12:00:00`).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })} a ${new Date(`${usage.periodEnd}T12:00:00`).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })}`;
     const coverageNote = !usage.todayComplete && usage.coverageStartedAt
       ? `<p class="printerUsageNote">Contagem disponível desde ${esc(dateTime(usage.coverageStartedAt))}; páginas anteriores à primeira leitura SNMP não podem ser recuperadas.</p>`
       : "";
     const pointMarkup = points.map((point) => `<g>
       <circle cx="${point.x}" cy="${point.y}" r="4"></circle>
       <text class="printerChartValue" x="${point.x}" y="${Math.max(12, point.y - 9)}">${Number(point.pages || 0).toLocaleString("pt-BR")}</text>
-      <text class="printerChartLabel" x="${point.x}" y="${chartHeight - 12}">${esc(point.label)}</text>
+      <text class="printerChartLabel" x="${point.x}" y="${chartHeight - 12}">${esc(point.label)}${point.current ? " *" : ""}</text>
     </g>`).join("");
     return `<div class="detailSection printerUsage">
-      <div class="detailSectionHead"><h3>Impressões da semana</h3><span>${esc(period)}</span></div>
+      <div class="detailSectionHead"><h3>Impressões das últimas 4 semanas</h3><span>${esc(period)}</span></div>
       <div class="printerUsageSummary">
         <div><span>Impressas hoje</span><strong>${Number(usage.todayPages || 0).toLocaleString("pt-BR")}</strong><small>páginas</small></div>
         <div><span>Total da semana</span><strong>${Number(usage.weekPages || 0).toLocaleString("pt-BR")}</strong><small>páginas</small></div>
+        <div><span>Total em 4 semanas</span><strong>${Number(usage.fourWeekPages || 0).toLocaleString("pt-BR")}</strong><small>páginas</small></div>
       </div>
-      <div class="printerChartWrap"><svg class="printerChart" viewBox="0 0 ${chartWidth} ${chartHeight}" role="img" aria-label="Páginas impressas por dia nesta semana">
+      <div class="printerChartWrap"><svg class="printerChart" viewBox="0 0 ${chartWidth} ${chartHeight}" role="img" aria-label="Páginas impressas nas últimas quatro semanas">
         <line x1="${left}" y1="${top + plotHeight}" x2="${chartWidth - right}" y2="${top + plotHeight}"></line>
         ${points.length > 1 ? `<polyline points="${polyline}"></polyline>` : ""}
         ${pointMarkup}
-      </svg></div>${coverageNote}
+      </svg></div><p class="printerUsageNote">* semana atual em andamento.</p>${coverageNote}
     </div>`;
   }
 
@@ -717,12 +718,13 @@
   }
 
   function setView(view, updateHash = true) {
-    const known = ["dashboard", "equipamentos", "protocolos", "backup", "historico", "config"];
+    const known = ["dashboard", "equipamentos", "protocolos", "backup", "historico", "ocupacao-link", "config"];
     if (!known.includes(view)) view = "dashboard";
     $$(".techView").forEach((element) => element.classList.toggle("hidden", element.dataset.page !== view));
     $$(".tab").forEach((element) => element.classList.toggle("active", element.dataset.view === view));
     if (updateHash) history.replaceState(null, "", view === "dashboard" ? location.pathname : `#${view}`);
     if (view === "historico") loadHistory();
+    if (view === "ocupacao-link") loadLinkUsageReport();
     if (view === "backup") loadBackups();
   }
 
@@ -912,6 +914,93 @@
     }
   }
 
+  function renderLinkUsageChart(report) {
+    const svg = $("#linkUsageChart");
+    const timeline = report?.timeline || [];
+    if (!timeline.length || !report?.capacityConfigured) {
+      const message = report?.capacityConfigured ? "Sem telemetria no período" : "Configure a largura contratada do link";
+      svg.innerHTML = `<text x="500" y="135" text-anchor="middle" fill="#66736e" font-size="18">${esc(message)}</text>`;
+      return;
+    }
+    const values = timeline.flatMap((item) => [Number(item.downloadPct || 0), Number(item.uploadPct || 0)]);
+    const maximum = Math.max(100, ...values) * 1.08;
+    const xAt = (index) => timeline.length === 1 ? 500 : 24 + index * (952 / (timeline.length - 1));
+    const points = (field) => timeline.map((item, index) => {
+      const y = 235 - Math.min(maximum, Number(item[field] || 0)) / maximum * 205;
+      return `${xAt(index).toFixed(1)},${y.toFixed(1)}`;
+    }).join(" ");
+    const grid = [30, 81, 133, 184, 235].map((y, index) => {
+      const label = number(maximum * (4 - index) / 4, 0);
+      return `<line class="chartGrid" x1="24" y1="${y}" x2="976" y2="${y}"/><text class="linkChartAxis" x="20" y="${y + 4}" text-anchor="end">${label}%</text>`;
+    }).join("");
+    const tickCount = Math.min(6, timeline.length);
+    const tickIndexes = tickCount === 1 ? [0] : Array.from(
+      { length: tickCount }, (_, index) => Math.round(index * (timeline.length - 1) / (tickCount - 1)),
+    );
+    const ticks = [...new Set(tickIndexes)].map((itemIndex, tickIndex, allTicks) => {
+      const x = xAt(itemIndex);
+      const at = new Date(timeline[itemIndex].checkedAt);
+      const label = at.toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+      const anchor = tickIndex === 0 ? "start" : tickIndex === allTicks.length - 1 ? "end" : "middle";
+      return `<line class="chartTimeGrid" x1="${x}" y1="30" x2="${x}" y2="235"/><text class="chartTime" x="${x}" y="260" text-anchor="${anchor}">${esc(label)}</text>`;
+    }).join("");
+    svg.innerHTML = `${grid}${ticks}<polyline class="linkChartDownload" points="${points("downloadPct")}"/><polyline class="linkChartUpload" points="${points("uploadPct")}"/>`;
+  }
+
+  function renderLinkUsageReport() {
+    const report = state.linkUsageReport;
+    if (!report) return;
+    $("#linkReportSummary").innerHTML = [
+      `<article class="kpi speed"><span>Link contratado</span><strong>${number(report.downloadCapacityMbps)} Mbps ↓</strong><small>${number(report.uploadCapacityMbps)} Mbps ↑</small></article>`,
+      `<article class="kpi"><span>Ocupação média</span><strong>${report.averageUsagePct == null ? "—" : `${number(report.averageUsagePct)}%`}</strong><small>maior direção de cada intervalo</small></article>`,
+      `<article class="kpi warning"><span>Pico do período</span><strong>${report.peakUsagePct == null ? "—" : `${number(report.peakUsagePct)}%`}</strong><small>da largura total configurada</small></article>`,
+      `<article class="kpi"><span>Dispositivos</span><strong>${Number(report.devices?.length || 0).toLocaleString("pt-BR")}</strong><small>com telemetria de rede</small></article>`,
+    ].join("");
+    renderLinkUsageChart(report);
+
+    const devices = report.devices || [];
+    $("#linkDeviceSummaryTable").innerHTML = devices.map((item) => `<tr>
+      <td><strong>${esc(item.name)}</strong><br><small class="muted">${esc(item.host)}</small></td>
+      <td>${number(item.averageDownloadMbps, 3)} Mbps<br><small class="muted">${item.averageDownloadPct == null ? "capacidade não configurada" : `${number(item.averageDownloadPct)}% do link`}</small></td>
+      <td>${number(item.peakDownloadMbps, 3)} Mbps<br><strong>${item.peakDownloadPct == null ? "—" : `${number(item.peakDownloadPct)}%`}</strong></td>
+      <td>${number(item.averageUploadMbps, 3)} Mbps<br><small class="muted">${item.averageUploadPct == null ? "capacidade não configurada" : `${number(item.averageUploadPct)}% do link`}</small></td>
+      <td>${number(item.peakUploadMbps, 3)} Mbps<br><strong>${item.peakUploadPct == null ? "—" : `${number(item.peakUploadPct)}%`}</strong></td>
+      <td>${Number(item.sampleCount || 0).toLocaleString("pt-BR")}<br><small class="muted">até ${esc(dateTime(item.lastMeasuredAt))}</small></td>
+    </tr>`).join("") || '<tr><td colspan="6" class="muted">Nenhum dispositivo enviou telemetria de rede neste período.</td></tr>';
+
+    const deviceSelect = $("#linkReportDevice");
+    const selected = deviceSelect.value;
+    deviceSelect.innerHTML = `<option value="">Todos os dispositivos</option>${devices.map((item) => `<option value="${item.deviceId}">${esc(item.name)} — ${esc(item.host)}</option>`).join("")}`;
+    if (devices.some((item) => String(item.deviceId) === selected)) deviceSelect.value = selected;
+    const selectedDevice = deviceSelect.value;
+    const samples = [...(report.samples || [])]
+      .filter((item) => !selectedDevice || String(item.deviceId) === selectedDevice)
+      .reverse()
+      .slice(0, 1000);
+    $("#linkUsageHistoryTable").innerHTML = samples.map((item) => `<tr>
+      <td>${esc(dateTime(item.checkedAt))}</td><td><strong>${esc(item.name)}</strong><br><small class="muted">${esc(item.host)}</small></td>
+      <td>${number(item.downloadMbps, 3)} Mbps</td><td><strong>${item.downloadPct == null ? "—" : `${number(item.downloadPct)}%`}</strong></td>
+      <td>${number(item.uploadMbps, 3)} Mbps</td><td><strong>${item.uploadPct == null ? "—" : `${number(item.uploadPct)}%`}</strong></td>
+      <td>${Number(item.sampleCount || 0).toLocaleString("pt-BR")}</td>
+    </tr>`).join("") || '<tr><td colspan="7" class="muted">Sem amostras para o filtro selecionado.</td></tr>';
+  }
+
+  async function loadLinkUsageReport() {
+    const button = $("#refreshLinkReport");
+    button.disabled = true;
+    button.textContent = "Carregando...";
+    try {
+      const hours = Number($("#linkReportHours").value || 168);
+      state.linkUsageReport = await request(`/link-usage-history?hours=${hours}`);
+      renderLinkUsageReport();
+    } catch (error) {
+      showToast(error.message, true);
+    } finally {
+      button.disabled = false;
+      button.textContent = "Atualizar relatório";
+    }
+  }
+
   function renderHistory() {
     const metrics = state.metrics;
     const online = metrics.filter((item) => item.status !== "OFFLINE").length;
@@ -1017,6 +1106,9 @@
   $("#discoverComputers").addEventListener("click", discoverComputers);
   $("#historyDevice").addEventListener("change", loadHistory);
   $("#historyHours").addEventListener("change", loadHistory);
+  $("#linkReportHours").addEventListener("change", loadLinkUsageReport);
+  $("#refreshLinkReport").addEventListener("click", loadLinkUsageReport);
+  $("#linkReportDevice").addEventListener("change", renderLinkUsageReport);
   $$(".tab").forEach((button) => button.addEventListener("click", () => setView(button.dataset.view)));
   $$('[data-open-view]').forEach((button) => button.addEventListener("click", () => setView(button.dataset.openView)));
   $("#deviceTable").addEventListener("click", (event) => {

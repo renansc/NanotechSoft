@@ -62,8 +62,9 @@ e tempo ligado quando as respectivas séries estiverem habilitadas. O próprio
 card permite atualizar somente aquele equipamento.
 
 No popup de equipamentos do tipo **Impressora**, o contador acumulado do
-Printer-MIB é comparado entre coletas para mostrar as páginas impressas no dia
-e uma linha diária da semana corrente, iniciada no domingo. Reduções do contador
+Printer-MIB é comparado entre coletas para mostrar as páginas impressas no dia,
+na semana atual e o histórico agregado das quatro últimas semanas, iniciadas no
+domingo. Reduções do contador
 após manutenção ou reinício não são contabilizadas como valores negativos. O
 comparativo aparece antes da seção de suprimentos e exige ao menos duas leituras
 SNMP com contador de páginas. Quando o monitoramento começou depois da meia-noite,
@@ -123,6 +124,15 @@ da coleta. Essa soma é uma estimativa: pode incluir tráfego interno e não cob
 máquinas sem agente. A identificação exata do IP que consome a internet exige
 que o roteador exporte NetFlow, sFlow, IPFIX ou ofereça uma API equivalente;
 isso não pode ser inferido apenas pelos contadores SNMP.
+
+O relatório **Ocupação do link**, disponível em Relatórios, reutiliza essas
+amostras por períodos de 24 horas, 7, 30 ou 90 dias. Ele apresenta a série
+histórica de download/upload em relação às capacidades contratadas, médias e
+picos de cada dispositivo e o detalhamento por intervalo. Períodos maiores são
+agregados em intervalos mais largos para manter a consulta responsiva. Os
+percentuais só são calculados quando as capacidades de download e upload estão
+informadas na Configuração e continuam sendo uma estimativa das interfaces
+monitoradas, não uma atribuição WAN exata.
 
 Alguns NVRs não implementam a tabela moderna `ifXTable`, embora respondam
 normalmente ao SNMP. Nesses casos, a coleta usa automaticamente a `ifTable`
@@ -236,8 +246,9 @@ confirmada localmente ou por inventário de um agente.
 - `POST /apps/tecnologia/api/alerts/test-email`: testa o SMTP (admin).
 - `POST /apps/tecnologia/api/speed-test`: força download/upload do link.
 - `GET /apps/tecnologia/api/speed-history`: histórico da velocidade do link.
+- `GET /apps/tecnologia/api/link-usage-history`: relatório histórico da ocupação estimada do link e participação por dispositivo.
 - `GET /apps/tecnologia/api/history`: histórico por equipamento e período.
-- `GET /apps/tecnologia/api/devices/<id>/print-usage`: páginas impressas no dia e na semana.
+- `GET /apps/tecnologia/api/devices/<id>/print-usage`: páginas impressas no dia, semana e últimas quatro semanas.
 - `POST /apps/tecnologia/api/devices`: cadastra um equipamento (admin).
 - `PUT|DELETE /apps/tecnologia/api/devices/<id>`: altera ou exclui (admin).
 - `POST /apps/tecnologia/api/discover-printers`: descoberta manual (admin).

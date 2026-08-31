@@ -42,8 +42,10 @@ Esta metodologia separa quatro responsabilidades:
 ```
 
 O Render nao entra na Tailscale dos clientes, nao conhece credenciais dos
-bancos locais e nao encaminha requisicoes para as aplicacoes locais. Se uma
-alteracao for necessaria, o operador acessa o deploy local pela Tailscale.
+bancos locais e nao encaminha requisicoes para as aplicacoes locais. Links web
+externos, como o PACS publicado em HTTPS, sao abertos diretamente pelo
+navegador e nao passam pelo servidor do portal. Se uma alteracao local for
+necessaria, o operador acessa o deploy local pela Tailscale.
 
 ## 3. Fonte de verdade e fluxo dos dados
 
@@ -121,7 +123,8 @@ NANOTECH_DEPLOY_PROFILE=senhor ./update.sh main
 ```
 
 `update.sh` continua sem iniciar, parar, importar, exportar, restaurar ou
-sincronizar bancos.
+sincronizar bancos. Ele para serviços RioB fora do perfil e remove containers
+órfãos do projeto, preservando os volumes e bancos locais.
 
 ## 6. Codigo central no GitHub
 
@@ -165,6 +168,7 @@ Defesas aplicadas pela aplicacao:
 - banner permanente de somente leitura;
 - cabecalho `X-Nanotech-Read-Only: 1`;
 - contrato `cloud` limitado aos modulos preparados para consulta;
+- PACS somente como atalho web externo via `LABORATORIO_PACS_URL`, sem proxy;
 - nenhuma `RIOB_BASE_URL` local no Blueprint.
 
 A permissao `SELECT` no MySQL e a segunda barreira. O bloqueio da aplicacao nao

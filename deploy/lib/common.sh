@@ -176,6 +176,13 @@ local_database_enabled() {
   [[ "$DEPLOY_HAS_LOCAL_DATABASE" == "1" ]]
 }
 
+stop_services_outside_profile() {
+  if ! riob_stack_enabled; then
+    log "parando servicos RioB fora do perfil ${DEPLOY_PROFILE_ID}..."
+    compose stop "$RIOB_APP_SERVICE" "$RIOB_PROXY_SERVICE" >/dev/null 2>&1 || true
+  fi
+}
+
 validate_app_sources() {
   local py
   py="$(python_cmd)" || die "python nao encontrado para validar os apps"
@@ -451,6 +458,33 @@ for index, deployment in enumerate(deployments):
             errors.append(
                 f"deploy {deployment_id}: modulo obrigatorio {module_id} perdeu seu manifest ou destino externo"
             )
+
+    if component_id == "portal" and contract and contract.get("allModules") is not True:
+        contracted_modules = {
+            slug(module.get("slug") or module.get("id") or module.get("nome"))
+            for module in contract_modules
+            if isinstance(module, dict)
+            and str(module.get("status") or "").strip().lower() != "importar"
+        }
+        required_set = {slug(module) for module in required_modules}
+        if required_set != contracted_modules:
+            errors.append(
+                f"deploy {deployment_id}: requiredModules deve coincidir exatamente com o contrato {profile_client_id}"
+            )
+
+rio_branco_contract = clients_by_id.get("rio-branco") or {}
+rio_branco_modules = {
+    slug(module.get("slug") or module.get("id") or module.get("nome"))
+    for module in (rio_branco_contract.get("modules") or [])
+    if isinstance(module, dict)
+}
+for forbidden_module in ("pacs", "tatoo", "bpa", "gpsmusical"):
+    if forbidden_module in rio_branco_modules:
+        errors.append(f"contrato rio-branco: modulo proibido {forbidden_module}")
+
+nanotech_contract = clients_by_id.get("nanotech") or {}
+if nanotech_contract.get("allModules") is not True:
+    errors.append("contrato nanotech: allModules deve permanecer habilitado")
 
 senhor_deploy = next((item for item in deployments if isinstance(item, dict) and slug(item.get("id")) == "senhor"), {})
 senhor_window = senhor_deploy.get("updateWindow") or {}

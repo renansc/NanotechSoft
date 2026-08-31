@@ -212,13 +212,20 @@
 .chartLegend i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 4px; }
 .latencyDot { background: var(--tech-primary); }
 .lossDot { background: var(--tech-warning); }
-#historyChart { display: block; width: 100%; height: 275px; margin-top: 8px; }
+.linkDownloadDot { background: var(--tech-info); }
+.linkUploadDot { background: #8d56a8; }
+#historyChart, #linkUsageChart { display: block; width: 100%; height: 275px; margin-top: 8px; overflow: visible; }
 .chartGrid { stroke: #e1e8e5; stroke-width: 1; vector-effect: non-scaling-stroke; }
 .chartTimeGrid { stroke: #edf1ef; stroke-width: 1; stroke-dasharray: 3 5; vector-effect: non-scaling-stroke; }
 .chartTime { fill: var(--tech-muted); font-size: 13px; }
 .chartLatency, .chartLoss { fill: none; stroke-width: 2.5; vector-effect: non-scaling-stroke; }
 .chartLatency { stroke: var(--tech-primary); }
 .chartLoss { stroke: var(--tech-warning); }
+.linkChartDownload, .linkChartUpload { fill: none; stroke-width: 2.5; vector-effect: non-scaling-stroke; }
+.linkChartDownload { stroke: var(--tech-info); }
+.linkChartUpload { stroke: #8d56a8; }
+.linkChartAxis { fill: var(--tech-muted); font-size: 11px; }
+.linkReportKpis { grid-template-columns: repeat(4, minmax(0, 1fr)); margin-bottom: 15px; }
 
 .techApp .modal { position: fixed; z-index: 1000; inset: 0; display: grid; place-items: center; padding: 20px; background: rgba(8, 22, 18, .56); }
 .techApp .modalCard { width: min(760px, 100%); max-height: 94vh; overflow-y: auto; border-radius: 17px; padding: 22px; background: #fff; box-shadow: 0 25px 80px rgba(0, 0, 0, .3); }
@@ -247,7 +254,7 @@
 .detailIdentity { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
 .detailTableWrap { overflow-x: auto; border: 1px solid var(--tech-line); border-radius: 10px; }
 .printerUsage { border: 1px solid var(--tech-line); border-radius: 12px; padding: 14px; background: #fbfdfc; }
-.printerUsageSummary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; margin-bottom: 8px; }
+.printerUsageSummary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; margin-bottom: 8px; }
 .printerUsageSummary > div { display: flex; align-items: baseline; gap: 7px; border-radius: 9px; padding: 10px 12px; background: #edf6f3; }
 .printerUsageSummary span { color: var(--tech-muted); font-size: .7rem; font-weight: 750; text-transform: uppercase; }
 .printerUsageSummary strong { color: var(--tech-primary-dark); font-size: 1.35rem; }
@@ -276,6 +283,7 @@
   .detailResources, .detailIdentity { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .emailAlertSummary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .backupInfoGrid { grid-template-columns: 1fr; }
+  .linkReportKpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 680px) {
@@ -296,6 +304,7 @@
   .detailStatus, .detailStatus > div { align-items: flex-start; flex-direction: column; }
   .detailEndpoint { grid-template-columns: 1fr; }
   .printerUsageSummary { grid-template-columns: 1fr; }
+  .linkReportKpis { grid-template-columns: 1fr; }
   .emailAlertSummary { grid-template-columns: 1fr; }
   .notificationGrid { grid-template-columns: 1fr; }
   .linkUsageSummary { align-items: flex-start; flex-direction: column; }

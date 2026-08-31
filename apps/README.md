@@ -39,8 +39,10 @@ tempo de execução e o catálogo mínimo global é validado por
 Modulos cujo codigo oficial vive em outro repositorio/deploy podem ser
 referenciados em `clientes-modulos.json` com `status: "externo"` e `hrefEnv`.
 A URL vem do ambiente (por exemplo, `LABORATORIO_PACS_URL`) e nunca deve ser
-gravada como credencial ou usada pelo perfil Render para acessar a Tailscale.
-O perfil `cloud` lista somente apps preparados para consulta ao cache.
+gravada como credencial ou usada pelo servidor Render para acessar a Tailscale.
+Sem a URL, o card contratado continua visivel com um aviso de configuracao. O
+perfil `cloud` lista apps preparados para consulta ao cache e pode oferecer
+atalhos web externos, sem proxy, banco compartilhado ou copia de dados.
 
 ## Regra de localizacao
 

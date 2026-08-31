@@ -83,7 +83,7 @@
       "id": "render",
       "component": "portal",
       "profile": "render",
-      "requiredModules": ["financeiro", "chamados", "tecnologia"]
+      "requiredModules": ["financeiro", "chamados", "tecnologia", "pacs"]
     }
   ]
 }

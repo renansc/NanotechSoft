@@ -33,6 +33,17 @@ class EcosystemDeployTests(unittest.TestCase):
         self.assertEqual("18:00", senhor["updateWindow"]["start"])
         self.assertEqual(["nanostore"], senhor["requiredModules"])
 
+    def test_render_declares_external_pacs_and_riob_excludes_forbidden_modules(self):
+        ecosystem = json.loads((PROJECT_DIR / "deploy/ecosystem.json").read_text(encoding="utf-8"))
+        deployments = {item["id"]: item for item in ecosystem["deployments"]}
+
+        self.assertIn("pacs", deployments["render"]["requiredModules"])
+        self.assertTrue(
+            {"pacs", "tatoo", "bpa", "gpsmusical"}.isdisjoint(
+                deployments["rio-branco"]["requiredModules"]
+            )
+        )
+
     def test_riob_deploy_rejects_empty_local_directory_when_cifs_is_missing(self):
         common = (PROJECT_DIR / "deploy/lib/common.sh").read_text(encoding="utf-8")
 
@@ -42,6 +53,17 @@ class EcosystemDeployTests(unittest.TestCase):
         self.assertTrue((PROJECT_DIR / "deploy/systemd/media-serverwin.automount.d/retry.conf").is_file())
         compose = (PROJECT_DIR / "docker-compose.yml").read_text(encoding="utf-8")
         self.assertIn("TZ: ${TZ:-America/Sao_Paulo}", compose)
+
+    def test_local_deploy_stops_services_outside_profile_and_removes_orphans(self):
+        common = (PROJECT_DIR / "deploy/lib/common.sh").read_text(encoding="utf-8")
+        up_script = (PROJECT_DIR / "deploy/up.sh").read_text(encoding="utf-8")
+        update_script = (PROJECT_DIR / "deploy/update.sh").read_text(encoding="utf-8")
+
+        self.assertIn("stop_services_outside_profile()", common)
+        self.assertIn('compose stop "$RIOB_APP_SERVICE" "$RIOB_PROXY_SERVICE"', common)
+        for source in (up_script, update_script):
+            self.assertIn("stop_services_outside_profile", source)
+            self.assertIn("--remove-orphans", source)
 
     def test_server_blocks_module_outside_deploy_even_for_admin(self):
         with (

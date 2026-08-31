@@ -26,6 +26,7 @@
       <button class="tab" data-view="protocolos" type="button">Agentes e protocolos</button>
       <button class="tab" data-view="backup" type="button">Backup</button>
       <button class="tab" data-view="historico" type="button">Histórico</button>
+      <button class="tab" data-view="ocupacao-link" type="button">Ocupação do link</button>
       <button class="tab" data-view="config" type="button">Configuração</button>
     </nav>
 
@@ -175,6 +176,53 @@
           </div>
           <div class="tableWrap">
             <table><thead><tr><th>Data</th><th>Status</th><th>Latência</th><th>Perda</th><th>Jitter</th><th>Serviço</th><th>Motivo</th></tr></thead><tbody id="historyTable"></tbody></table>
+          </div>
+        </section>
+      </section>
+
+      <section class="techView hidden" data-page="ocupacao-link">
+        <section class="panel">
+          <div class="panelHead historyHead">
+            <div><span class="eyebrow">Relatório de Tecnologia</span><h2>Ocupação do link de internet</h2></div>
+            <div class="historyFilters">
+              <select id="linkReportHours" aria-label="Período do relatório">
+                <option value="24">Últimas 24 horas</option>
+                <option value="168" selected>Últimos 7 dias</option>
+                <option value="720">Últimos 30 dias</option>
+                <option value="2160">Últimos 90 dias</option>
+              </select>
+              <button class="btn" id="refreshLinkReport" type="button">Atualizar relatório</button>
+            </div>
+          </div>
+          <p class="configIntro">Compara o tráfego registrado pelos exporters/SNMP com as capacidades contratadas configuradas neste ambiente.</p>
+          <div id="linkReportSummary" class="kpiGrid linkReportKpis"></div>
+          <div class="chartBox">
+            <div class="chartLegend"><span><i class="linkDownloadDot"></i> Download ocupado</span><span><i class="linkUploadDot"></i> Upload ocupado</span></div>
+            <svg id="linkUsageChart" viewBox="0 0 1000 275" preserveAspectRatio="none" aria-label="Histórico percentual de ocupação do link"></svg>
+          </div>
+          <p class="scopeWarning">A atribuição por equipamento é uma estimativa do tráfego das interfaces monitoradas, pode incluir tráfego interno e não inclui dispositivos sem exporter/SNMP. A medição exata do consumo da internet por IP exige NetFlow, sFlow, IPFIX ou API do roteador.</p>
+        </section>
+
+        <section class="panel">
+          <div class="panelHead"><div><span class="eyebrow">Participação no período</span><h2>Ocupação por dispositivo</h2></div></div>
+          <div class="tableWrap">
+            <table>
+              <thead><tr><th>Dispositivo</th><th>Download médio</th><th>Pico download</th><th>Upload médio</th><th>Pico upload</th><th>Amostras</th></tr></thead>
+              <tbody id="linkDeviceSummaryTable"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panelHead historyHead">
+            <div><span class="eyebrow">Série histórica</span><h2>Detalhamento por intervalo</h2></div>
+            <div class="historyFilters"><select id="linkReportDevice" aria-label="Filtrar dispositivo"><option value="">Todos os dispositivos</option></select></div>
+          </div>
+          <div class="tableWrap">
+            <table>
+              <thead><tr><th>Data</th><th>Dispositivo</th><th>Download</th><th>% do link ↓</th><th>Upload</th><th>% do link ↑</th><th>Amostras</th></tr></thead>
+              <tbody id="linkUsageHistoryTable"></tbody>
+            </table>
           </div>
         </section>
       </section>
