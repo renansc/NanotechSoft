@@ -33918,12 +33918,30 @@ def vendas_diario_api():
 @app.route("/api/vendas/diario/dashboard", methods=["GET"])
 def vendas_diario_dashboard_api():
     data_ref = _as_str(request.args.get("data"))
+    data_inicio_raw = _as_str(request.args.get("data_inicio"))
+    data_fim_raw = _as_str(request.args.get("data_fim"))
+    data_inicio = _parse_data_br(data_inicio_raw) if data_inicio_raw else None
+    data_fim = _parse_data_br(data_fim_raw) if data_fim_raw else None
+    if (data_inicio_raw and not data_inicio) or (data_fim_raw and not data_fim):
+        return jsonify({"erro": "periodo de vendas invalido; use AAAA-MM-DD"}), 400
+    if data_inicio and not data_fim:
+        data_fim = data_inicio
+    if data_fim and not data_inicio:
+        data_inicio = data_fim
+    if data_inicio and data_fim and data_fim < data_inicio:
+        return jsonify({"erro": "data_fim deve ser igual ou posterior a data_inicio"}), 400
     conn = get_conn()
     cur = conn.cursor(dictionary=True)
     try:
-        if not data_ref:
+        if not data_ref and not data_inicio:
             cur.execute("SELECT MAX(data_ref) AS data_ref FROM vendas_diario_importacoes")
             data_ref = _fmt_date((cur.fetchone() or {}).get("data_ref"))
+        if data_inicio:
+            filtro_data_sql = "p.data_ref >= %s AND p.data_ref < %s"
+            filtro_data_params = (data_inicio, data_fim + datetime.timedelta(days=1))
+        else:
+            filtro_data_sql = "p.data_ref=%s"
+            filtro_data_params = (data_ref or "1900-01-01",)
         cur.execute("""
             SELECT p.vendedor_codigo,
                    MAX(cv.nome) AS vendedor_nome,
@@ -33949,7 +33967,7 @@ def vendas_diario_dashboard_api():
                 WHERE LOWER(funcao)='vendedor' AND ativo=1 AND codigo IS NOT NULL
                 GROUP BY codigo
             ) cv ON cv.codigo=CAST(p.vendedor_codigo AS UNSIGNED)
-            WHERE p.data_ref=%s
+            WHERE """ + filtro_data_sql + """
               AND NOT (
                   EXISTS (
                       SELECT 1 FROM vendas_diario_kanban kpdf
@@ -33978,7 +33996,7 @@ def vendas_diario_dashboard_api():
               )
             GROUP BY p.vendedor_codigo
             ORDER BY valor_bruto DESC, p.vendedor_codigo
-        """, (data_ref or "1900-01-01",))
+        """, filtro_data_params)
         sellers = []
         for row in cur.fetchall() or []:
             item = dict(row)
@@ -33997,6 +34015,10 @@ def vendas_diario_dashboard_api():
         dates = [_fmt_date(row.get("data_ref")) for row in (cur.fetchall() or [])]
         return jsonify({
             "data_ref": data_ref,
+            "periodo": {
+                "data_inicio": _fmt_date(data_inicio) if data_inicio else data_ref,
+                "data_fim": _fmt_date(data_fim) if data_fim else data_ref,
+            },
             "datas": dates,
             "vendedores": sellers,
             "resumo": {

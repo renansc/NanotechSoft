@@ -1094,6 +1094,70 @@ class RioBrancoAgentWebTests(unittest.TestCase):
         self.assertIn("Carlos", result["reply"])
         self.assertIn("Fontes:", result["reply"])
 
+    def test_generic_sales_question_uses_populated_daily_dashboard(self):
+        payload = {
+            "data_ref": "2026-08-29",
+            "periodo": {"data_inicio": "2026-08-29", "data_fim": "2026-08-29"},
+            "resumo": {
+                "vendedores": 2,
+                "positivos": 12,
+                "valor_bruto": 4500.0,
+                "valor_bonificacao": 200.0,
+                "valor_liquido": 4300.0,
+                "volume_venda": 180.0,
+            },
+            "vendedores": [
+                {"vendedor_codigo": "7", "vendedor_nome": "Carlos", "valor_bruto": 3000.0},
+                {"vendedor_codigo": "8", "vendedor_nome": "Ana", "valor_bruto": 1500.0},
+            ],
+        }
+        with mock.patch.object(agent_web, "system_api", return_value=payload) as api, \
+            mock.patch.object(agent_web, "_agent_llm_request") as llm:
+            result = agent_web.handle_chat({"message": "me fale sobre as vendas", "chat_mode": "ia"})
+
+        self.assertIn("Resumo das vendas", result["reply"])
+        self.assertIn("R$ 4500.00", result["reply"])
+        self.assertIn("Carlos", result["reply"])
+        self.assertEqual("/api/vendas/diario/dashboard", api.call_args.args[1])
+        llm.assert_not_called()
+
+    def test_sales_ranking_question_uses_daily_values_not_seller_registration(self):
+        payload = {
+            "data_ref": "2026-08-29",
+            "resumo": {"vendedores": 2, "valor_bruto": 4500.0},
+            "vendedores": [
+                {"vendedor_codigo": "7", "vendedor_nome": "Carlos", "valor_bruto": 3000.0},
+                {"vendedor_codigo": "8", "vendedor_nome": "Ana", "valor_bruto": 1500.0},
+            ],
+        }
+        with mock.patch.object(agent_web, "system_api", return_value=payload) as api, \
+            mock.patch.object(agent_web, "_agent_llm_request") as llm:
+            result = agent_web.handle_chat({"message": "qual vendedor vendeu mais?", "chat_mode": "ia"})
+
+        self.assertIn("Carlos", result["reply"])
+        self.assertIn("R$ 3000.00", result["reply"])
+        self.assertEqual("/api/vendas/diario/dashboard", api.call_args.args[1])
+        llm.assert_not_called()
+
+    def test_explicit_point_of_sale_question_keeps_point_of_sale_dataset(self):
+        with mock.patch.object(agent_web, "system_api", return_value=[{
+            "id": 9, "vendedor": "Carlos", "cliente": "Mercado Central", "rota": "Norte",
+        }]) as api:
+            result = agent_web.handle_chat({"message": "listar pontos de venda da rota Norte", "chat_mode": "ia"})
+
+        self.assertIn("Mercado Central", result["reply"])
+        self.assertEqual("/api/pontos_venda", api.call_args.args[1])
+
+    def test_sales_month_question_builds_inclusive_local_period(self):
+        item = next(row for row in agent_web.READ_ONLY_MODULES if row["name"] == "vendas_diario_dashboard")
+
+        path = agent_web._read_only_module_path(item, "como estao as vendas em agosto de 2026?")
+
+        self.assertEqual(
+            "/api/vendas/diario/dashboard?data_inicio=2026-08-01&data_fim=2026-08-31",
+            path,
+        )
+
     def test_handle_chat_uses_vendas_dashboard_top_growth(self):
         payload = {
             "meses_disponiveis": ["2025-01", "2025-02"],

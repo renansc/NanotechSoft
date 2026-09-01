@@ -4693,8 +4693,14 @@ READ_ONLY_MODULES.extend([
     },
     {
         "name": "vendas_diario_dashboard", "label": "dashboard de vendas diarias", "resource": "vendas",
-        "keywords": ["dashboard vendas diario", "dashboard vendas diárias", "resumo das vendas do dia", "resultado diario por vendedor"],
-        "path": "/api/vendas/diario/dashboard", "records_key": "vendedores",
+        "keywords": [
+            "dashboard vendas diario", "dashboard vendas diárias", "resumo das vendas do dia",
+            "resultado diario por vendedor", "como estao as vendas", "como estão as vendas",
+            "total de vendas", "resumo de vendas", "qual vendedor vendeu mais",
+            "vendedor que vendeu mais", "vendas deste mes", "vendas do mes",
+        ],
+        "path": "/api/vendas/diario/dashboard", "path_builder": "vendas_diario_dashboard",
+        "records_key": "vendedores",
         "fields": ["vendedor_codigo", "vendedor_nome", "clientes", "positivos", "valor_bruto", "valor_bonificacao", "valor_liquido", "volume_venda"],
     },
     {
@@ -5018,11 +5024,60 @@ def _read_only_module_match(message: str) -> dict | None:
         if score > best_score:
             best = item
             best_score = score
+
+    # "Pontos de venda" e "vendedores" compartilham palavras com o dominio
+    # comercial, mas sao cadastros auxiliares. Sem um termo especifico desses
+    # cadastros, uma pergunta generica de vendas usa o consolidado diario que e
+    # efetivamente alimentado no banco local.
+    sales_question = bool(re.search(
+        r"\b(venda|vendas|vendeu|vendemos|vendido|vendidos|vendedor|vendedores)\b",
+        normalized,
+    ))
+    best_name = _as_str((best or {}).get("name"))
+    if sales_question and best_score < 1000 and best_name in {"", "pontos_venda", "vendas_vendedores"}:
+        point_of_sale_question = any(
+            term in normalized
+            for term in ("ponto de venda", "pontos de venda", "pdv", "pdvs", "visita", "visitas", "periodicidade")
+        )
+        seller_registration_question = (
+            best_name == "vendas_vendedores"
+            and any(term in normalized for term in ("lista", "listar", "cadastro", "cadastrados", "codigo", "codigos"))
+        )
+        if not point_of_sale_question and not seller_registration_question:
+            return next(
+                (item for item in READ_ONLY_MODULES if item.get("name") == "vendas_diario_dashboard"),
+                best,
+            )
     return best
 
 
 def _read_only_module_path(item: dict, message: str) -> str | None:
     builder = item.get("path_builder")
+    if builder == "vendas_diario_dashboard":
+        normalized = normalize(message)
+        period = _message_time_request(normalized)
+        if period is None:
+            month_request = _sales_month_request(normalized)
+            if isinstance(month_request, dict):
+                month = _as_int(month_request.get("month"), 0)
+                year = _as_int(month_request.get("year"), datetime.date.today().year)
+                if month:
+                    start, end = _month_bounds(year, month)
+                    period = {"mode": "range", "start": start, "end": end}
+        if period is None and "vendas do mes" in normalized:
+            today = datetime.date.today()
+            start, end = _month_bounds(today.year, today.month)
+            period = {"mode": "range", "start": start, "end": end}
+        if isinstance(period, dict) and period.get("mode") == "range":
+            start = period.get("start")
+            end = period.get("end")
+            if isinstance(start, datetime.date) and isinstance(end, datetime.date) and end > start:
+                inclusive_end = end - datetime.timedelta(days=1)
+                return (
+                    "/api/vendas/diario/dashboard"
+                    f"?data_inicio={start.isoformat()}&data_fim={inclusive_end.isoformat()}"
+                )
+        return "/api/vendas/diario/dashboard"
     if builder == "chat_unread":
         usuario = get_logged_usuario()
         usuario_id = _as_int((usuario or {}).get("id"), 0)
@@ -6492,6 +6547,51 @@ def _summarize_vendas_dashboard(payload: dict, normalized: str) -> str:
     return "\n".join(lines)
 
 
+def _summarize_vendas_diario_dashboard(payload: dict, normalized: str) -> str:
+    resumo = payload.get("resumo") if isinstance(payload.get("resumo"), dict) else {}
+    vendedores = [row for row in (payload.get("vendedores") or []) if isinstance(row, dict)]
+    periodo = payload.get("periodo") if isinstance(payload.get("periodo"), dict) else {}
+    data_inicio = _as_str(periodo.get("data_inicio"))
+    data_fim = _as_str(periodo.get("data_fim"))
+    data_ref = _as_str(payload.get("data_ref"))
+    if data_inicio and data_fim and data_inicio != data_fim:
+        periodo_label = f"de {data_inicio} a {data_fim}"
+    else:
+        periodo_label = data_ref or data_inicio or data_fim or "ultimo periodo disponivel"
+
+    top_vendedor = _top_row_by(vendedores, "valor_bruto") or _top_row_by(vendedores, "valor_liquido") or {}
+    top_nome = _as_str(top_vendedor.get("vendedor_nome"))
+    if not top_nome and _as_str(top_vendedor.get("vendedor_codigo")):
+        top_nome = "codigo " + _as_str(top_vendedor.get("vendedor_codigo"))
+    top_nome = top_nome or "-"
+    top_valor = top_vendedor.get("valor_bruto")
+    if top_valor in (None, ""):
+        top_valor = top_vendedor.get("valor_liquido")
+
+    if "vendedor" in normalized and any(
+        term in normalized for term in ("vendeu mais", "mais vendeu", "maior venda", "lider", "ranking")
+    ):
+        if not vendedores:
+            return f"Nao ha vendas registradas no periodo {periodo_label}."
+        return (
+            f"O vendedor com maior valor bruto no periodo {periodo_label} foi {top_nome}, "
+            f"com {_fmt_money(top_valor)}."
+        )
+
+    lines = [
+        f"Resumo das vendas no periodo {periodo_label}:",
+        f"- valor bruto: {_fmt_money(resumo.get('valor_bruto') or resumo.get('valor_total'))}",
+        f"- bonificacao: {_fmt_money(resumo.get('valor_bonificacao'))}",
+        f"- valor liquido: {_fmt_money(resumo.get('valor_liquido'))}",
+        f"- clientes/pedidos positivos: {_as_int(resumo.get('positivos'), 0)}",
+        f"- vendedores com vendas: {_as_int(resumo.get('vendedores'), len(vendedores))}",
+        f"- volume vendido: {_as_float(resumo.get('volume_venda'), 0.0):.3f}",
+    ]
+    if vendedores:
+        lines.append(f"- maior valor por vendedor: {top_nome} com {_fmt_money(top_valor)}")
+    return "\n".join(lines)
+
+
 def _summarize_vendas_painel(payload: dict) -> str:
     bon = payload.get("bonificacoes") if isinstance(payload.get("bonificacoes"), dict) else {}
     var = payload.get("variacao_preco") if isinstance(payload.get("variacao_preco"), dict) else {}
@@ -6586,6 +6686,8 @@ def _summarize_special_module(item: dict, payload: object, normalized: str) -> s
         return _summarize_comissao_relatorios(payload, normalized)
     if name == "vendas_dashboard" and isinstance(payload, dict):
         return _summarize_vendas_dashboard(payload, normalized)
+    if name == "vendas_diario_dashboard" and isinstance(payload, dict):
+        return _summarize_vendas_diario_dashboard(payload, normalized)
     if name == "dashboard_vendas_painel" and isinstance(payload, dict):
         return _summarize_vendas_painel(payload)
     if name == "vendas_relatorio" and isinstance(payload, dict):

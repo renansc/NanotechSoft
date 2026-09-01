@@ -85,7 +85,12 @@ O recurso mantem agenda e periodicidade de visitas, vendedor, cliente e rota.
 ## Vendas e caches
 
 - `GET /api/vendas/diario`: consulta os pedidos diarios importados, opcionalmente por `?data=AAAA-MM-DD`.
-- `GET /api/vendas/diario/dashboard`: consolida status, positivacao, volume e valor diario por vendedor.
+- `GET /api/vendas/diario/dashboard`: consolida status, positivacao, volume e
+  valor por vendedor. Sem filtro usa a ultima data importada; `?data=AAAA-MM-DD`
+  consulta um dia e `?data_inicio=AAAA-MM-DD&data_fim=AAAA-MM-DD` agrega um
+  periodo inclusivo. O Agent IA usa esta fonte para perguntas genericas de
+  vendas e preserva `pontos de venda` apenas para consultas explicitas de PDV,
+  visitas ou periodicidade.
 - `GET /api/vendas/diario/kanban`: retorna os cards persistidos com clientes,
   produtos, sugestao de baixa e a etapa de evidencia atual: venda TXT, carga PDF
   ou SELLOUT confirmado.
