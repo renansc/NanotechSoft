@@ -541,6 +541,8 @@ def ensure_database():
     technology_backup_columns = {
         "origens_path": "JSON NULL AFTER senha_variavel",
         "janelas_execucao": "JSON NULL AFTER horarios",
+        "forcar_execucao_id": "VARCHAR(40) NOT NULL DEFAULT '' AFTER agente_versao",
+        "forcar_execucao_em": "DATETIME(3) NULL AFTER forcar_execucao_id",
     }
     for column_name, column_ddl in technology_backup_columns.items():
         cur.execute(f"SHOW COLUMNS FROM tecnologia_backups LIKE '{column_name}'")
@@ -7551,6 +7553,8 @@ def technology_public_backup(row):
         "health": health,
         "lastSeenAt": technology_db_timestamp_iso(last_seen) if last_seen else "",
         "agentVersion": row.get("agente_versao") or "",
+        "forcePending": bool(row.get("forcar_execucao_id")),
+        "forceRequestedAt": technology_db_timestamp_iso(row.get("forcar_execucao_em")) if row.get("forcar_execucao_em") else "",
         "nextRunAt": technology_backup_next_run(
             times,
             row.get("timezone") or "America/Sao_Paulo",
@@ -7793,6 +7797,42 @@ def tecnologia_backup_rotate_token_api(backup_id):
     return jsonify({"setup": technology_backup_setup(row, token)})
 
 
+@app.route("/apps/tecnologia/api/backup/jobs/<int:backup_id>/run-now", methods=["POST"])
+@login_required
+def tecnologia_backup_run_now_api(backup_id):
+    denied = technology_admin_or_error()
+    if denied:
+        return denied
+    request_id = secrets.token_hex(16)
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        UPDATE tecnologia_backups
+        SET forcar_execucao_id=%s, forcar_execucao_em=UTC_TIMESTAMP(3)
+        WHERE id=%s AND ativo=1
+          AND (forcar_execucao_id='' OR forcar_execucao_id IS NULL)
+        """,
+        (request_id, backup_id),
+    )
+    changed = cur.rowcount
+    conn.commit()
+    cur.close()
+    conn.close()
+    row = technology_backup_find(backup_id)
+    if not row:
+        return jsonify({"erro": "plano de backup não encontrado"}), 404
+    if not row.get("ativo"):
+        return jsonify({"erro": "ative o plano antes de forçar o backup"}), 409
+    if not changed:
+        return jsonify({"erro": "já existe uma execução forçada aguardando o agente"}), 409
+    return jsonify({
+        "ok": True,
+        "message": "Backup solicitado; o agente iniciará em até um minuto.",
+        "job": technology_public_backup(row),
+    }), 202
+
+
 @app.route("/apps/tecnologia/api/backup/agent-script")
 @login_required
 def tecnologia_backup_agent_script_api():
@@ -7836,8 +7876,9 @@ def tecnologia_backup_agent_config_api(agent_id):
     cur.close()
     conn.close()
     job = technology_public_backup(row)
-    for private_field in ("id", "health", "lastSeenAt", "agentVersion", "nextRunAt", "lastRun"):
+    for private_field in ("id", "health", "lastSeenAt", "agentVersion", "nextRunAt", "lastRun", "forcePending", "forceRequestedAt"):
         job.pop(private_field, None)
+    job["forceRequestId"] = str(row.get("forcar_execucao_id") or "")
     return jsonify({"schemaVersion": 1, "serverTime": dt.datetime.now(dt.UTC).isoformat(), "job": job})
 
 
@@ -7850,10 +7891,15 @@ def tecnologia_backup_agent_report_api(agent_id):
     payload = request.get_json(silent=True) or {}
     status = str(payload.get("status") or "").upper()
     execution_id = str(payload.get("executionId") or "").strip()
+    force_request_id = str(payload.get("forceRequestId") or "").strip()
     if status not in TECHNOLOGY_BACKUP_STATUSES or not execution_id or len(execution_id) > 120:
         cur.close()
         conn.close()
         return jsonify({"erro": "relatório de execução inválido"}), 400
+    if force_request_id and not re.fullmatch(r"[a-f0-9]{32}", force_request_id):
+        cur.close()
+        conn.close()
+        return jsonify({"erro": "identificador de execução forçada inválido"}), 400
     try:
         started_at = technology_backup_parse_timestamp(payload.get("startedAt"))
         completed_at = technology_backup_parse_timestamp(payload.get("completedAt"))
@@ -7892,6 +7938,15 @@ def tecnologia_backup_agent_report_api(agent_id):
         "UPDATE tecnologia_backups SET ultimo_contato_em=UTC_TIMESTAMP(3), agente_versao=%s WHERE id=%s",
         (str(request.headers.get("X-Backup-Agent-Version") or "")[:40], row["id"]),
     )
+    if status in {"SUCCESS", "SKIPPED"} and force_request_id:
+        cur.execute(
+            """
+            UPDATE tecnologia_backups
+            SET forcar_execucao_id='', forcar_execucao_em=NULL
+            WHERE id=%s AND forcar_execucao_id=%s
+            """,
+            (row["id"], force_request_id),
+        )
     conn.commit()
     cur.close()
     conn.close()

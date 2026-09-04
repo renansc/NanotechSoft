@@ -183,6 +183,8 @@ CREATE TABLE IF NOT EXISTS tecnologia_backups (
     ativo TINYINT(1) NOT NULL DEFAULT 1,
     ultimo_contato_em DATETIME(3) NULL,
     agente_versao VARCHAR(40) NOT NULL DEFAULT '',
+    forcar_execucao_id VARCHAR(40) NOT NULL DEFAULT '',
+    forcar_execucao_em DATETIME(3) NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_tecnologia_backups_ativo_contato (ativo, ultimo_contato_em)

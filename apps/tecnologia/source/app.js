@@ -573,9 +573,9 @@
       <td><strong>${esc(job.name)}</strong><br><small class="muted">${esc(job.machine)} · ${job.databaseType === "FILES" ? `Arquivos: ${(job.sourcePaths || []).map(esc).join(", ")}` : `${esc(job.databaseType)} ${esc(job.databaseHost)}:${Number(job.databasePort)}/${esc(job.databaseName)}`}</small></td>
       <td><strong>${job.times.map(esc).join(" · ")}</strong><br><small class="muted">${esc(backupWindowSummary(job.operatingWindows))}</small><br><small class="muted">Próximo: ${esc(dateTime(job.nextRunAt))}</small></td>
       <td><span class="backupPath">${esc(job.destinationPath)}</span>${job.cloudSyncPath ? `<br><small class="muted">Nuvem: ${esc(job.cloudSyncPath)}</small>` : ""}</td>
-      <td>${backupBadge(job.health)}<br><small class="muted">${job.lastSeenAt ? `Contato: ${esc(dateTime(job.lastSeenAt))}` : esc(job.agentId)}</small></td>
+      <td>${backupBadge(job.health)}<br><small class="muted">${job.lastSeenAt ? `Contato: ${esc(dateTime(job.lastSeenAt))}` : esc(job.agentId)}</small>${job.forcePending ? `<br><small class="muted">Execução forçada solicitada em ${esc(dateTime(job.forceRequestedAt))}</small>` : ""}</td>
       <td>${job.lastRun ? `${backupBadge(job.lastRun.status, backupRunLabel)}<br><small class="muted">${esc(dateTime(job.lastRun.completedAt))} · ${esc(bytes(job.lastRun.sizeBytes))}</small>` : '<span class="muted">Nenhuma execução</span>'}</td>
-      <td><div class="tableActions"><button class="smallButton" data-backup-edit="${job.id}" type="button">Editar</button><button class="smallButton" data-backup-token="${job.id}" type="button">Novo JSON</button><button class="smallButton danger" data-backup-delete="${job.id}" type="button">Excluir</button></div></td>
+      <td><div class="tableActions"><button class="smallButton" data-backup-run="${job.id}" type="button" ${job.forcePending ? "disabled" : ""}>${job.forcePending ? "Solicitado" : "Forçar backup"}</button><button class="smallButton" data-backup-edit="${job.id}" type="button">Editar</button><button class="smallButton" data-backup-token="${job.id}" type="button">Novo JSON</button><button class="smallButton danger" data-backup-delete="${job.id}" type="button">Excluir</button></div></td>
     </tr>`).join("") || '<tr><td colspan="6" class="muted">Nenhum plano de backup configurado.</td></tr>';
     $("#backupRunsTable").innerHTML = state.backupRuns.map((run) => `<tr>
       <td>${esc(dateTime(run.completedAt || run.startedAt))}</td><td><strong>${esc(run.jobName)}</strong><br><small class="muted">${esc(run.machine)}</small></td>
@@ -709,6 +709,16 @@
       downloadJson(data.setup.fileName, data.setup.bootstrap);
       await loadBackups({ quiet: true });
       showToast("Novo JSON baixado; substitua o arquivo na máquina executora.");
+    } catch (error) { showToast(error.message, true); }
+  }
+
+  async function forceBackup(id) {
+    const job = state.backups.find((item) => item.id === id);
+    if (!job || job.forcePending || !window.confirm(`Forçar um novo backup de ${job.name} agora?`)) return;
+    try {
+      const data = await request(`/backup/jobs/${id}/run-now`, { method: "POST", body: "{}" });
+      await loadBackups({ quiet: true });
+      showToast(data.message || "Backup solicitado ao agente.");
     } catch (error) { showToast(error.message, true); }
   }
 
@@ -1153,9 +1163,11 @@
     setView("historico");
   });
   $("#backupTable").addEventListener("click", (event) => {
+    const run = event.target.closest("[data-backup-run]");
     const edit = event.target.closest("[data-backup-edit]");
     const rotate = event.target.closest("[data-backup-token]");
     const remove = event.target.closest("[data-backup-delete]");
+    if (run) return forceBackup(Number(run.dataset.backupRun));
     if (edit) return openBackup(state.backups.find((job) => job.id === Number(edit.dataset.backupEdit)));
     if (rotate) return rotateBackupToken(Number(rotate.dataset.backupToken));
     if (remove) return deleteBackup(Number(remove.dataset.backupDelete));

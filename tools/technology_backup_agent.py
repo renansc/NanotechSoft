@@ -30,7 +30,8 @@ import urllib.request
 from zoneinfo import ZoneInfo
 
 
-AGENT_VERSION = "1.5.0"
+AGENT_VERSION = "1.6.0"
+RETRY_SECONDS = 600
 FILE_MANIFEST_FORMAT = "nanotech-files-incremental-v1"
 FILE_MANIFEST_SUFFIX = ".files.json.gz"
 FILE_OBJECT_STORE = Path("arquivos_incrementais") / "objetos"
@@ -746,7 +747,7 @@ def sha256_file(path: Path):
     return digest.hexdigest()
 
 
-def run_backup(job, scheduled_time: str, local_now: dt.datetime, execution_id: str, report):
+def run_backup(job, scheduled_time: str, local_now: dt.datetime, execution_id: str, report, force_request_id=""):
     started = dt.datetime.now(dt.UTC)
     running = {
         "executionId": execution_id,
@@ -755,6 +756,8 @@ def run_backup(job, scheduled_time: str, local_now: dt.datetime, execution_id: s
         "startedAt": started.isoformat(),
         "message": "Backup iniciado pelo agente.",
     }
+    if force_request_id:
+        running["forceRequestId"] = force_request_id
     report(running)
     root = Path(str(job["destinationPath"]))
     backup_type = str(job.get("databaseType") or "MYSQL").upper()
@@ -832,6 +835,48 @@ def due_slot(job, state, now=None, force=False):
     return (due[-1], local_now) if due else (None, local_now)
 
 
+def scheduled_times_for_date(job, local_date):
+    times = sorted(str(item) for item in job["times"])
+    windows = normalize_operating_windows(job.get("operatingWindows"))
+    window = windows.get(str(local_date.weekday())) if windows else None
+    if windows and not window:
+        return []
+    return sorted(
+        item for item in ((window.get("times") or times) if window else times)
+        if not window or window["start"] <= item < window["end"]
+    )
+
+
+def retry_is_waiting(state, retry_key, now=None):
+    retry = state.get("retry") if isinstance(state.get("retry"), dict) else {}
+    if retry.get("key") != retry_key:
+        return False
+    try:
+        not_before = dt.datetime.fromisoformat(str(retry.get("notBefore") or ""))
+    except ValueError:
+        return False
+    if not_before.tzinfo is None:
+        not_before = not_before.replace(tzinfo=dt.UTC)
+    current = now or dt.datetime.now(dt.UTC)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=dt.UTC)
+    return current < not_before.astimezone(dt.UTC)
+
+
+def schedule_retry(state, retry_key, now=None):
+    current = now or dt.datetime.now(dt.UTC)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=dt.UTC)
+    previous = state.get("retry") if isinstance(state.get("retry"), dict) else {}
+    attempts = int(previous.get("attempts") or 0) + 1 if previous.get("key") == retry_key else 1
+    state["retry"] = {
+        "key": retry_key,
+        "notBefore": (current.astimezone(dt.UTC) + dt.timedelta(seconds=RETRY_SECONDS)).isoformat(),
+        "attempts": attempts,
+    }
+    return state["retry"]
+
+
 def trim_state(state, local_date):
     slots = state.setdefault("completedSlots", {})
     minimum = (local_date - dt.timedelta(days=14)).isoformat()
@@ -904,9 +949,29 @@ def main(argv=None):
             time.sleep(max(30, min(3600, int(bootstrap.get("pollSeconds") or 60))))
             continue
 
-        slot, local_now = due_slot(job, state, force=args.run_now)
+        force_request_id = str(job.get("forceRequestId") or "").strip()
+        completed_force_requests = state.get("completedForceRequests")
+        if not isinstance(completed_force_requests, list):
+            completed_force_requests = []
+            state["completedForceRequests"] = completed_force_requests
+        portal_force = bool(force_request_id and force_request_id not in completed_force_requests)
+        slot, local_now = due_slot(job, state, force=args.run_now or portal_force)
+        retry_key = ""
         if slot:
-            execution_id = f"{bootstrap['agentId']}-{local_now.strftime('%Y%m%d')}-{slot.replace(':', '')}"
+            if portal_force:
+                retry_key = f"force:{force_request_id}"
+            elif args.run_now:
+                retry_key = f"cli:{local_now.strftime('%Y-%m-%dT%H:%M')}"
+            else:
+                retry_key = f"schedule:{local_now.date().isoformat()}:{slot}"
+            if retry_is_waiting(state, retry_key):
+                slot = None
+        if slot:
+            execution_id = (
+                f"{bootstrap['agentId']}-manual-{force_request_id}"
+                if portal_force
+                else f"{bootstrap['agentId']}-{local_now.strftime('%Y%m%d')}-{slot.replace(':', '')}"
+            )
 
             def report(payload):
                 try:
@@ -918,11 +983,23 @@ def main(argv=None):
                     state["pendingReports"] = pending[-100:]
                     write_json_atomic(state_path, state)
 
-            result = run_backup(job, slot, local_now, execution_id, report)
+            result = run_backup(
+                job, slot, local_now, execution_id, report,
+                force_request_id=force_request_id if portal_force else "",
+            )
+            if result.get("status") == "FAILED":
+                schedule_retry(state, retry_key)
+            elif isinstance(state.get("retry"), dict) and state["retry"].get("key") == retry_key:
+                state.pop("retry", None)
+            if portal_force and result.get("status") == "SUCCESS":
+                completed_force_requests.append(force_request_id)
+                state["completedForceRequests"] = completed_force_requests[-20:]
+                state.pop("retry", None)
             if not args.run_now and result.get("status") == "SUCCESS":
                 today_slots = state.setdefault("completedSlots", {}).setdefault(local_now.date().isoformat(), [])
-                for scheduled in job["times"]:
-                    if scheduled <= slot and scheduled not in today_slots:
+                completed_through = local_now.strftime("%H:%M") if portal_force else slot
+                for scheduled in scheduled_times_for_date(job, local_now.date()):
+                    if scheduled <= completed_through and scheduled not in today_slots:
                         today_slots.append(scheduled)
             state["lastResult"] = result
         trim_state(state, local_now.date())

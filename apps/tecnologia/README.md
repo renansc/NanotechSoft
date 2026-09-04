@@ -358,6 +358,13 @@ impedindo a recuperação tardia fora do expediente. Backups de arquivos usam o
 repositório incremental; planos MySQL/MariaDB continuam com `mysqldump`
 completo.
 
+O botão **Forçar backup** cria uma solicitação persistente no portal; o agente a
+recebe na próxima consulta, normalmente em até um minuto, e executa mesmo fora
+do horário programado. Se uma execução agendada ou forçada falhar, o agente
+aguarda dez minutos antes da nova tentativa. A solicitação forçada só é baixada
+depois do sucesso, e o intervalo de repetição fica salvo no estado local para
+continuar correto mesmo após reinício do serviço.
+
 ### Inicialização automática
 
 No Linux, instale uma unidade `systemd` com `After=network-online.target`,

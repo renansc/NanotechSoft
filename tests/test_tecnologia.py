@@ -572,6 +572,64 @@ class TecnologiaIntegrationTests(unittest.TestCase):
         )
         self.assertIsNone(slot_sunday)
 
+    def test_backup_agent_retries_failure_only_after_ten_minutes(self):
+        state = {}
+        started = dt.datetime(2026, 9, 4, 11, 0, tzinfo=dt.UTC)
+        retry = technology_backup_agent.schedule_retry(state, "schedule:2026-09-04:08:00", started)
+
+        self.assertEqual(1, retry["attempts"])
+        self.assertTrue(technology_backup_agent.retry_is_waiting(
+            state, "schedule:2026-09-04:08:00", started + dt.timedelta(minutes=9, seconds=59)
+        ))
+        self.assertFalse(technology_backup_agent.retry_is_waiting(
+            state, "schedule:2026-09-04:08:00", started + dt.timedelta(minutes=10)
+        ))
+
+    def test_backup_agent_marks_specific_saturday_schedule_on_success(self):
+        windows = {
+            **{str(day): {"start": "07:00", "end": "17:00", "times": ["08:00", "16:00"]} for day in range(5)},
+            "5": {"start": "09:30", "end": "11:00", "times": ["10:00"]},
+        }
+        job = {"times": ["08:00", "16:00"], "operatingWindows": windows}
+
+        self.assertEqual(
+            ["10:00"],
+            technology_backup_agent.scheduled_times_for_date(job, dt.date(2026, 9, 5)),
+        )
+
+    def test_backup_dashboard_exposes_force_action(self):
+        script = (PROJECT_DIR / "apps" / "tecnologia" / "source" / "app.js").read_text(encoding="utf-8")
+        self.assertIn('data-backup-run="${job.id}"', script)
+        self.assertIn('request(`/backup/jobs/${id}/run-now`', script)
+        self.assertIn(
+            "/apps/tecnologia/api/backup/jobs/<int:backup_id>/run-now",
+            {rule.rule for rule in portal.app.url_map.iter_rules()},
+        )
+
+    def test_forced_backup_reports_request_identifier(self):
+        with tempfile.TemporaryDirectory(prefix="tecnologia-force-") as temp_dir:
+            reports = []
+
+            def fake_dump(_job, output):
+                output.write_bytes(b"dump")
+
+            with (
+                mock.patch.object(technology_backup_agent, "create_dump", side_effect=fake_dump),
+                mock.patch.object(technology_backup_agent, "copy_promotions", return_value=["diario"]),
+                mock.patch.object(technology_backup_agent, "apply_retention", return_value={}),
+            ):
+                result = technology_backup_agent.run_backup(
+                    {
+                        "destinationPath": temp_dir, "databaseType": "MYSQL",
+                        "databaseName": "notechsoft", "times": ["08:00"],
+                    },
+                    "10:30", dt.datetime(2026, 9, 4, 10, 30), "execucao-forcada",
+                    reports.append, force_request_id="a" * 32,
+                )
+
+            self.assertEqual("SUCCESS", result["status"])
+            self.assertEqual(["a" * 32, "a" * 32], [item["forceRequestId"] for item in reports])
+
     def test_backup_agent_promotes_last_daily_and_sunday_backup(self):
         times = ["08:00", "12:00", "17:00"]
 
@@ -1300,7 +1358,7 @@ class TecnologiaIntegrationTests(unittest.TestCase):
         self.assertIn("O que será notificado", html)
         self.assertIn("Consumo dos equipamentos monitorados", html)
         self.assertIn("Backups configurados", html)
-        self.assertIn("08:00, 12:00, 16:00", html)
+        self.assertIn("08:00, 16:00", html)
         self.assertIn("backupOperatingWindows", html)
         self.assertIn("operatingWindows", javascript)
         self.assertIn("/backup/jobs", javascript)
