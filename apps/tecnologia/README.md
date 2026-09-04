@@ -361,9 +361,10 @@ completo.
 O botão **Forçar backup** cria uma solicitação persistente no portal; o agente a
 recebe na próxima consulta, normalmente em até um minuto, e executa mesmo fora
 do horário programado. Se uma execução agendada ou forçada falhar, o agente
-aguarda dez minutos antes da nova tentativa. A solicitação forçada só é baixada
-depois do sucesso, e o intervalo de repetição fica salvo no estado local para
-continuar correto mesmo após reinício do serviço.
+aguarda dez minutos antes da nova tentativa. Uma execução agendada continua
+tentando até o fim do mesmo dia, mesmo depois da janela normal; a solicitação
+forçada só é baixada depois do sucesso. O intervalo de repetição fica salvo no
+estado local para continuar correto mesmo após reinício do serviço.
 
 ### Inicialização automática
 

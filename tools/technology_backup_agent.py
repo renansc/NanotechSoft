@@ -30,7 +30,7 @@ import urllib.request
 from zoneinfo import ZoneInfo
 
 
-AGENT_VERSION = "1.6.0"
+AGENT_VERSION = "1.6.1"
 RETRY_SECONDS = 600
 FILE_MANIFEST_FORMAT = "nanotech-files-incremental-v1"
 FILE_MANIFEST_SUFFIX = ".files.json.gz"
@@ -877,6 +877,17 @@ def schedule_retry(state, retry_key, now=None):
     return state["retry"]
 
 
+def pending_scheduled_retry(state, local_now):
+    retry = state.get("retry") if isinstance(state.get("retry"), dict) else {}
+    match = re.fullmatch(r"schedule:(\d{4}-\d{2}-\d{2}):([0-2]\d:[0-5]\d)", str(retry.get("key") or ""))
+    if not match:
+        return None
+    if match.group(1) != local_now.date().isoformat():
+        state.pop("retry", None)
+        return None
+    return match.group(2), retry["key"]
+
+
 def trim_state(state, local_date):
     slots = state.setdefault("completedSlots", {})
     minimum = (local_date - dt.timedelta(days=14)).isoformat()
@@ -966,6 +977,10 @@ def main(argv=None):
                 retry_key = f"schedule:{local_now.date().isoformat()}:{slot}"
             if retry_is_waiting(state, retry_key):
                 slot = None
+        if not slot and not portal_force and not args.run_now:
+            pending_retry = pending_scheduled_retry(state, local_now)
+            if pending_retry and not retry_is_waiting(state, pending_retry[1]):
+                slot, retry_key = pending_retry
         if slot:
             execution_id = (
                 f"{bootstrap['agentId']}-manual-{force_request_id}"

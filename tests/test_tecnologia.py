@@ -584,6 +584,15 @@ class TecnologiaIntegrationTests(unittest.TestCase):
         self.assertFalse(technology_backup_agent.retry_is_waiting(
             state, "schedule:2026-09-04:08:00", started + dt.timedelta(minutes=10)
         ))
+        self.assertEqual(
+            ("08:00", "schedule:2026-09-04:08:00"),
+            technology_backup_agent.pending_scheduled_retry(
+                state, dt.datetime(2026, 9, 4, 22, 0, tzinfo=dt.UTC)
+            ),
+        )
+        self.assertIsNone(technology_backup_agent.pending_scheduled_retry(
+            state, dt.datetime(2026, 9, 5, 3, 0, tzinfo=dt.UTC)
+        ))
 
     def test_backup_agent_marks_specific_saturday_schedule_on_success(self):
         windows = {
