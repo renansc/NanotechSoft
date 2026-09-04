@@ -39,7 +39,7 @@ from html.parser import HTMLParser
 from urllib.parse import urlparse, unquote
 import paramiko
 import nfe_ws
-from vendas_diario import discover_txt_files, intervalo_semana_iso, parse_report, read_report
+from vendas_diario import discover_txt_files, intervalo_semana_iso, parse_report, read_report, volume_item_sql
 from vendas_carga_pdf import parse_carga_pdf, parse_cargas_pdf
 from vendas_referencias import (
     classificar_etapa_conciliacao,
@@ -33942,7 +33942,8 @@ def vendas_diario_dashboard_api():
         else:
             filtro_data_sql = "p.data_ref=%s"
             filtro_data_params = (data_ref or "1900-01-01",)
-        cur.execute("""
+        volume_sql = volume_item_sql("i")
+        cur.execute(f"""
             SELECT p.vendedor_codigo,
                    MAX(cv.nome) AS vendedor_nome,
                    COUNT(*) AS clientes,
@@ -33951,14 +33952,16 @@ def vendas_diario_dashboard_api():
                    SUM(CASE WHEN p.status='positiva' THEN p.valor_total ELSE 0 END) AS valor_bruto,
                    SUM(CASE WHEN p.status='positiva' THEN COALESCE(iv.valor_bonificacao,0) ELSE 0 END) AS valor_bonificacao,
                    SUM(CASE WHEN p.status='positiva' THEN COALESCE(iv.volume_venda, 0) ELSE 0 END) AS volume_venda,
+                   SUM(CASE WHEN p.status='positiva' THEN COALESCE(iv.volume_total, 0) ELSE 0 END) AS volume_total,
                    SUM(CASE WHEN p.status='positiva' THEN COALESCE(iv.volume_bonificado, 0) ELSE 0 END) AS volume_bonificado
             FROM vendas_diario_pedidos p
             LEFT JOIN (
                 SELECT pedido_id,
-                       SUM(CASE WHEN tabela_venda<>91 THEN quantidade ELSE 0 END) AS volume_venda,
-                       SUM(CASE WHEN tabela_venda=91 THEN quantidade ELSE 0 END) AS volume_bonificado,
+                       SUM(CASE WHEN tabela_venda<>91 THEN {volume_sql} ELSE 0 END) AS volume_venda,
+                       SUM({volume_sql}) AS volume_total,
+                       SUM(CASE WHEN tabela_venda=91 THEN {volume_sql} ELSE 0 END) AS volume_bonificado,
                        SUM(CASE WHEN tabela_venda=91 THEN quantidade*valor_unitario ELSE 0 END) AS valor_bonificacao
-                FROM vendas_diario_itens
+                FROM vendas_diario_itens i
                 GROUP BY pedido_id
             ) iv ON iv.pedido_id=p.id
             LEFT JOIN (
@@ -33967,7 +33970,7 @@ def vendas_diario_dashboard_api():
                 WHERE LOWER(funcao)='vendedor' AND ativo=1 AND codigo IS NOT NULL
                 GROUP BY codigo
             ) cv ON cv.codigo=CAST(p.vendedor_codigo AS UNSIGNED)
-            WHERE """ + filtro_data_sql + """
+            WHERE {filtro_data_sql}
               AND NOT (
                   EXISTS (
                       SELECT 1 FROM vendas_diario_kanban kpdf
@@ -34007,6 +34010,9 @@ def vendas_diario_dashboard_api():
             item["valor_bruto"] = round(_as_float(item.get("valor_bruto"), 0), 2)
             item["valor_bonificacao"] = round(_as_float(item.get("valor_bonificacao"), 0), 2)
             item["valor_liquido"] = round(item["valor_bruto"] - item["valor_bonificacao"], 2)
+            item["bonificacao_percentual"] = round(
+                item["valor_bonificacao"] / item["valor_bruto"] * 100, 2
+            ) if item["valor_bruto"] > 0 else 0.0
             item["valor_total"] = item["valor_bruto"]
             item["status"] = "sem_vendas" if positives == 0 else ("atencao" if rate < 30 else "com_vendas")
             sellers.append(item)
@@ -34027,11 +34033,17 @@ def vendas_diario_dashboard_api():
                 "positivos": sum(_as_int(row.get("positivos"), 0) for row in sellers),
                 "negativos": sum(_as_int(row.get("negativos"), 0) for row in sellers),
                 "volume_venda": round(sum(_as_float(row.get("volume_venda"), 0) for row in sellers), 3),
+                "volume_total": round(sum(_as_float(row.get("volume_total"), 0) for row in sellers), 3),
                 "volume_bonificado": round(sum(_as_float(row.get("volume_bonificado"), 0) for row in sellers), 3),
                 "valor_total": round(sum(_as_float(row.get("valor_bruto"), 0) for row in sellers), 2),
                 "valor_bruto": round(sum(_as_float(row.get("valor_bruto"), 0) for row in sellers), 2),
                 "valor_bonificacao": round(sum(_as_float(row.get("valor_bonificacao"), 0) for row in sellers), 2),
                 "valor_liquido": round(sum(_as_float(row.get("valor_liquido"), 0) for row in sellers), 2),
+                "bonificacao_percentual": round(
+                    sum(_as_float(row.get("valor_bonificacao"), 0) for row in sellers)
+                    / sum(_as_float(row.get("valor_bruto"), 0) for row in sellers) * 100,
+                    2,
+                ) if sum(_as_float(row.get("valor_bruto"), 0) for row in sellers) > 0 else 0.0,
             },
         })
     finally:

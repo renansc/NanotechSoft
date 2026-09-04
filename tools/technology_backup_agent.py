@@ -30,7 +30,7 @@ import urllib.request
 from zoneinfo import ZoneInfo
 
 
-AGENT_VERSION = "1.4.0"
+AGENT_VERSION = "1.5.0"
 FILE_MANIFEST_FORMAT = "nanotech-files-incremental-v1"
 FILE_MANIFEST_SUFFIX = ".files.json.gz"
 FILE_OBJECT_STORE = Path("arquivos_incrementais") / "objetos"
@@ -160,7 +160,22 @@ def normalize_operating_windows(value):
             raise ValueError(f"início inválido para o dia {weekday}")
         if not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", end) or end <= start:
             raise ValueError(f"fim inválido para o dia {weekday}")
-        windows[str(weekday)] = {"start": start, "end": end}
+        window = {"start": start, "end": end}
+        raw_times = raw_window.get("times")
+        if raw_times not in (None, "", []):
+            if not isinstance(raw_times, list) or not raw_times:
+                raise ValueError(f"horários inválidos para o dia {weekday}")
+            day_times = []
+            for value in raw_times:
+                scheduled = str(value or "").strip()
+                if not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", scheduled):
+                    raise ValueError(f"horário inválido para o dia {weekday}: {scheduled}")
+                if not (start <= scheduled < end):
+                    raise ValueError(f"horário fora da janela do dia {weekday}: {scheduled}")
+                if scheduled not in day_times:
+                    day_times.append(scheduled)
+            window["times"] = sorted(day_times)
+        windows[str(weekday)] = window
     return {key: windows[key] for key in sorted(windows, key=int)}
 
 
@@ -199,8 +214,9 @@ def promotion_tiers(
     tiers = ["diario"]
     windows = normalize_operating_windows(operating_windows)
     window = windows.get(str(local_date.weekday())) if windows else None
+    day_times = (window.get("times") or times) if window else times
     active_times = sorted(
-        item for item in times
+        item for item in day_times
         if not window or window["start"] <= item < window["end"]
     )
     if active_times and scheduled_time == active_times[-1]:
@@ -227,10 +243,19 @@ def remove_expired_files(root: Path, days: int, now=None):
             continue
         try:
             if path.stat().st_mtime < cutoff:
-                path.unlink()
+                try:
+                    path.unlink()
+                except PermissionError:
+                    # Backups antigos podem ter sido criados dentro de uma pasta
+                    # sem bit de escrita. Repara a pasta quando ela pertence ao
+                    # usuário do agente e tenta a retenção novamente.
+                    ensure_writable_directory(path.parent)
+                    path.unlink()
                 removed += 1
         except FileNotFoundError:
             pass
+        except OSError as exc:
+            print(f"[backup] aviso: não foi possível remover arquivo expirado: {exc}", file=sys.stderr)
     for directory in sorted((item for item in root.rglob("*") if item.is_dir()), reverse=True):
         try:
             directory.rmdir()
@@ -797,8 +822,9 @@ def due_slot(job, state, now=None, force=False):
         return None, local_now
     today = local_now.date().isoformat()
     completed = set(state.get("completedSlots", {}).get(today, []))
+    day_times = (window.get("times") or times) if window else times
     due = [
-        item for item in times
+        item for item in day_times
         if item <= current_time
         and item not in completed
         and (not window or window["start"] <= item < window["end"])

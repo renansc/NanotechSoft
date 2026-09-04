@@ -18,6 +18,28 @@ ORDER_TOTAL_RE = re.compile(r"TOTAL DO PEDIDO\s+([\d.,]+)")
 WEIGHT_RE = re.compile(r"PESO BRUTO TOTAL\s+([\d.,]+)Kg", re.IGNORECASE)
 
 
+def volume_item_sql(alias="i"):
+    """Retorna a quantidade do item convertida para volumes fisicos do TXT."""
+    prefix = f"{alias}." if alias else ""
+    quantity = f"COALESCE({prefix}quantidade, 0)"
+    unit = f"UPPER(TRIM(COALESCE({prefix}unidade, '')))"
+    description = f"UPPER(COALESCE({prefix}descricao, ''))"
+    product_code = f"TRIM(COALESCE({prefix}produto_codigo, ''))"
+    return f"""
+        CASE
+            WHEN {unit}='DZ'
+                 AND ({product_code}='4700'
+                      OR {description} REGEXP '(48[/X]4|CX[ ]*48)')
+                THEN {quantity}/4
+            WHEN {unit}='DZ'
+                 AND (({description} REGEXP '600[ ]*ML' AND {description} LIKE '%GFA%')
+                      OR {description} REGEXP '(24[/X]2|CX[ ]*24)')
+                THEN {quantity}/2
+            ELSE {quantity}
+        END
+    """.strip()
+
+
 def intervalo_semana_iso(semana="", referencia=None):
     valor = str(semana or "").strip().upper()
     if valor:

@@ -148,6 +148,12 @@ If you need context fast, read these files first:
   minus that bonus. Keep gross, bonus, and net visible together and calculate
   the bonus in a per-order aggregate so joining multiple items never repeats
   the order gross value.
+- Daily TXT volume follows the report's physical-package total, including
+  bonus packages. Quantities expressed in dozens must be converted for
+  returnable packaging: GFA 600 ml uses two dozens per volume, GFA 200 ml CX48
+  (`48/4`) uses four, and GFA 200 ml CX24 (`24/2`) uses two. Keep bonus volume
+  visible as a subset of total volume, and calculate the monetary bonus
+  percentage as bonus value divided by gross sales value.
 - Daily-sales dashboards are live projections of active card sources. A logical
   card deletion must exclude its import/seller source (and every attached source
   of a composed card) from daily summaries and detail immediately, while keeping

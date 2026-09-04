@@ -1144,6 +1144,14 @@ button:hover{ background:#e68900; }
   margin-bottom:0;
 }
 
+.vendas-toolbar label{
+  display:grid;
+  gap:4px;
+  color:#475569;
+  font-size:.78rem;
+  font-weight:700;
+}
+
 .vendas-relatorio-tabs{
   display:flex;
   gap:10px;

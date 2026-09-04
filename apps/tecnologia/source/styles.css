@@ -168,7 +168,7 @@
 .backupOperatingWindows legend { padding: 0 6px; color: var(--tech-primary-dark); font-size: .8rem; font-weight: 800; }
 .backupOperatingWindows > small { display: block; margin-bottom: 10px; color: var(--tech-muted); }
 .backupWindowGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
-.backupWindowGrid label { grid-template-columns: minmax(90px, 1fr) 95px 95px; align-items: center; gap: 7px; border-radius: 8px; padding: 7px; background: #f4f8f7; }
+.backupWindowGrid label { grid-template-columns: minmax(80px, .8fr) minmax(125px, 1.2fr) 90px 90px; align-items: center; gap: 7px; border-radius: 8px; padding: 7px; background: #f4f8f7; }
 .backupWindowGrid label span { display: flex; align-items: center; gap: 6px; color: var(--tech-ink); }
 .backupWindowGrid label.disabled { opacity: .55; }
 

@@ -544,7 +544,10 @@
   function backupWindowSummary(windows) {
     const entries = Object.entries(windows || {}).sort(([left], [right]) => Number(left) - Number(right));
     if (!entries.length) return "Todos os dias, sem limite de janela";
-    return entries.map(([day, window]) => `${backupWeekdayLabel[Number(day)]}: ${window.start}–${window.end}`).join(" · ");
+    return entries.map(([day, window]) => {
+      const schedule = Array.isArray(window.times) && window.times.length ? `${window.times.join(", ")} ` : "";
+      return `${backupWeekdayLabel[Number(day)]}: ${schedule}(${window.start}–${window.end})`;
+    }).join(" · ");
   }
 
   function downloadJson(fileName, payload) {
@@ -607,7 +610,7 @@
     $("#backupSourcePaths").value = (job?.sourcePaths || []).join("\n");
     $("#backupDestination").value = job?.destinationPath || "";
     $("#backupCloudPath").value = job?.cloudSyncPath || "";
-    $("#backupTimes").value = (job?.times || ["08:00", "12:00", "16:00"]).join(", ");
+    $("#backupTimes").value = (job?.times || ["08:00", "16:00"]).join(", ");
     $("#backupTimezone").value = job?.timezone || "America/Sao_Paulo";
     $("#backupDailyRetention").value = job?.dailyRetentionDays || 7;
     $("#backupWeeklyRetention").value = job?.weeklyRetentionWeeks || 5;
@@ -617,15 +620,16 @@
     if (job && !Object.keys(windows).length) {
       windows = Object.fromEntries(backupWeekdayLabel.map((_label, day) => [String(day), {start: "00:00", end: "23:59"}]));
     } else if (!job) {
-      windows = Object.fromEntries(backupWeekdayLabel.slice(0, 5).map((_label, day) => [String(day), {start: "07:00", end: "17:00"}]));
-      windows["5"] = {start: "07:00", end: "11:00"};
+      windows = Object.fromEntries(backupWeekdayLabel.slice(0, 5).map((_label, day) => [String(day), {start: "07:00", end: "17:00", times: ["08:00", "16:00"]}]));
+      windows["5"] = {start: "09:30", end: "11:00", times: ["10:00"]};
     }
     $$('[data-backup-weekday]').forEach((row) => {
       const day = String(row.dataset.backupWeekday);
       const window = windows[day];
       row.querySelector('[data-backup-day-enabled]').checked = Boolean(window);
-      row.querySelector('[data-backup-day-start]').value = window?.start || (day === "5" ? "07:00" : "07:00");
-      row.querySelector('[data-backup-day-end]').value = window?.end || (day === "5" ? "11:00" : "17:00");
+      row.querySelector('[data-backup-day-times]').value = (window?.times || job?.times || (day === "5" || day === "6" ? ["10:00"] : ["08:00", "16:00"])).join(", ");
+      row.querySelector('[data-backup-day-start]').value = window?.start || (day === "5" || day === "6" ? "09:30" : "07:00");
+      row.querySelector('[data-backup-day-end]').value = window?.end || (day === "5" || day === "6" ? "11:00" : "17:00");
     });
     toggleBackupWindows();
     toggleBackupFields();
@@ -662,6 +666,7 @@
       operatingWindows[String(row.dataset.backupWeekday)] = {
         start: row.querySelector('[data-backup-day-start]').value,
         end: row.querySelector('[data-backup-day-end]').value,
+        times: row.querySelector('[data-backup-day-times]').value.split(",").map((item) => item.trim()).filter(Boolean),
       };
     });
     const payload = {

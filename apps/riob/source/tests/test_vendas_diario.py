@@ -1,12 +1,39 @@
 import datetime
 import os
+import re
+import sqlite3
 import unittest
 from pathlib import Path
 
-from vendas_diario import intervalo_semana_iso, parse_report, read_report
+from vendas_diario import intervalo_semana_iso, parse_report, read_report, volume_item_sql
 
 
 class VendasDiarioParserTest(unittest.TestCase):
+    def test_converte_duzias_retornaveis_em_volumes_do_totalizador_txt(self):
+        conn = sqlite3.connect(":memory:")
+        conn.create_function(
+            "regexp", 2,
+            lambda pattern, value: bool(re.search(pattern, str(value or ""))),
+        )
+        conn.execute("""
+            CREATE TABLE itens (
+                produto_codigo TEXT, unidade TEXT, descricao TEXT, quantidade REAL
+            )
+        """)
+        conn.executemany(
+            "INSERT INTO itens VALUES (?,?,?,?)",
+            [
+                ("4000", "DZ", "TUBARIO RIO BRANCO 600ML GFA", 35),
+                ("4700", "DZ", "SODINHA RIO BRANCO 48/4 200ML", 28),
+                ("7000", "PT", "GUARANA RIO BRANCO PET 6X2", 811),
+            ],
+        )
+        total = conn.execute(
+            f"SELECT SUM({volume_item_sql('itens')}) FROM itens"
+        ).fetchone()[0]
+        conn.close()
+        self.assertEqual(835.5, total)
+
     def test_calcula_intervalo_operacional_de_domingo_a_sabado(self):
         inicio, fim, semana = intervalo_semana_iso("2026-W33")
         self.assertEqual("2026-08-09", inicio.isoformat())
@@ -123,6 +150,23 @@ class VendasDiarioNavigationTest(unittest.TestCase):
             self.script,
         )
         self.assertIn('function openImportView(ev, view)', self.script)
+
+    def test_dashboard_diario_usa_periodo_e_colunas_operacionais(self):
+        dashboard = self.page.split('id="dashViewVendasDiario"', 1)[1]
+        dashboard = dashboard.split('id="dashViewVendas"', 1)[0]
+        self.assertIn('id="dashVendasDiarioDataInicio"', dashboard)
+        self.assertIn('id="dashVendasDiarioDataFim"', dashboard)
+        self.assertIn('<th>N. de pedidos</th>', dashboard)
+        self.assertIn('<th>Bonificação sobre venda</th>', dashboard)
+        self.assertNotIn('<th>Status</th>', dashboard)
+        self.assertNotIn('<th>Clientes</th>', dashboard)
+
+        carregar = self.script.split(
+            "async function carregarDashboardVendasDiario(){", 1
+        )[1].split("async function carregarDashboardComissoes", 1)[0]
+        self.assertIn('params.set("data_inicio", inputInicio.value)', carregar)
+        self.assertIn('params.set("data_fim", inputFim.value)', carregar)
+        self.assertIn("item.volume_total", carregar)
 
     def test_card_resumido_tem_uma_acao_e_salvar_mantem_popup_aberto(self):
         render_card = self.script.split(

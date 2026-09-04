@@ -540,29 +540,29 @@ class TecnologiaIntegrationTests(unittest.TestCase):
 
     def test_backup_respects_business_windows_and_skips_sunday(self):
         windows = {
-            **{str(day): {"start": "07:00", "end": "17:00"} for day in range(5)},
-            "5": {"start": "07:00", "end": "11:00"},
+            **{str(day): {"start": "07:00", "end": "17:00", "times": ["08:00", "16:00"]} for day in range(5)},
+            "5": {"start": "09:30", "end": "11:00", "times": ["10:00"]},
         }
         payload = portal.normalize_technology_backup_payload({
             "name": "Arquivos CTA", "machine": "Servidor Ubuntu",
             "databaseType": "FILES", "sourcePaths": ["/media/cta"],
-            "destinationPath": "/mnt/backup/cta", "times": ["07:00"],
+            "destinationPath": "/mnt/backup/cta", "times": ["08:00", "16:00"],
             "operatingWindows": windows,
         })
         self.assertEqual(windows, json.loads(payload["janelas_execucao"]))
 
         next_run = portal.technology_backup_next_run(
-            ["07:00"], "America/Sao_Paulo",
+            ["08:00", "16:00"], "America/Sao_Paulo",
             now=dt.datetime(2026, 8, 29, 14, 5, tzinfo=dt.UTC),
             operating_windows=windows,
         )
-        self.assertEqual("2026-08-31T07:00-03:00", next_run)
+        self.assertEqual("2026-08-31T08:00-03:00", next_run)
 
-        job = {"timezone": "America/Sao_Paulo", "times": ["07:00"], "operatingWindows": windows}
+        job = {"timezone": "America/Sao_Paulo", "times": ["08:00", "16:00"], "operatingWindows": windows}
         slot, _local = technology_backup_agent.due_slot(
-            job, {}, now=dt.datetime(2026, 8, 29, 10, 5, tzinfo=dt.UTC),
+            job, {}, now=dt.datetime(2026, 8, 29, 13, 5, tzinfo=dt.UTC),
         )
-        self.assertEqual("07:00", slot)
+        self.assertEqual("10:00", slot)
         slot_after_window, _local = technology_backup_agent.due_slot(
             job, {}, now=dt.datetime(2026, 8, 29, 14, 5, tzinfo=dt.UTC),
         )
@@ -815,6 +815,24 @@ class TecnologiaIntegrationTests(unittest.TestCase):
             technology_backup_agent.ensure_writable_directory(destination)
 
             self.assertTrue(destination.stat().st_mode & technology_backup_agent.stat.S_IWUSR)
+
+    def test_backup_agent_removes_expired_file_from_read_only_directory(self):
+        with tempfile.TemporaryDirectory(prefix="tecnologia-retention-") as temp_dir:
+            destination = Path(temp_dir) / "diario" / "2026-08-01"
+            destination.mkdir(parents=True)
+            expired = destination / "backup.sql.gz"
+            expired.write_bytes(b"backup")
+            old = time.time() - 10 * 86400
+            expired.touch()
+            technology_backup_agent.os.utime(expired, (old, old))
+            destination.chmod(0o555)
+
+            removed = technology_backup_agent.remove_expired_files(
+                Path(temp_dir), 7, now=time.time()
+            )
+
+            self.assertEqual(1, removed)
+            self.assertFalse(expired.exists())
 
     def test_registered_device_hosts_include_additional_interfaces(self):
         rows = [{

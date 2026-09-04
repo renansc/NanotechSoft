@@ -215,7 +215,8 @@
         <div class="vendas-box-head">
           <h2>Dashboard - Vendas diária</h2>
           <div class="vendas-toolbar">
-            <input type="date" id="dashVendasDiarioData" onchange="carregarDashboardVendasDiario()">
+            <label>Data inicial<input type="date" id="dashVendasDiarioDataInicio" onchange="carregarDashboardVendasDiario()"></label>
+            <label>Data final<input type="date" id="dashVendasDiarioDataFim" onchange="carregarDashboardVendasDiario()"></label>
             <button type="button" onclick="carregarDashboardVendasDiario()">Atualizar Dashboard</button>
           </div>
         </div>
@@ -223,10 +224,10 @@
         <div id="dashVendasDiarioCards" class="vendas-resumo-cards vendas-resumo-cards--wide"></div>
       </div>
       <div class="boxFrota">
-        <h3>Status dos vendedores</h3>
+        <h3>Vendas por vendedor</h3>
         <div style="overflow:auto; max-height:620px;">
           <table class="vendas-dashboard-table">
-            <thead><tr><th>Status</th><th>Vendedor</th><th>Clientes</th><th>Vendas efetivadas</th><th>Volume</th><th>Vol. bonificado</th><th>Valor bruto</th><th>Bonificação (Tb. 91)</th><th>Valor líquido</th></tr></thead>
+            <thead><tr><th>Vendedor</th><th>N. de pedidos</th><th>Volume</th><th>Vol. bonificado</th><th>Valor bruto</th><th>Bonificação (Tb. 91)</th><th>Bonificação sobre venda</th><th>Valor líquido</th></tr></thead>
             <tbody id="dashVendasDiarioBody"></tbody>
           </table>
         </div>

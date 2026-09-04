@@ -378,19 +378,19 @@
           <label data-backup-database>Variável local da senha<input id="backupPasswordEnv" data-backup-db-required maxlength="160" required value="NANOTECH_BACKUP_DB_PASSWORD"><small>A senha não é gravada no portal.</small></label>
           <label class="wide">Pasta no HDD externo<input id="backupDestination" maxlength="1000" required placeholder="\\192.168.200.10\e\backup Nanotechsoft"><small>Use um compartilhamento UNC no Windows ou um caminho já montado no Linux.</small></label>
           <label class="wide">Pasta sincronizada na nuvem (opcional)<input id="backupCloudPath" maxlength="1000" placeholder="C:\Nuvem\Backup Nanotechsoft\mes"><small>Recebe somente o último backup de cada semana.</small></label>
-          <label>Horários diários<input id="backupTimes" required value="08:00, 12:00, 16:00"><small>Formato 24 horas, separados por vírgula. O agente só inicia dentro da janela do dia.</small></label>
+          <label>Horários padrão<input id="backupTimes" required value="08:00, 16:00"><small>Usados apenas quando o dia não possui horários específicos.</small></label>
           <label>Fuso horário<input id="backupTimezone" maxlength="80" required value="America/Sao_Paulo"></label>
           <fieldset class="wide backupOperatingWindows" id="backupOperatingWindows">
-            <legend>Dias e janelas permitidas</legend>
-            <small>Se o servidor ou agente voltar depois do encerramento, o backup vencido não será iniciado fora do expediente.</small>
+            <legend>Dias, horários e janelas permitidas</legend>
+            <small>Informe os horários de cada dia. Se o agente voltar depois do encerramento da janela, o backup vencido não será iniciado.</small>
             <div class="backupWindowGrid">
-              <label data-backup-weekday="0"><span><input type="checkbox" data-backup-day-enabled> Segunda</span><input type="time" data-backup-day-start value="07:00"><input type="time" data-backup-day-end value="17:00"></label>
-              <label data-backup-weekday="1"><span><input type="checkbox" data-backup-day-enabled> Terça</span><input type="time" data-backup-day-start value="07:00"><input type="time" data-backup-day-end value="17:00"></label>
-              <label data-backup-weekday="2"><span><input type="checkbox" data-backup-day-enabled> Quarta</span><input type="time" data-backup-day-start value="07:00"><input type="time" data-backup-day-end value="17:00"></label>
-              <label data-backup-weekday="3"><span><input type="checkbox" data-backup-day-enabled> Quinta</span><input type="time" data-backup-day-start value="07:00"><input type="time" data-backup-day-end value="17:00"></label>
-              <label data-backup-weekday="4"><span><input type="checkbox" data-backup-day-enabled> Sexta</span><input type="time" data-backup-day-start value="07:00"><input type="time" data-backup-day-end value="17:00"></label>
-              <label data-backup-weekday="5"><span><input type="checkbox" data-backup-day-enabled> Sábado</span><input type="time" data-backup-day-start value="07:00"><input type="time" data-backup-day-end value="11:00"></label>
-              <label data-backup-weekday="6"><span><input type="checkbox" data-backup-day-enabled> Domingo</span><input type="time" data-backup-day-start value="07:00"><input type="time" data-backup-day-end value="11:00"></label>
+              <label data-backup-weekday="0"><span><input type="checkbox" data-backup-day-enabled> Segunda</span><input data-backup-day-times value="08:00, 16:00" aria-label="Horários de segunda"><input type="time" data-backup-day-start value="07:00"><input type="time" data-backup-day-end value="17:00"></label>
+              <label data-backup-weekday="1"><span><input type="checkbox" data-backup-day-enabled> Terça</span><input data-backup-day-times value="08:00, 16:00" aria-label="Horários de terça"><input type="time" data-backup-day-start value="07:00"><input type="time" data-backup-day-end value="17:00"></label>
+              <label data-backup-weekday="2"><span><input type="checkbox" data-backup-day-enabled> Quarta</span><input data-backup-day-times value="08:00, 16:00" aria-label="Horários de quarta"><input type="time" data-backup-day-start value="07:00"><input type="time" data-backup-day-end value="17:00"></label>
+              <label data-backup-weekday="3"><span><input type="checkbox" data-backup-day-enabled> Quinta</span><input data-backup-day-times value="08:00, 16:00" aria-label="Horários de quinta"><input type="time" data-backup-day-start value="07:00"><input type="time" data-backup-day-end value="17:00"></label>
+              <label data-backup-weekday="4"><span><input type="checkbox" data-backup-day-enabled> Sexta</span><input data-backup-day-times value="08:00, 16:00" aria-label="Horários de sexta"><input type="time" data-backup-day-start value="07:00"><input type="time" data-backup-day-end value="17:00"></label>
+              <label data-backup-weekday="5"><span><input type="checkbox" data-backup-day-enabled> Sábado</span><input data-backup-day-times value="10:00" aria-label="Horários de sábado"><input type="time" data-backup-day-start value="09:30"><input type="time" data-backup-day-end value="11:00"></label>
+              <label data-backup-weekday="6"><span><input type="checkbox" data-backup-day-enabled> Domingo</span><input data-backup-day-times value="10:00" aria-label="Horários de domingo"><input type="time" data-backup-day-start value="09:30"><input type="time" data-backup-day-end value="11:00"></label>
             </div>
           </fieldset>
           <label>Reter diário por dias<input id="backupDailyRetention" type="number" min="1" max="365" value="7" required></label>

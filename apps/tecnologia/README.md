@@ -346,15 +346,17 @@ do horário, use `--run-now`; `--once` executa apenas o horário já vencido e
 encerra. Instale o comando contínuo como serviço do sistema operacional, não
 como parte dos comandos canônicos de deploy do repositório.
 
-Cada plano também define os dias e as janelas em que uma execução pode começar.
+Cada plano também define os horários específicos de cada dia e as janelas em
+que uma execução pode começar.
 Um horário vencido só é recuperado enquanto o agente ainda estiver dentro da
 janela daquele dia; depois do encerramento ele aguarda o próximo dia permitido.
 Isso evita iniciar uma cópia longa quando o servidor de origem já está perto de
 ser desligado. `--run-now` continua ignorando a janela por ser uma ação manual.
-Para o CTA, cuja primeira carga observada levou até 2h35, o plano operacional
-usa início às 07:00, janela de segunda a sexta 07:00–17:00, sábado 07:00–11:00
-e domingo sem execução. Backups de arquivos usam o repositório incremental;
-planos MySQL/MariaDB continuam com `mysqldump` completo.
+O padrão operacional atual executa às 08:00 e às 16:00 de segunda a sexta e
+somente às 10:00 no sábado, com domingo sem execução. As janelas continuam
+impedindo a recuperação tardia fora do expediente. Backups de arquivos usam o
+repositório incremental; planos MySQL/MariaDB continuam com `mysqldump`
+completo.
 
 ### Inicialização automática
 

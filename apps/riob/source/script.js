@@ -2361,9 +2361,11 @@ function setDashboardView(view){
 }
 
 async function carregarDashboardVendasDiario(){
-  const input = document.getElementById("dashVendasDiarioData");
+  const inputInicio = document.getElementById("dashVendasDiarioDataInicio");
+  const inputFim = document.getElementById("dashVendasDiarioDataFim");
   const params = new URLSearchParams();
-  if (input?.value) params.set("data", input.value);
+  if (inputInicio?.value) params.set("data_inicio", inputInicio.value);
+  if (inputFim?.value) params.set("data_fim", inputFim.value);
   const resp = await apiFetch(`/api/vendas/diario/dashboard${params.toString() ? `?${params}` : ""}`);
   const data = await resp.json().catch(() => ({}));
   const info = document.getElementById("dashVendasDiarioInfo");
@@ -2371,29 +2373,36 @@ async function carregarDashboardVendasDiario(){
     if (info) info.textContent = data?.erro || "Falha ao carregar dashboard de vendas diária.";
     return;
   }
-  if (input && data.data_ref) input.value = data.data_ref;
-  if (info) info.textContent = data.data_ref ? `Posição de ${data.data_ref.split("-").reverse().join("/")}.` : "Nenhuma venda diária importada.";
+  const dataInicio = data?.periodo?.data_inicio || data.data_ref || "";
+  const dataFim = data?.periodo?.data_fim || data.data_ref || "";
+  if (inputInicio && dataInicio) inputInicio.value = dataInicio;
+  if (inputFim && dataFim) inputFim.value = dataFim;
+  if (info) info.textContent = dataInicio
+    ? (dataInicio === dataFim
+      ? `Posição de ${dataInicio.split("-").reverse().join("/")}.`
+      : `Período de ${dataInicio.split("-").reverse().join("/")} a ${dataFim.split("-").reverse().join("/")}.`)
+    : "Nenhuma venda diária importada.";
   const resumo = data?.resumo || {};
   const cards = document.getElementById("dashVendasDiarioCards");
   if (cards) cards.innerHTML = _renderCardsVendasResumo([
     ["Vendedores", _fmtNumVendas(resumo.vendedores)], ["Clientes com venda", _fmtNumVendas(resumo.clientes)],
-    ["Vendas efetivadas", _fmtNumVendas(resumo.positivos)],
-    ["Volume vendido", _fmtNumVendas(resumo.volume_venda, 3)], ["Volume bonificado", _fmtNumVendas(resumo.volume_bonificado, 3)],
+    ["N. de pedidos", _fmtNumVendas(resumo.positivos)],
+    ["Volume", _fmtNumVendas(resumo.volume_total, 3)], ["Volume bonificado", _fmtNumVendas(resumo.volume_bonificado, 3)],
     ["Valor bruto", _fmtMoneyVendas(resumo.valor_bruto)], ["Bonificação (Tb. 91)", _fmtMoneyVendas(resumo.valor_bonificacao)],
+    ["Bonificação sobre venda", `${_fmtNumVendas(resumo.bonificacao_percentual, 2)}%`],
     ["Valor líquido", _fmtMoneyVendas(resumo.valor_liquido)],
   ]);
-  const statusLabel = {com_vendas: "Com vendas", atencao: "Atenção", sem_vendas: "Sem vendas"};
   const sellers = Array.isArray(data?.vendedores) ? data.vendedores : [];
   const body = document.getElementById("dashVendasDiarioBody");
   if (body) body.innerHTML = sellers.length ? sellers.map((item) => `<tr>
-    <td><span class="vendas-diario-status vendas-diario-status--${_escHtml(item.status || "sem_vendas")}">${_escHtml(statusLabel[item.status] || item.status)}</span></td>
     <td><strong>${_escHtml(item.vendedor_nome ? `${item.vendedor_nome} - ${item.vendedor_codigo || "-"}` : `Vendedor ${item.vendedor_codigo || "-"}`)}</strong></td>
-    <td>${_escHtml(_fmtNumVendas(item.clientes))}</td><td>${_escHtml(_fmtNumVendas(item.positivos))}</td>
-    <td>${_escHtml(_fmtNumVendas(item.volume_venda, 3))}</td><td>${_escHtml(_fmtNumVendas(item.volume_bonificado, 3))}</td>
+    <td>${_escHtml(_fmtNumVendas(item.positivos))}</td>
+    <td>${_escHtml(_fmtNumVendas(item.volume_total, 3))}</td><td>${_escHtml(_fmtNumVendas(item.volume_bonificado, 3))}</td>
     <td>${_escHtml(_fmtMoneyVendas(item.valor_bruto))}</td>
     <td>${_escHtml(_fmtMoneyVendas(item.valor_bonificacao))}</td>
+    <td>${_escHtml(_fmtNumVendas(item.bonificacao_percentual, 2))}%</td>
     <td><strong>${_escHtml(_fmtMoneyVendas(item.valor_liquido))}</strong></td>
-  </tr>`).join("") : '<tr><td colspan="9">Nenhum vendedor encontrado para a data.</td></tr>';
+  </tr>`).join("") : '<tr><td colspan="8">Nenhum vendedor encontrado para o período.</td></tr>';
 }
 
 async function carregarDashboardComissoes(){

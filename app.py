@@ -7372,7 +7372,13 @@ def technology_backup_operating_windows(value, *, required=False):
             raise ValueError(f"início inválido para o dia {weekday}")
         if not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", end) or end <= start:
             raise ValueError(f"fim inválido para o dia {weekday}")
-        windows[str(weekday)] = {"start": start, "end": end}
+        window = {"start": start, "end": end}
+        if raw_window.get("times") not in (None, "", []):
+            day_times = technology_backup_times(raw_window.get("times"))
+            if any(not (start <= scheduled < end) for scheduled in day_times):
+                raise ValueError(f"horário fora da janela do dia {weekday}")
+            window["times"] = day_times
+        windows[str(weekday)] = window
     if required and not windows:
         raise ValueError("selecione ao menos um dia e uma janela de execução")
     return {key: windows[key] for key in sorted(windows, key=int)}
@@ -7448,7 +7454,7 @@ def normalize_technology_backup_payload(payload):
     if not any(
         window["start"] <= scheduled < window["end"]
         for window in operating_windows.values()
-        for scheduled in times
+        for scheduled in (window.get("times") or times)
     ):
         raise ValueError("nenhum horário programado está dentro das janelas de execução")
     return {
@@ -7486,7 +7492,7 @@ def technology_backup_next_run(times, timezone_name, now=None, operating_windows
         window = windows.get(str(day.weekday())) if windows else None
         if windows and not window:
             continue
-        for item in schedule:
+        for item in (window.get("times") or schedule) if window else schedule:
             if window and not (window["start"] <= item < window["end"]):
                 continue
             hour, minute = (int(part) for part in item.split(":"))
