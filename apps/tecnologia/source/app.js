@@ -733,11 +733,17 @@
   }
 
   function setView(view, updateHash = true) {
+    const requestedView = view;
+    const backupSection = view.startsWith("backup-") ? view.slice(7) : "";
+    if (["visao", "planos", "agentes"].includes(backupSection)) view = "backup";
+    $$('[data-backup-sections]').forEach((element) => {
+      element.classList.toggle("hidden", view === "backup" && !!backupSection && !element.dataset.backupSections.split(" ").includes(backupSection));
+    });
     const known = ["dashboard", "equipamentos", "protocolos", "backup", "historico", "ocupacao-link", "config"];
     if (!known.includes(view)) view = "dashboard";
     $$(".techView").forEach((element) => element.classList.toggle("hidden", element.dataset.page !== view));
     $$(".tab").forEach((element) => element.classList.toggle("active", element.dataset.view === view));
-    if (updateHash) history.replaceState(null, "", view === "dashboard" ? location.pathname : `#${view}`);
+    if (updateHash) history.replaceState(null, "", view === "dashboard" ? location.pathname : `#${requestedView}`);
     if (view === "historico") loadHistory();
     if (view === "ocupacao-link") loadLinkUsageReport();
     if (view === "backup") loadBackups();
@@ -1178,5 +1184,5 @@
   setView(location.hash.slice(1) || "dashboard", false);
   loadOverview();
   window.setInterval(() => loadOverview({ quiet: true }), 15000);
-  window.setInterval(() => { if (location.hash === "#backup") loadBackups({ quiet: true }); }, 30000);
+  window.setInterval(() => { if (location.hash === "#backup" || location.hash.startsWith("#backup-")) loadBackups({ quiet: true }); }, 30000);
 })();

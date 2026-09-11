@@ -5,6 +5,18 @@
 <h1>Monitoramento Automação RioBranco</h1>
 
 <div class="card">
+    Máquinas monitoradas:
+    <b>{{ total_maquinas }}</b>
+    {% if maquinas_em_alarme %}
+    — <span class="danger"><b>{{ maquinas_em_alarme }}</b> em alarme</span>
+    {% endif %}
+    <div class="actions">
+        <a href="/maquinas">Abrir máquinas</a>
+        <a href="/documentacao">Consultar documentação</a>
+    </div>
+</div>
+
+<div class="card">
     Motores Cadastrados:
     <b>{{ total_motores }}</b>
 </div>

@@ -180,6 +180,12 @@ Objetivo:
 - reaproveitar o import ativo nas consultas seguintes sem reler o CSV bruto
 - manter uma lista dos relatorios importados e qual deles esta em uso
 - expor no relatorio agrupadores consolidados por vendedor, cidade e produto
+- filtrar o resumo mensal por cliente e disponibilizar o comparativo anual de
+  volume com `tipo_relatorio=percentual_vendas_anual`, incluindo diferenca em
+  hectolitros, percentual e classificacao de acrescimo/decrescimo por mes
+- aplicar `vendedor` e `cliente` tanto no relatorio anual quanto no dashboard
+  correspondente; em ano ainda aberto, comparar somente ate o ultimo mes com
+  dados, sem tratar meses futuros como queda
 - expor uma camada de configuracao pronta para futura troca da fonte para Firebird
 
 Campos principais da configuracao:
@@ -1527,3 +1533,10 @@ Do ponto de vista de API e dados, o sistema e um monolito com:
 - arquivos auxiliares em disco
 - fluxos integrados de estoque/NF-e, chat com anexo e relatorios PDF de frota
 - integracao forte com FreePBX, Nginx e bootstrap de certificados
+
+## Menu: contagem, orcamentos e e-mails (10/09/2026)
+
+- `GET /api/vendas/orcamentos/relatorio`: filtros opcionais `inicio`/`fim` (ISO), `q` (cliente, cidade ou vendedor) e `pagina`. Retorna `orcamentos`, `total`, `valor_real` agregado do filtro, `pagina` e `limite=50`. Le somente `vendas_orcamentos`; preserva valores emitidos. Recurso `vendas_orcamentos_relatorio`; tambem permite GET do PDF individual.
+- Contagem consulta `GET /api/estoque/produtos` e `/api/estoque/posicao` com recurso `estoque_contagem`. Rascunho na pagina e CSV; nenhuma nova tabela nem alteracao de saldo. Acerto mantem sua autorizacao administrativa.
+- Gestor de e-mails: `GET /gestor-emails/historico`, `/recuperar`, `/backup` apresentam as acoes separadamente. Os POST existentes `/importar-historico-xml` e `/recuperar-conteudo` continuam sob `riob-email:operacao` (ou `*`).
+- `POST /gestor-emails/backup/download`: recurso `riob-email:backup` (ou `*`), ZIP dos registros importados e anexos disponiveis; metadados JSONL por lote de 100, sem credenciais/configuracoes, sem acesso aos servidores de e-mail. Exige acesso ao modulo e retorna `Cache-Control: no-store`. Anexos fora da raiz permitida ou ausentes sao marcados indisponiveis.

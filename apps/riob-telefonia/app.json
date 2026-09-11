@@ -13,7 +13,8 @@
     "workflow": [
       {
         "nome": "Telefonia Chat",
-        "url": "/apps/riob#comunicacao"
+        "url": "/apps/riob#comunicacao:telefonia",
+        "recurso": "*"
       }
     ]
   },
@@ -21,8 +22,15 @@
     "riob-telefonia": [
       {
         "nome": "SIP / FreePBX",
-        "url": "/apps/riob#config:sip"
+        "url": "/apps/riob#config:sip",
+        "recurso": "*"
       }
     ]
+  },
+  "menu_profiles": {
+    "rio-branco": {
+      "menu_groups": {},
+      "config_groups": {}
+    }
   }
 }

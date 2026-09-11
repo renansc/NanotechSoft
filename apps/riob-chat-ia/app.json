@@ -13,14 +13,22 @@
     "dashboards": [
       {
         "nome": "Agent IA",
-        "url": "/apps/riob#agentia"
+        "url": "/apps/riob#agentia",
+        "recurso": "*"
       }
     ],
     "workflow": [
       {
         "nome": "Chat IA",
-        "url": "/apps/riob#comunicacao"
+        "url": "/apps/riob#comunicacao:ia",
+        "recurso": "*"
       }
     ]
+  },
+  "menu_profiles": {
+    "rio-branco": {
+      "menu_groups": {},
+      "config_groups": {}
+    }
   }
 }

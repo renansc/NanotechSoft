@@ -62,6 +62,7 @@
         <div class="submenu-item" data-dashboard-view="processos" onclick="openDashboardView(event,'processos')">Processos internos</div>
         <div class="submenu-item" data-dashboard-view="compras" onclick="openDashboardView(event,'compras')">Compras</div>
         <div class="submenu-item" data-dashboard-view="vendas_diario" onclick="openDashboardView(event,'vendas_diario')">Vendas diária</div>
+        <div class="submenu-item" data-dashboard-view="vendas_anual" onclick="openDashboardView(event,'vendas_anual')">Vendas anual</div>
         <div class="submenu-item" data-dashboard-view="bonificacoes" onclick="openDashboardView(event,'bonificacoes')">Bonificações</div>
         <div class="submenu-item" data-dashboard-view="variacao_preco" onclick="openDashboardView(event,'variacao_preco')">Variação de Preço</div>
         <div class="submenu-item" data-dashboard-view="grupos_embalagem" onclick="openDashboardView(event,'grupos_embalagem')">Grupos Embalagem</div>
@@ -98,6 +99,7 @@
         <div class="submenu-item active" data-estoque-view="posicao" onclick="openEstoqueView(event,'posicao')">Posicao atual</div>
         <div class="submenu-item" data-estoque-view="movimentar" onclick="openEstoqueView(event,'movimentar')">Movimentar estoque</div>
         <div class="submenu-item" data-estoque-view="rastreio" onclick="openEstoqueView(event,'rastreio')">Rastreio de lotes</div>
+        <div class="submenu-item" data-estoque-view="contagem" onclick="openEstoqueView(event,'contagem')">Contagem</div>
         <div class="submenu-item" id="estoqueMenuAcerto" data-estoque-view="acerto" onclick="openEstoqueView(event,'acerto')">Acerto de estoque</div>
       </div>
     </div>
@@ -116,6 +118,7 @@
     <div class="menu-item has-submenu" data-tab="relatorios" onclick="toggleRelatoriosSubmenu(event)">
       Relatórios <span class="submenu-caret">&#9662;</span>
       <div class="submenu" id="submenuRelatorios">
+        <div class="submenu-item" data-relatorios-view="orcamentos" onclick="openRelatoriosView(event,'orcamentos')">Orcamentos gerados</div>
         <div class="submenu-item active" data-relatorios-view="estoque_comprometido" onclick="openRelatoriosView(event,'estoque_comprometido')">Estoque comprometido</div>
         <div class="submenu-item" data-relatorios-view="processos" onclick="openRelatoriosView(event,'processos')">Processos internos</div>
         <div class="submenu-item" data-relatorios-view="compras" onclick="openRelatoriosView(event,'compras')">Compras</div>
@@ -351,6 +354,36 @@
         </div>
       </div>
 
+      <div id="dashVendasPanelAnual" class="dash-view hidden">
+        <div class="boxFrota vendas-filtros-box">
+          <div class="vendas-box-head">
+            <h3>Filtros do comparativo anual</h3>
+            <div class="vendas-toolbar">
+              <button type="button" onclick="carregarDashboardVendasAnual()">Atualizar Dashboard</button>
+              <button type="button" class="btn-secondary" onclick="limparFiltrosDashboardVendasAnual()">Limpar Filtros</button>
+            </div>
+          </div>
+          <div class="vendas-filtros-grid">
+            <label>Vendedor<select id="dashVendasAnualVendedor" onchange="carregarDashboardVendasAnual()"><option value="">Todos os vendedores</option></select></label>
+            <label>Cliente<select id="dashVendasAnualCliente" onchange="carregarDashboardVendasAnual()"><option value="">Todos os clientes</option></select></label>
+          </div>
+        </div>
+        <div class="boxFrota">
+          <h3>Resumo ano a ano</h3>
+          <div id="dashVendasAnualCards" class="vendas-resumo-cards vendas-resumo-cards--wide"></div>
+        </div>
+        <div class="boxFrota">
+          <h3>Volume mensal comparado</h3>
+          <div class="hint">Volumes em hectolitros. Verde indica acréscimo e vermelho indica decréscimo em relação ao mesmo mês do ano anterior.</div>
+          <div style="overflow:auto; max-height:520px;">
+            <table class="vendas-dashboard-table">
+              <thead id="dashVendasAnualHead"></thead>
+              <tbody id="dashVendasAnualBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
     </div>
 
     <div id="dashViewComissoes" class="dash-view hidden">
@@ -415,55 +448,7 @@
   <!-- =====================================================
        (MENU) AGENT IA
   ====================================================== -->
-  <section id="agentia" class="section">
-    <div class="agentia-shell">
-      <aside class="agentia-sidebar">
-        <div class="agentia-title">
-          <h2>Agent IA</h2>
-          <p>Converse com o assistente para consultar cards e executar rotinas do sistema.</p>
-        </div>
-        <button type="button" class="agentia-menu-btn active" data-agentia-option="kanban" onclick="agentIaMenu('kanban')">Kanban / Cargas</button>
-        <button type="button" class="agentia-menu-btn" data-agentia-option="devolucoes" onclick="agentIaMenu('devolucoes')">Devoluções</button>
-        <button type="button" class="agentia-menu-btn" data-agentia-option="status" onclick="agentIaMenu('status')">Status</button>
-        <button type="button" class="agentia-menu-btn" data-agentia-option="backup" onclick="agentIaMenu('backup')">Backup</button>
-        <button type="button" class="agentia-menu-btn" data-agentia-option="brief" onclick="agentIaMenu('brief')">Brief</button>
-        <button type="button" class="agentia-menu-btn" data-agentia-option="validate" onclick="agentIaMenu('validate')">Validação</button>
-        <button type="button" class="agentia-menu-btn" data-agentia-option="git" onclick="agentIaMenu('git')">Git</button>
-        <button type="button" class="agentia-menu-btn" data-agentia-option="deploy" onclick="agentIaMenu('deploy')">Deploy</button>
-        <div class="agentia-hint">
-          Exemplos:
-          <br>listar cargas
-          <br>mostrar caminhao 13
-          <br>mover status para carregado caminhao 13
-        </div>
-      </aside>
 
-      <div class="agentia-main">
-        <div class="agentia-workspace">
-          <div class="agentia-workspace-head">
-            <div>
-              <h3 id="agentIaWorkspaceTitle">Kanban / Cargas</h3>
-              <span id="agentIaWorkspaceMeta">Nenhum card carregado</span>
-            </div>
-            <button type="button" class="btn-secondary" onclick="agentIaSendAction({name:'refresh_fretes', label:'Atualizar kanban'})">Atualizar</button>
-          </div>
-          <div id="agentIaSelectedCard" class="agentia-selected-card"></div>
-          <div id="agentIaCardGrid" class="agentia-card-grid"></div>
-        </div>
-
-        <div id="agentIaChat" class="agentia-chat"></div>
-
-        <form class="agentia-form" onsubmit="agentIaEnviarPergunta(event)">
-          <div class="agentia-command-field">
-            <textarea id="agentIaInput" placeholder="Pergunte, digite ou fale um comando..."></textarea>
-            <small id="agentIaVoiceStatus" class="agentia-voice-status" aria-live="polite">Use o microfone, confira o texto reconhecido e clique em Enviar.</small>
-          </div>
-          <button id="agentIaVoiceBtn" class="agentia-voice-btn" type="button" onclick="agentIaToggleVoz()" aria-pressed="false" title="Falar comando em português">Falar</button>
-          <button id="agentIaSendBtn" type="submit">Enviar</button>
-        </form>
-      </div>
-    </div>
-  </section>
 
   <div id="vendasDiarioCardModal" class="vendas-diario-modal hidden" role="dialog" aria-modal="true" onclick="fecharCardVendasDiarioBackdrop(event)">
     <div class="vendas-diario-modal-content" onclick="event.stopPropagation()">
@@ -1027,6 +1012,23 @@
       </div>
     </div>
 
+    <div id="estoqueViewContagem" class="hidden">
+      <div class="boxFrota">
+        <h3>Contagem de estoque</h3>
+        <p>Informe a quantidade fisica em pallets, embalagens e unidades. A contagem confere o saldo consultado ao abrir esta tela. Exporte o resultado antes de fechar ou recarregar a pagina; o saldo e alterado em Acerto.</p>
+        <div class="estoque-inline-actions">
+          <input type="search" id="estoqueContagemBusca" aria-label="Buscar produto na contagem" placeholder="Buscar produto ou codigo" oninput="renderContagemEstoque()">
+          <button type="button" onclick="exportarContagemEstoque()">Exportar contagem CSV</button>
+          <button type="button" onclick="novaContagemEstoque()">Nova contagem</button>
+        </div>
+        <p id="estoqueContagemStatus" role="status"></p>
+        <div style="overflow:auto;max-height:560px"><table>
+          <thead><tr><th>Produto</th><th>Saldo consultado</th><th>Pallets</th><th>Embalagens</th><th>Unidades</th><th>Total contado</th><th>Diferenca</th></tr></thead>
+          <tbody id="estoqueContagemBody"></tbody>
+        </table></div>
+      </div>
+    </div>
+
     <div id="estoqueViewAcerto" class="hidden">
       <div class="boxFrota">
         <h3>Acerto de Estoque</h3>
@@ -1372,6 +1374,24 @@
        (MENU) RELATORIOS
   ====================================================== -->
   <section id="relatorios" class="section">
+    <div id="relatoriosViewOrcamentos" class="relatorios-view hidden boxFrota">
+      <h3>Orcamentos gerados</h3>
+      <form class="estoque-inline-actions" onsubmit="event.preventDefault();carregarRelatorioOrcamentos(1)">
+        <label>De <input type="date" id="relOrcInicio"></label>
+        <label>Ate <input type="date" id="relOrcFim"></label>
+        <input type="search" id="relOrcBusca" aria-label="Cliente, cidade ou vendedor" placeholder="Cliente, cidade ou vendedor">
+        <button>Consultar</button>
+      </form>
+      <p id="relOrcStatus" role="status"></p>
+      <div style="overflow:auto"><table>
+        <thead><tr><th>Orcamento</th><th>Data</th><th>Cliente</th><th>Cidade</th><th>Vendedor</th><th>Bruto</th><th>Liquido</th><th>Real</th><th>PDF</th></tr></thead>
+        <tbody id="relOrcBody"></tbody>
+      </table></div>
+      <div class="estoque-inline-actions">
+        <button type="button" id="relOrcAnterior" onclick="carregarRelatorioOrcamentos(relatorioOrcamentosPagina-1)">Anterior</button>
+        <button type="button" id="relOrcProxima" onclick="carregarRelatorioOrcamentos(relatorioOrcamentosPagina+1)">Proxima</button>
+      </div>
+    </div>
     <div id="relatoriosViewEstoqueComprometido" class="relatorios-view">
       <div class="boxFrota">
         <div class="vendas-box-head">
@@ -2413,6 +2433,7 @@
       <button type="button" id="vendasRelTabVariacao" onclick="setVendasRelatorioModo('variacao_preco')">Variação de Preço</button>
       <button type="button" id="vendasRelTabMix" onclick="setVendasRelatorioModo('grupos_embalagem')">Grupos Embalagem</button>
       <button type="button" id="vendasRelTabPrecoMedio" onclick="setVendasRelatorioModo('preco_medio')">Preço Médio</button>
+      <button type="button" id="vendasRelTabAnual" onclick="setVendasRelatorioModo('vendas_anual')">Vendas Anual</button>
     </div>
 
     <div id="vendasViewOrcamento" class="dash-view hidden">
@@ -2539,6 +2560,38 @@
               <tbody id="vendasRelDetalhesBody"></tbody>
             </table>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="vendasViewRelatorioAnual" class="dash-view hidden">
+      <div class="vendas-variacao-layout">
+        <div class="boxFrota vendas-grupo-box">
+          <h3>Resumo Ano a Ano</h3>
+          <div id="vendasAnualResumoCards" class="vendas-resumo-cards vendas-resumo-cards--wide"></div>
+        </div>
+        <div class="boxFrota vendas-filtros-box">
+          <div class="vendas-box-head">
+            <h3>Vendas Anual</h3>
+            <div class="vendas-toolbar">
+              <button type="button" onclick="carregarRelatorioVendasAnual()">Atualizar Relatório</button>
+              <button type="button" class="btn-secondary" onclick="limparFiltrosRelatorioVendasAnual()">Limpar Filtros</button>
+            </div>
+          </div>
+          <div class="vendas-filtros-grid">
+            <label>Vendedor<select id="vendasAnualVendedor" onchange="carregarRelatorioVendasAnual()"><option value="">Todos os vendedores</option></select></label>
+            <label>Cliente<select id="vendasAnualCliente" onchange="carregarRelatorioVendasAnual()"><option value="">Todos os clientes</option></select></label>
+          </div>
+          <div class="hint">Compara cada mês com o mesmo mês do ano anterior usando o volume vendido em hectolitros.</div>
+        </div>
+      </div>
+      <div class="boxFrota">
+        <h3>Comparativo mensal</h3>
+        <div style="overflow:auto; max-height:520px;">
+          <table class="vendas-dashboard-table">
+            <thead id="vendasAnualHead"></thead>
+            <tbody id="vendasAnualBody"></tbody>
+          </table>
         </div>
       </div>
     </div>
@@ -3141,23 +3194,23 @@
     </div>
 
     <div id="configViewVendas" class="hidden">
-      <h3>Vendas / Cache</h3>
+      <h3>Vendas / Dados</h3>
       <div class="frotaGrid">
         <div class="boxFrota">
           <label class="config-check"><input type="checkbox" id="vendasConfigHabilitado"> Ativar integracao de vendas</label>
-          <div class="sip-mode-row">
+          <div class="sip-mode-row" data-vendas-legado>
             <label for="vendasConfigSourceType">Origem dos dados</label>
             <select id="vendasConfigSourceType">
               <option value="csv_relatorios_dir">CSV/XLSX em Relatorios</option>
             </select>
           </div>
-          <input type="text" id="vendasConfigCsvDir" placeholder="Diretorio dos relatorios de vendas">
-          <input type="file" id="vendasConfigArquivoCsv" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+          <input type="text" data-vendas-legado id="vendasConfigCsvDir" placeholder="Diretorio dos relatorios de vendas">
+          <input type="file" data-vendas-legado id="vendasConfigArquivoCsv" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
           <div class="sip-config-actions">
             <button type="button" onclick="salvarConfigVendas()">Salvar vendas</button>
-            <button type="button" onclick="importarRelatorioCsvVendas()">Importar relatorio</button>
-            <button type="button" onclick="importarCacheVendas()">Importar da pasta</button>
-            <button type="button" onclick="processarRelatoriosVendas()">Processar relatórios</button>
+            <button type="button" data-vendas-legado onclick="importarRelatorioCsvVendas()">Importar relatorio</button>
+            <button type="button" data-vendas-legado onclick="importarCacheVendas()">Importar da pasta</button>
+            <button type="button" data-vendas-legado onclick="processarRelatoriosVendas()">Processar relatórios</button>
             <button type="button" onclick="carregarConfigVendas()">Atualizar lista</button>
           </div>
           <small id="vendasConfigResumo" class="hint">Carregando configuracao de vendas...</small>
@@ -3165,12 +3218,12 @@
           <small id="vendasConfigFonte" class="hint">Fonte atual: -</small>
           <small id="vendasConfigRegras" class="hint">Arquivo de regras: Relatorios/config-rel-vendas.</small>
           <small id="vendasConfigGrupos" class="hint">Grupos normalizados e descartes de importacao serao exibidos aqui.</small>
-          <small class="hint">Fluxo atual: importa CSV ou XLSX, processa o cache mensal e a tela passa a ler apenas o mês filtrado.</small>
+          <small id="vendasConfigFluxo" class="hint">Fluxo atual: importa CSV ou XLSX, processa o cache mensal e a tela passa a ler apenas o mês filtrado.</small>
         </div>
       </div>
       <div class="frotaGrid">
         <div class="boxFrota">
-          <h4>Arquivos importados</h4>
+          <h4>Base de vendas</h4>
           <div style="overflow:auto; max-height:340px;">
             <table>
               <thead>
@@ -3178,7 +3231,7 @@
                   <th>Em uso</th>
                   <th>Arquivo</th>
                   <th>Linhas</th>
-                  <th>Importado em</th>
+                  <th>Atualizado em</th>
                   <th>Status</th>
                   <th>Acoes</th>
                 </tr>
@@ -3475,12 +3528,15 @@
     </div>
   </div>
 
-  <button id="chatFab" class="chat-fab" type="button" onclick="toggleChatPopup()">
-    Comunicacao
+  <button id="chatFab" class="chat-fab" type="button" onclick="toggleChatPopup()" aria-label="Abrir comunicacao" title="Comunicacao" aria-controls="chatWidget" aria-expanded="false">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5H4l-3 3V11.5a10 10 0 0 1 20 0Z"/><path d="M7 10h8M7 14h5"/></svg>
     <span id="chatFabBadge" class="chat-fab-badge hidden">0</span>
   </button>
+  <button id="backToTop" class="back-to-top" type="button" onclick="voltarAoTopo()" aria-label="Voltar ao topo" title="Voltar ao topo">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 7-7 7 7M12 5v15"/></svg>
+  </button>
 
-  <div id="chatWidget" class="chat-widget hidden">
+  <div id="chatWidget" class="chat-widget hidden" role="dialog" aria-label="Comunicacao" data-communication-tab="chat">
     <div class="chat-widget-header">
       <div class="chat-widget-brand">
         <div id="chatUserAvatar" class="chat-avatar">RB</div>
@@ -3490,16 +3546,24 @@
         </div>
       </div>
       <div class="chat-widget-actions">
-        <button type="button" class="btn-secondary" onclick="abrirAgentIaDoChat()">Agent IA</button>
         <button type="button" class="btn-secondary" onclick="toggleChatPopup(false)">Minimizar</button>
       </div>
     </div>
 
-    <div class="chat-shell">
+    <div class="communication-tabs" role="tablist" aria-label="Opcoes de comunicacao">
+      <button id="communicationTabChat" type="button" role="tab" aria-selected="true" aria-controls="communicationChatPanel" data-communication-tab="chat" onclick="setCommunicationTab('chat')">Chat</button>
+      <button id="communicationTabIa" type="button" role="tab" aria-selected="false" aria-controls="communicationChatPanel agentia" data-communication-tab="ia" onclick="setCommunicationTab('ia')">IA</button>
+      <button id="communicationTabTelefonia" type="button" role="tab" aria-selected="false" aria-controls="communicationPhonePanel" data-communication-tab="telefonia" onclick="setCommunicationTab('telefonia')">Telefonia<span id="communicationCallBadge" class="hidden" aria-live="polite"> · Chamada</span></button>
+    </div>
+    <div id="communicationIaOptions" class="communication-ia-options hidden" aria-label="Funcoes de IA">
+      <button type="button" data-communication-ia="conversa" onclick="setCommunicationTab('ia', 'conversa')">Conversa IA</button>
+      <button type="button" data-communication-ia="agent" onclick="setCommunicationTab('ia', 'agent')">Agent IA</button>
+    </div>
+    <div id="communicationChatPanel" class="chat-shell" role="tabpanel" aria-labelledby="communicationTabChat">
       <aside class="chat-sidebar">
         <div class="chat-sidebar-top">
           <div class="chat-sidebar-heading">Conversas</div>
-          <div class="chat-sidebar-caption">Escolha um contato para trocar mensagens ou iniciar uma ligacao SIP.</div>
+          <div class="chat-sidebar-caption">Escolha um contato para trocar mensagens e anexos.</div>
         </div>
         <div id="chatContatosLista" class="chat-contatos-lista"></div>
       </aside>
@@ -3511,51 +3575,12 @@
               <div id="chatContatoAvatar" class="chat-avatar">--</div>
               <div class="chat-main-contact-text">
                 <div id="chatContatoAtualNome" class="chat-main-title">Selecione um contato</div>
-                <div id="chatContatoAtualStatus" class="chat-main-subtitle">Abra uma conversa para enviar mensagens ou usar SIP.</div>
+                <div id="chatContatoAtualStatus" class="chat-main-subtitle">Abra uma conversa para enviar mensagens.</div>
               </div>
             </div>
-            <div class="chat-sip-actions">
-              <button type="button" id="chatSipCallBtn" class="btn-secondary" onclick="iniciarChamadaSipChat()">Ligar SIP</button>
-              <button type="button" id="chatSipExternalToggleBtn" class="btn-secondary" onclick="toggleChatSipExternalPanel()">Discar externo</button>
-              <button type="button" id="chatSipAnswerBtn" class="btn-secondary hidden" onclick="atenderChamadaSip()">Atender</button>
-              <button type="button" id="chatSipRejectBtn" class="btn-secondary hidden" onclick="recusarChamadaSip()">Recusar</button>
-              <button type="button" id="chatSipHangupBtn" class="btn-secondary hidden" onclick="encerrarChamadaSip()">Encerrar</button>
-            </div>
+
           </div>
-          <div id="chatSipDialerWrap" class="chat-sip-dialer hidden">
-            <input type="text" id="chatSipManualNumber" inputmode="tel" autocomplete="off" placeholder="Numero externo, ramal ou URI SIP" oninput="atualizarEstadoSipChat()" onkeydown="if(event.key === 'Enter'){ event.preventDefault(); iniciarChamadaSipManual(); }">
-            <div class="chat-sip-dialer-actions">
-              <button type="button" id="chatSipManualCallBtn" class="btn-secondary" onclick="iniciarChamadaSipManual()">Ligar externo</button>
-              <button type="button" id="chatSipManualCloseBtn" class="btn-secondary" onclick="toggleChatSipExternalPanel(false)">Fechar</button>
-            </div>
-          </div>
-          <div id="chatSipStatus" class="chat-sip-status">SIP indisponível.</div>
-          <div id="chatSipActivePanel" class="chat-sip-active hidden">
-            <div class="chat-sip-active-row">
-              <div>
-                <div class="chat-sip-active-title">Chamada atual</div>
-                <div id="chatSipActiveLabel" class="chat-sip-active-label">Nenhuma chamada em andamento.</div>
-              </div>
-              <button type="button" id="chatSipHangupMainBtn" class="btn-secondary chat-sip-hangup-main" onclick="encerrarChamadaSip()">Finalizar</button>
-            </div>
-            <div id="chatSipDtmfPanel" class="chat-sip-dtmf hidden">
-              <div class="chat-sip-dtmf-grid">
-                <button type="button" data-sip-dtmf="1" onclick="enviarTomSip('1')">1</button>
-                <button type="button" data-sip-dtmf="2" onclick="enviarTomSip('2')">2</button>
-                <button type="button" data-sip-dtmf="3" onclick="enviarTomSip('3')">3</button>
-                <button type="button" data-sip-dtmf="4" onclick="enviarTomSip('4')">4</button>
-                <button type="button" data-sip-dtmf="5" onclick="enviarTomSip('5')">5</button>
-                <button type="button" data-sip-dtmf="6" onclick="enviarTomSip('6')">6</button>
-                <button type="button" data-sip-dtmf="7" onclick="enviarTomSip('7')">7</button>
-                <button type="button" data-sip-dtmf="8" onclick="enviarTomSip('8')">8</button>
-                <button type="button" data-sip-dtmf="9" onclick="enviarTomSip('9')">9</button>
-                <button type="button" data-sip-dtmf="*" onclick="enviarTomSip('*')">*</button>
-                <button type="button" data-sip-dtmf="0" onclick="enviarTomSip('0')">0</button>
-                <button type="button" data-sip-dtmf="#" onclick="enviarTomSip('#')">#</button>
-              </div>
-              <div id="chatSipDtmfFeedback" class="chat-sip-dtmf-feedback">O teclado aparece durante a chamada.</div>
-            </div>
-          </div>
+
         </div>
         <div id="chatMensagens" class="chat-mensagens"></div>
         <div class="chat-input-shell">
@@ -3569,6 +3594,100 @@
         </div>
       </div>
     </div>
+    <section id="agentia" class="communication-panel hidden" role="tabpanel" aria-labelledby="communicationTabIa">
+      <div class="agentia-shell">
+        <aside class="agentia-sidebar">
+          <div class="agentia-title">
+            <h2>Agent IA</h2>
+            <p>Converse com o assistente para consultar cards e executar rotinas do sistema.</p>
+          </div>
+          <button type="button" class="agentia-menu-btn active" data-agentia-option="kanban" onclick="agentIaMenu('kanban')">Kanban / Cargas</button>
+          <button type="button" class="agentia-menu-btn" data-agentia-option="devolucoes" onclick="agentIaMenu('devolucoes')">Devoluções</button>
+          <button type="button" class="agentia-menu-btn" data-agentia-option="status" onclick="agentIaMenu('status')">Status</button>
+          <button type="button" class="agentia-menu-btn" data-agentia-option="backup" onclick="agentIaMenu('backup')">Backup</button>
+          <button type="button" class="agentia-menu-btn" data-agentia-option="brief" onclick="agentIaMenu('brief')">Brief</button>
+          <button type="button" class="agentia-menu-btn" data-agentia-option="validate" onclick="agentIaMenu('validate')">Validação</button>
+          <button type="button" class="agentia-menu-btn" data-agentia-option="git" onclick="agentIaMenu('git')">Git</button>
+          <button type="button" class="agentia-menu-btn" data-agentia-option="deploy" onclick="agentIaMenu('deploy')">Deploy</button>
+          <div class="agentia-hint">
+            Exemplos:
+            <br>listar cargas
+            <br>mostrar caminhao 13
+            <br>mover status para carregado caminhao 13
+          </div>
+        </aside>
+
+        <div class="agentia-main">
+          <div class="agentia-workspace">
+            <div class="agentia-workspace-head">
+              <div>
+                <h3 id="agentIaWorkspaceTitle">Kanban / Cargas</h3>
+                <span id="agentIaWorkspaceMeta">Nenhum card carregado</span>
+              </div>
+              <button type="button" class="btn-secondary" onclick="agentIaSendAction({name:'refresh_fretes', label:'Atualizar kanban'})">Atualizar</button>
+            </div>
+            <div id="agentIaSelectedCard" class="agentia-selected-card"></div>
+            <div id="agentIaCardGrid" class="agentia-card-grid"></div>
+          </div>
+
+          <div id="agentIaChat" class="agentia-chat"></div>
+
+          <form class="agentia-form" onsubmit="agentIaEnviarPergunta(event)">
+            <div class="agentia-command-field">
+              <textarea id="agentIaInput" placeholder="Pergunte, digite ou fale um comando..."></textarea>
+              <small id="agentIaVoiceStatus" class="agentia-voice-status" aria-live="polite">Use o microfone, confira o texto reconhecido e clique em Enviar.</small>
+            </div>
+            <button id="agentIaVoiceBtn" class="agentia-voice-btn" type="button" onclick="agentIaToggleVoz()" aria-pressed="false" title="Falar comando em português">Falar</button>
+            <button id="agentIaSendBtn" type="submit">Enviar</button>
+          </form>
+        </div>
+      </div>
+    </section>
+    <section id="communicationPhonePanel" class="communication-panel communication-phone-panel hidden" role="tabpanel" aria-labelledby="communicationTabTelefonia">
+      <label for="communicationPhoneContact">Contato ou ramal</label>
+      <select id="communicationPhoneContact" onchange="chatState.phoneContactId = this.value; atualizarEstadoSipChat()"><option value="">Selecione um contato</option></select>
+      <div class="chat-sip-actions">
+        <button type="button" id="chatSipCallBtn" class="btn-secondary" onclick="iniciarChamadaSipChat()">Ligar SIP</button>
+        <button type="button" id="chatSipExternalToggleBtn" class="btn-secondary" onclick="toggleChatSipExternalPanel()">Discar externo</button>
+        <button type="button" id="chatSipAnswerBtn" class="btn-secondary hidden" onclick="atenderChamadaSip()">Atender</button>
+        <button type="button" id="chatSipRejectBtn" class="btn-secondary hidden" onclick="recusarChamadaSip()">Recusar</button>
+        <button type="button" id="chatSipHangupBtn" class="btn-secondary hidden" onclick="encerrarChamadaSip()">Encerrar</button>
+      </div>
+      <div id="chatSipDialerWrap" class="chat-sip-dialer hidden">
+        <input type="text" id="chatSipManualNumber" inputmode="tel" autocomplete="off" placeholder="Numero externo, ramal ou URI SIP" oninput="atualizarEstadoSipChat()" onkeydown="if(event.key === 'Enter'){ event.preventDefault(); iniciarChamadaSipManual(); }">
+        <div class="chat-sip-dialer-actions">
+          <button type="button" id="chatSipManualCallBtn" class="btn-secondary" onclick="iniciarChamadaSipManual()">Ligar externo</button>
+          <button type="button" id="chatSipManualCloseBtn" class="btn-secondary" onclick="toggleChatSipExternalPanel(false)">Fechar</button>
+        </div>
+      </div>
+      <div id="chatSipStatus" class="chat-sip-status">SIP indisponível.</div>
+      <div id="chatSipActivePanel" class="chat-sip-active hidden">
+        <div class="chat-sip-active-row">
+          <div>
+            <div class="chat-sip-active-title">Chamada atual</div>
+            <div id="chatSipActiveLabel" class="chat-sip-active-label">Nenhuma chamada em andamento.</div>
+          </div>
+          <button type="button" id="chatSipHangupMainBtn" class="btn-secondary chat-sip-hangup-main" onclick="encerrarChamadaSip()">Finalizar</button>
+        </div>
+        <div id="chatSipDtmfPanel" class="chat-sip-dtmf hidden">
+          <div class="chat-sip-dtmf-grid">
+            <button type="button" data-sip-dtmf="1" onclick="enviarTomSip('1')">1</button>
+            <button type="button" data-sip-dtmf="2" onclick="enviarTomSip('2')">2</button>
+            <button type="button" data-sip-dtmf="3" onclick="enviarTomSip('3')">3</button>
+            <button type="button" data-sip-dtmf="4" onclick="enviarTomSip('4')">4</button>
+            <button type="button" data-sip-dtmf="5" onclick="enviarTomSip('5')">5</button>
+            <button type="button" data-sip-dtmf="6" onclick="enviarTomSip('6')">6</button>
+            <button type="button" data-sip-dtmf="7" onclick="enviarTomSip('7')">7</button>
+            <button type="button" data-sip-dtmf="8" onclick="enviarTomSip('8')">8</button>
+            <button type="button" data-sip-dtmf="9" onclick="enviarTomSip('9')">9</button>
+            <button type="button" data-sip-dtmf="*" onclick="enviarTomSip('*')">*</button>
+            <button type="button" data-sip-dtmf="0" onclick="enviarTomSip('0')">0</button>
+            <button type="button" data-sip-dtmf="#" onclick="enviarTomSip('#')">#</button>
+          </div>
+          <div id="chatSipDtmfFeedback" class="chat-sip-dtmf-feedback">O teclado aparece durante a chamada.</div>
+        </div>
+      </div>
+    </section>
   </div>
   <audio id="sipRemoteAudio" autoplay playsinline hidden></audio>
   <input type="file" id="nfeOcrImagemInput" accept="image/*" capture="environment" hidden>

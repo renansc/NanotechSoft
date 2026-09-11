@@ -29486,10 +29486,10 @@ def _vendas_comparativo_anual(rows, titulo="PERCENTUAL DE VENDAS ANUAL", referen
     meses = [{
         "numero": idx,
         "label": ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"][idx - 1],
-    } for idx in range(1, 13)]
+    } for idx in range(1, referencia.month + 1)]
     valores = {
-        ano_atual: {idx: 0.0 for idx in range(1, 13)},
-        ano_anterior: {idx: 0.0 for idx in range(1, 13)},
+        ano_atual: {item["numero"]: 0.0 for item in meses},
+        ano_anterior: {item["numero"]: 0.0 for item in meses},
     }
     totais = {ano_atual: 0.0, ano_anterior: 0.0}
     for row in rows or []:
@@ -29499,23 +29499,62 @@ def _vendas_comparativo_anual(rows, titulo="PERCENTUAL DE VENDAS ANUAL", referen
         if data_ref.year not in valores:
             continue
         volume = _vendas_row_hectolitros(row)
+        if data_ref.month not in valores[data_ref.year]:
+            continue
         valores[data_ref.year][data_ref.month] += volume
         totais[data_ref.year] += volume
 
     atual = [round(valores[ano_atual][m["numero"]], 3) for m in meses]
     anterior = [round(valores[ano_anterior][m["numero"]], 3) for m in meses]
     percentual = []
-    for i in range(12):
+    comparativo_mensal = []
+    for i in range(len(meses)):
         base = anterior[i]
         pct = round(((atual[i] - base) / base) * 100.0, 2) if base > 0 else 0.0
         percentual.append(pct)
+        diferenca = round(atual[i] - base, 3)
+        if base <= 0 and atual[i] > 0:
+            movimento = "sem_base"
+            percentual_real = None
+        elif diferenca > 0:
+            movimento = "acrescimo"
+            percentual_real = pct
+        elif diferenca < 0:
+            movimento = "decrescimo"
+            percentual_real = pct
+        else:
+            movimento = "estavel"
+            percentual_real = pct if base > 0 else None
+        comparativo_mensal.append({
+            "mes": meses[i]["numero"],
+            "label": meses[i]["label"],
+            "volume_atual": atual[i],
+            "volume_anterior": anterior[i],
+            "diferenca_volume": diferenca,
+            "variacao_percentual": percentual_real,
+            "movimento": movimento,
+        })
     total_pct = round(((totais[ano_atual] - totais[ano_anterior]) / totais[ano_anterior]) * 100.0, 2) if totais[ano_anterior] > 0 else 0.0
+    diferenca_total = round(totais[ano_atual] - totais[ano_anterior], 3)
+    if totais[ano_anterior] <= 0 and totais[ano_atual] > 0:
+        movimento_total = "sem_base"
+        percentual_total_real = None
+    elif diferenca_total > 0:
+        movimento_total = "acrescimo"
+        percentual_total_real = total_pct
+    elif diferenca_total < 0:
+        movimento_total = "decrescimo"
+        percentual_total_real = total_pct
+    else:
+        movimento_total = "estavel"
+        percentual_total_real = total_pct if totais[ano_anterior] > 0 else None
 
     return {
         "titulo": titulo,
         "ano_atual": ano_atual,
         "ano_anterior": ano_anterior,
         "meses": meses,
+        "comparativo_mensal": comparativo_mensal,
         "linhas": [
             {
                 "rotulo": str(ano_atual),
@@ -29537,6 +29576,9 @@ def _vendas_comparativo_anual(rows, titulo="PERCENTUAL DE VENDAS ANUAL", referen
             "total_atual": round(totais[ano_atual], 3),
             "total_anterior": round(totais[ano_anterior], 3),
             "variacao_total": total_pct,
+            "diferenca_volume": diferenca_total,
+            "variacao_percentual": percentual_total_real,
+            "movimento": movimento_total,
         },
     }
 
@@ -33476,23 +33518,43 @@ def _coletar_relatorio_vendas_volume_diario_vendedor(filtro_vendedor="", filtro_
     }
 
 def _coletar_relatorio_vendas_percentual_vendas_anual(filtro_vendedor="", filtro_cliente="", data_inicio=None, data_fim=None):
+    cache_entry, source, cfg = _vendas_obter_cache_ativo(force_refresh=False)
     rows_base, _ = _vendas_relatorio_base_rows(data_inicio, data_fim)
+    vendedores, clientes_disponiveis = _vendas_publicar_opcoes_relatorio(rows_base)
     filas = _vendas_rows_filtradas_base(rows_base, filtro_vendedor, filtro_cliente)
-    anual = _vendas_comparativo_anual(filas, "PERCENTUAL DE VENDAS ANUAL")
+    datas_referencia = [
+        row.get("data_ref") for row in rows_base
+        if isinstance(row.get("data_ref"), datetime.date)
+    ]
+    referencia = max(datas_referencia) if datas_referencia else None
+    anual = _vendas_comparativo_anual(filas, "PERCENTUAL DE VENDAS ANUAL", referencia=referencia)
     return {
-        "arquivo": {"nome": "", "tamanho_bytes": 0, "atualizado_em": ""},
+        "arquivo": {
+            "nome": _as_str(source.get("name")) or os.path.basename(_as_str(cache_entry.get("source_path"))),
+            "tamanho_bytes": _as_int(source.get("size"), _as_int(cache_entry.get("source_size"), 0)),
+            "atualizado_em": _as_str(source.get("mtime")) or _fmt_dt(cache_entry.get("source_mtime")),
+        },
         "filtros": {
             "vendedor": _as_str(filtro_vendedor).upper(),
             "cliente": _as_str(filtro_cliente).upper(),
             "data_inicio": _fmt_date(data_inicio),
             "data_fim": _fmt_date(data_fim),
         },
+        "cache": _vendas_cache_entry_publico(cache_entry),
+        "fonte": {
+            "source_type": _as_str(cfg.get("source_type")),
+            "ready": True,
+            "message": "",
+        },
         "relatorio_tipo": "percentual_vendas_anual",
         "resumo_geral": anual["resumo"],
         "meses": anual["meses"],
+        "comparativo_mensal": anual["comparativo_mensal"],
         "linhas": anual["linhas"],
         "ano_atual": anual["ano_atual"],
         "ano_anterior": anual["ano_anterior"],
+        "vendedores": vendedores,
+        "clientes_disponiveis": clientes_disponiveis,
     }
 
 def _coletar_relatorio_vendas_percentual_vendas_grupo_anual(filtro_vendedor="", filtro_cliente="", data_inicio=None, data_fim=None):
@@ -35903,6 +35965,53 @@ def vendas_orcamentos_api():
     except ValueError as exc:
         conn.rollback()
         return jsonify({"erro": str(exc)}), 400
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.get("/api/vendas/orcamentos/relatorio")
+def vendas_orcamentos_relatorio_api():
+    conditions, params = [], []
+    for key, operator in (("inicio", ">="), ("fim", "<=")):
+        value = request.args.get(key, "").strip()
+        if value:
+            try:
+                value = datetime.date.fromisoformat(value)
+            except ValueError:
+                return jsonify({"erro": "Data invalida."}), 400
+            conditions.append(f"data_ref {operator} %s")
+            params.append(value)
+    if len(params) == 2 and params[0] > params[1]:
+        return jsonify({"erro": "A data inicial deve ser anterior a final."}), 400
+    query = request.args.get("q", "").strip()[:180]
+    if query:
+        conditions.append("(cliente_nome LIKE %s OR cidade LIKE %s OR vendedor_nome LIKE %s OR vendedor_identificacao LIKE %s)")
+        params.extend([f"%{query}%"] * 4)
+    where = " WHERE " + " AND ".join(conditions) if conditions else ""
+    page = max(1, _as_int(request.args.get("pagina"), 1))
+    limit = 50
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute("SELECT COUNT(*) AS total, COALESCE(SUM(valor_real), 0) AS valor_real FROM vendas_orcamentos" + where, tuple(params))
+        summary = cur.fetchone() or {}
+        total = _as_int(summary.get("total"), 0)
+        page = min(page, max(1, (total + limit - 1) // limit))
+        cur.execute("""SELECT id, data_ref, cliente_nome, cidade, vendedor_nome,
+                       vendedor_identificacao, valor_bruto, valor_liquido, valor_real
+                       FROM vendas_orcamentos""" + where + " ORDER BY id DESC LIMIT %s OFFSET %s",
+                    tuple(params) + (limit, (page - 1) * limit))
+        rows = []
+        for row in cur.fetchall() or []:
+            rows.append({
+                **row, "codigo": _vendas_orcamento_codigo(row["id"], row.get("data_ref")),
+                "data_ref": _fmt_date(row.get("data_ref")),
+                **{key: _vendas_orcamento_numero_publico(row.get(key), 2)
+                   for key in ("valor_bruto", "valor_liquido", "valor_real")},
+            })
+        return jsonify({"orcamentos": rows, "total": total, "pagina": page, "limite": limit,
+                        "valor_real": _vendas_orcamento_numero_publico(summary.get("valor_real"), 2)})
     finally:
         cur.close()
         conn.close()

@@ -4,9 +4,9 @@
 <div class="app-shell">
   {% set topbar_title = "NanotechSoft" %}
   {% set topbar_subtitle = "Portal de apps" %}
-  {% include "_topbar.html" %}
   {% set active_page = 'portal' %}
-  {% include "_menu.html" %}
+  {% include "_topbar.html" %}
+
 
   <main class="content">
     <section class="portal-head">
@@ -14,9 +14,6 @@
         <h2>Menu principal</h2>
         <p>Apps instalados dinamicamente em uma base Flask e MySQL.</p>
       </div>
-      {% if not deployment.readOnly %}
-        <a class="action-link" href="{{ url_for('config_page') }}">Configurar temas</a>
-      {% endif %}
     </section>
 
     {% if deployment.readOnly and deployment.cacheClients %}
@@ -34,7 +31,7 @@
     <section class="apps-grid" aria-label="Apps instalados">
       {% if apps %}
         {% for item in apps %}
-          <a class="app-card" href="{{ item.standalone_url or item.url }}" target="_blank" rel="noopener noreferrer">
+          <a class="app-card" href="{{ item.url }}">
             <span class="app-icon">{{ item.nome[:2].upper() }}</span>
             <strong>{{ item.nome }}</strong>
             <small>{{ item.descricao or "App instalado no portal" }}</small>

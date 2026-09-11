@@ -83,3 +83,7 @@ backup de dados do servidor separadamente do código.
 - `GET /apps/chamados/api/documents/<id>/download`: arquivo ou link protegido.
 
 O login e as permissões são sempre os do portal.
+
+## Menu Rio Branco
+
+No perfil `rio-branco`, Indicadores ficam em Dash, Manuais e Documentacoes em Cadastro, Historico de Solucoes em Relatorio, Chamados e Manutencoes em Workflow e Agenda de Tarefas em Gestao. Rotas e recursos existentes sao preservados; consulte `docs/MENU_RIO_BRANCO_PDF.md`.

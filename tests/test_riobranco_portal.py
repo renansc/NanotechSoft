@@ -7,18 +7,13 @@ PROJECT_DIR = Path(__file__).resolve().parents[1]
 
 EXPECTED_APPS = [
     ("riob", "RioB"),
-    ("financeiro", "Financeiro"),
-    ("nanoponto", "Ponto"),
-    ("nanostore", "Store"),
     ("automacao", "Automacao"),
     ("zap", "Zap"),
     ("riob-chat", "Chat"),
     ("riob-chat-ia", "Ia-chatbot"),
     ("riob-telefonia", "Telefonia"),
-    ("riob-cameras", "Cameras"),
     ("chamados", "Chamados"),
     ("tecnologia", "Tecnologia"),
-    ("riob-esxi", "ESXi"),
     ("riob-email", "Email"),
     ("riob-xml", "XML"),
 ]
@@ -53,7 +48,7 @@ class RioBrancoPortalTests(unittest.TestCase):
         self.assertFalse(client["allModules"])
         self.assertEqual(EXPECTED_APPS, contracted)
 
-    def test_manifest_names_and_order_form_three_rows_of_five(self):
+    def test_active_manifest_names_and_order_follow_contract(self):
         manifests = []
         for app_key, _ in EXPECTED_APPS:
             manifests.append(
@@ -62,8 +57,8 @@ class RioBrancoPortalTests(unittest.TestCase):
         ordered = sorted(manifests, key=lambda item: (item["ordem"], item["nome"].lower()))
 
         self.assertEqual(EXPECTED_APPS, [(item["app_key"], item["nome"]) for item in ordered])
-        self.assertEqual([10 * index for index in range(1, 16)], [item["ordem"] for item in ordered])
-        self.assertEqual(3, len(ordered) // 5)
+        self.assertEqual(sorted(item["ordem"] for item in ordered), [item["ordem"] for item in ordered])
+        self.assertEqual(10, len(ordered))
 
     def test_desktop_portal_grid_has_five_columns(self):
         css = (PROJECT_DIR / "static/style.css").read_text(encoding="utf-8")

@@ -60,14 +60,36 @@ function bindMenu() {
   const menu = qs("[data-menu]");
   const overlay = qs("[data-menu-overlay]");
   const toggle = qs("[data-menu-toggle]");
+  const topbar = toggle?.closest(".topo");
   function open(next) {
     if (!menu || !overlay) return;
     menu.classList.toggle("show", next);
     overlay.classList.toggle("show", next);
     document.body.classList.toggle("menu-open", next);
+    toggle?.setAttribute("aria-expanded", String(next));
+    toggle?.setAttribute("aria-label", next ? "Fechar menu" : "Abrir menu");
   }
   toggle?.addEventListener("click", () => open(!menu.classList.contains("show")));
   overlay?.addEventListener("click", () => open(false));
+  menu?.addEventListener("click", (event) => {
+    if (event.target.closest("a, [data-logout]")) open(false);
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && menu?.classList.contains("show")) {
+      open(false);
+      toggle?.focus();
+    }
+  });
+  if (!topbar || !menu) return;
+  function fitMenu() {
+    topbar.classList.remove("compact-menu");
+    const compact = window.innerWidth <= 760 || menu.scrollWidth > menu.clientWidth;
+    topbar.classList.toggle("compact-menu", compact);
+    if (!compact) open(false);
+  }
+  new ResizeObserver(fitMenu).observe(topbar);
+  document.fonts?.ready.then(fitMenu);
+  fitMenu();
 }
 
 function syncMenuSection() {
@@ -192,13 +214,21 @@ function syncMenuSection() {
     };
     section = riobSections[hash] || section;
   }
+  // O destino efetivo identifica o modulo mesmo nas antigas rotas por tarefa.
+  const current = new URL(window.location.href);
+  const matchingLink = [...document.querySelectorAll("[data-menu] .submenu-item[href]")].find((link) => {
+    const target = new URL(link.href, current);
+    return target.pathname === current.pathname && target.search === current.search && target.hash === current.hash;
+  });
+  if (matchingLink) section = matchingLink.closest("[data-menu-section]")?.dataset.menuSection || section;
+  if (!section && current.pathname.startsWith("/apps/")) section = "module-" + current.pathname.split("/")[2];
   if (!section) return;
   document.querySelectorAll("[data-menu-section]").forEach((item) => {
     item.classList.toggle("active", item.dataset.menuSection === section);
   });
 }
 
-// Sincroniza tanto o seletor da pagina Config quanto o atalho de tema do topo.
+// A escolha de tema fica somente na pagina Config.
 function bindTheme() {
   const button = qs("[data-save-theme]");
   if (button) {
@@ -206,46 +236,14 @@ function bindTheme() {
       const tema = qs("#temaSelect")?.value || "rio_branco";
       setMessage("#themeMsg", "Salvando...", "");
       try {
-        const data = await saveTheme(tema);
+        await saveTheme(tema);
         setMessage("#themeMsg", "Tema salvo.", "ok");
-        setActiveThemeOptions(data.tema);
       } catch (err) {
         setMessage("#themeMsg", err.message, "error");
       }
     });
   }
 
-  document.querySelectorAll("[data-theme-toggle]").forEach((toggle) => {
-    toggle.addEventListener("click", (event) => {
-      event.stopPropagation();
-      const wrap = toggle.closest("[data-theme-switcher]");
-      document.querySelectorAll("[data-theme-switcher].open").forEach((item) => {
-        if (item !== wrap) item.classList.remove("open");
-      });
-      wrap?.classList.toggle("open");
-    });
-  });
-
-  document.querySelectorAll("[data-theme-option]").forEach((option) => {
-    option.addEventListener("click", async (event) => {
-      event.stopPropagation();
-      if (option.disabled) return;
-      const tema = option.dataset.themeOption || "rio_branco";
-      try {
-        const data = await saveTheme(tema);
-        setActiveThemeOptions(data.tema);
-        option.closest("[data-theme-switcher]")?.classList.remove("open");
-      } catch (err) {
-        alert(err.message);
-      }
-    });
-  });
-
-  document.addEventListener("click", () => {
-    document.querySelectorAll("[data-theme-switcher].open").forEach((item) => {
-      item.classList.remove("open");
-    });
-  });
 }
 
 // Salva o tema no backend e troca somente a classe theme-* do body.
@@ -258,12 +256,6 @@ async function saveTheme(tema) {
   const select = qs("#temaSelect");
   if (select) select.value = data.tema;
   return data;
-}
-
-function setActiveThemeOptions(tema) {
-  document.querySelectorAll("[data-theme-option]").forEach((option) => {
-    option.classList.toggle("active", option.dataset.themeOption === tema);
-  });
 }
 
 function bindPortalBackup() {
@@ -335,10 +327,33 @@ function bindUserAdmin() {
   const userSelect = root.querySelector("[data-user-select]");
   const profileSelect = root.querySelector("[data-user-store-profile]");
   const deleteButton = root.querySelector("[data-user-delete]");
-  let state = { usuarios: [], nanostore_perfis: [] };
+  let state = { usuarios: [], nanostore_perfis: [], catalogo_acessos: [] };
+  let creating = false;
+  const permissionsList = root.querySelector("[data-user-permissions-list]");
+  function renderPermissions(user) {
+    permissionsList.replaceChildren();
+    for (const module of state.catalogo_acessos || []) {
+      const section = document.createElement("fieldset");
+      const legend = document.createElement("legend");
+      legend.textContent = module.nome;
+      section.append(legend);
+      for (const resource of module.recursos) {
+        const label = document.createElement("label");
+        label.className = "inline-check";
+        const input = document.createElement("input");
+        input.type = "checkbox";
+        input.dataset.accessApp = module.app_key;
+        input.dataset.accessResource = resource.key;
+        input.checked = (user.permissoes?.[module.app_key] || []).includes(resource.key);
+        label.append(input, document.createTextNode(resource.nome));
+        section.append(label);
+      }
+      permissionsList.append(section);
+    }
+  }
 
   function selectedUser() {
-    return state.usuarios.find((item) => String(item.id) === userSelect.value) || state.usuarios[0] || null;
+    return creating ? { ativo: true, perfil: "usuario", permissoes: {} } : state.usuarios.find((item) => String(item.id) === userSelect.value) || state.usuarios[0] || null;
   }
 
   function fillForm() {
@@ -350,10 +365,12 @@ function bindUserAdmin() {
     form.elements.nanostore_perfil.value = user.nanostore_perfil || "";
     form.elements.senha.value = "";
     form.elements.ativo.checked = Boolean(user.ativo);
+    deleteButton.disabled = creating;
+    renderPermissions(user);
   }
 
   function render() {
-    const selectedId = userSelect.value;
+    const selectedId = userSelect.value || root.dataset.currentUser;
     userSelect.replaceChildren(...state.usuarios.map((user) => new Option(
       `${user.nome} (${user.login})`, String(user.id), false, String(user.id) === selectedId
     )));
@@ -373,7 +390,14 @@ function bindUserAdmin() {
     render();
   }
 
+  root.querySelector("[data-user-new]")?.addEventListener("click", () => { creating = true; fillForm(); });
+  qs("[data-edit-current-user]")?.addEventListener("click", (event) => {
+    creating = false;
+    userSelect.value = event.currentTarget.dataset.editCurrentUser;
+    fillForm();
+  });
   userSelect?.addEventListener("change", () => {
+    creating = false;
     setMessage("#userAdminMsg", "", "");
     fillForm();
   });
@@ -390,18 +414,23 @@ function bindUserAdmin() {
       senha: form.elements.senha.value,
       ativo: form.elements.ativo.checked,
     };
+    payload.permissoes = {};
+    for (const input of permissionsList.querySelectorAll("input:checked")) {
+      (payload.permissoes[input.dataset.accessApp] ||= []).push(input.dataset.accessResource);
+    }
     setMessage("#userAdminMsg", "Salvando...", "");
     try {
-      const resp = await fetch(`/api/usuarios/${user.id}`, {
-        method: "PUT",
+      const resp = await fetch(creating ? "/api/usuarios" : `/api/usuarios/${user.id}`, {
+        method: creating ? "POST" : "PUT",
         headers: { Accept: "application/json", "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) throw new Error(data.erro || "Falha ao salvar usuario");
       state = data;
+      creating = false;
       render();
-      setMessage("#userAdminMsg", "Usuario atualizado.", "ok");
+      setMessage("#userAdminMsg", "Usuario salvo.", "ok");
     } catch (err) {
       setMessage("#userAdminMsg", err.message, "error");
     }

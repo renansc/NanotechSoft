@@ -1,0 +1,77 @@
+{% extends 'base.html' %}
+
+{% block content %}
+
+<div class="no-print actions">
+    <a href="/maquinas/{{ maquina.slug }}">Monitoramento</a>
+    <a href="/static/{{ maquina.documentacao.arquivo }}" target="_blank">Manual fotografado</a>
+    <button type="button" onclick="window.print()">Imprimir guia</button>
+</div>
+
+<article>
+    <h1>{{ maquina.documentacao.titulo }}</h1>
+    <p>{{ maquina.resumo }}</p>
+
+    <div class="notice">
+        Este guia facilita consulta e integração. O manual original do
+        fabricante, os diagramas e as regras de segurança da fábrica continuam
+        sendo a fonte principal para operação e manutenção.
+    </div>
+
+    <section class="card">
+        <h2>Identificação e especificações confirmadas</h2>
+        <div class="spec-grid">
+        {% for nome, valor in maquina.especificacoes %}
+            <div class="spec-item"><b>{{ nome }}</b><br>{{ valor }}</div>
+        {% endfor %}
+        </div>
+        <p class="machine-meta">{{ maquina.documentacao.fontes }}</p>
+    </section>
+
+    <section class="card">
+        <h2>Operação e integração</h2>
+        <ul class="documentation-list">
+        {% for item in maquina.documentacao.operacao %}<li>{{ item }}</li>{% endfor %}
+        </ul>
+    </section>
+
+    <section class="card">
+        <h2>Plano de monitoramento</h2>
+        <table>
+            <thead><tr><th>Grupo</th><th>Ponto</th><th>Unidade</th><th>Origem</th></tr></thead>
+            <tbody>
+            {% for ponto in maquina.pontos %}
+                <tr>
+                    <td>{{ ponto.grupo }}</td>
+                    <td>{{ ponto.nome }}</td>
+                    <td>{{ ponto.unidade or 'estado' }}</td>
+                    <td>{{ ponto.origem }}</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </section>
+
+    <section class="card">
+        <h2>Manutenção</h2>
+        <ul class="documentation-list">
+        {% for item in maquina.documentacao.manutencao %}<li>{{ item }}</li>{% endfor %}
+        </ul>
+    </section>
+
+    <section class="card">
+        <h2>Segurança</h2>
+        <ul class="documentation-list">
+        {% for item in maquina.documentacao.seguranca %}<li>{{ item }}</li>{% endfor %}
+        </ul>
+    </section>
+
+    <section class="card">
+        <h2>Pendências para a integração definitiva</h2>
+        <ul class="documentation-list">
+        {% for item in maquina.documentacao.lacunas %}<li>{{ item }}</li>{% endfor %}
+        </ul>
+    </section>
+</article>
+
+{% endblock %}

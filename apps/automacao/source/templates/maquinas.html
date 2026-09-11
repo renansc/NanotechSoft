@@ -1,0 +1,40 @@
+{% extends 'base.html' %}
+
+{% block content %}
+
+<h1>Máquinas</h1>
+
+<p>
+Monitoramento industrial por equipamento. Os pontos ficam preparados para
+receber telemetria de um gateway sem comandar ou alterar o CLP da máquina.
+</p>
+
+<div class="machine-grid">
+{% for maquina in maquinas %}
+{% set ficha = catalogo.get(maquina.slug) %}
+<article class="card machine-card">
+    <div class="machine-status-row">
+        <h2>{{ maquina.nome }}</h2>
+        <span class="status status-{{ maquina.ultimo_status }}">
+            {{ maquina.ultimo_status }}
+        </span>
+    </div>
+    <p class="machine-meta">
+        {{ maquina.fabricante }}<br>
+        <b>Modelo:</b> {{ maquina.modelo }}
+        {% if maquina.numero_serie %} · <b>Série:</b> {{ maquina.numero_serie }}{% endif %}<br>
+        <b>Setor:</b> {{ maquina.setor }} · <b>Pontos:</b> {{ maquina.pontos_total }}<br>
+        <b>Último contato:</b> {{ maquina.ultimo_contato or 'aguardando integração' }}
+    </p>
+    <p>{{ maquina.resumo }}</p>
+    <div class="actions">
+        <a href="/maquinas/{{ maquina.slug }}">Abrir monitoramento</a>
+        {% if ficha %}
+        <a href="/documentacao/{{ maquina.slug }}">Guia técnico</a>
+        {% endif %}
+    </div>
+</article>
+{% endfor %}
+</div>
+
+{% endblock %}

@@ -5,27 +5,12 @@
       "nome": "Rio Branco",
       "status": "ativo",
       "databaseKey": "riobranco",
-      "observacao": "Deploy de producao da Rio Branco com 15 modulos organizados no portal.",
+      "observacao": "Menu por tarefa conforme menu.pdf. Financeiro, Ponto, Store, Cameras e ESXi desativados neste deploy; comunicacao permanece no popup.",
       "allModules": false,
       "modules": [
         {
           "slug": "riob",
           "nome": "RioB",
-          "status": "contratado"
-        },
-        {
-          "slug": "financeiro",
-          "nome": "Financeiro",
-          "status": "contratado"
-        },
-        {
-          "slug": "nanoponto",
-          "nome": "Ponto",
-          "status": "contratado"
-        },
-        {
-          "slug": "nanostore",
-          "nome": "Store",
           "status": "contratado"
         },
         {
@@ -54,11 +39,6 @@
           "status": "contratado"
         },
         {
-          "slug": "riob-cameras",
-          "nome": "Cameras",
-          "status": "contratado"
-        },
-        {
           "slug": "chamados",
           "nome": "Chamados",
           "status": "contratado"
@@ -66,11 +46,6 @@
         {
           "slug": "tecnologia",
           "nome": "Tecnologia",
-          "status": "contratado"
-        },
-        {
-          "slug": "riob-esxi",
-          "nome": "ESXi",
           "status": "contratado"
         },
         {

@@ -12,7 +12,8 @@ class PortalAppPermissionsTests(unittest.TestCase):
         self.ensure_database.start()
         self.addCleanup(self.ensure_database.stop)
 
-    def test_usuario_so_acessa_app_liberado(self):
+    @mock.patch.object(portal, "allowed_app_keys", return_value={"nanostore", "automacao"})
+    def test_usuario_so_acessa_app_liberado(self, _deployment):
         usuario = {
             "id": 5,
             "nome": "Senhor",
@@ -202,6 +203,7 @@ class PortalAppPermissionsTests(unittest.TestCase):
             {"nome": "Orçamento", "url": "/apps/riob#vendas:orcamento"},
             {"nome": "Relatório", "url": "/apps/riob#vendas:relatorio"},
         ]
+        menu["modules"] = [{"key": "riob", "nome": "RioB", "entries": [{**item, "grupo": "Vendas"} for item in menu["vendas"]]}]
         with portal.app.test_request_context("/apps/riob#vendas:orcamento"):
             html = portal.render_template(
                 "_menu.html",
@@ -210,7 +212,7 @@ class PortalAppPermissionsTests(unittest.TestCase):
                 usuario={"id": 1, "perfil": "admin"},
             )
 
-        self.assertIn('data-menu-section="vendas"', html)
+        self.assertIn('data-menu-section="module-riob"', html)
         self.assertIn("Vendas", html)
         self.assertIn("Orçamento", html)
         frontend = (Path(__file__).resolve().parents[1] / "static/app.js").read_text(encoding="utf-8")
@@ -232,7 +234,7 @@ class PortalAppPermissionsTests(unittest.TestCase):
 
         self.assertIn("/apps/riob#workflow:vendas_diario", workflow_urls)
         self.assertEqual(
-            {"/apps/riob#vendas:orcamento", "/apps/riob#vendas:relatorio"},
+            {"/apps/riob#vendas:orcamento"},
             vendas_urls,
         )
         self.assertEqual({"vendas"}, {item.get("recurso") for item in groups["vendas"]})
@@ -246,7 +248,7 @@ class PortalAppPermissionsTests(unittest.TestCase):
             import_items["Importar Vendas Diario"],
         )
         self.assertIn(
-            {"nome": "Estoque Comprometido RioB", "url": "/apps/riob#relatorios:estoque_comprometido"},
+            {"nome": "Estoque Comprometido RioB", "url": "/apps/riob#relatorios:estoque_comprometido", "recurso": "estoque"},
             groups["relatorios"],
         )
         self.assertIn("/apps/riob#cadastros:estoque_produtos", cadastro_urls)

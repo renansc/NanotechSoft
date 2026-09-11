@@ -20,5 +20,43 @@
         "url": "/apps/riob#config:nfe"
       }
     ]
+  },
+  "menu_profiles": {
+    "rio-branco": {
+      "menu_groups": {
+        "cadastros": [
+          {
+            "nome": "Configuracao da empresa",
+            "url": "/apps/riob-xml/riob/config",
+            "recurso": "*"
+          }
+        ],
+        "estoque": [
+          {
+            "nome": "Estoque de XMLs recebidos",
+            "url": "/apps/riob-xml/riob/estoque",
+            "recurso": "*"
+          },
+          {
+            "nome": "Abastecimentos de XMLs recebidos",
+            "url": "/apps/riob-xml/riob/abastecimentos",
+            "recurso": "*"
+          }
+        ],
+        "gestao": [
+          {
+            "nome": "Arquivos XML",
+            "url": "/apps/riob-xml/riob/arquivos",
+            "recurso": "*"
+          },
+          {
+            "nome": "Revisao de abastecimentos",
+            "url": "/apps/riob-xml/riob/abastecimentos?visao=revisao",
+            "recurso": "*"
+          }
+        ]
+      },
+      "config_groups": {}
+    }
   }
 }

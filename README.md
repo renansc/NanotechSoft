@@ -279,3 +279,68 @@ Na tela **Importar Extrato**, o histórico de importações permite trocar a con
 Na **Conciliação**, os matches confirmados são a fonte única do vínculo banco-lançamento. As criações em lote ignoram transações já vinculadas ou com candidato similar, e títulos não podem tomar uma transação pertencente a outro lançamento. Ao carregar estados gravados por versões anteriores, o app restaura vínculos parciais e cancela somente títulos/lançamentos comprovadamente duplicados que tenham sido gerados do próprio extrato.
 
 O tema padrao do portal continua sendo `Rio Branco`. O tema original do financeiro fica disponivel como `Fin Blue`; nenhum deles e aplicado automaticamente ao abrir um app.
+
+## Login, menus e acessos obrigatorios
+
+- Somente Nanotech e Render apresentam o portal de aplicativos. Os demais
+  deploys abrem a aplicacao contratada apos o login unico; Rio Branco abre RioB.
+- A autenticacao e a sessao continuam centralizadas no NanotechSoft, inclusive
+  quando a tela inicial e a aplicacao. Nao criar login paralelo nos modulos.
+- Config > Usuarios e acessos e o cadastro central de pessoas e autorizacoes.
+  Os menus e o catalogo de funcoes usam os mesmos recursos dos manifests.
+- Sempre que criar, alterar, mover ou remover uma funcao/modulo/rota, atualizar
+  a documentacao afetada e o catalogo de acesso dos usuarios no mesmo trabalho.
+  Revisar `recurso` no manifest, verificacoes no servidor, menus e testes de
+  usuario autorizado e nao autorizado. Ocultar menu nao substitui autorizacao.
+- Atualizar o catalogo nao significa conceder acessos automaticamente: preservar
+  as escolhas existentes; novas funcoes exigem liberacao em Config (ou acesso
+  integral explicitamente concedido ao modulo).
+- Nanotech e Render compartilham o codigo de navegacao. Espelhamento de dados
+  continua uma operacao separada; Render permanece somente leitura ate existir
+  definicao explicita de uma nova arquitetura de dados.
+
+O cadastro usa `GET/POST /api/usuarios` e `PUT /api/usuarios/<id>`. O payload
+`permissoes` mapeia modulo para lista de recursos, por exemplo
+`{"riob": ["vendas", "estoque"]}`. Omitir o campo preserva os acessos.
+O catalogo retornado por GET respeita o contrato do deploy. As portas auxiliares
+8898/8899 do RioB ficam em loopback; usuarios entram pelo HTTPS principal,
+que aplica a sessao e as autorizacoes antes de encaminhar ao RioB.
+
+## Menu principal por modulo
+
+O cabecalho reune identificacao, menu e usuario/Sair em uma unica linha.
+Quando faltar largura, o botao de menu abre a navegacao lateral na mesma linha.
+O icone de usuario abre `Config > Minha conta`, com os dados da sessao atual;
+administradores podem abrir o proprio cadastro em Usuarios e acessos.
+A selecao de temas fica somente em `Config > Temas`.
+
+No RioB, o balao flutuante abre Comunicacao e a seta ao lado retorna ao topo
+da pagina, inclusive dentro do frame integrado. O recurso permanece `chat`,
+exibido no catalogo como `Comunicacao (chat)` pelo `recurso_nome` do manifest;
+permissoes existentes e autorizacao das APIs continuam usando a mesma chave.
+Minha conta e retorno ao topo nao concedem acesso adicional. Recuperacao de
+senha permanece uma etapa futura.
+
+O popup de Comunicacao tem tres botoes no topo: Chat, IA e Telefonia, com um
+unico Minimizar. Chat concentra contatos, mensagens e anexos; IA agrupa a
+Conversa IA e as ferramentas do Agent IA; Telefonia concentra contatos/ramais,
+discagem externa, atendimento, encerramento e teclado de tons. Trocar a opcao
+preserva rascunhos e chamadas ativas. O atalho Telefonia abre esse painel;
+configuracao SIP continua em Config. Os atalhos `#comunicacao:chat`,
+`#comunicacao:ia`, `#comunicacao:telefonia` e o legado `#agentia` abrem o mesmo
+popup. Os manifests dos atalhos Chat/IA/Telefonia explicitam o recurso `*`,
+preservando as liberacoes existentes. No proxy RioB, APIs de chat continuam
+exigindo `chat`, SIP continua exigindo `config`, e Agent IA continua filtrando
+dados e acoes conforme os acessos do usuario.
+
+Cada aplicativo contratado e autorizado tem seu proprio item no menu principal.
+As operacoes e os cadastros ficam dentro desse item, agrupados por funcao.
+Dashboard, Config, Relatorios e Import/Export permanecem como menus comuns.
+Cadastros e Workflow deixam de ser itens globais, sem mudar URLs ou recursos.
+O agrupamento deriva dos mesmos manifests usados por Config > Usuarios e acessos;
+reorganizar atalhos nao altera nem concede permissoes. Ao adicionar uma funcao,
+classificar seu grupo e recurso no manifest e verificar o menu de usuario restrito.
+
+## Menu do Rio Branco (setembro de 2026)
+
+O cliente `rio-branco` usa o perfil dos manifests definido em [Menu conforme PDF](docs/MENU_RIO_BRANCO_PDF.md): Dash, Cadastro, Relatorio, Dados, Config, Workflow, Monitor, Estoque, Gestao e Docs, com os modulos identificados dentro de cada menu. Os demais clientes mantem a navegacao por modulo. Financeiro, Ponto, Store, Cameras e ESXi estao temporariamente desativados apenas no Rio Branco. Contagem, relatorio de orcamentos e backup de e-mails possuem recursos proprios em Config > Usuarios e acessos; acessos individuais nao sao ampliados automaticamente.

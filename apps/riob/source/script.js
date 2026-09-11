@@ -34,6 +34,11 @@ let chatState = {
   pollHandle: null,
   unreadByContato: {},
   isOpen: false,
+  communicationTab: "chat",
+  iaView: "conversa",
+  humanContactId: "",
+  phoneContactId: "",
+  conversationDrafts: {},
   unreadReqSeq: 0,
   unreadAppliedSeq: 0,
   showExternalDialer: false,
@@ -2255,12 +2260,15 @@ function openEstoqueView(ev, view = "posicao"){
     return;
   }
   const menu = document.querySelector('.menu-item.has-submenu[data-tab="estoque"]');
+  window.__estoqueView = view;
   showTab("estoque", menu);
   document.querySelectorAll("#submenuEstoque .submenu-item").forEach((item) => {
     item.classList.toggle("active", item.dataset.estoqueView === view);
   });
-  setEstoqueView(view);
-  carregarEstoque().catch(() => {});
+  if (view !== "contagem") {
+    setEstoqueView(view);
+    carregarEstoque().catch(() => {});
+  }
   _fecharSubmenuAposNavegacao(menu);
 }
 
@@ -2271,13 +2279,13 @@ function toggleRelatoriosSubmenu(ev){
 function openRelatoriosView(ev, view = "estoque_comprometido"){
   if (ev) { ev.preventDefault(); ev.stopPropagation(); }
   const menu = document.querySelector('.menu-item.has-submenu[data-tab="relatorios"]');
-  window.__relatoriosView = ["estoque_comprometido", "processos", "compras"].includes(view) ? view : "estoque_comprometido";
+  window.__relatoriosView = ["estoque_comprometido", "processos", "compras", "orcamentos"].includes(view) ? view : "estoque_comprometido";
   showTab("relatorios", menu);
   _fecharSubmenuAposNavegacao(menu);
 }
 
 function setRelatoriosView(view = "estoque_comprometido"){
-  const nextView = ["estoque_comprometido", "processos", "compras"].includes(view) ? view : "estoque_comprometido";
+  const nextView = ["estoque_comprometido", "processos", "compras", "orcamentos"].includes(view) ? view : "estoque_comprometido";
   window.__relatoriosView = nextView;
   document.querySelectorAll("#submenuRelatorios .submenu-item").forEach((item) => {
     item.classList.toggle("active", item.dataset.relatoriosView === nextView);
@@ -2285,7 +2293,10 @@ function setRelatoriosView(view = "estoque_comprometido"){
   document.getElementById("relatoriosViewEstoqueComprometido")?.classList.toggle("hidden", nextView !== "estoque_comprometido");
   document.getElementById("relatoriosViewProcessos")?.classList.toggle("hidden", nextView !== "processos");
   document.getElementById("relatoriosViewCompras")?.classList.toggle("hidden", nextView !== "compras");
-  if (nextView === "estoque_comprometido") {
+  document.getElementById("relatoriosViewOrcamentos")?.classList.toggle("hidden", nextView !== "orcamentos");
+  if (nextView === "orcamentos") {
+    carregarRelatorioOrcamentos(1);
+  } else if (nextView === "estoque_comprometido") {
     carregarRelatorioEstoqueComprometido().catch((erro) => console.warn("relatorio estoque comprometido erro:", erro));
   } else if (nextView === "processos") {
     carregarRelatorioProcessos().catch((erro) => console.warn("relatorio processos erro:", erro));
@@ -2454,19 +2465,21 @@ async function carregarDashboardComissoes(){
 }
 
 function _dashboardVendasIsView(view){
-  return ["bonificacoes", "variacao_preco", "mix_embalagens", "grupos_embalagem", "vendas"].includes(String(view || "").toLowerCase());
+  return ["bonificacoes", "variacao_preco", "mix_embalagens", "grupos_embalagem", "vendas_anual", "percentual_vendas_anual", "vendas"].includes(String(view || "").toLowerCase());
 }
 
 function _dashboardVendasNormalizeView(view){
   const valor = String(view || "bonificacoes").toLowerCase();
   if (valor === "variacao_preco") return "variacao_preco";
   if (valor === "mix_embalagens" || valor === "grupos_embalagem") return "mix_embalagens";
+  if (valor === "vendas_anual" || valor === "percentual_vendas_anual") return "vendas_anual";
   return "bonificacoes";
 }
 
 function setDashboardVendasView(view){
   const target = _dashboardVendasNormalizeView(view);
   dashboardVendasPainelState.view = target;
+  document.getElementById("dashVendasMesWrap")?.classList.toggle("hidden", target === "vendas_anual");
   window.__dashVendasView = target;
 
   const tituloEl = document.getElementById("dashVendasTitulo");
@@ -2475,15 +2488,19 @@ function setDashboardVendasView(view){
       ? "Dashboard - Variação de Preço"
       : target === "mix_embalagens"
       ? "Dashboard - Grupos Embalagem"
+      : target === "vendas_anual"
+      ? "Dashboard - Vendas Anual"
       : "Dashboard - Bonificações";
   }
 
   const pBon = document.getElementById("dashVendasPanelBonificacoes");
   const pVar = document.getElementById("dashVendasPanelVariacao");
   const pMix = document.getElementById("dashVendasPanelMix");
+  const pAnual = document.getElementById("dashVendasPanelAnual");
   if (pBon) pBon.classList.toggle("hidden", target !== "bonificacoes");
   if (pVar) pVar.classList.toggle("hidden", target !== "variacao_preco");
   if (pMix) pMix.classList.toggle("hidden", target !== "mix_embalagens");
+  if (pAnual) pAnual.classList.toggle("hidden", target !== "vendas_anual");
 }
 
 function _dashboardVendasAtualizarInfo(payload = {}) {
@@ -2560,6 +2577,42 @@ async function carregarDashboardMixEmbalagens(force = false) {
   renderDashboardMixEmbalagens(data || {});
 }
 
+async function carregarDashboardVendasAnual() {
+  const infoEl = document.getElementById("dashVendasArquivoInfo");
+  if (infoEl) infoEl.textContent = "Carregando comparativo anual de vendas...";
+  const params = new URLSearchParams({tipo_relatorio: "percentual_vendas_anual"});
+  const vendedor = document.getElementById("dashVendasAnualVendedor")?.value || "";
+  const cliente = document.getElementById("dashVendasAnualCliente")?.value || "";
+  if (vendedor) params.set("vendedor", vendedor);
+  if (cliente) params.set("cliente", cliente);
+  const resp = await apiFetch(`/api/vendas/relatorio?${params.toString()}`);
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    const erro = data?.erro || "Falha ao carregar o dashboard anual de vendas.";
+    if (infoEl) infoEl.textContent = erro;
+    if (resp.status !== 409) alert(erro);
+    return;
+  }
+  dashboardVendasPainelState.payload = data || {};
+  dashboardVendasPainelState.cacheId = _as_str(data?.cache?.id);
+  _vendasRenderComparativoAnual(data, {
+    cardsId: "dashVendasAnualCards",
+    headId: "dashVendasAnualHead",
+    bodyId: "dashVendasAnualBody",
+    vendedorId: "dashVendasAnualVendedor",
+    clienteId: "dashVendasAnualCliente",
+  });
+  _vendasAtualizarInfoAnual(data, "dashVendasArquivoInfo");
+}
+
+function limparFiltrosDashboardVendasAnual() {
+  const vendedor = document.getElementById("dashVendasAnualVendedor");
+  const cliente = document.getElementById("dashVendasAnualCliente");
+  if (vendedor) vendedor.value = "";
+  if (cliente) cliente.value = "";
+  carregarDashboardVendasAnual().catch(() => {});
+}
+
 async function recarregarDashboardVendaAtual(force = false) {
   const target = _dashboardVendasNormalizeView(window.__dashView || dashboardVendasPainelState.view || window.__dashVendasView || "bonificacoes");
   setDashboardVendasView(target);
@@ -2569,6 +2622,10 @@ async function recarregarDashboardVendaAtual(force = false) {
   }
   if (target === "mix_embalagens") {
     await carregarDashboardMixEmbalagens(force);
+    return;
+  }
+  if (target === "vendas_anual") {
+    await carregarDashboardVendasAnual(force);
     return;
   }
   await carregarDashboardBonificacoes(force);
@@ -3032,6 +3089,7 @@ function openVendasView(ev, view){
   }
   const menu = document.querySelector('.menu-item.has-submenu[data-tab="vendas"]');
   document.querySelectorAll("#submenuVendas .submenu-item").forEach((x) => x.classList.remove("active"));
+  const relatorioModo = ["relatorio_anual", "vendas_anual", "percentual_vendas_anual"].includes(rawView) ? "vendas_anual" : "";
   const targetView = rawView === "pontosvenda" ? "pontosvenda" : (rawView === "orcamento" ? "orcamento" : "relatorio");
   const itemAtivo = document.querySelector(`#submenuVendas .submenu-item[data-vendas-view="${targetView}"]`);
 
@@ -3040,6 +3098,7 @@ function openVendasView(ev, view){
     showTab("pontosvenda", menu);
     if (itemAtivo) itemAtivo.classList.add("active");
   } else {
+    if (relatorioModo) window.__vendasRelatorioModo = relatorioModo;
     window.__vendasView = targetView;
     showTab("vendas", menu);
     if (itemAtivo) itemAtivo.classList.add("active");
@@ -3072,7 +3131,7 @@ function setVendasView(view){
   const relTabs = document.getElementById("vendasRelatorioTabs");
   if (relHeader) relHeader.classList.toggle("hidden", target !== "relatorio");
   if (relTabs) relTabs.classList.toggle("hidden", target !== "relatorio");
-  ["vendasViewRelatorioVariacao", "vendasViewRelatorioMix", "vendasViewRelatorioPrecoMedio"].forEach((id) => {
+  ["vendasViewRelatorioVariacao", "vendasViewRelatorioMix", "vendasViewRelatorioPrecoMedio", "vendasViewRelatorioAnual"].forEach((id) => {
     const element = document.getElementById(id);
     if (element && target !== "relatorio") element.classList.add("hidden");
   });
@@ -4043,6 +4102,78 @@ const _VENDAS_RELATORIO_ESPECIAL_TIPOS = new Set([
 
 function _vendasRelatorioEhEspecial(tipoRelatorio){
   return _VENDAS_RELATORIO_ESPECIAL_TIPOS.has(String(tipoRelatorio || ""));
+}
+
+function _vendasAnualPercentualTexto(valor) {
+  if (valor === null || valor === undefined) return "Sem base";
+  const numero = Number(valor || 0);
+  return `${numero > 0 ? "+" : ""}${_fmtNumVendas(numero, 2)}%`;
+}
+
+function _vendasAnualMovimentoMeta(item = {}) {
+  const movimento = String(item?.movimento || "estavel");
+  if (movimento === "acrescimo") return {label: "Acréscimo", classe: "vendas-dashboard-chip-up"};
+  if (movimento === "decrescimo") return {label: "Decréscimo", classe: "vendas-dashboard-chip-down"};
+  if (movimento === "sem_base") return {label: "Sem base anterior", classe: "vendas-dashboard-chip-neutral"};
+  return {label: "Estável", classe: "vendas-dashboard-chip-equal"};
+}
+
+function _vendasAtualizarInfoAnual(payload = {}, elementId = "vendasRelArquivoInfo") {
+  const infoEl = document.getElementById(elementId);
+  if (!infoEl) return;
+  const vendedor = payload?.filtros?.vendedor || "";
+  const cliente = payload?.filtros?.cliente || "";
+  const partes = [
+    `Arquivo: ${payload?.arquivo?.nome || "Base atual"}`,
+    `Comparativo: ${payload?.ano_atual || "-"} x ${payload?.ano_anterior || "-"}`,
+  ];
+  if (vendedor) partes.push(`Vendedor: ${vendedor}`);
+  if (cliente) partes.push(`Cliente: ${cliente}`);
+  infoEl.textContent = partes.join(" | ");
+}
+
+function _vendasRenderComparativoAnual(payload = {}, ids = {}) {
+  const resumo = payload?.resumo_geral || {};
+  const meses = Array.isArray(payload?.comparativo_mensal) ? payload.comparativo_mensal : [];
+  const anoAtual = payload?.ano_atual || "Atual";
+  const anoAnterior = payload?.ano_anterior || "Anterior";
+  const vendedorFiltro = payload?.filtros?.vendedor || document.getElementById(ids.vendedorId)?.value || "";
+  const clienteFiltro = payload?.filtros?.cliente || document.getElementById(ids.clienteId)?.value || "";
+
+  _vendasPreencherSelectVendedores(payload?.vendedores || [], vendedorFiltro, ids.vendedorId);
+  _vendasPreencherSelectClientes(payload?.clientes_disponiveis || [], clienteFiltro, ids.clienteId, "Todos os clientes");
+
+  const metaTotal = _vendasAnualMovimentoMeta(resumo);
+  const cardsEl = document.getElementById(ids.cardsId);
+  if (cardsEl) {
+    const diferenca = Number(resumo?.diferenca_volume || 0);
+    cardsEl.innerHTML = _renderCardsVendasResumo([
+      [`Volume ${anoAtual}`, `${_fmtNumVendas(resumo?.total_atual, 3)} hl`],
+      [`Volume ${anoAnterior}`, `${_fmtNumVendas(resumo?.total_anterior, 3)} hl`],
+      [metaTotal.label, `${diferenca > 0 ? "+" : ""}${_fmtNumVendas(diferenca, 3)} hl`],
+      ["Variação", _vendasAnualPercentualTexto(resumo?.variacao_percentual)],
+    ]);
+  }
+
+  const headEl = document.getElementById(ids.headId);
+  if (headEl) {
+    headEl.innerHTML = `<tr><th>Mês</th><th>${_escHtml(anoAnterior)} (hl)</th><th>${_escHtml(anoAtual)} (hl)</th><th>Diferença (hl)</th><th>Variação</th><th>Movimento</th></tr>`;
+  }
+  const bodyEl = document.getElementById(ids.bodyId);
+  if (bodyEl) {
+    bodyEl.innerHTML = meses.length ? meses.map((item) => {
+      const meta = _vendasAnualMovimentoMeta(item);
+      const diferenca = Number(item?.diferenca_volume || 0);
+      return `<tr>
+        <td><strong>${_escHtml(item?.label || "-")}</strong></td>
+        <td>${_escHtml(_fmtNumVendas(item?.volume_anterior, 3))}</td>
+        <td>${_escHtml(_fmtNumVendas(item?.volume_atual, 3))}</td>
+        <td><span class="vendas-dashboard-chip ${meta.classe}">${_escHtml(`${diferenca > 0 ? "+" : ""}${_fmtNumVendas(diferenca, 3)}`)}</span></td>
+        <td><span class="vendas-dashboard-chip ${meta.classe}">${_escHtml(_vendasAnualPercentualTexto(item?.variacao_percentual))}</span></td>
+        <td><span class="vendas-dashboard-chip ${meta.classe}">${_escHtml(meta.label)}</span></td>
+      </tr>`;
+    }).join("") : '<tr><td colspan="6">Nenhuma venda encontrada para os filtros selecionados.</td></tr>';
+  }
 }
 
 function _vendasTabelaVazia(colspan, mensagem){
@@ -5152,7 +5283,47 @@ async function recarregarRelatorioVendasAtual() {
     await carregarRelatorioPrecoMedioVendas();
     return;
   }
+  if (modo === "vendas_anual" || modo === "percentual_vendas_anual") {
+    await carregarRelatorioVendasAnual();
+    return;
+  }
   await carregarRelatorioVendas();
+}
+
+async function carregarRelatorioVendasAnual() {
+  const infoEl = document.getElementById("vendasRelArquivoInfo");
+  if (infoEl) infoEl.textContent = "Carregando comparativo anual de vendas...";
+  const params = new URLSearchParams({tipo_relatorio: "percentual_vendas_anual"});
+  const vendedor = document.getElementById("vendasAnualVendedor")?.value || "";
+  const cliente = document.getElementById("vendasAnualCliente")?.value || "";
+  if (vendedor) params.set("vendedor", vendedor);
+  if (cliente) params.set("cliente", cliente);
+  const resp = await apiFetch(`/api/vendas/relatorio?${params.toString()}`);
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    const erro = data?.erro || "Falha ao carregar o relatório anual de vendas.";
+    if (infoEl) infoEl.textContent = erro;
+    if (resp.status !== 409) alert(erro);
+    return;
+  }
+  vendasState.lastPayload = data || {};
+  vendasState.tipoRelatorio = "vendas_anual";
+  _vendasRenderComparativoAnual(data, {
+    cardsId: "vendasAnualResumoCards",
+    headId: "vendasAnualHead",
+    bodyId: "vendasAnualBody",
+    vendedorId: "vendasAnualVendedor",
+    clienteId: "vendasAnualCliente",
+  });
+  _vendasAtualizarInfoAnual(data);
+}
+
+function limparFiltrosRelatorioVendasAnual() {
+  const vendedor = document.getElementById("vendasAnualVendedor");
+  const cliente = document.getElementById("vendasAnualCliente");
+  if (vendedor) vendedor.value = "";
+  if (cliente) cliente.value = "";
+  carregarRelatorioVendasAnual().catch(() => {});
 }
 
 function setVendasRelatorioModo(modo){
@@ -5163,6 +5334,8 @@ function setVendasRelatorioModo(modo){
     ? "grupos_embalagem"
     : raw === "preco_medio" || raw === "preco_medio_vendedor_cidade"
     ? "preco_medio"
+    : raw === "vendas_anual" || raw === "percentual_vendas_anual"
+    ? "vendas_anual"
     : "bonificacoes";
   window.__vendasRelatorioModo = valor;
   vendasState.tipoRelatorio = valor;
@@ -5170,18 +5343,22 @@ function setVendasRelatorioModo(modo){
   const viewVar = document.getElementById("vendasViewRelatorioVariacao");
   const viewMix = document.getElementById("vendasViewRelatorioMix");
   const viewPreco = document.getElementById("vendasViewRelatorioPrecoMedio");
+  const viewAnual = document.getElementById("vendasViewRelatorioAnual");
   const tabBon = document.getElementById("vendasRelTabBonificacoes");
   const tabVar = document.getElementById("vendasRelTabVariacao");
   const tabMix = document.getElementById("vendasRelTabMix");
   const tabPreco = document.getElementById("vendasRelTabPrecoMedio");
+  const tabAnual = document.getElementById("vendasRelTabAnual");
   if (viewBon) viewBon.classList.toggle("hidden", valor !== "bonificacoes");
   if (viewVar) viewVar.classList.toggle("hidden", valor !== "variacao_preco");
   if (viewMix) viewMix.classList.toggle("hidden", valor !== "grupos_embalagem");
   if (viewPreco) viewPreco.classList.toggle("hidden", valor !== "preco_medio");
+  if (viewAnual) viewAnual.classList.toggle("hidden", valor !== "vendas_anual");
   if (tabBon) tabBon.classList.toggle("active", valor === "bonificacoes");
   if (tabVar) tabVar.classList.toggle("active", valor === "variacao_preco");
   if (tabMix) tabMix.classList.toggle("active", valor === "grupos_embalagem");
   if (tabPreco) tabPreco.classList.toggle("active", valor === "preco_medio");
+  if (tabAnual) tabAnual.classList.toggle("active", valor === "vendas_anual");
   recarregarRelatorioVendasAtual().catch(() => {});
 }
 
@@ -6488,6 +6665,12 @@ async function renderDashboardFrota(){
 }
 
 function showTab(tabId, el) {
+  if (tabId === "agentia") {
+    closeOpenSubmenus();
+    toggleMenuMobile(false);
+    toggleChatPopup(true, "ia", "agent").catch(() => {});
+    return;
+  }
   const mudouDeComunicacao = tabId !== "comunicacao";
   if (mudouDeComunicacao && chatState.isOpen) {
     toggleChatPopup(false).catch(() => {});
@@ -6554,7 +6737,7 @@ function showTab(tabId, el) {
     setPontosVendaView(window.__pontosVendaView);
   }
   if (tabId === "estoque") {
-    if (!window.__estoqueView || !["importar_xml", "importar_xml_bipe", "importar_xml_auto", "movimentar", "posicao", "acerto", "rastreio"].includes(window.__estoqueView)) {
+    if (!window.__estoqueView || !["importar_xml", "importar_xml_bipe", "importar_xml_auto", "movimentar", "posicao", "acerto", "contagem", "rastreio"].includes(window.__estoqueView)) {
       window.__estoqueView = "posicao";
     }
     setEstoqueView(window.__estoqueView);
@@ -7605,12 +7788,7 @@ function iniciarAgentIa(){
 }
 
 function abrirAgentIaDoChat(){
-  try {
-    showTab("agentia");
-  } catch {}
-  try {
-    iniciarAgentIa();
-  } catch {}
+  return toggleChatPopup(true, "ia", "agent");
 }
 
 //////////////////////////////////////////////////////
@@ -7656,7 +7834,7 @@ function _chatMensagemHtml(texto) {
 function _chatResumoContato(contato) {
   if (!contato) {
     return chatState.usuarioId
-      ? "Abra uma conversa para enviar mensagens ou usar SIP."
+      ? "Abra uma conversa para enviar mensagens."
       : "Faca login para usar o chat.";
   }
   if (contato.sip_ramal) return `Ramal ${contato.sip_ramal}`;
@@ -8049,9 +8227,9 @@ function _sipArmConnectWatchdog(ua) {
   }, 12000);
 }
 
-function _sipContatoAtual() {
+function _sipContatoAtual(contatoId = chatState.contatoId) {
   const usuarios = cacheUsuarios || [];
-  return usuarios.find((u) => String(u.id) === String(chatState.contatoId)) || null;
+  return usuarios.find((u) => String(u.id) === String(contatoId)) || null;
 }
 
 function _sipSanitizarDestino(raw) {
@@ -8243,6 +8421,7 @@ function _sipBindSession(session, direction, targetLabel = "") {
   sipState.currentDirection = direction || "";
   sipState.currentTargetLabel = targetLabel || "";
   sipState.dtmfHistory = "";
+  if (direction === "incoming") toggleChatPopup(true, "telefonia").catch(() => {});
   _sipAttachRemoteAudio(session);
   atualizarEstadoSipChat();
 
@@ -8527,12 +8706,13 @@ function atualizarEstadoSipChat() {
   const dtmfFeedbackEl = document.getElementById("chatSipDtmfFeedback");
   const hangupMainBtn = document.getElementById("chatSipHangupMainBtn");
   const dtmfButtons = document.querySelectorAll("[data-sip-dtmf]");
-  const contato = _sipContatoAtual();
+  const contato = _sipContatoAtual(chatState.phoneContactId);
   const destino = _sipDestinoBruto(contato);
   const destinoManual = _sipDestinoManual();
   const destinoInterno = _sipDestinoEhInterno(destino);
   const destinoManualInterno = _sipDestinoEhInterno(destinoManual);
   const hasActiveSession = !!sipState.currentSession;
+  document.getElementById("communicationCallBadge")?.classList.toggle("hidden", !hasActiveSession);
   const incomingPending = hasActiveSession && sipState.currentDirection === "incoming" && !!sipState.currentSession?.isInProgress?.();
   const callEstablished = hasActiveSession && !!sipState.currentSession?.isEstablished?.() && !sipState.currentSession?.isEnded?.();
   const externalEnabled = _sipPodeDiscarExterno();
@@ -8544,7 +8724,7 @@ function atualizarEstadoSipChat() {
 
   if (callBtn) {
     callBtn.disabled = !canCall;
-    callBtn.title = !chatState.contatoId
+    callBtn.title = !chatState.phoneContactId
       ? "Selecione um contato"
       : (!destino
           ? "Contato sem ramal SIP configurado"
@@ -8607,10 +8787,10 @@ function atualizarEstadoSipChat() {
   if (statusEl) {
     let text = sipState.statusText || "SIP indisponivel.";
     let level = sipState.statusLevel || "warn";
-    if (!hasActiveSession && !!sipState.ua && chatState.contatoId && !destino) {
+    if (!hasActiveSession && !!sipState.ua && chatState.phoneContactId && !destino) {
       text = "Contato selecionado sem ramal SIP configurado.";
       level = "warn";
-    } else if (!hasActiveSession && !!sipState.ua && chatState.contatoId && destino && !_sipPodeDiscarExterno() && !destinoInterno) {
+    } else if (!hasActiveSession && !!sipState.ua && chatState.phoneContactId && destino && !_sipPodeDiscarExterno() && !destinoInterno) {
       text = "Seu usuario pode ligar apenas para ramais internos.";
       level = "warn";
     } else if (!hasActiveSession && !!sipState.ua && destinoManual && !_sipPodeDiscarExterno() && !destinoManualInterno) {
@@ -8689,8 +8869,8 @@ function toggleChatSipExternalPanel(force) {
 }
 
 async function iniciarChamadaSipChat() {
-  if (!chatState.usuarioId || !chatState.contatoId) return;
-  const contato = _sipContatoAtual();
+  if (!chatState.usuarioId || !chatState.phoneContactId) return;
+  const contato = _sipContatoAtual(chatState.phoneContactId);
   const destinoRaw = _sipDestinoBruto(contato);
   if (!destinoRaw) {
     alert("Este contato nao possui ramal SIP configurado.");
@@ -8852,19 +9032,13 @@ function renderListaContatosChat() {
 
   const usuarios = cacheUsuarios || [];
   const eu = String(chatState.usuarioId || "");
-  const contatos = [
-    {
-      id: CHAT_AI_RIO_CONTACT_ID,
-      nome: CHAT_AI_RIO_NAME,
-      login: "ia-rio",
-      sip_ramal: "",
-      sip_usuario: "",
-      ativo: true,
-      codbar_modo: "bip",
-      is_ai_rio: true,
-    },
-    ...usuarios.filter((u) => String(u.id) !== eu),
-  ];
+  const contatos = usuarios.filter((u) => String(u.id) !== eu);
+  const phoneSelect = document.getElementById("communicationPhoneContact");
+  if (phoneSelect) {
+    phoneSelect.replaceChildren(new Option("Selecione um contato", ""), ...contatos.map((u) =>
+      new Option(`${u.nome}${u.sip_ramal ? " · " + u.sip_ramal : ""}`, String(u.id))));
+    phoneSelect.value = chatState.phoneContactId;
+  }
 
   if (!eu) {
     wrap.innerHTML = `<div class="hint">Faca login para usar o chat.</div>`;
@@ -8913,7 +9087,7 @@ async function carregarUsuariosChat(manterSelecao = true) {
     ...(cacheUsuarios || []).filter((u) => String(u.id) !== String(chatState.usuarioId)),
   ];
   if (!manterSelecao || !contatos.some((u) => String(u.id) === String(chatState.contatoId))) {
-    chatState.contatoId = CHAT_AI_RIO_CONTACT_ID;
+    chatState.contatoId = chatState.communicationTab === "ia" ? CHAT_AI_RIO_CONTACT_ID : String(contatos.find((u) => !u.is_ai_rio)?.id || "");
   }
   _chatAIRioLoadState();
   if (String(chatState.contatoId) === CHAT_AI_RIO_CONTACT_ID && !(chatState.aiRioMessages || []).length) {
@@ -8925,6 +9099,7 @@ async function carregarUsuariosChat(manterSelecao = true) {
 }
 
 async function selecionarContatoChat(contatoId) {
+  if (_chatEhContatoAIRio(contatoId)) return setCommunicationTab("ia", "conversa");
   limparAnexoChat();
   chatState.contatoId = String(contatoId || "");
   if (_chatEhContatoAIRio()) {
@@ -8962,13 +9137,16 @@ async function carregarChat() {
     return;
   }
 
+  const requestedContact = chatState.contatoId;
   const url = `/api/chat/conversa?usuario_id=${encodeURIComponent(chatState.usuarioId)}&contato_id=${encodeURIComponent(chatState.contatoId)}&limit=250`;
   const resp = await apiFetch(url);
+  if (chatState.contatoId !== requestedContact || !communicationConversationVisible()) return;
   if (!resp.ok) {
     box.innerHTML = "<div class='chat-empty'><div class='chat-empty-title'>Erro ao carregar conversa</div><div class='chat-empty-text'>Tente novamente em alguns segundos.</div></div>";
     return;
   }
   const mensagens = await resp.json();
+  if (chatState.contatoId !== requestedContact || !communicationConversationVisible()) return;
   _chatProcessarNovasMensagens(mensagens);
   if (!(mensagens || []).length) {
     const nomeContato = _escHtml(_chatNomePorId(chatState.contatoId) || "o contato");
@@ -9158,7 +9336,67 @@ async function enviarMensagemChatAIRio(mensagem, anexo = null) {
   }
 }
 
-async function toggleChatPopup(force) {
+function communicationConversationVisible() {
+  return chatState.isOpen && (chatState.communicationTab === "chat" ||
+    (chatState.communicationTab === "ia" && chatState.iaView === "conversa"));
+}
+
+async function setCommunicationTab(tab, iaView = chatState.iaView) {
+  if (!["chat", "ia", "telefonia"].includes(tab)) return;
+  const widget = document.getElementById("chatWidget");
+  if (!widget) return;
+  const nextAi = tab === "ia";
+  const changesConversation = tab !== "telefonia" && nextAi !== _chatEhContatoAIRio();
+  if (changesConversation && chatState.sendingMessage) {
+    alert("Aguarde o envio da mensagem antes de trocar de conversa.");
+    return;
+  }
+  const input = document.getElementById("chatTexto");
+  if (changesConversation) {
+    const oldKey = _chatEhContatoAIRio() ? "ia" : "chat";
+    chatState.conversationDrafts[oldKey] = { text: input?.value || "", attachment: chatState.pendingAttachment };
+    if (!_chatEhContatoAIRio()) chatState.humanContactId = chatState.contatoId;
+    chatState.contatoId = nextAi ? CHAT_AI_RIO_CONTACT_ID : chatState.humanContactId;
+    const draft = chatState.conversationDrafts[nextAi ? "ia" : "chat"] || {};
+    if (input) input.value = draft.text || "";
+    chatState.pendingAttachment = draft.attachment || null;
+    renderAnexoPendenteChat();
+    document.getElementById("chatMensagens")?.replaceChildren();
+  }
+  chatState.communicationTab = tab;
+  chatState.iaView = iaView === "agent" ? "agent" : "conversa";
+  widget.dataset.communicationTab = tab;
+  widget.querySelectorAll("button[data-communication-tab]").forEach((button) => {
+    button.setAttribute("aria-selected", String(button.dataset.communicationTab === tab));
+  });
+  widget.querySelectorAll("[data-communication-ia]").forEach((button) => {
+    button.setAttribute("aria-pressed", String(button.dataset.communicationIa === chatState.iaView));
+  });
+  const conversation = tab === "chat" || (nextAi && chatState.iaView === "conversa");
+  const panel = document.getElementById("communicationChatPanel");
+  panel?.classList.toggle("hidden", !conversation);
+  panel?.setAttribute("aria-labelledby", nextAi ? "communicationTabIa" : "communicationTabChat");
+  document.getElementById("communicationIaOptions")?.classList.toggle("hidden", !nextAi);
+  document.getElementById("agentia")?.classList.toggle("hidden", !(nextAi && chatState.iaView === "agent"));
+  document.getElementById("communicationPhonePanel")?.classList.toggle("hidden", tab !== "telefonia");
+  if (nextAi && chatState.iaView === "agent") iniciarAgentIa();
+  if (!nextAi) await carregarUsuariosChat(true).catch(() => {});
+  // Uma resposta anterior nao deve trocar a aba ou marcar outra conversa como lida.
+  if (chatState.communicationTab !== tab) return;
+  if (conversation) {
+    await carregarChat().catch(() => {});
+    _chatAutoResizeInput();
+  }
+  if (tab === "telefonia") await initSipClient().catch(() => {});
+  atualizarEstadoSipChat();
+}
+
+function voltarAoTopo() {
+  const behavior = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth";
+  window.scrollTo({ top: 0, behavior });
+}
+
+async function toggleChatPopup(force, tab, iaView) {
   if (!window.__chatIniciado) {
     initChatInterno();
   }
@@ -9169,19 +9407,11 @@ async function toggleChatPopup(force) {
   if (fab) fab.style.pointerEvents = "auto";
   const abrir = force === undefined ? w.classList.contains("hidden") : !!force;
   chatState.isOpen = abrir;
+  fab?.setAttribute("aria-expanded", String(abrir));
   w.classList.toggle("hidden", !abrir);
   if (abrir) {
-    await initSipClient().catch(() => {});
-    await carregarUsuariosChat(true).catch(() => {});
-    await carregarChat().catch(() => {});
-    _chatAutoResizeInput();
-    setTimeout(() => {
-      try { document.getElementById("chatTexto")?.focus(); } catch {}
-    }, 60);
+    await setCommunicationTab(tab || chatState.communicationTab, iaView || chatState.iaView);
   } else {
-    toggleChatSipExternalPanel(false);
-    if (chatState.contatoId && !_chatEhContatoAIRio(chatState.contatoId)) await marcarLidasContatoChat(chatState.contatoId).catch(() => {});
-    renderListaContatosChat();
     atualizarBadgeFabDoMapa();
     atualizarEstadoSipChat();
   }
@@ -9237,6 +9467,17 @@ if (document.readyState !== "loading") {
 function initChatInterno() {
   if (window.__chatIniciado) return;
   window.__chatIniciado = true;
+  document.querySelector(".communication-tabs")?.addEventListener("keydown", (event) => {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    const buttons = [...event.currentTarget.querySelectorAll("[role=tab]")];
+    const index = buttons.indexOf(document.activeElement);
+    if (index < 0) return;
+    event.preventDefault();
+    const next = event.key === "Home" ? 0 : event.key === "End" ? buttons.length - 1 :
+      (index + (event.key === "ArrowRight" ? 1 : -1) + buttons.length) % buttons.length;
+    buttons[next].focus();
+    buttons[next].click();
+  });
   renderAnexoPendenteChat();
   _chatAIRioLoadState();
   if (!(chatState.aiRioMessages || []).length) _chatAIRioEnsureGreeting();
@@ -9262,7 +9503,7 @@ function initChatInterno() {
       }
       await carregarNaoLidasChat();
       renderListaContatosChat();
-      if (chatState.isOpen && chatState.contatoId) await carregarChat();
+      if (communicationConversationVisible() && chatState.contatoId) await carregarChat();
       atualizarEstadoSipChat();
     } catch {}
   }, 2000);
@@ -10825,9 +11066,10 @@ function _atualizarScrollbarAuxiliarKanban(){
   const margemViewport = 12;
   const esquerda = Math.max(margemViewport, rect.left);
   let direita = Math.min(window.innerWidth - margemViewport, rect.right);
-  const chatFab = document.getElementById("chatFab");
-  if (chatFab?.getClientRects().length) {
-    direita = Math.min(direita, chatFab.getBoundingClientRect().left - 10);
+  for (const button of document.querySelectorAll("#chatFab, #backToTop")) {
+    if (button.getClientRects().length) {
+      direita = Math.min(direita, button.getBoundingClientRect().left - 10);
+    }
   }
   barra.style.left = `${Math.round(esquerda)}px`;
   barra.style.width = `${Math.max(120, Math.round(direita - esquerda))}px`;
@@ -18535,6 +18777,8 @@ function setEstoqueView(view){
     ? "acerto"
     : requestedView === "posicao"
     ? "posicao"
+    : requestedView === "contagem"
+    ? "contagem"
     : requestedView === "rastreio"
     ? "rastreio"
     : requestedView === "movimentar"
@@ -18557,6 +18801,7 @@ function setEstoqueView(view){
 
   if (viewLancar) viewLancar.classList.toggle("hidden", !["importar_xml_bipe", "importar_xml_auto", "movimentar"].includes(nextView));
   if (viewConferir) viewConferir.classList.toggle("hidden", nextView !== "posicao");
+  document.getElementById("estoqueViewContagem")?.classList.toggle("hidden", nextView !== "contagem");
   if (viewAcerto) viewAcerto.classList.toggle("hidden", nextView !== "acerto");
   if (viewRastreio) viewRastreio.classList.toggle("hidden", nextView !== "rastreio");
   if (importacoesBox) importacoesBox.classList.toggle("hidden", nextView !== "importar_xml_auto");
@@ -18569,6 +18814,7 @@ function setEstoqueView(view){
       importar_xml_auto: "Compras / Importar XML Auto",
       movimentar: "Estoque / Movimentar",
       posicao: "Estoque / Posicao atual",
+      contagem: "Estoque / Contagem",
       acerto: "Estoque / Acerto",
       rastreio: "Estoque / Rastreio de lotes",
     };
@@ -18583,7 +18829,9 @@ function setEstoqueView(view){
 
   renderEstoqueImportPreview();
   atualizarStatusCodbarSistema();
-  if (nextView === "acerto") {
+  if (nextView === "contagem") {
+    carregarContagemEstoque().catch(e => { document.getElementById("estoqueContagemStatus").textContent = e.message || "Falha ao carregar produtos."; });
+  } else if (nextView === "acerto") {
     carregarAcertoEstoque().catch((e) => console.warn("acerto estoque erro:", e));
   } else if (nextView === "posicao") {
     carregarSaldoEstoque().catch((e) => {
@@ -20523,6 +20771,106 @@ function renderSaldoEstoqueFiltrado(){
       <td>${_escHtml(_fmtDateBr(r.ultima_movimentacao))}</td>
     </tr>
   `, 9) : `<tr><td colspan="9">Sem itens no estoque para os filtros selecionados.</td></tr>`;
+}
+
+let contagemEstoque = null;
+let contagemEstoqueLoading = null;
+
+async function carregarContagemEstoque(){
+  if (!contagemEstoque) {
+    if (!contagemEstoqueLoading) contagemEstoqueLoading = (async () => {
+      const [position] = await Promise.all([apiFetch("/api/estoque/posicao"), ensureProdutosEstoqueCache(true)]);
+      if (!position.ok) throw new Error("Falha ao consultar saldo para contagem.");
+      estoqueState.posicaoRows = _estoqueRowsPayload(await position.json());
+      contagemEstoque = { data: new Date().toISOString(), produtos: (estoqueState.cadastroProdutos || []).map(p => ({
+        ...p, contagemMeta: {..._acertoEstoqueValores(p), saldo: Number(_saldoProdutoCadastroAtual(p) || 0)}, contagem: {pallets:"", volumes:"", unidades:""},
+      })) };
+    })().finally(() => { contagemEstoqueLoading = null; });
+    await contagemEstoqueLoading;
+  }
+  renderContagemEstoque();
+}
+
+function resultadoContagemEstoque(produto){
+  const campos = Object.values(produto.contagem);
+  if (campos.every(v => v === "")) return null;
+  if (campos.some(v => v !== "" && (!Number.isFinite(Number(v)) || Number(v) < 0))) return {erro:true};
+  if (["pallets", "volumes"].some(k => !Number.isInteger(Number(produto.contagem[k])))) return {erro:true};
+  const meta = produto.contagemMeta;
+  const total = Number(produto.contagem.pallets) * meta.porPallet + Number(produto.contagem.volumes) * meta.porVolume + Number(produto.contagem.unidades);
+  return {total, diferenca: Math.round((total - meta.saldo) * 1000) / 1000};
+}
+
+function atualizarContagemEstoque(id, campo, value){
+  const produto = contagemEstoque?.produtos.find(p => Number(p.id) === id);
+  if (!produto || !["pallets","volumes","unidades"].includes(campo)) return;
+  produto.contagem[campo] = value;
+  const resultado = resultadoContagemEstoque(produto);
+  const row = document.querySelector(`#estoqueContagemBody tr[data-id="${id}"]`);
+  if (!row) return;
+  row.querySelector('[data-total]').textContent = resultado?.erro ? "Quantidade invalida" : resultado ? _estoqueFormatQtd(resultado.total) : "Nao contado";
+  row.querySelector('[data-diferenca]').textContent = resultado && !resultado.erro ? _estoqueFormatQtd(resultado.diferenca) : "-";
+}
+
+function renderContagemEstoque(){
+  const body = document.getElementById("estoqueContagemBody");
+  if (!body || !contagemEstoque) return;
+  const query = _estoqueTextoBusca(document.getElementById("estoqueContagemBusca")?.value || "");
+  const rows = contagemEstoque.produtos.filter(p => _estoqueTextoBusca([p.nome_produto,p.produto_base_nome,p.codigo_barras,p.codigo_produto_nfe].join(" ")).includes(query));
+  body.innerHTML = rows.map(p => {
+    const r = resultadoContagemEstoque(p);
+    return `<tr data-id="${Number(p.id)}"><td>${_escHtml(p.produto_base_nome || p.nome_produto)}<br><small>${_escHtml(p.codigo_barras || p.codigo_produto_nfe || "")}</small></td>
+      <td>${_escHtml(_estoqueFormatQtd(p.contagemMeta.saldo))}</td>
+      ${["pallets","volumes","unidades"].map(k => `<td><input type="number" aria-label="${k}" min="0" step="${k === "unidades" ? "0.001" : "1"}" value="${_escAttr(p.contagem[k])}" ${k === "pallets" && !p.contagemMeta.porPallet || k === "volumes" && !p.contagemMeta.porVolume ? "disabled" : ""} oninput="atualizarContagemEstoque(${Number(p.id)},'${k}',this.value)">${k === "volumes" ? `<small>${_escHtml(_acertoEstoqueVolumeLabel(p))} x ${p.contagemMeta.porVolume}</small>` : ""}</td>`).join("")}
+      <td data-total>${r?.erro ? "Quantidade invalida" : r ? _escHtml(_estoqueFormatQtd(r.total)) : "Nao contado"}</td>
+      <td data-diferenca>${r && !r.erro ? _escHtml(_estoqueFormatQtd(r.diferenca)) : "-"}</td></tr>`;
+  }).join("") || '<tr><td colspan="7">Nenhum produto encontrado.</td></tr>';
+  document.getElementById("estoqueContagemStatus").textContent = `Saldo consultado em ${new Date(contagemEstoque.data).toLocaleString("pt-BR")}.`;
+}
+
+async function novaContagemEstoque(){
+  if (contagemEstoque?.produtos.some(p => resultadoContagemEstoque(p)) && !confirm("Iniciar nova contagem? Exporte a contagem atual antes de continuar.")) return;
+  contagemEstoque = null;
+  await carregarContagemEstoque().catch(e => { document.getElementById("estoqueContagemStatus").textContent = e.message; });
+}
+
+function exportarContagemEstoque(){
+  const rows = (contagemEstoque?.produtos || []).filter(p => resultadoContagemEstoque(p));
+  if (!rows.length) return alert("Informe a contagem de pelo menos um produto.");
+  if (rows.some(p => resultadoContagemEstoque(p).erro)) return alert("Corrija as quantidades invalidas antes de exportar.");
+  const csvCell = value => '"' + (typeof value === "string" ? value.replace(/^\s*[=+@\-]/, "'$&") : String(value ?? "")).replaceAll('"', '""') + '"';
+  const csv = [["Data consulta","Produto","Codigo","Saldo consultado","Pallets","Embalagens","Unidades","Total contado","Diferenca"],
+    ...rows.map(p => { const r=resultadoContagemEstoque(p); return [contagemEstoque.data,p.produto_base_nome || p.nome_produto,p.codigo_barras || p.codigo_produto_nfe,p.contagemMeta.saldo,p.contagem.pallets,p.contagem.volumes,p.contagem.unidades,r.total,r.diferenca]; })]
+    .map(row => row.map(csvCell).join(";")).join("\r\n");
+  const url = URL.createObjectURL(new Blob(["\uFEFF",csv],{type:"text/csv;charset=utf-8"}));
+  const link=document.createElement("a"); link.href=url; link.download="contagem-estoque.csv"; link.click();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+
+let relatorioOrcamentosPagina = 1;
+let relatorioOrcamentosRequest = 0;
+async function carregarRelatorioOrcamentos(pagina=1){
+  const requestId = ++relatorioOrcamentosRequest;
+  const status = document.getElementById("relOrcStatus");
+  const body = document.getElementById("relOrcBody");
+  const anterior = document.getElementById("relOrcAnterior"), proxima = document.getElementById("relOrcProxima");
+  anterior.disabled = proxima.disabled = true;
+  status.textContent = "Consultando orcamentos...";
+  body.innerHTML = "";
+  const params = new URLSearchParams({pagina:String(Math.max(1,pagina))});
+  for (const [key,id] of [["inicio","relOrcInicio"],["fim","relOrcFim"],["q","relOrcBusca"]]) {
+    const value=document.getElementById(id).value; if(value) params.set(key,value);
+  }
+  try {
+    const resp = await apiFetch(`/api/vendas/orcamentos/relatorio?${params}`);
+    const data = await resp.json();
+    if (requestId !== relatorioOrcamentosRequest) return;
+    if (!resp.ok) throw new Error(data.erro || "Falha ao consultar orcamentos.");
+    relatorioOrcamentosPagina = data.pagina;
+    status.textContent = `${data.total} orcamento(s) | Valor real total: ${_fmtMoneyVendas(data.valor_real)} | Pagina ${data.pagina} de ${Math.max(1,Math.ceil(data.total/data.limite))}`;
+    body.innerHTML = data.orcamentos.map(row => `<tr><td>${_escHtml(row.codigo)}</td><td>${_escHtml(_fmtDataCurtaBr(row.data_ref))}</td><td>${_escHtml(row.cliente_nome)}</td><td>${_escHtml(row.cidade)}</td><td>${_escHtml(row.vendedor_nome || row.vendedor_identificacao || "-")}</td>${["valor_bruto","valor_liquido","valor_real"].map(k=>`<td>${_escHtml(_fmtMoneyVendas(row[k]))}</td>`).join("")}<td><button type="button" onclick="abrirPdfOrcamentoVendas(${Number(row.id)}).catch(e=>alert(e.message))">Abrir PDF</button></td></tr>`).join("") || '<tr><td colspan="9">Nenhum orcamento encontrado.</td></tr>';
+    anterior.disabled = data.pagina <= 1; proxima.disabled = data.pagina * data.limite >= data.total;
+  } catch(e) { if (requestId === relatorioOrcamentosRequest) status.textContent = e.message || "Falha ao consultar orcamentos."; }
 }
 
 function _acertoEstoqueValores(produto = {}){

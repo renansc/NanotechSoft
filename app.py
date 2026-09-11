@@ -28,7 +28,7 @@ from io import BytesIO
 from email.message import EmailMessage
 from zoneinfo import ZoneInfo
 
-from flask import Flask, Response, has_request_context, jsonify, redirect, render_template, request, send_file, send_from_directory, session, url_for
+from flask import Flask, Response, g, has_request_context, jsonify, redirect, render_template, request, send_file, send_from_directory, session, url_for
 import mysql.connector
 from mysql.connector import errorcode
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -245,7 +245,7 @@ RIOB_SSL_VERIFY = str(os.environ.get("RIOB_SSL_VERIFY", "0")).strip().lower() in
 RIOB_ROUTE_DEFAULTS = {
     "riob": "/",
     "riob-cameras": "/monitor/cameras/",
-    "riob-telefonia": "/#config:sip",
+    "riob-telefonia": "/#comunicacao:telefonia",
     "riob-chat-ia": "/#agentia",
     "riob-chat": "/#comunicacao",
     "riob-email": "/gestor-emails/",
@@ -292,7 +292,7 @@ LOCAL_RIOB_APPS = {
     },
 }
 LOCAL_RIOB_ALIASES = {
-    "riob-telefonia": ("riob", "#config:sip"),
+    "riob-telefonia": ("riob", "#comunicacao:telefonia"),
     "riob-chat-ia": ("riob", "#agentia"),
     "riob-chat": ("riob", "#comunicacao"),
 }
@@ -311,6 +311,9 @@ MENU_SECTIONS = (
     "vendas",
     "relatorios",
     "import_export",
+    "monitor",
+    "gestao",
+    "docs",
 )
 _automacao_lock = threading.Lock()
 _automacao_proc = None
@@ -633,17 +636,7 @@ def ensure_database():
     riob_hash = generate_password_hash("riob")
     cur.execute("SELECT id FROM usuarios WHERE login=%s LIMIT 1", ("riob",))
     riob_row = cur.fetchone()
-    if riob_row and seed_rio_branco:
-        riob_user_id = int(riob_row[0])
-        cur.execute(
-            """
-            UPDATE usuarios
-            SET nome=%s, senha=%s, perfil=%s, ativo=%s
-            WHERE id=%s
-            """,
-            ("Usuario RioB", riob_hash, "usuario", 1, riob_user_id),
-        )
-    elif seed_rio_branco:
+    if seed_rio_branco and not riob_row:
         cur.execute(
             """
             INSERT INTO usuarios (nome, login, senha, perfil, ativo)
@@ -653,11 +646,7 @@ def ensure_database():
         )
         riob_user_id = int(cur.lastrowid)
 
-    if seed_rio_branco:
-        cur.execute(
-            "DELETE FROM usuario_app_permissoes WHERE usuario_id=%s",
-            (riob_user_id,),
-        )
+    if seed_rio_branco and not riob_row:
         cur.execute(
             """
             INSERT INTO usuario_app_permissoes
@@ -677,15 +666,7 @@ def ensure_database():
         cur.execute("SELECT id FROM usuarios WHERE login=%s LIMIT 1", (login,))
         usuario_row = cur.fetchone()
         if usuario_row:
-            usuario_id = int(usuario_row[0])
-            cur.execute(
-                """
-                UPDATE usuarios
-                SET nome=%s, senha=%s, perfil=%s, ativo=%s
-                WHERE id=%s
-                """,
-                (nome, senha_hash, "usuario", 1, usuario_id),
-            )
+            continue
         else:
             cur.execute(
                 """
@@ -739,6 +720,13 @@ def bootstrap_request():
     ensure_database()
 
 
+@app.url_defaults
+def version_navigation_assets(endpoint, values):
+    if endpoint == "static" and values.get("filename") in {"app.js", "style.css"}:
+        asset = BASE_DIR / "static" / values["filename"]
+        values.setdefault("v", hashlib.sha256(asset.read_bytes()).hexdigest()[:16])
+
+
 @app.after_request
 def add_no_cache_headers(resp):
     if CLOUD_READ_ONLY:
@@ -748,6 +736,7 @@ def add_no_cache_headers(resp):
         or request.path.startswith("/apps/tecnologia/api/")
         or request.path.startswith("/apps/chamados/api/")
         or request.path in {"/", "/login", "/config"}
+        or (request.path.startswith("/apps/") and resp.mimetype == "text/html")
     ):
         resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
         resp.headers["Pragma"] = "no-cache"
@@ -973,6 +962,9 @@ def get_config():
 def get_user_permissions(usuario):
     if not usuario or user_is_admin(usuario):
         return {}
+    cache_key = str(usuario["id"])
+    if has_request_context() and cache_key in getattr(g, "user_permissions", {}):
+        return g.user_permissions[cache_key]
     conn = get_auth_conn()
     cur = conn.cursor(dictionary=True)
     cur.execute(
@@ -989,6 +981,10 @@ def get_user_permissions(usuario):
     allowed = {}
     for row in rows:
         allowed.setdefault(row["app_key"], set()).add(row["recurso"])
+    if has_request_context():
+        if not hasattr(g, "user_permissions"):
+            g.user_permissions = {}
+        g.user_permissions[cache_key] = allowed
     return allowed
 
 
@@ -1704,6 +1700,10 @@ PUBLIC_APP_PATH_PREFIXES = (
 @app.before_request
 def enforce_app_permission():
     path = request.path
+    if configured_client_id() == "rio-branco" and path.startswith("/api/finance/"):
+        deployed = allowed_app_keys()
+        if deployed is not None and "financeiro" not in deployed:
+            return jsonify({"erro": "app nao habilitado neste deploy"}), 404
     if not path.startswith("/apps/"):
         return None
     if any(path == prefix.rstrip("/") or path.startswith(prefix) for prefix in PUBLIC_APP_PATH_PREFIXES):
@@ -1720,6 +1720,11 @@ def enforce_app_permission():
     deployment_apps = allowed_app_keys()
     if deployment_apps is not None and app_key not in deployment_apps:
         return jsonify({"erro": "app nao habilitado neste deploy"}), 404
+    if app_key == "riob" and deployment_apps is not None and configured_client_id() == "rio-branco":
+        for monitor, module in (("cameras", "riob-cameras"), ("esxi", "riob-esxi")):
+            prefix = f"/apps/riob/monitor/{monitor}"
+            if (path == prefix or path.startswith(prefix + "/")) and module not in deployment_apps:
+                return jsonify({"erro": "modulo nao habilitado neste deploy"}), 404
 
     usuario = current_user_or_logout()
     if not usuario:
@@ -1729,19 +1734,56 @@ def enforce_app_permission():
     if not app_visible_to_user({"app_key": app_key}, usuario):
         return jsonify({"erro": "app nao liberado para este usuario"}), 403
 
-    # Permissoes especificas do RioB tambem limitam as APIs acessiveis. O hash
-    # usado pelo menu nao e enviado ao servidor, portanto ocultar os demais
-    # atalhos, sozinho, nao impediria o acesso manual aos outros modulos.
-    if app_key == "riob" and not user_is_admin(usuario):
-        recursos = get_user_permissions(usuario).get("riob", set())
-        if "*" not in recursos and request.path.startswith("/apps/riob/api/"):
-            api_recurso = request.path.removeprefix("/apps/riob/api/").split("/", 1)[0]
-            # O Agent IA recebe a lista completa de recursos abaixo e aplica a
-            # mesma autorizacao por conjunto de dados. Assim, qualquer usuario
-            # com ao menos um recurso RioB pode perguntar sobre o que ja possui,
-            # sem liberar as demais APIs do aplicativo.
-            if api_recurso != "agent" and api_recurso not in recursos:
-                return jsonify({"erro": "recurso nao liberado para este usuario"}), 403
+    # O backup novo tem concessao propria, inclusive pelo caminho embarcado.
+    if path.startswith("/apps/riob/gestor-emails/backup") and not can_access(usuario, "riob-email", "backup"):
+        return jsonify({"erro": "recurso nao liberado para este usuario"}), 403
+
+    if not user_is_admin(usuario):
+        recursos = get_user_permissions(usuario).get(app_key, set())
+        if "*" not in recursos:
+            if app_key == "riob-email":
+                relative_email = path.removeprefix("/apps/riob-email").removeprefix("/riob").strip("/")
+                required_email = "backup" if relative_email == "backup" or relative_email.startswith("backup/") else "operacao"
+                if required_email not in recursos:
+                    return jsonify({"erro": "recurso nao liberado para este usuario"}), 403
+            view = request.args.get("view")
+            if view and view not in recursos:
+                return jsonify({"erro": "funcao nao liberada para este usuario"}), 403
+            if app_key == "riob":
+                relative = path.removeprefix("/apps/riob/")
+                if relative.startswith("api/"):
+                    api_path = relative.removeprefix("api/")
+                    resource = api_path.split("/", 1)[0]
+                    # Somente identificacao e Agent (filtrado internamente) sao comuns.
+                    common = resource == "agent" or (resource == "me" and request.method == "GET")
+                    aliases = {"dashboard_estoque": "estoque", "dashboard_vendas": "vendas",
+                               "dashboard_frota": "frota", "frota_resumo": "frota",
+                               "frota_relatorio": "frota", "frota_historico": "frota",
+                               "abastecimentos": "frota", "manutencoes": "frota",
+                               "lavagens": "frota", "trocas_oleo": "frota", "trocas_pneu": "frota",
+                               "status": "config", "backup": "config", "logs_exclusoes": "config",
+                               "app": "config", "monitor_boot": "config", "sip": "config"}
+                    required = aliases.get(resource, resource)
+                    if api_path == "vendas/orcamentos/relatorio":
+                        required = "vendas_orcamentos_relatorio"
+                    if ("/config" in api_path or api_path.startswith("vendas/cache") or api_path.startswith("vendas/sellout")) and request.method not in {"GET", "HEAD"}:
+                        required = "config"
+                    read_dependencies = {
+                        "estoque/produtos": {"estoque_contagem"},
+                        "estoque/posicao": {"estoque_contagem"},
+                        "veiculos": {"frota", "fretes", "escala", "cargas"},
+                        "colaboradores": {"frota", "fretes", "escala", "cargas", "comissao"},
+                    }
+                    dependency = request.method in {"GET", "HEAD"} and bool(recursos & read_dependencies.get(api_path, set()))
+                    if request.method in {"GET", "HEAD"} and re.fullmatch(r"vendas/orcamentos/\d+/pdf", api_path):
+                        dependency = dependency or "vendas_orcamentos_relatorio" in recursos
+                    if not common and not dependency and required not in recursos:
+                        return jsonify({"erro": "recurso nao liberado para este usuario"}), 403
+                elif relative.startswith(("monitor/", "gestor-emails", "importar-xml")):
+                    required = relative.split("/")[1] if relative.startswith("monitor/") else relative.split("/")[0]
+                    if required not in recursos:
+                        return jsonify({"erro": "recurso nao liberado para este usuario"}), 403
+
     return None
 
 
@@ -1757,11 +1799,68 @@ def visible_apps_for_user(usuario):
     ]
 
 
+def deployment_uses_portal():
+    return RENDER_RUNTIME or configured_client_id() in {"", "nanotech", "cloud"}
+
+
+def permission_catalog():
+    """O mesmo manifest alimenta os menus e o cadastro de acessos."""
+    catalog = []
+    for item in list_apps():
+        resources = {"*": "Todas as funcoes"}
+        # Preserva recursos ja concedidos mesmo quando o perfil move/omite atalhos.
+        for definition in (item, app_menu_definition(item)):
+            for groups_key in ("menu_groups", "config_groups"):
+                for entries in (definition.get(groups_key) or {}).values():
+                    for entry in entries:
+                        resource = entry.get("recurso") or entry.get("permission")
+                        if resource:
+                            resources.setdefault(resource, entry.get("recurso_nome") or resource.replace("_", " ").replace("-", " ").capitalize())
+        catalog.append({"app_key": item["app_key"], "nome": item["nome"],
+                        "recursos": [{"key": k, "nome": v} for k, v in resources.items()]})
+    return catalog
+
+
+def validate_user_permissions(raw):
+    if not isinstance(raw, dict):
+        raise ValueError("Informe os acessos por modulo.")
+    catalog = {a["app_key"]: {r["key"] for r in a["recursos"]} for a in permission_catalog()}
+    result = {}
+    for key, resources in raw.items():
+        if key not in catalog or not isinstance(resources, list):
+            raise ValueError("Modulo de acesso invalido.")
+        if any(not isinstance(r, str) or r not in catalog[key] for r in resources):
+            raise ValueError("Funcao de acesso invalida.")
+        result[key] = sorted(set(resources))
+    return result
+
+
+def application_entry_url(usuario):
+    apps = visible_apps_for_user(usuario)
+    preferred = {"rio-branco": "riob", "senhor": "nanostore", "laboratorio": "pacs"}.get(configured_client_id())
+    apps.sort(key=lambda item: item["app_key"] != preferred)
+    for item in apps:
+        if user_is_admin(usuario) or "*" in allowed_resources_for_app(usuario, item["app_key"]):
+            return item["url"]
+        for definition in (app_menu_definition(item), item):
+            for groups_key in ("menu_groups", "config_groups"):
+                for entries in (definition.get(groups_key) or {}).values():
+                    for entry in entries:
+                        if menu_item_visible(entry, item, usuario):
+                            return entry["url"]
+    return None
+
+
 def menu_item_visible(item, app_item, usuario):
     if user_is_admin(usuario):
         return True
     recurso = item.get("recurso") or item.get("permission")
     return can_access(usuario, app_item["app_key"], recurso)
+
+
+def app_menu_definition(app_item):
+    """O perfil do cliente reorganiza atalhos sem alterar o manifest global."""
+    return (app_item.get("menu_profiles") or {}).get(configured_client_id(), app_item)
 
 
 def menu_sections(apps, usuario=None):
@@ -1771,8 +1870,9 @@ def menu_sections(apps, usuario=None):
     for app_item in apps:
         if not app_visible_to_user(app_item, usuario):
             continue
-        groups = app_item.get("menu_groups") or {}
-        config_groups = app_item.get("config_groups") or {}
+        definition = app_menu_definition(app_item)
+        groups = definition.get("menu_groups") or {}
+        config_groups = definition.get("config_groups") or {}
         for section in MENU_SECTIONS:
             for item in groups.get(section, []):
                 if menu_item_visible(item, app_item, usuario):
@@ -1781,6 +1881,7 @@ def menu_sections(apps, usuario=None):
                             **item,
                             "nome": menu_display_name(item, app_item["nome"], section),
                             "app": app_item["nome"],
+                            "app_key": app_item["app_key"],
                             "grupo": item.get("grupo") or "",
                         }
                     )
@@ -1792,9 +1893,48 @@ def menu_sections(apps, usuario=None):
                             **item,
                             "nome": menu_display_name(item, app_item["nome"], "config"),
                             "app": app_item["nome"],
+                            "app_key": app_item["app_key"],
                             "grupo": item.get("grupo") or "",
                         }
                     )
+    # Mantem as secoes de compatibilidade para telas existentes, mas o menu
+    # principal agrupa operacoes e cadastros pelo aplicativo de origem.
+    sections["modules"] = []
+    shared = {"dashboards", "config", "relatorios", "import_export"}
+    labels = {"cadastros": "Cadastros", "workflow": "Operacoes", "vendas": "Vendas",
+              "compras": "Compras", "estoque": "Estoque", "financeiro": "Financeiro",
+              "ponto": "Ponto", "automacao": "Automacao"}
+    for app_item in apps:
+        if not app_visible_to_user(app_item, usuario):
+            continue
+        entries, seen = [], set()
+        for section, items in (app_item.get("menu_groups") or {}).items():
+            if section in shared:
+                continue
+            for item in items:
+                if item.get("url") in seen or not menu_item_visible(item, app_item, usuario):
+                    continue
+                seen.add(item.get("url"))
+                entries.append({**item, "nome": menu_display_name(item, app_item["nome"], section),
+                                "grupo": labels.get(section, section)})
+        if not entries and (user_is_admin(usuario) or "*" in allowed_resources_for_app(usuario, app_item["app_key"])):
+            entries.append({"nome": "Abrir " + app_item["nome"], "url": app_item["url"], "grupo": ""})
+        if entries:
+            sections["modules"].append({"key": app_item["app_key"], "nome": app_item["nome"], "entries": entries})
+    if configured_client_id() == "rio-branco" and any("rio-branco" in (item.get("menu_profiles") or {}) for item in apps):
+        order = [("dashboards", "Dash"), ("cadastros", "Cadastro"), ("relatorios", "Relatorio"),
+                 ("import_export", "Dados"), ("config", "Config"), ("workflow", "Workflow"),
+                 ("monitor", "Monitor"), ("estoque", "Estoque"), ("gestao", "Gestao"), ("docs", "Docs")]
+        modules = ["riob", "riob-email", "riob-xml", "automacao", "chamados", "tecnologia", "zap"]
+        sections["primary"] = []
+        for key, label in order:
+            grouped = []
+            for module_key in modules:
+                entries = [entry for entry in sections[key] if entry.get("app_key") == module_key]
+                if entries:
+                    grouped.append({"nome": entries[0]["app"], "entries": entries})
+            if grouped or key == "config":
+                sections["primary"].append({"key": key, "nome": label, "groups": grouped})
     return sections
 
 
@@ -1850,6 +1990,7 @@ def portal_context(usuario=None):
     client_config = client_contracts_payload()
     return {
         "usuario": usuario,
+        "show_portal": deployment_uses_portal(),
         "apps": visible_apps,
         "menu": menu_sections(apps, usuario),
         "config": get_config(),
@@ -1879,6 +2020,11 @@ def portal():
     usuario = current_user_or_logout()
     if not usuario:
         return redirect(url_for("login_page"))
+    if not deployment_uses_portal():
+        target = application_entry_url(usuario)
+        if target:
+            return redirect(target)
+        return render_template("access_pending.html", **portal_context(usuario))
     return render_template(
         "portal.html",
         **portal_context(usuario),
@@ -1900,9 +2046,12 @@ def select_cloud_client(client_id):
 @app.route("/config")
 @login_required
 def config_page():
+    usuario = current_user_or_logout()
+    if not usuario:
+        return redirect(url_for("login_page"))
     return render_template(
         "config.html",
-        **portal_context(),
+        **portal_context(usuario),
     )
 
 
@@ -2077,10 +2226,18 @@ def portal_users_payload():
         item = public_user(row)
         item["ativo"] = bool(row.get("ativo"))
         users.append(item)
+    cur.execute("SELECT usuario_id, app_key, recurso FROM usuario_app_permissoes WHERE permitido=1")
+    by_id = {u["id"]: u for u in users}
+    for u in users:
+        u["permissoes"] = {}
+    for row in cur.fetchall():
+        if row["usuario_id"] in by_id:
+            by_id[row["usuario_id"]]["permissoes"].setdefault(row["app_key"], []).append(row["recurso"])
     cur.close()
     conn.close()
     return {
         "ok": True,
+        "catalogo_acessos": permission_catalog(),
         "usuarios": users,
         "nanostore_perfis": [
             {"key": key, "name": name}
@@ -2098,6 +2255,7 @@ def api_users():
     return jsonify(portal_users_payload())
 
 
+@app.route("/api/usuarios", defaults={"user_id": None}, methods=["POST"])
 @app.route("/api/usuarios/<int:user_id>", methods=["PUT"])
 @login_required
 def api_update_user(user_id):
@@ -2126,13 +2284,20 @@ def api_update_user(user_id):
     if int(admin["id"]) == user_id and (perfil != "admin" or not ativo):
         return jsonify({"erro": "o administrador conectado nao pode remover o proprio acesso"}), 400
 
+    try:
+        permissions = validate_user_permissions(payload["permissoes"]) if "permissoes" in payload else None
+    except ValueError as exc:
+        return jsonify({"erro": str(exc)}), 400
+    if user_id is None and not senha:
+        return jsonify({"erro": "informe a senha do novo usuario"}), 400
     conn = get_auth_conn()
     cur = conn.cursor(dictionary=True)
     try:
-        cur.execute("SELECT id FROM usuarios WHERE id=%s LIMIT 1", (user_id,))
-        if not cur.fetchone():
-            return jsonify({"erro": "usuario nao encontrado"}), 404
-        cur.execute("SELECT id FROM usuarios WHERE login=%s AND id<>%s LIMIT 1", (login, user_id))
+        if user_id is not None:
+            cur.execute("SELECT id FROM usuarios WHERE id=%s LIMIT 1", (user_id,))
+            if not cur.fetchone():
+                return jsonify({"erro": "usuario nao encontrado"}), 404
+        cur.execute("SELECT id FROM usuarios WHERE login=%s AND id<>%s LIMIT 1", (login, user_id or 0))
         if cur.fetchone():
             return jsonify({"erro": "este login ja esta em uso"}), 409
 
@@ -2142,17 +2307,21 @@ def api_update_user(user_id):
             fields.append("senha=%s")
             values.append(generate_password_hash(senha))
         values.append(user_id)
+        if user_id is None:
+            cur.execute("INSERT INTO usuarios (nome,login,senha,perfil,nanostore_perfil,ativo) VALUES (%s,%s,%s,%s,%s,%s)",
+                        (nome, login, generate_password_hash(senha), perfil, nanostore_perfil, int(ativo)))
+            user_id = cur.lastrowid
+            values[-1] = user_id
         cur.execute(f"UPDATE usuarios SET {', '.join(fields)} WHERE id=%s", tuple(values))
 
-        cur.execute("DELETE FROM usuario_app_permissoes WHERE usuario_id=%s", (user_id,))
-        if perfil != "admin" and nanostore_perfil:
-            cur.execute(
-                """
-                INSERT INTO usuario_app_permissoes (usuario_id, app_key, recurso, permitido)
-                VALUES (%s, 'nanostore', '*', 1)
-                """,
-                (user_id,),
-            )
+        if permissions is not None:
+            # Somente os modulos deste deploy; nunca apagar acessos fora do catalogo.
+            for module in permission_catalog():
+                key = module["app_key"]
+                cur.execute("DELETE FROM usuario_app_permissoes WHERE usuario_id=%s AND app_key=%s", (user_id, key))
+                for resource in permissions.get(key, []):
+                    cur.execute("INSERT INTO usuario_app_permissoes (usuario_id,app_key,recurso,permitido) VALUES (%s,%s,%s,1)",
+                                (user_id, key, resource))
         conn.commit()
     except Exception:
         conn.rollback()
@@ -2313,6 +2482,10 @@ def riob_hash_bridge_script():
     var section = parts[0] || "";
     var view = parts[1] || "";
     try {
+      if (section === "comunicacao" && typeof window.toggleChatPopup === "function") {
+        window.toggleChatPopup(true, ["chat", "ia", "telefonia"].includes(view) ? view : "chat");
+        return;
+      }
       if (section === "config" && view && typeof window.openConfigView === "function") {
         window.openConfigView(null, view);
         return;
@@ -2848,6 +3021,10 @@ def riob_proxy(subpath=""):
         ):
             frame_url += "#vendas:orcamento"
             active_page = "vendas"
+        if usuario and not user_is_admin(usuario) and "#" not in frame_url:
+            entry = application_entry_url(usuario) or ""
+            if entry.startswith("/apps/riob#"):
+                frame_url += "#" + entry.partition("#")[2]
         return render_template(
             "integrated_frame.html",
             active_page=active_page,
@@ -3132,9 +3309,14 @@ def rewrite_automacao_html(content, prefix="/apps/automacao", apply_theme=True):
 
 def automacao_active_page(subpath):
     path = "/" + (subpath or "")
-    if path in {"/", ""} or path.startswith("/tempo-real"):
+    if path in {"/", ""} or path.startswith("/tempo-real") or path.startswith("/maquinas"):
         return "dashboards"
-    if path.startswith("/motores") or path.startswith("/motor") or path.startswith("/sensores/drivers"):
+    if (
+        path.startswith("/motores")
+        or path.startswith("/motor")
+        or path.startswith("/sensores/drivers")
+        or path.startswith("/documentacao")
+    ):
         return "cadastros"
     if path.startswith("/alarmes"):
         return "workflow"

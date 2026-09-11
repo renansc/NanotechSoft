@@ -169,6 +169,18 @@ O pre-lancamento permite revisar, descartar ou devolver a NF-e ao estoque.
 
 ## Identidade, chat, agente e arquivos
 
+Comunicacao usa um unico popup com as opcoes Chat, IA e Telefonia e um
+Minimizar. Os atalhos do portal `#comunicacao:chat`, `#comunicacao:ia`,
+`#comunicacao:telefonia` e `#agentia` abrem a opcao correspondente. IA preserva
+Conversa IA e Agent IA em seu grupo. O catalogo dos aliases explicita o recurso
+`*`, sem alterar liberacoes; no proxy RioB, `/api/chat/*` exige `chat`,
+`/api/sip/*` exige `config` e `/api/agent/*` continua filtrando dados/acoes pelas
+permissoes do usuario. Configuracao SIP permanece em Config.
+
+Validacao visual e de comportamento (com Playwright Python e Chrome instalados):
+`python tests/check_communication_popup.py`, a partir da raiz do repositorio.
+O teste usa respostas simuladas; nao envia mensagens nem efetua chamadas reais.
+
 - `GET /api/me`
 - `GET /api/chat/mensagens/<mensagem_id>/anexo`
 - `GET /api/devolucoes/fotos/<filename>`
@@ -239,3 +251,7 @@ validos mesmo sem chamada textual direta.
   ajudantes vem do proprio SELLOUT quando preenchidos; o sistema nao inventa
   equipe quando o arquivo traz `000-` ou campo vazio. O prefixo do mapa sugere
   o caminhao quando existe veiculo com o mesmo numero no cadastro.
+
+## Destinos adicionais do menu Rio Branco
+
+`#estoque:contagem` e `#relatorios:orcamentos` sao visoes independentes de Acerto e emissao de orcamentos. Suas APIs e permissoes estao em `API_E_DADOS.md`. Gestao > XML aponta para `/arquivos` e `/abastecimentos?visao=revisao`; esse parametro seleciona o painel de pendencias sem executar uma revisao. Gestao > Email separa `/historico`, `/recuperar` e `/backup`. O mapa completo fica em `docs/MENU_RIO_BRANCO_PDF.md` na raiz.

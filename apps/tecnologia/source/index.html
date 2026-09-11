@@ -271,13 +271,13 @@
       </section>
 
       <section class="techView hidden" data-page="backup">
-        <div class="kpiGrid backupKpis">
+        <div class="kpiGrid backupKpis" data-backup-sections="visao">
           <article class="kpi"><span>Planos ativos</span><strong id="backupKpiActive">0</strong><small>configurações em execução</small></article>
           <article class="kpi warning"><span>Exigem atenção</span><strong id="backupKpiWarning">0</strong><small>agente sem contato ou falha</small></article>
           <article class="kpi speed"><span>Último sucesso</span><strong id="backupKpiLastSuccess">—</strong><small>execução confirmada pelo agente</small></article>
         </div>
 
-        <section class="panel">
+        <section class="panel" data-backup-sections="planos">
           <div class="panelHead">
             <div><span class="eyebrow">Cópias externas</span><h2>Backups configurados</h2></div>
             <button class="btn primary" id="newBackup" type="button">Novo plano de backup</button>
@@ -290,7 +290,7 @@
           </div>
         </section>
 
-        <div class="backupInfoGrid">
+        <div class="backupInfoGrid" data-backup-sections="agentes">
           <section class="panel">
             <span class="eyebrow">Retenção em camadas</span>
             <h2>Diário → semana → mês → nuvem</h2>
@@ -313,7 +313,7 @@
           </section>
         </div>
 
-        <section class="panel">
+        <section class="panel" data-backup-sections="visao">
           <div class="panelHead"><div><span class="eyebrow">Auditoria</span><h2>Execuções recentes</h2></div><button class="btn" id="refreshBackups" type="button">Atualizar</button></div>
           <div class="tableWrap"><table><thead><tr><th>Data</th><th>Plano</th><th>Status</th><th>Camadas</th><th>Gravado</th><th>Mensagem</th></tr></thead><tbody id="backupRunsTable"></tbody></table></div>
         </section>

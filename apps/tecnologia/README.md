@@ -429,3 +429,7 @@ Rotas administrativas e do agente:
 - `GET /apps/tecnologia/api/backup/agent-script`;
 - `GET /apps/tecnologia/api/backup/agent/<agent_id>/config` com Bearer token;
 - `POST /apps/tecnologia/api/backup/agent/<agent_id>/report` com Bearer token e JSON.
+
+## Menu Rio Branco
+
+O perfil Rio Branco organiza os atalhos conforme `docs/MENU_RIO_BRANCO_PDF.md`. Os destinos `#backup-visao`, `#backup-planos` e `#backup-agentes` selecionam, respectivamente, indicadores/execucoes, planos e instalacao/retencao. Todos reutilizam o recurso `backup` e as APIs existentes. `#backup` conserva a visao completa para os demais destinos.

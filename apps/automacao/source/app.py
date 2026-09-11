@@ -3,10 +3,11 @@ from flask import (
     render_template,
     request,
     jsonify,
-    redirect
+    redirect,
 )
 
 import json
+import math
 import os
 
 from database import (
@@ -20,6 +21,7 @@ from driver_service import (
     salvar_leitura_motor,
     start_driver_monitor
 )
+from machine_catalog import MACHINES, machine_by_slug
 
 app = Flask(__name__)
 
@@ -45,14 +47,237 @@ def dashboard():
         WHERE reconhecido = 0
     """).fetchone()["total"]
 
+    total_maquinas = conn.execute("""
+        SELECT COUNT(*) total
+        FROM maquinas
+        WHERE ativo = 1
+    """).fetchone()["total"]
+
+    maquinas_em_alarme = conn.execute("""
+        SELECT COUNT(*) total
+        FROM maquinas
+        WHERE ativo = 1
+          AND ultimo_status = 'alarme'
+    """).fetchone()["total"]
+
     conn.close()
 
     return render_template(
         "dashboard.html",
         total_motores=total_motores,
         total_leituras=total_leituras,
-        total_alarmes=total_alarmes
+        total_alarmes=total_alarmes,
+        total_maquinas=total_maquinas,
+        maquinas_em_alarme=maquinas_em_alarme,
     )
+
+
+@app.route("/maquinas")
+def maquinas():
+    conn = get_connection()
+    dados = conn.execute("""
+        SELECT
+            m.*,
+            COUNT(DISTINCT p.id) pontos_total,
+            COUNT(DISTINCT l.id) leituras_total
+        FROM maquinas m
+        LEFT JOIN maquina_pontos p
+            ON p.maquina_id = m.id AND p.ativo = 1
+        LEFT JOIN maquina_leituras l
+            ON l.maquina_id = m.id
+        GROUP BY m.id
+        ORDER BY m.nome
+    """).fetchall()
+    conn.close()
+
+    catalogo = {item["slug"]: item for item in MACHINES}
+    return render_template(
+        "maquinas.html",
+        maquinas=dados,
+        catalogo=catalogo,
+    )
+
+
+@app.route("/maquinas/<slug>")
+def detalhe_maquina(slug):
+    conn = get_connection()
+    maquina = conn.execute(
+        "SELECT * FROM maquinas WHERE slug = ?",
+        (slug,),
+    ).fetchone()
+    if not maquina:
+        conn.close()
+        return redirect("/maquinas")
+
+    pontos = conn.execute("""
+        SELECT *
+        FROM maquina_pontos
+        WHERE maquina_id = ? AND ativo = 1
+        ORDER BY grupo, nome
+    """, (maquina["id"],)).fetchall()
+    ultima = conn.execute("""
+        SELECT *
+        FROM maquina_leituras
+        WHERE maquina_id = ?
+        ORDER BY id DESC
+        LIMIT 1
+    """, (maquina["id"],)).fetchone()
+    conn.close()
+
+    leitura = _preparar_leitura_maquina(ultima) if ultima else None
+    return render_template(
+        "maquina_detalhe.html",
+        maquina=maquina,
+        pontos=pontos,
+        leitura=leitura,
+        documento=machine_by_slug(slug),
+    )
+
+
+@app.route("/documentacao")
+def documentacao():
+    return render_template("documentacao.html", maquinas=MACHINES)
+
+
+@app.route("/documentacao/<slug>")
+def documento_maquina(slug):
+    maquina = machine_by_slug(slug)
+    if not maquina:
+        return redirect("/documentacao")
+    return render_template("documento_maquina.html", maquina=maquina)
+
+
+@app.route("/api/maquinas")
+def api_maquinas():
+    conn = get_connection()
+    rows = conn.execute("""
+        SELECT *
+        FROM maquinas
+        WHERE ativo = 1
+        ORDER BY nome
+    """).fetchall()
+    result = []
+    for row in rows:
+        item = dict(row)
+        item["pontos"] = [
+            dict(point)
+            for point in conn.execute("""
+                SELECT slug, nome, grupo, tipo, unidade,
+                       limite_min, limite_max, alarme_quando, origem
+                FROM maquina_pontos
+                WHERE maquina_id = ? AND ativo = 1
+                ORDER BY grupo, nome
+            """, (row["id"],)).fetchall()
+        ]
+        result.append(item)
+    conn.close()
+    return jsonify({"maquinas": result})
+
+
+@app.route("/api/maquinas/<slug>/ultima")
+def api_ultima_leitura_maquina(slug):
+    conn = get_connection()
+    maquina = conn.execute(
+        "SELECT id FROM maquinas WHERE slug = ? AND ativo = 1",
+        (slug,),
+    ).fetchone()
+    if not maquina:
+        conn.close()
+        return jsonify({"erro": "maquina nao encontrada"}), 404
+    leitura = conn.execute("""
+        SELECT * FROM maquina_leituras
+        WHERE maquina_id = ?
+        ORDER BY id DESC LIMIT 1
+    """, (maquina["id"],)).fetchone()
+    conn.close()
+    return jsonify(_preparar_leitura_maquina(leitura) if leitura else {})
+
+
+@app.route("/api/maquinas/<slug>/leituras", methods=["POST"])
+def api_receber_leitura_maquina(slug):
+    if request.content_length and request.content_length > 65536:
+        return jsonify({"erro": "leitura excede 64 KB"}), 413
+
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"erro": "envie um objeto JSON"}), 400
+    valores = payload.get("pontos", payload.get("valores", payload))
+    if not isinstance(valores, dict):
+        return jsonify({"erro": "pontos deve ser um objeto JSON"}), 400
+
+    conn = get_connection()
+    maquina = conn.execute(
+        "SELECT * FROM maquinas WHERE slug = ? AND ativo = 1",
+        (slug,),
+    ).fetchone()
+    if not maquina:
+        conn.close()
+        return jsonify({"erro": "maquina nao encontrada"}), 404
+
+    pontos = conn.execute("""
+        SELECT * FROM maquina_pontos
+        WHERE maquina_id = ? AND ativo = 1
+    """, (maquina["id"],)).fetchall()
+    por_slug = {point["slug"]: point for point in pontos}
+    normalizados = {}
+    alarmes = []
+    ignorados = []
+
+    try:
+        for chave, valor in valores.items():
+            if chave not in por_slug:
+                ignorados.append(chave)
+                continue
+            point = por_slug[chave]
+            normalizado = _normalizar_valor_ponto(point, valor)
+            normalizados[chave] = normalizado
+            motivo = _avaliar_alarme_ponto(point, normalizado)
+            if motivo:
+                alarmes.append({
+                    "ponto": chave,
+                    "nome": point["nome"],
+                    "motivo": motivo,
+                    "valor": normalizado,
+                })
+    except (TypeError, ValueError) as exc:
+        conn.close()
+        return jsonify({"erro": str(exc)}), 400
+
+    if not normalizados:
+        conn.close()
+        return jsonify({
+            "erro": "nenhum ponto conhecido foi informado",
+            "ignorados": ignorados,
+        }), 400
+
+    erro = str(payload.get("erro") or "")[:500]
+    status = "erro" if erro else ("alarme" if alarmes else "online")
+    conn.execute("""
+        INSERT INTO maquina_leituras(
+            maquina_id, dados_json, status, alarmes_json, erro
+        ) VALUES (?,?,?,?,?)
+    """, (
+        maquina["id"],
+        json.dumps(normalizados, ensure_ascii=False),
+        status,
+        json.dumps(alarmes, ensure_ascii=False),
+        erro or None,
+    ))
+    conn.execute("""
+        UPDATE maquinas
+        SET ultimo_status = ?,
+            ultimo_erro = ?,
+            ultimo_contato = CURRENT_TIMESTAMP
+        WHERE id = ?
+    """, (status, erro or None, maquina["id"]))
+    conn.commit()
+    conn.close()
+    return jsonify({
+        "status": status,
+        "alarmes": alarmes,
+        "ignorados": ignorados,
+        "pontos": normalizados,
+    }), 201
 
 
 
@@ -687,6 +912,60 @@ def _preparar_leitura_driver(leitura):
     item["raw"] = json.loads(item["raw_json"] or "{}")
 
     return item
+
+
+def _preparar_leitura_maquina(leitura):
+    item = dict(leitura)
+    item["dados"] = json.loads(item.get("dados_json") or "{}")
+    item["alarmes"] = json.loads(item.get("alarmes_json") or "[]")
+    return item
+
+
+def _normalizar_valor_ponto(point, value):
+    tipo = point["tipo"]
+    if tipo == "booleano":
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)) and value in (0, 1):
+            return bool(value)
+        if isinstance(value, str):
+            text = value.strip().lower()
+            if text in {"1", "true", "sim", "on", "ligado"}:
+                return True
+            if text in {"0", "false", "nao", "não", "off", "desligado"}:
+                return False
+        raise ValueError(f"{point['slug']} deve ser booleano")
+
+    if tipo in {"numero", "contador"}:
+        if isinstance(value, bool):
+            raise ValueError(f"{point['slug']} deve ser numerico")
+        number = float(value)
+        if not math.isfinite(number):
+            raise ValueError(f"{point['slug']} deve ser um numero finito")
+        if tipo == "contador":
+            if number < 0 or not number.is_integer():
+                raise ValueError(f"{point['slug']} deve ser inteiro e positivo")
+            return int(number)
+        return number
+
+    if value is None:
+        raise ValueError(f"{point['slug']} nao pode ser nulo")
+    return str(value)[:200]
+
+
+def _avaliar_alarme_ponto(point, value):
+    if point["tipo"] == "booleano" and point["alarme_quando"] is not None:
+        if bool(value) == bool(point["alarme_quando"]):
+            return "estado de alarme ativo"
+        return None
+
+    if point["tipo"] not in {"numero", "contador"}:
+        return None
+    if point["limite_min"] is not None and value < point["limite_min"]:
+        return f"abaixo do limite {point['limite_min']}"
+    if point["limite_max"] is not None and value > point["limite_max"]:
+        return f"acima do limite {point['limite_max']}"
+    return None
 
 
 def _preparar_driver_tempo_real(driver, ultima):

@@ -354,3 +354,58 @@ If you need context fast, read these files first:
 - Keep filenames, routes, and status names consistent with the existing project vocabulary.
 - Use ASCII-only edits unless the file already uses accented text.
 - Favor explicit references to files and line-level behavior in explanations.
+
+## Login, menus e acessos obrigatorios
+
+- Somente Nanotech e Render apresentam o portal de aplicativos. Os demais
+  deploys abrem a aplicacao contratada apos o login unico; Rio Branco abre RioB.
+- A autenticacao e a sessao continuam centralizadas no NanotechSoft, inclusive
+  quando a tela inicial e a aplicacao. Nao criar login paralelo nos modulos.
+- Config > Usuarios e acessos e o cadastro central de pessoas e autorizacoes.
+  Os menus e o catalogo de funcoes usam os mesmos recursos dos manifests.
+- Sempre que criar, alterar, mover ou remover uma funcao/modulo/rota, atualizar
+  a documentacao afetada e o catalogo de acesso dos usuarios no mesmo trabalho.
+  Revisar `recurso` no manifest, verificacoes no servidor, menus e testes de
+  usuario autorizado e nao autorizado. Ocultar menu nao substitui autorizacao.
+- Atualizar o catalogo nao significa conceder acessos automaticamente: preservar
+  as escolhas existentes; novas funcoes exigem liberacao em Config (ou acesso
+  integral explicitamente concedido ao modulo).
+- Nanotech e Render compartilham o codigo de navegacao. Espelhamento de dados
+  continua uma operacao separada; Render permanece somente leitura ate existir
+  definicao explicita de uma nova arquitetura de dados.
+
+## Menu principal por modulo
+
+O shell do portal mantem identificacao, menu e Sair na mesma linha, com menu
+recolhido quando faltar largura. Temas ficam em Config e o icone de usuario
+abre Config > Minha conta, usando a sessao unica.
+O botao flutuante de Comunicacao usa um balao com contador de nao lidas e
+mantem `toggleChatPopup` e o recurso `chat` (catalogo: Comunicacao (chat)).
+A seta adjacente executa `voltarAoTopo` no documento do RioB, inclusive dentro
+do iframe, respeitando a preferencia de movimento reduzido. A barra auxiliar
+do Kanban reserva espaco para os dois botoes; o modo TV oculta ambos.
+
+O popup tem Chat, IA e Telefonia no topo e um unico Minimizar. Somente a opcao
+selecionada exibe seus controles. IA agrupa Conversa IA (historico I.A-Rio) e
+Agent IA (ferramentas, voz e historico proprios), ambos dentro do popup.
+`setCommunicationTab` preserva os rascunhos entre Chat e Conversa IA; telefonia
+usa `phoneContactId`, separado do destinatario do chat. Trocar aba ou minimizar
+nao encerra chamadas, nao limpa a discagem e nao marca conversas ocultas como
+lidas. Uma chamada recebida abre Telefonia e a chamada ativa e indicada na aba.
+`#agentia` e `abrirAgentIaDoChat` abrem IA > Agent IA; a ponte do portal tambem
+aceita `#comunicacao:chat`, `#comunicacao:ia` e `#comunicacao:telefonia`.
+Os recursos continuam os existentes: chat exige `chat`, SIP exige `config`
+no proxy e Agent aplica o filtro de dados/acoes do usuario. Os manifests dos
+aliases explicitam `*`; reorganizar as telas nao concede permissoes novas.
+
+Cada aplicativo contratado e autorizado tem seu proprio item no menu principal.
+As operacoes e os cadastros ficam dentro desse item, agrupados por funcao.
+Dashboard, Config, Relatorios e Import/Export permanecem como menus comuns.
+Cadastros e Workflow deixam de ser itens globais, sem mudar URLs ou recursos.
+O agrupamento deriva dos mesmos manifests usados por Config > Usuarios e acessos;
+reorganizar atalhos nao altera nem concede permissoes. Ao adicionar uma funcao,
+classificar seu grupo e recurso no manifest e verificar o menu de usuario restrito.
+
+## Navegacao conforme PDF (10/09/2026)
+
+O perfil Rio Branco e documentado em `docs/MENU_RIO_BRANCO_PDF.md` na raiz. `#estoque:contagem` abre a conferencia separada do Acerto, com rascunho em memoria e exportacao CSV, sem alterar saldos. `#relatorios:orcamentos` lista orcamentos emitidos, com filtros e paginacao, reutilizando o PDF historico. Recursos novos: `estoque_contagem` e `vendas_orcamentos_relatorio`. Email oferece paginas distintas para backup ZIP, importacao de historico XML e recuperacao de conteudo; acesso ao backup exige `riob-email:backup`.

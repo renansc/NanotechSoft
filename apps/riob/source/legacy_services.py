@@ -11,6 +11,7 @@ import re
 import shutil
 import sqlite3
 import threading
+import tempfile
 import time
 import unicodedata
 import uuid
@@ -1174,6 +1175,7 @@ def estoque():
 
 @XML_BP.route("/abastecimentos")
 def abastecimentos():
+    review_only = request.args.get("visao") == "revisao"
     query = request.args.get("q", "").strip()
     params = []
     conditions = []
@@ -1263,8 +1265,9 @@ def abastecimentos():
         for row in rows
     )
     return _xml_page(f"""
-    <h2>Abastecimentos importados</h2>
-    <form method="get"><input name="q" value="{html.escape(query)}" placeholder="Buscar placa, posto, combustivel ou nota"><button>Buscar</button></form>
+    <h2>{"Revisao de abastecimentos" if review_only else "Abastecimentos importados"}</h2>
+    {'<style>.abastecimentos-lista { display:none; }</style>' if review_only else ""}
+    <form method="get"><input type="hidden" name="visao" value="{'revisao' if review_only else 'lista'}"><input name="q" value="{html.escape(query)}" placeholder="Buscar placa, posto, combustivel ou nota"><button>Buscar</button></form>
     <div class="pending-box">
       <h3>Pendencias de abastecimento: {len(pending_rows)}</h3>
       <p>Revise o veiculo, KM, combustivel, quantidade e valor para concluir o lancamento no modulo de frota.</p>
@@ -1273,8 +1276,8 @@ def abastecimentos():
         {pending_table or '<tr><td colspan="8">Nenhuma pendencia neste filtro.</td></tr>'}
       </table></div>
     </div>
-    <p><a href="{url_for('importar_xml.exportar_abastecimentos')}">Exportar CSV</a></p>
-    <div class="scroll"><table><tr><th>ID</th><th>Nota</th><th>Emissao</th><th>Posto</th><th>Placa</th><th>KM</th><th>Motorista</th><th>Combustivel</th><th>Litros</th><th>Valor</th><th>Status</th><th>Acao</th></tr>{table}</table></div>
+    <p class="abastecimentos-lista"><a href="{url_for('importar_xml.exportar_abastecimentos')}">Exportar CSV</a></p>
+    <div class="scroll abastecimentos-lista"><table><tr><th>ID</th><th>Nota</th><th>Emissao</th><th>Posto</th><th>Placa</th><th>KM</th><th>Motorista</th><th>Combustivel</th><th>Litros</th><th>Valor</th><th>Status</th><th>Acao</th></tr>{table}</table></div>
     """)
 
 
@@ -1614,6 +1617,14 @@ table{width:100%;border-collapse:collapse;background:#fff}th,td{padding:10px;bor
 
 
 def _email_page(body):
+    panel = request.args.get("painel", "")
+    if request.endpoint == "gestor_emails.index" and panel in {"resumo", "status"}:
+        body = f'<div class="email-dashboard-{panel}">{body}</div>'
+        body = """<style>
+        .email-dashboard-resumo .card:not(.email-summary),
+        .email-dashboard-resumo .email-summary form,
+        .email-dashboard-status .card:not(.email-status) { display:none; }
+        </style>""" + body
     return render_template_string(EMAIL_BASE, body=body)
 
 
@@ -4137,7 +4148,7 @@ def index():
     recover_url = url_for("gestor_emails.recuperar_conteudo")
     today_text = _email_today().isoformat()
     return _email_page(f"""
-    <div class="card"><h3>Resumo</h3>
+    <div class="card email-summary"><h3>Resumo</h3>
       <p><b>E-mails importados:</b> {email_total}</p>
       <p><b>Anexos registrados:</b> {attachment_total}</p>
       <p><b>Uso atual:</b> {used_gb:.3f} GB de {storage_limit:g} GB</p>
@@ -4159,7 +4170,7 @@ def index():
         <button>Recuperar conteudo dos e-mails antigos</button>
       </form>
     </div>
-    <div class="card"><h3>Status</h3><p id="email-status">Aguardando...</p>
+    <div class="card email-status"><h3>Status</h3><p id="email-status">Aguardando...</p>
       <p>Verificados: <span id="email-processed">0</span>/<span id="email-total">0</span></p>
       <p>Novos: <span id="email-imported">0</span> | Conteudos recuperados: <span id="email-recovered">0</span> | Anexos: <span id="email-attachments">0</span></p>
       <p>XML importados: <span id="email-xml-imported">0</span> | Ja existentes: <span id="email-xml-existing">0</span> | Erros XML: <span id="email-xml-errors">0</span> | Falhas IMAP: <span id="email-fetch-errors">0</span> | Exclusoes POP3 confirmadas: <span id="email-deleted">0</span></p>
@@ -4194,6 +4205,79 @@ def _supplier_category_options(selected):
         f"{html.escape(label)}</option>"
         for value, label in SUPPLIER_CATEGORIES.items()
     )
+
+
+@EMAIL_BP.get("/historico")
+def pagina_historico():
+    return _email_page(f"""<div class="card"><h3>Importar historico XML</h3>
+      <p>Verifica a conta BOL desde 01/01/2026 ate a data escolhida, mantendo as mensagens no servidor.</p>
+      <form method="post" action="{url_for('gestor_emails.importar_historico_xml')}">
+        <label>Ate a data <input type="date" name="until_date" required value="{_email_today().isoformat()}"></label>
+        <button>Importar historico</button>
+      </form></div>""")
+
+
+@EMAIL_BP.get("/recuperar")
+def pagina_recuperar():
+    return _email_page(f"""<div class="card"><h3>Recuperar conteudo</h3>
+      <p>Recupera pelo UID o corpo das mensagens antigas ainda disponiveis no POP3, sem duplicar anexos nem apagar mensagens.</p>
+      <form method="post" action="{url_for('gestor_emails.recuperar_conteudo')}">
+        <button>Recuperar conteudo dos e-mails</button>
+      </form></div>""")
+
+
+@EMAIL_BP.get("/backup")
+def pagina_backup():
+    return _email_page(f"""<div class="card"><h3>Backup de e-mails e anexos</h3>
+      <p>Baixe as mensagens ja importadas e seus anexos em ZIP. O arquivo inclui os corpos disponiveis,
+      os metadados e uma lista de anexos ausentes. Configuracoes e senhas das contas nao fazem parte do arquivo.</p>
+      <form method="post" action="{url_for('gestor_emails.exportar_backup')}"><button>Baixar backup ZIP</button></form>
+      </div>""")
+
+
+@EMAIL_BP.post("/backup/download")
+def exportar_backup():
+    # Leitura local paginada; nao conecta nas contas nem executa restauracao.
+    archive = tempfile.TemporaryFile()
+    try:
+        with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as backup:
+            for table, filename, columns in (
+                ("gestor_email_mensagens", "mensagens.jsonl", "id, account_id, account_label, uid, sender_name, sender_email, subject, email_date, imported_at, body_text, body_html, raw_headers"),
+                ("gestor_email_anexos", "anexos.jsonl", "id, email_id, filename, path_relativo, size_bytes, created_at"),
+            ):
+                last_id = 0
+                while True:
+                    rows = _rows(f"SELECT {columns} FROM {table} WHERE id > %s ORDER BY id LIMIT 100", (last_id,))
+                    if not rows:
+                        break
+                    # Um arquivo por lote evita manter corpos e anexos em memoria.
+                    entries = []
+                    for row in rows:
+                        item = dict(row)
+                        if table == "gestor_email_anexos":
+                            item.pop("path_relativo", None)
+                            try:
+                                path = _attachment_path(row.get("path_relativo"))
+                                if not path.is_file():
+                                    raise FileNotFoundError()
+                                name = f"anexos/{int(row['id'])}/{secure_filename(row.get('filename') or '') or 'anexo'}"
+                                backup.write(path, name)
+                                item["arquivo_backup"] = name
+                            except (ValueError, OSError):
+                                item["indisponivel"] = True
+                        entries.append(json.dumps(item, ensure_ascii=False, default=str))
+                    backup.writestr(f"metadados/{last_id}-{filename}", "\n".join(entries) + "\n")
+                    last_id = int(rows[-1]["id"])
+            backup.writestr("LEIA-ME.txt", "Backup dos dados importados. Metadados em JSON Lines UTF-8 por lote; anexos em anexos/<id>/. Registros com indisponivel=true indicam anexos nao encontrados. Configuracoes e credenciais nao estao incluidas.\n")
+        archive.seek(0)
+        response = send_file(archive, mimetype="application/zip", as_attachment=True,
+                             download_name=f"emails-{_email_today().isoformat()}.zip", max_age=0)
+        response.headers["Cache-Control"] = "no-store"
+        response.call_on_close(archive.close)
+        return response
+    except Exception:
+        archive.close()
+        raise
 
 
 @EMAIL_BP.route("/fornecedores", methods=["GET", "POST"])

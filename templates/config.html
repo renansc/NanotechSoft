@@ -4,17 +4,31 @@
 <div class="app-shell">
   {% set topbar_title = "Config" %}
   {% set topbar_subtitle = "NanotechSoft" %}
-  {% include "_topbar.html" %}
   {% set active_page = 'config' %}
-  {% include "_menu.html" %}
+  {% include "_topbar.html" %}
+
 
   <main class="content">
-    <section class="portal-head">
+    <section id="minha-conta" class="config-panel user-account-panel" aria-labelledby="userAccountTitle">
+      <h2 id="userAccountTitle">Configuracoes do usuario</h2>
+      <dl class="user-account-details">
+        <div><dt>Nome</dt><dd>{{ usuario.nome }}</dd></div>
+        <div><dt>Login</dt><dd>{{ usuario.login }}</dd></div>
+        <div><dt>Papel no sistema</dt><dd>{{ 'Administrador' if usuario.perfil == 'admin' else 'Usuario' }}</dd></div>
+      </dl>
+      {% if usuario.perfil == 'admin' %}
+        <a class="action-link" href="#usuarios" data-edit-current-user="{{ usuario.id }}">Editar meu cadastro</a>
+      {% else %}
+        <p>Para alterar seu cadastro ou seus acessos, entre em contato com o administrador.</p>
+      {% endif %}
+    </section>
+
+    <section id="temas" class="portal-head">
       <div>
         <h2>Temas</h2>
         <p>O tema ativo sera usado pelo portal e ficara disponivel para apps importados.</p>
       </div>
-      <a class="action-link" href="{{ url_for('portal') }}">Voltar ao portal</a>
+      <a class="action-link" href="{{ url_for('portal') }}">Voltar ao inicio</a>
     </section>
 
     <section class="config-panel">
@@ -31,13 +45,14 @@
     </section>
 
     {% if usuario and usuario.perfil == 'admin' %}
-      <section id="usuarios" class="config-panel user-admin-panel" data-user-admin>
+      <section id="usuarios" class="config-panel user-admin-panel" data-user-admin data-current-user="{{ usuario.id }}">
         <div class="client-admin-head">
           <div>
             <h3>Usuarios e acessos</h3>
-            <p>Altere o papel no portal, o perfil operacional do NanoStore e a senha de acesso.</p>
+            <p>Cadastre usuarios e escolha os modulos e funcoes que cada pessoa pode acessar.</p>
           </div>
         </div>
+        <button type="button" data-user-new>Novo usuario</button>
         <form class="client-admin-form" data-user-form>
           <label class="user-picker">
             Usuario
@@ -53,7 +68,7 @@
               <input type="text" name="login" required autocomplete="off">
             </label>
             <label>
-              Papel no portal
+              Papel no sistema
               <select name="perfil">
                 <option value="usuario">Usuario</option>
                 <option value="admin">Administrador</option>
@@ -76,6 +91,11 @@
               Usuario ativo
             </label>
           </div>
+          <fieldset data-user-permissions>
+            <legend>Funcoes permitidas</legend>
+            <p>Marque as funcoes autorizadas. Administradores acessam todas as funcoes do deploy.</p>
+            <div data-user-permissions-list></div>
+          </fieldset>
           <div class="client-admin-actions">
             <button type="submit">Salvar usuario</button>
             <button type="button" class="danger-button" data-user-delete>Excluir usuario</button>

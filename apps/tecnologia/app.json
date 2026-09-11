@@ -9,7 +9,14 @@
   "ativo": true,
   "origem": "nanotech",
   "source_dir": "apps/tecnologia/source",
-  "temas": ["rio_branco", "autoblue", "fin-blue", "pontobege", "zapgreen", "pacsred"],
+  "temas": [
+    "rio_branco",
+    "autoblue",
+    "fin-blue",
+    "pontobege",
+    "zapgreen",
+    "pacsred"
+  ],
   "menu_groups": {
     "dashboards": [
       {
@@ -57,5 +64,72 @@
         "recurso": "backup"
       }
     ]
+  },
+  "menu_profiles": {
+    "rio-branco": {
+      "menu_groups": {
+        "dashboards": [
+          {
+            "nome": "Visao geral",
+            "url": "/apps/tecnologia#dashboard",
+            "recurso": "dashboard"
+          },
+          {
+            "nome": "Visao de backups",
+            "url": "/apps/tecnologia#backup-visao",
+            "recurso": "backup"
+          }
+        ],
+        "cadastros": [
+          {
+            "nome": "Equipamentos",
+            "url": "/apps/tecnologia#equipamentos",
+            "recurso": "equipamentos"
+          },
+          {
+            "nome": "Planos de backup",
+            "url": "/apps/tecnologia#backup-planos",
+            "recurso": "backup"
+          },
+          {
+            "nome": "Instalar agentes",
+            "url": "/apps/tecnologia#backup-agentes",
+            "recurso": "backup"
+          },
+          {
+            "nome": "Configuracao",
+            "url": "/apps/tecnologia#config",
+            "recurso": "config"
+          }
+        ],
+        "relatorios": [
+          {
+            "nome": "Historico",
+            "url": "/apps/tecnologia#historico",
+            "recurso": "historico"
+          }
+        ],
+        "gestao": [
+          {
+            "nome": "Serie temporal",
+            "url": "/apps/tecnologia#historico",
+            "recurso": "historico"
+          },
+          {
+            "nome": "Ocupacao do link",
+            "url": "/apps/tecnologia#ocupacao-link",
+            "recurso": "historico"
+          }
+        ],
+        "docs": [
+          {
+            "nome": "Agentes e protocolos",
+            "url": "/apps/tecnologia#protocolos",
+            "recurso": "equipamentos"
+          }
+        ]
+      },
+      "config_groups": {}
+    }
   }
 }

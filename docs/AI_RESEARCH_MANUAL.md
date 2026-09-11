@@ -200,3 +200,36 @@ avaliado quanto a entrada externa antes da exclusão.
 - Cache e balanceamento não podem incluir respostas mutáveis, sessões, uploads
   ou APIs de escrita sem armazenamento e afinidade compartilhados entre todas
   as origens.
+
+## Login, menus e acessos obrigatorios
+
+- Somente Nanotech e Render apresentam o portal de aplicativos. Os demais
+  deploys abrem a aplicacao contratada apos o login unico; Rio Branco abre RioB.
+- A autenticacao e a sessao continuam centralizadas no NanotechSoft, inclusive
+  quando a tela inicial e a aplicacao. Nao criar login paralelo nos modulos.
+- Config > Usuarios e acessos e o cadastro central de pessoas e autorizacoes.
+  Os menus e o catalogo de funcoes usam os mesmos recursos dos manifests.
+- Sempre que criar, alterar, mover ou remover uma funcao/modulo/rota, atualizar
+  a documentacao afetada e o catalogo de acesso dos usuarios no mesmo trabalho.
+  Revisar `recurso` no manifest, verificacoes no servidor, menus e testes de
+  usuario autorizado e nao autorizado. Ocultar menu nao substitui autorizacao.
+- Atualizar o catalogo nao significa conceder acessos automaticamente: preservar
+  as escolhas existentes; novas funcoes exigem liberacao em Config (ou acesso
+  integral explicitamente concedido ao modulo).
+- Nanotech e Render compartilham o codigo de navegacao. Espelhamento de dados
+  continua uma operacao separada; Render permanece somente leitura ate existir
+  definicao explicita de uma nova arquitetura de dados.
+
+## Menu principal por modulo
+
+Cada aplicativo contratado e autorizado tem seu proprio item no menu principal.
+As operacoes e os cadastros ficam dentro desse item, agrupados por funcao.
+Dashboard, Config, Relatorios e Import/Export permanecem como menus comuns.
+Cadastros e Workflow deixam de ser itens globais, sem mudar URLs ou recursos.
+O agrupamento deriva dos mesmos manifests usados por Config > Usuarios e acessos;
+reorganizar atalhos nao altera nem concede permissoes. Ao adicionar uma funcao,
+classificar seu grupo e recurso no manifest e verificar o menu de usuario restrito.
+
+### Perfil de menu do Rio Branco
+
+Por decisao explicita do usuario em 10/09/2026, o cliente `rio-branco` e uma excecao ao menu principal por modulo descrito acima. Seu `menu_profiles.rio-branco` segue [MENU_RIO_BRANCO_PDF.md](MENU_RIO_BRANCO_PDF.md), com dez categorias globais e grupos por modulo. Os manifests base continuam regendo os demais clientes. A reorganizacao preserva permissoes antigas; novas funcoes possuem recursos proprios. Financeiro, Ponto, Store, Cameras e ESXi ficam desativados somente neste contrato, sem remover codigo ou dados.

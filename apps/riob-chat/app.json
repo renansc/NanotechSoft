@@ -13,8 +13,15 @@
     "workflow": [
       {
         "nome": "Chat Interno",
-        "url": "/apps/riob#comunicacao"
+        "url": "/apps/riob#comunicacao:chat",
+        "recurso": "*"
       }
     ]
+  },
+  "menu_profiles": {
+    "rio-branco": {
+      "menu_groups": {},
+      "config_groups": {}
+    }
   }
 }

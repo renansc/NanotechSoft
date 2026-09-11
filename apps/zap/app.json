@@ -9,7 +9,14 @@
   "ativo": true,
   "origem": "nanotech",
   "source_dir": "apps/zap/source",
-  "temas": ["rio_branco", "autoblue", "fin-blue", "pontobege", "zapgreen", "pacsred"],
+  "temas": [
+    "rio_branco",
+    "autoblue",
+    "fin-blue",
+    "pontobege",
+    "zapgreen",
+    "pacsred"
+  ],
   "menu_groups": {
     "cadastros": [
       {
@@ -48,5 +55,33 @@
         "recurso": "docs"
       }
     ]
+  },
+  "menu_profiles": {
+    "rio-branco": {
+      "menu_groups": {
+        "dashboards": [
+          {
+            "nome": "Status de entradas",
+            "url": "/apps/zap",
+            "recurso": "workflow"
+          }
+        ],
+        "cadastros": [
+          {
+            "nome": "Google Agenda",
+            "url": "/apps/zap/calendar",
+            "recurso": "agenda"
+          }
+        ],
+        "docs": [
+          {
+            "nome": "Guia do Gestor",
+            "url": "/apps/zap/docs",
+            "recurso": "docs"
+          }
+        ]
+      },
+      "config_groups": {}
+    }
   }
 }

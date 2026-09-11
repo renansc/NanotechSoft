@@ -13,8 +13,99 @@
     "import_export": [
       {
         "nome": "Gestor de E-mails",
-        "url": "/apps/riob-email/riob"
+        "url": "/apps/riob-email/riob",
+        "recurso": "operacao",
+        "recurso_nome": "E-mails, anexos e importacoes"
       }
     ]
+  },
+  "menu_profiles": {
+    "rio-branco": {
+      "menu_groups": {
+        "dashboards": [
+          {
+            "nome": "Painel de e-mails",
+            "url": "/apps/riob-email/riob/?painel=resumo",
+            "recurso": "operacao",
+            "recurso_nome": "E-mails, anexos e importacoes"
+          }
+        ],
+        "cadastros": [
+          {
+            "nome": "Painel de e-mails",
+            "url": "/apps/riob-email/riob/?painel=resumo",
+            "recurso": "operacao",
+            "recurso_nome": "E-mails, anexos e importacoes"
+          },
+          {
+            "nome": "Contas de e-mail",
+            "url": "/apps/riob-email/riob/config",
+            "recurso": "operacao",
+            "recurso_nome": "E-mails, anexos e importacoes"
+          },
+          {
+            "nome": "Fornecedores",
+            "url": "/apps/riob-email/riob/fornecedores",
+            "recurso": "operacao",
+            "recurso_nome": "E-mails, anexos e importacoes"
+          }
+        ],
+        "monitor": [
+          {
+            "nome": "Status de e-mails",
+            "url": "/apps/riob-email/riob/?painel=status",
+            "recurso": "operacao",
+            "recurso_nome": "E-mails, anexos e importacoes"
+          }
+        ],
+        "gestao": [
+          {
+            "nome": "Anexos de e-mail",
+            "url": "/apps/riob-email/riob/anexos",
+            "recurso": "operacao",
+            "recurso_nome": "E-mails, anexos e importacoes"
+          },
+          {
+            "nome": "E-mails",
+            "url": "/apps/riob-email/riob/emails",
+            "recurso": "operacao",
+            "recurso_nome": "E-mails, anexos e importacoes"
+          },
+          {
+            "nome": "Backup de e-mails e anexos",
+            "url": "/apps/riob-email/riob/backup",
+            "recurso": "backup",
+            "recurso_nome": "Backup de e-mails e anexos"
+          },
+          {
+            "nome": "Importar historico XML",
+            "url": "/apps/riob-email/riob/historico",
+            "recurso": "operacao",
+            "recurso_nome": "E-mails, anexos e importacoes"
+          },
+          {
+            "nome": "Recuperar conteudo",
+            "url": "/apps/riob-email/riob/recuperar",
+            "recurso": "operacao",
+            "recurso_nome": "E-mails, anexos e importacoes"
+          }
+        ],
+        "import_export": [
+          {
+            "nome": "XML - Importar historico",
+            "url": "/apps/riob-email/riob/historico",
+            "recurso": "operacao",
+            "recurso_nome": "E-mails, anexos e importacoes"
+          },
+          {
+            "nome": "Backup de e-mails",
+            "url": "/apps/riob-email/riob/backup",
+            "recurso": "backup",
+            "recurso_nome": "Backup de e-mails e anexos"
+          }
+        ]
+      },
+      "config_groups": {}
+    }
   }
 }

@@ -20,18 +20,13 @@
       "profile": "rio-branco",
       "requiredModules": [
         "riob",
-        "financeiro",
-        "nanoponto",
-        "nanostore",
         "automacao",
         "zap",
         "riob-chat",
         "riob-chat-ia",
         "riob-telefonia",
-        "riob-cameras",
         "chamados",
         "tecnologia",
-        "riob-esxi",
         "riob-email",
         "riob-xml"
       ]
@@ -66,13 +61,17 @@
     {
       "id": "laboratorio",
       "component": "pacs",
-      "requiredModules": ["pacs"]
+      "requiredModules": [
+        "pacs"
+      ]
     },
     {
       "id": "senhor",
       "component": "portal",
       "profile": "senhor",
-      "requiredModules": ["nanostore"],
+      "requiredModules": [
+        "nanostore"
+      ],
       "updateWindow": {
         "timezone": "America/Sao_Paulo",
         "start": "18:00",
@@ -83,7 +82,12 @@
       "id": "render",
       "component": "portal",
       "profile": "render",
-      "requiredModules": ["financeiro", "chamados", "tecnologia", "pacs"]
+      "requiredModules": [
+        "financeiro",
+        "chamados",
+        "tecnologia",
+        "pacs"
+      ]
     }
   ]
 }

@@ -2,10 +2,10 @@
 {% block title %}{{ app_nome }} - NanotechSoft{% endblock %}
 {% block body %}
 <div class="app-shell">
-  {% set topbar_title = "NanotechSoft" %}
+  {% set topbar_title = app_nome if show_portal is defined and not show_portal else "NanotechSoft" %}
   {% set topbar_subtitle = app_nome %}
   {% include "_topbar.html" %}
-  {% include "_menu.html" %}
+
 
   <main class="content riob-integrated-page">
     <iframe
@@ -19,23 +19,30 @@
   </main>
 </div>
 <style>
+.app-shell:has(.riob-integrated-page) {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+}
 .riob-integrated-page {
+  flex: 1;
+  min-height: 0;
   padding: 0;
   overflow: hidden;
 }
 .riob-integrated-frame {
   display: block;
   width: 100%;
-  height: calc(100vh - 118px);
-  height: calc(100dvh - 118px);
+  height: 100%;
+  height: 100%;
   min-height: 0;
   border: 0;
   background: transparent;
 }
 @media (max-width: 760px) {
   .riob-integrated-frame {
-    height: calc(100vh - 72px);
-    height: calc(100dvh - 72px);
+    height: 100%;
+    height: 100%;
   }
 }
 </style>
@@ -45,7 +52,7 @@
   if (!frame) return;
 
   function sendHash() {
-    var hash = window.location.hash || "";
+    var hash = window.location.hash || new URL(frame.src).hash || "";
     try {
       if (frame.contentWindow && frame.contentWindow.location.hash !== hash) {
         frame.contentWindow.location.hash = hash;

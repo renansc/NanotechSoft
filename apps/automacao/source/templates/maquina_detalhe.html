@@ -1,0 +1,123 @@
+{% extends 'base.html' %}
+
+{% block content %}
+
+<div class="machine-status-row">
+    <div>
+        <h1>{{ maquina.nome }}</h1>
+        <p>{{ maquina.fabricante }} · {{ maquina.modelo }}</p>
+    </div>
+    <span id="machine-status" class="status status-{{ maquina.ultimo_status }}">
+        {{ maquina.ultimo_status }}
+    </span>
+</div>
+
+<div class="card">
+    <div class="actions">
+        <a href="/documentacao/{{ maquina.slug }}">Abrir guia técnico</a>
+        {% if documento %}
+        <a href="/static/{{ documento.documentacao.arquivo }}" target="_blank">Manual fotografado</a>
+        {% endif %}
+    </div>
+    <p>
+        Último contato: <b id="machine-updated">{{ maquina.ultimo_contato or 'aguardando' }}</b>
+    </p>
+    <p id="machine-error" class="danger" {% if not maquina.ultimo_erro %}hidden{% endif %}>
+        {{ maquina.ultimo_erro or '' }}
+    </p>
+</div>
+
+<div class="card">
+    <h2>Pontos de monitoramento</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Grupo</th>
+                <th>Ponto</th>
+                <th>Valor atual</th>
+                <th>Referência / alarme</th>
+                <th>Origem sugerida</th>
+            </tr>
+        </thead>
+        <tbody id="machine-points">
+        {% for ponto in pontos %}
+            <tr data-point="{{ ponto.slug }}" data-unit="{{ ponto.unidade or '' }}">
+                <td>{{ ponto.grupo }}</td>
+                <td>{{ ponto.nome }}<div class="tag-bits">{{ ponto.slug }}</div></td>
+                <td class="point-value">
+                    {% if leitura and ponto.slug in leitura.dados %}
+                        {% set valor = leitura.dados[ponto.slug] %}
+                        {% if valor is sameas true %}Ativo
+                        {% elif valor is sameas false %}Inativo
+                        {% else %}{{ valor }} {{ ponto.unidade or '' }}{% endif %}
+                    {% else %}-{% endif %}
+                </td>
+                <td>
+                    {% if ponto.alarme_quando is not none %}
+                        Alarme quando {{ 'ativo' if ponto.alarme_quando else 'inativo' }}
+                    {% elif ponto.limite_min is not none or ponto.limite_max is not none %}
+                        {% if ponto.limite_min is not none %}mín. {{ ponto.limite_min }}{% endif %}
+                        {% if ponto.limite_max is not none %}máx. {{ ponto.limite_max }}{% endif %}
+                        {{ ponto.unidade or '' }}
+                    {% else %}
+                        Definir após validação operacional
+                    {% endif %}
+                </td>
+                <td>{{ ponto.origem }}</td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<div class="card">
+    <h2>Integração do gateway</h2>
+    <p>
+        Envie somente os pontos conhecidos para esta rota. A resposta informa
+        alarmes e nomes ignorados. Não existe comando de escrita no CLP.
+    </p>
+    <pre class="code-example">POST /api/maquinas/{{ maquina.slug }}/leituras
+Content-Type: application/json
+
+{
+  "pontos": {
+    "{{ pontos[0].slug }}": {% if pontos[0].tipo == 'booleano' %}true{% else %}0{% endif %}
+  }
+}</pre>
+</div>
+
+<script>
+async function atualizarMaquina(){
+    try{
+        const resposta = await fetch("/api/maquinas/{{ maquina.slug }}/ultima");
+        const leitura = await resposta.json();
+        if(!leitura || !leitura.id) return;
+
+        const status = document.getElementById("machine-status");
+        status.className = "status status-" + leitura.status;
+        status.innerText = leitura.status;
+        document.getElementById("machine-updated").innerText = leitura.timestamp || "-";
+
+        const erro = document.getElementById("machine-error");
+        erro.hidden = !leitura.erro;
+        erro.innerText = leitura.erro || "";
+
+        for(const [slug, valor] of Object.entries(leitura.dados || {})){
+            const linha = document.querySelector('[data-point="' + slug + '"]');
+            if(!linha) continue;
+            const unidade = linha.dataset.unit ? " " + linha.dataset.unit : "";
+            linha.querySelector(".point-value").innerText =
+                typeof valor === "boolean" ? (valor ? "Ativo" : "Inativo") : valor + unidade;
+        }
+    }
+    catch(error){
+        document.getElementById("machine-error").hidden = false;
+        document.getElementById("machine-error").innerText = "Falha ao atualizar a telemetria";
+    }
+}
+
+setInterval(atualizarMaquina, 5000);
+atualizarMaquina();
+</script>
+
+{% endblock %}

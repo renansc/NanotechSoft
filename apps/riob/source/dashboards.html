@@ -62,6 +62,7 @@
       { label: "Vendas - Bonificações", view: "bonificacoes" },
       { label: "Vendas - Variação de Preço", view: "variacao_preco" },
       { label: "Vendas - Grupos Embalagem", view: "grupos_embalagem" },
+      { label: "Vendas - Comparativo Anual", view: "vendas_anual" },
     ];
 
     const iframe = document.getElementById("frame");
@@ -122,7 +123,7 @@
         const vEstoque = cd.getElementById("dashViewEstoque");
         const vVendas = cd.getElementById("dashViewVendas");
         if (vResumo && vFrota){
-          const isVendas = view === "bonificacoes" || view === "variacao_preco" || view === "mix_embalagens" || view === "grupos_embalagem";
+          const isVendas = view === "bonificacoes" || view === "variacao_preco" || view === "mix_embalagens" || view === "grupos_embalagem" || view === "vendas_anual";
           vResumo.classList.toggle("hidden", view !== "resumo");
           vFrota.classList.toggle("hidden", view !== "frota");
           if (vEstoque) vEstoque.classList.toggle("hidden", view !== "estoque");

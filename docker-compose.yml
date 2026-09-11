@@ -136,8 +136,8 @@ services:
       RB_SERVER_NAME: ${RB_SERVER_NAME:-localhost}
       RB_HTTPS_PORT: ${RB_HTTPS_PORT:-8899}
     ports:
-      - "0.0.0.0:${RB_HTTP_PORT:-8898}:80"
-      - "0.0.0.0:${RB_HTTPS_PORT:-8899}:443"
+      - "127.0.0.1:${RB_HTTP_PORT:-8898}:80"
+      - "127.0.0.1:${RB_HTTPS_PORT:-8899}:443"
     volumes:
       - ./apps/riob/source/deploy/nginx/http.conf.template:/etc/nginx/riobranco-http.conf.template:ro
       - ./apps/riob/source/deploy/nginx/https.conf.template:/etc/nginx/riobranco-https.conf.template:ro

@@ -1,0 +1,27 @@
+{% extends 'base.html' %}
+
+{% block content %}
+
+<h1>Documentação das máquinas</h1>
+
+<p>
+Guias técnicos preparados a partir das fotos dos manuais físicos. Cada guia
+separa dados confirmados, recomendações de monitoramento e lacunas que precisam
+ser validadas no equipamento.
+</p>
+
+<div class="machine-grid">
+{% for maquina in maquinas %}
+<article class="card machine-card">
+    <h2>{{ maquina.nome }}</h2>
+    <p>{{ maquina.resumo }}</p>
+    <p class="machine-meta">{{ maquina.documentacao.fontes }}</p>
+    <div class="actions">
+        <a href="/documentacao/{{ maquina.slug }}">Consultar guia</a>
+        <a href="/static/{{ maquina.documentacao.arquivo }}" target="_blank">Abrir fotografias em PDF</a>
+    </div>
+</article>
+{% endfor %}
+</div>
+
+{% endblock %}

@@ -89,3 +89,7 @@ O menu de documentacao traz os fluxos e links oficiais. O resumo tambem esta em:
 2. Criar rotinas de manutencao para limpar anexos antigos.
 3. Se quiser, eu posso preparar agora um fluxo de migracao formal com Flask-Migrate.
 
+
+## Menu integrado Rio Branco
+
+O perfil Rio Branco mostra Status de entradas em Dash, Google Agenda em Cadastro e Guia do Gestor em Docs. Reutiliza os destinos e recursos `workflow`, `agenda` e `docs`, sem alterar a integracao atual da agenda. O nome do atalho vem do PDF; nao representa uma nova integracao Google Calendar. Consulte `docs/MENU_RIO_BRANCO_PDF.md` na raiz.

@@ -9,7 +9,14 @@
   "ativo": true,
   "origem": "sensoresMonitor",
   "source_dir": "apps/automacao/source",
-  "temas": ["rio_branco", "autoblue", "fin-blue", "pontobege", "zapgreen", "pacsred"],
+  "temas": [
+    "rio_branco",
+    "autoblue",
+    "fin-blue",
+    "pontobege",
+    "zapgreen",
+    "pacsred"
+  ],
   "menu_groups": {
     "dashboards": [
       {
@@ -19,6 +26,10 @@
       {
         "nome": "Tempo Real Automacao",
         "url": "/apps/automacao/tempo-real"
+      },
+      {
+        "nome": "Maquinas Automacao",
+        "url": "/apps/automacao/maquinas"
       }
     ],
     "cadastros": [
@@ -29,6 +40,10 @@
       {
         "nome": "Drivers Automacao",
         "url": "/apps/automacao/sensores/drivers"
+      },
+      {
+        "nome": "Documentacao Automacao",
+        "url": "/apps/automacao/documentacao"
       }
     ],
     "relatorios": [
@@ -58,5 +73,65 @@
         "url": "/apps/automacao/setores"
       }
     ]
+  },
+  "menu_profiles": {
+    "rio-branco": {
+      "menu_groups": {
+        "dashboards": [
+          {
+            "nome": "Dashboard Automacao",
+            "url": "/apps/automacao/",
+            "recurso": "*"
+          },
+          {
+            "nome": "Maquinas Automacao",
+            "url": "/apps/automacao/maquinas",
+            "recurso": "*"
+          }
+        ],
+        "cadastros": [
+          {
+            "nome": "Equipamentos e tipos - Motores",
+            "url": "/apps/automacao/motores",
+            "recurso": "*"
+          },
+          {
+            "nome": "Equipamentos e tipos - Drivers",
+            "url": "/apps/automacao/sensores/drivers",
+            "recurso": "*"
+          },
+          {
+            "nome": "Equipamentos e tipos - Maquinas",
+            "url": "/apps/automacao/maquinas",
+            "recurso": "*"
+          },
+          {
+            "nome": "Setores",
+            "url": "/apps/automacao/setores",
+            "recurso": "*"
+          }
+        ],
+        "monitor": [
+          {
+            "nome": "Tempo real",
+            "url": "/apps/automacao/tempo-real",
+            "recurso": "*"
+          }
+        ],
+        "gestao": [
+          {
+            "nome": "Historico",
+            "url": "/apps/automacao/historico",
+            "recurso": "*"
+          },
+          {
+            "nome": "Alarmes",
+            "url": "/apps/automacao/alarmes",
+            "recurso": "*"
+          }
+        ]
+      },
+      "config_groups": {}
+    }
   }
 }

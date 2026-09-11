@@ -1513,6 +1513,11 @@ button:hover{ background:#e68900; }
   color:#1d4ed8;
 }
 
+.vendas-dashboard-chip-neutral{
+  background:#f1f5f9;
+  color:#475569;
+}
+
 .vendas-dashboard-legend{
   display:flex;
   gap:8px;
@@ -4505,13 +4510,19 @@ body.estoque-import-modal-open{
   cursor:not-allowed;
 }
 
-.chat-fab{
+.chat-fab,
+.back-to-top{
   position:fixed;
   right:18px;
   bottom:18px;
   z-index:2400;
   border-radius:999px;
-  padding:12px 18px;
+  width:48px;
+  height:48px;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  padding:0;
   border:none;
   background:linear-gradient(135deg, var(--chat-wa-green-dark) 0%, var(--chat-wa-green) 100%);
   color:#fff;
@@ -4519,14 +4530,25 @@ body.estoque-import-modal-open{
   box-shadow:0 14px 32px rgba(7, 94, 84, 0.35);
 }
 
+.chat-fab { right:76px; }
+.chat-fab svg, .back-to-top svg { width:24px; height:24px; }
+.chat-fab:focus-visible, .back-to-top:focus-visible {
+  outline:3px solid var(--chat-wa-green-dark);
+  outline-offset:3px;
+}
+
 .chat-fab:hover,
-.chat-fab:focus{
+.chat-fab:focus,
+.back-to-top:hover,
+.back-to-top:focus{
   background:linear-gradient(135deg, var(--chat-wa-green-dark) 0%, var(--chat-wa-green) 100%);
   color:#fff;
 }
 
 .chat-fab-badge{
-  margin-left:8px;
+  position:absolute;
+  top:-5px;
+  right:-5px;
   display:inline-flex;
   align-items:center;
   justify-content:center;
@@ -4539,6 +4561,7 @@ body.estoque-import-modal-open{
   font-size:11px;
   font-weight:700;
 }
+.chat-fab-badge.hidden { display:none; }
 
 .nanotech-badge{
   position:fixed;
@@ -4612,6 +4635,7 @@ body.estoque-import-modal-open{
   100% { transform:scale(1); opacity:1; }
 }
 
+body.tv-mode .back-to-top,
 body.tv-mode .chat-fab,
 body.tv-mode .chat-widget,
 body.tv-mode .menu-item[data-tab="comunicacao"],
@@ -5304,4 +5328,62 @@ body.tv-mode #chatWidget{
   .agentia-form {
     grid-template-columns: 1fr;
   }
+}
+
+/* Comunicacao: um popup, com ferramentas separadas por tarefa. */
+.communication-tabs, .communication-ia-options {
+  display:flex;
+  flex-shrink:0;
+  gap:8px;
+  padding:10px 14px;
+  border-bottom:1px solid var(--chat-wa-border);
+  background:var(--chat-wa-panel);
+}
+.communication-tabs button { flex:1; min-width:0; }
+.communication-tabs button, .communication-ia-options button {
+  background:#fff;
+  color:var(--chat-wa-green-dark);
+  border:1px solid var(--chat-wa-border);
+  border-radius:8px;
+  padding:10px 12px;
+}
+.communication-tabs [aria-selected="true"], .communication-ia-options [aria-pressed="true"] {
+  background:var(--chat-wa-green-dark);
+  color:#fff;
+}
+.communication-tabs button:focus-visible, .communication-ia-options button:focus-visible {
+  outline:2px solid var(--chat-wa-green);
+  outline-offset:2px;
+}
+.chat-widget-header { flex-shrink:0; }
+#chatWidget .hidden { display:none; }
+#chatWidget .chat-main, #chatWidget .chat-input-shell { min-width:0; }
+#chatWidget #chatTexto { box-sizing:border-box; min-width:0; width:100%; }
+#chatWidget[data-communication-tab="ia"] .chat-sidebar { display:none; }
+#chatWidget[data-communication-tab="ia"] .chat-shell {
+  grid-template-columns:minmax(0, 1fr);
+  grid-template-rows:minmax(0, 1fr);
+}
+.communication-panel { flex:1; min-height:0; overflow:auto; padding:14px; }
+.communication-phone-panel { display:flex; flex-direction:column; gap:14px; }
+.communication-phone-panel .chat-sip-actions { justify-content:flex-start; }
+.communication-phone-panel select { width:100%; min-height:40px; }
+#chatWidget .agentia-shell {
+  height:100%;
+  min-height:0;
+  grid-template-columns:220px minmax(0, 1fr);
+}
+#chatWidget .agentia-sidebar { overflow:auto; }
+#chatWidget .agentia-main { min-height:360px; }
+@media (max-width: 900px) {
+  #chatWidget .agentia-shell { display:flex; flex-direction:column; height:auto; gap:12px; }
+  #chatWidget .agentia-sidebar { flex-direction:row; flex-wrap:wrap; overflow:visible; padding:10px; }
+  #chatWidget .agentia-title, #chatWidget .agentia-hint { display:none; }
+  #chatWidget .agentia-main { min-height:460px; }
+  .communication-tabs { padding:8px; gap:6px; }
+  .communication-tabs button { padding:10px 6px; }
+  .chat-widget-brand { gap:8px; }
+  .chat-widget-subtitle { max-width:170px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .chat-sidebar-top { padding:8px 12px; }
+  .chat-sidebar-caption { display:none; }
 }

@@ -13,44 +13,59 @@
     "dashboards": [
       {
         "nome": "Painel RioB",
-        "url": "/apps/riob#dashboard"
+        "url": "/apps/riob#dashboard",
+        "recurso": "dashboard"
       },
       {
         "nome": "Frota RioB",
-        "url": "/apps/riob#dashboard:frota"
+        "url": "/apps/riob#dashboard:frota",
+        "recurso": "frota"
       },
       {
         "nome": "Estoque RioB",
-        "url": "/apps/riob#dashboard:estoque"
+        "url": "/apps/riob#dashboard:estoque",
+        "recurso": "estoque"
       },
       {
         "nome": "Processos Internos RioB",
-        "url": "/apps/riob#dashboard:processos"
+        "url": "/apps/riob#dashboard:processos",
+        "recurso": "processos"
       },
       {
         "nome": "Compras RioB",
-        "url": "/apps/riob#dashboard:compras"
+        "url": "/apps/riob#dashboard:compras",
+        "recurso": "compras"
       },
       {
         "nome": "Vendas Diaria RioB",
-        "url": "/apps/riob#dashboard:vendas_diario"
+        "url": "/apps/riob#dashboard:vendas_diario",
+        "recurso": "vendas"
+      },
+      {
+        "nome": "Vendas Anual RioB",
+        "url": "/apps/riob#dashboard:vendas_anual",
+        "recurso": "vendas"
       },
       {
         "nome": "Bonificacoes RioB",
-        "url": "/apps/riob#dashboard:bonificacoes"
+        "url": "/apps/riob#dashboard:bonificacoes",
+        "recurso": "vendas"
       },
       {
         "nome": "Variacao de Preco RioB",
-        "url": "/apps/riob#dashboard:variacao_preco"
+        "url": "/apps/riob#dashboard:variacao_preco",
+        "recurso": "vendas"
       },
       {
         "nome": "Grupos de Embalagem RioB",
-        "url": "/apps/riob#dashboard:grupos_embalagem"
+        "url": "/apps/riob#dashboard:grupos_embalagem",
+        "recurso": "vendas"
       },
       {
         "nome": "Comissões",
         "url": "/apps/riob#dashboard:comissoes",
-        "grupo": "RioB"
+        "grupo": "RioB",
+        "recurso": "comissao"
       }
     ],
     "vendas": [
@@ -58,167 +73,206 @@
         "nome": "Orçamento RioB",
         "url": "/apps/riob#vendas:orcamento",
         "recurso": "vendas"
-      },
-      {
-        "nome": "Relatório RioB",
-        "url": "/apps/riob#vendas:relatorio",
-        "recurso": "vendas"
       }
     ],
     "workflow": [
       {
         "nome": "Vendas Diario RioB",
-        "url": "/apps/riob#workflow:vendas_diario"
+        "url": "/apps/riob#workflow:vendas_diario",
+        "recurso": "vendas"
       },
       {
         "nome": "Kanban RioB",
-        "url": "/apps/riob#fretes"
+        "url": "/apps/riob#fretes",
+        "recurso": "fretes"
       },
       {
         "nome": "Devolucoes RioB",
-        "url": "/apps/riob#devolucoes"
+        "url": "/apps/riob#devolucoes",
+        "recurso": "devolucoes"
       },
       {
         "nome": "Comissoes",
         "url": "/apps/riob#comissao",
-        "grupo": "RioB"
+        "grupo": "RioB",
+        "recurso": "comissao"
       },
       {
         "nome": "Gestao de Frota RioB",
-        "url": "/apps/riob#gestaofrota:registrar"
+        "url": "/apps/riob#gestaofrota:registrar",
+        "recurso": "frota"
       },
       {
-        "nome": "Chat Interno RioB",
-        "url": "/apps/riob#comunicacao"
+        "nome": "Comunicacao RioB",
+        "url": "/apps/riob#comunicacao",
+        "recurso": "chat",
+        "recurso_nome": "Comunicacao (chat)"
       },
       {
         "nome": "Processos Internos RioB",
-        "url": "/apps/riob#processos"
+        "url": "/apps/riob#processos",
+        "recurso": "processos"
       },
       {
         "nome": "Compras RioB",
-        "url": "/apps/riob#workflow:compras"
+        "url": "/apps/riob#workflow:compras",
+        "recurso": "compras"
       },
       {
         "nome": "Monitor Cameras RioB",
-        "url": "/apps/riob#monitor:cameras"
+        "url": "/apps/riob#monitor:cameras",
+        "recurso": "cameras"
       }
     ],
     "cadastros": [
       {
         "nome": "Colaboradores RioB",
         "url": "/apps/riob#cadastros:colaboradores",
-        "grupo": "RioB"
+        "grupo": "RioB",
+        "recurso": "colaboradores"
       },
       {
         "nome": "Veiculos RioB",
         "url": "/apps/riob#cadastros:veiculos",
-        "grupo": "RioB"
+        "grupo": "RioB",
+        "recurso": "veiculos"
       },
       {
         "nome": "Comissoes",
         "url": "/apps/riob#cadastros:comissao",
-        "grupo": "RioB"
+        "grupo": "RioB",
+        "recurso": "comissao"
       },
       {
         "nome": "Cadastrar produtos RioB",
         "url": "/apps/riob#cadastros:estoque_produtos",
-        "grupo": "RioB"
+        "grupo": "RioB",
+        "recurso": "estoque"
       },
       {
         "nome": "Grupos de estoque RioB",
         "url": "/apps/riob#cadastros:estoque_grupos",
-        "grupo": "RioB"
+        "grupo": "RioB",
+        "recurso": "estoque"
       },
       {
         "nome": "Tipos de processos RioB",
         "url": "/apps/riob#cadastros:processos_tipos",
-        "grupo": "RioB"
+        "grupo": "RioB",
+        "recurso": "processos"
       },
       {
         "nome": "Fornecedores e compras RioB",
         "url": "/apps/riob#cadastros:compras_fornecedores",
-        "grupo": "RioB"
+        "grupo": "RioB",
+        "recurso": "compras"
       },
       {
         "nome": "Cargas RioB",
         "url": "/apps/riob#gestaofrota:cargas",
-        "grupo": "RioB"
+        "grupo": "RioB",
+        "recurso": "cargas"
       },
       {
         "nome": "Escala RioB",
         "url": "/apps/riob#gestaofrota:escala",
-        "grupo": "RioB"
+        "grupo": "RioB",
+        "recurso": "escala"
       }
     ],
     "compras": [
       {
         "nome": "Previsao de compras RioB",
-        "url": "/apps/riob#compras:previsao"
-      },
-      {
-        "nome": "Importar XML (Bipe) RioB",
-        "url": "/apps/riob#estoque:importar_xml_bipe"
-      },
-      {
-        "nome": "Importar XML Auto RioB",
-        "url": "/apps/riob#estoque:importar_xml_auto"
+        "url": "/apps/riob#compras:previsao",
+        "recurso": "compras"
       }
     ],
     "estoque": [
       {
         "nome": "Posicao atual RioB",
-        "url": "/apps/riob#estoque:posicao"
+        "url": "/apps/riob#estoque:posicao",
+        "recurso": "estoque"
       },
       {
         "nome": "Movimentar estoque RioB",
-        "url": "/apps/riob#estoque:movimentar"
+        "url": "/apps/riob#estoque:movimentar",
+        "recurso": "estoque"
       },
       {
         "nome": "Rastreio de lotes RioB",
-        "url": "/apps/riob#estoque:rastreio"
+        "url": "/apps/riob#estoque:rastreio",
+        "recurso": "estoque"
       },
       {
         "nome": "Acerto de estoque RioB",
-        "url": "/apps/riob#estoque:acerto"
+        "url": "/apps/riob#estoque:acerto",
+        "recurso": "estoque"
       }
     ],
     "relatorios": [
       {
         "nome": "Estoque Comprometido RioB",
-        "url": "/apps/riob#relatorios:estoque_comprometido"
+        "url": "/apps/riob#relatorios:estoque_comprometido",
+        "recurso": "estoque"
       },
       {
         "nome": "Processos Internos RioB",
-        "url": "/apps/riob#relatorios:processos"
+        "url": "/apps/riob#relatorios:processos",
+        "recurso": "processos"
       },
       {
         "nome": "Compras RioB",
-        "url": "/apps/riob#relatorios:compras"
+        "url": "/apps/riob#relatorios:compras",
+        "recurso": "compras"
       },
       {
         "nome": "Comissões",
         "url": "/apps/riob#comissao:relatorios",
-        "grupo": "RioB"
+        "grupo": "RioB",
+        "recurso": "comissao"
       },
       {
         "nome": "Relatorios de Frota RioB",
-        "url": "/apps/riob#gestaofrota:relatorios"
+        "url": "/apps/riob#gestaofrota:relatorios",
+        "recurso": "frota"
+      },
+      {
+        "nome": "Relatório RioB",
+        "url": "/apps/riob#vendas:relatorio",
+        "recurso": "vendas"
+      },
+      {
+        "nome": "Vendas Anual RioB",
+        "url": "/apps/riob#vendas:relatorio_anual",
+        "recurso": "vendas"
       }
     ],
     "import_export": [
       {
         "nome": "Importar Vendas Diario",
-        "url": "/apps/riob#workflow:vendas_diario_importar"
+        "url": "/apps/riob#workflow:vendas_diario_importar",
+        "recurso": "vendas"
       },
       {
         "nome": "Comissões",
         "url": "/apps/riob#comissao:exportar",
-        "grupo": "RioB"
+        "grupo": "RioB",
+        "recurso": "comissao"
       },
       {
         "nome": "Gestor de E-mails RioB",
-        "url": "/apps/riob#monitor:gestor_emails"
+        "url": "/apps/riob#monitor:gestor_emails",
+        "recurso": "gestor-emails"
+      },
+      {
+        "nome": "Importar XML (Bipe) RioB",
+        "url": "/apps/riob#estoque:importar_xml_bipe",
+        "recurso": "estoque"
+      },
+      {
+        "nome": "Importar XML Auto RioB",
+        "url": "/apps/riob#estoque:importar_xml_auto",
+        "recurso": "estoque"
       }
     ]
   },
@@ -226,40 +280,261 @@
     "riob": [
       {
         "nome": "Status RioB",
-        "url": "/apps/riob#config:status"
+        "url": "/apps/riob#config:status",
+        "recurso": "config"
       },
       {
         "nome": "Logs RioB",
-        "url": "/apps/riob#config:logs"
+        "url": "/apps/riob#config:logs",
+        "recurso": "config"
       },
       {
         "nome": "Cameras RioB",
-        "url": "/apps/riob#config:cameras"
+        "url": "/apps/riob#config:cameras",
+        "recurso": "config"
       },
       {
         "nome": "SIP RioB",
-        "url": "/apps/riob#config:sip"
+        "url": "/apps/riob#config:sip",
+        "recurso": "config"
       },
       {
         "nome": "NF-e RioB",
-        "url": "/apps/riob#config:nfe"
+        "url": "/apps/riob#config:nfe",
+        "recurso": "config"
       },
       {
         "nome": "Vendas RioB",
-        "url": "/apps/riob#config:vendas"
+        "url": "/apps/riob#config:vendas",
+        "recurso": "config"
       },
       {
         "nome": "Monitor ESXi RioB",
-        "url": "/apps/riob#monitor:esxi"
+        "url": "/apps/riob#monitor:esxi",
+        "recurso": "esxi"
       },
       {
         "nome": "Monitor Automacao RioB",
-        "url": "/apps/riob#monitor:automacao"
+        "url": "/apps/riob#monitor:automacao",
+        "recurso": "automacao"
       },
       {
         "nome": "Modo completo RioB",
-        "url": "/apps/riob/original"
+        "url": "/apps/riob/original",
+        "recurso": "*"
       }
     ]
+  },
+  "menu_profiles": {
+    "rio-branco": {
+      "menu_groups": {
+        "dashboards": [
+          {
+            "nome": "RioB - Fretes",
+            "url": "/apps/riob#dashboard",
+            "recurso": "dashboard"
+          },
+          {
+            "nome": "Frota",
+            "url": "/apps/riob#dashboard:frota",
+            "recurso": "frota"
+          },
+          {
+            "nome": "Estoque",
+            "url": "/apps/riob#dashboard:estoque",
+            "recurso": "estoque"
+          },
+          {
+            "nome": "Processos operacionais",
+            "url": "/apps/riob#dashboard:processos",
+            "recurso": "processos"
+          },
+          {
+            "nome": "Compras",
+            "url": "/apps/riob#dashboard:compras",
+            "recurso": "compras"
+          },
+          {
+            "nome": "Vendas anual",
+            "url": "/apps/riob#dashboard:vendas_anual",
+            "recurso": "vendas"
+          },
+          {
+            "nome": "Vendas do dia",
+            "url": "/apps/riob#dashboard:vendas_diario",
+            "recurso": "vendas"
+          },
+          {
+            "nome": "Bonificacoes de vendas",
+            "url": "/apps/riob#dashboard:bonificacoes",
+            "recurso": "vendas"
+          },
+          {
+            "nome": "Variacao de preco",
+            "url": "/apps/riob#dashboard:variacao_preco",
+            "recurso": "vendas"
+          },
+          {
+            "nome": "Grupos de embalagem",
+            "url": "/apps/riob#dashboard:grupos_embalagem",
+            "recurso": "vendas"
+          },
+          {
+            "nome": "Comissoes de vendas",
+            "url": "/apps/riob#dashboard:comissoes",
+            "recurso": "comissao"
+          }
+        ],
+        "cadastros": [
+          {
+            "nome": "Colaboradores RioB",
+            "url": "/apps/riob#cadastros:colaboradores",
+            "recurso": "colaboradores"
+          },
+          {
+            "nome": "Veiculos RioB",
+            "url": "/apps/riob#cadastros:veiculos",
+            "recurso": "veiculos"
+          },
+          {
+            "nome": "Comissoes",
+            "url": "/apps/riob#cadastros:comissao",
+            "recurso": "comissao"
+          },
+          {
+            "nome": "Cadastrar produtos RioB",
+            "url": "/apps/riob#cadastros:estoque_produtos",
+            "recurso": "estoque"
+          },
+          {
+            "nome": "Grupos de estoque RioB",
+            "url": "/apps/riob#cadastros:estoque_grupos",
+            "recurso": "estoque"
+          },
+          {
+            "nome": "Tipos de processos RioB",
+            "url": "/apps/riob#cadastros:processos_tipos",
+            "recurso": "processos"
+          },
+          {
+            "nome": "Fornecedores e compras RioB",
+            "url": "/apps/riob#cadastros:compras_fornecedores",
+            "recurso": "compras"
+          },
+          {
+            "nome": "Cargas RioB",
+            "url": "/apps/riob#gestaofrota:cargas",
+            "recurso": "cargas"
+          },
+          {
+            "nome": "Escala RioB",
+            "url": "/apps/riob#gestaofrota:escala",
+            "recurso": "escala"
+          }
+        ],
+        "relatorios": [
+          {
+            "nome": "Vendas",
+            "url": "/apps/riob#vendas:relatorio",
+            "recurso": "vendas"
+          },
+          {
+            "nome": "Orcamentos gerados",
+            "url": "/apps/riob#relatorios:orcamentos",
+            "recurso": "vendas_orcamentos_relatorio",
+            "recurso_nome": "Relatorio de orcamentos gerados"
+          },
+          {
+            "nome": "Estoque comprometido",
+            "url": "/apps/riob#relatorios:estoque_comprometido",
+            "recurso": "estoque"
+          },
+          {
+            "nome": "Processos operacionais",
+            "url": "/apps/riob#relatorios:processos",
+            "recurso": "processos"
+          },
+          {
+            "nome": "Comissoes",
+            "url": "/apps/riob#comissao:relatorios",
+            "recurso": "comissao"
+          },
+          {
+            "nome": "Frota",
+            "url": "/apps/riob#gestaofrota:relatorios",
+            "recurso": "frota"
+          }
+        ],
+        "import_export": [
+          {
+            "nome": "Vendas do dia",
+            "url": "/apps/riob#workflow:vendas_diario_importar",
+            "recurso": "vendas"
+          },
+          {
+            "nome": "Comissoes",
+            "url": "/apps/riob#comissao:exportar",
+            "recurso": "comissao"
+          },
+          {
+            "nome": "E-mails",
+            "url": "/apps/riob#monitor:gestor_emails",
+            "recurso": "gestor-emails"
+          },
+          {
+            "nome": "NF-e / Receita",
+            "url": "/apps/riob#config:nfe",
+            "recurso": "config"
+          }
+        ],
+        "estoque": [
+          {
+            "nome": "Previsao de compras",
+            "url": "/apps/riob#compras:previsao",
+            "recurso": "compras"
+          },
+          {
+            "nome": "Posicao",
+            "url": "/apps/riob#estoque:posicao",
+            "recurso": "estoque"
+          },
+          {
+            "nome": "Movimentar",
+            "url": "/apps/riob#estoque:movimentar",
+            "recurso": "estoque"
+          },
+          {
+            "nome": "Rastreio",
+            "url": "/apps/riob#estoque:rastreio",
+            "recurso": "estoque"
+          },
+          {
+            "nome": "Acerto",
+            "url": "/apps/riob#estoque:acerto",
+            "recurso": "estoque"
+          },
+          {
+            "nome": "Contagem",
+            "url": "/apps/riob#estoque:contagem",
+            "recurso": "estoque_contagem",
+            "recurso_nome": "Contagem de estoque"
+          }
+        ]
+      },
+      "config_groups": {
+        "riob": [
+          {
+            "nome": "Logs",
+            "url": "/apps/riob#config:logs",
+            "recurso": "config"
+          },
+          {
+            "nome": "Status",
+            "url": "/apps/riob#config:status",
+            "recurso": "config"
+          }
+        ]
+      }
+    }
   }
 }

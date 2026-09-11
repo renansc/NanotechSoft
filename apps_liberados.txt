@@ -1,16 +1,11 @@
 # Um app por linha. No deploy do cliente, carregue somente os apps listados aqui.
 riob
-financeiro
-nanoponto
-nanostore
 automacao
 zap
 riob-chat
 riob-chat-ia
 riob-telefonia
-riob-cameras
 chamados
 tecnologia
-riob-esxi
 riob-email
 riob-xml

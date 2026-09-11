@@ -6,6 +6,63 @@ CREATE TABLE IF NOT EXISTS setores (
     descricao TEXT
 );
 
+CREATE TABLE IF NOT EXISTS maquinas (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    slug TEXT NOT NULL UNIQUE,
+    nome TEXT NOT NULL,
+    tipo TEXT NOT NULL,
+    fabricante TEXT,
+    modelo TEXT,
+    numero_serie TEXT,
+    fabricacao TEXT,
+    setor TEXT,
+    protocolo TEXT DEFAULT 'gateway_http',
+    resumo TEXT,
+    ativo INTEGER DEFAULT 1,
+    ultimo_status TEXT DEFAULT 'aguardando',
+    ultimo_erro TEXT,
+    ultimo_contato DATETIME,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS maquina_pontos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    maquina_id INTEGER NOT NULL,
+    slug TEXT NOT NULL,
+    nome TEXT NOT NULL,
+    grupo TEXT NOT NULL,
+    tipo TEXT NOT NULL DEFAULT 'numero',
+    unidade TEXT,
+    limite_min REAL,
+    limite_max REAL,
+    alarme_quando INTEGER,
+    origem TEXT,
+    ativo INTEGER DEFAULT 1,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+
+    UNIQUE(maquina_id, slug),
+    FOREIGN KEY(maquina_id)
+        REFERENCES maquinas(id)
+        ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS maquina_leituras (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    maquina_id INTEGER NOT NULL,
+    dados_json TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'online',
+    alarmes_json TEXT,
+    erro TEXT,
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+
+    FOREIGN KEY(maquina_id)
+        REFERENCES maquinas(id)
+        ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_maquina_leituras_maquina_data
+    ON maquina_leituras(maquina_id, timestamp DESC);
+
 CREATE TABLE IF NOT EXISTS motores (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     nome TEXT NOT NULL,

@@ -2,6 +2,8 @@ import os
 import sqlite3
 from pathlib import Path
 
+from machine_catalog import seed_machines
+
 BASE_DIR = Path(__file__).resolve().parent
 DB_NAME = Path(
     os.getenv("DATABASE_PATH", BASE_DIR / "homologacao.db")
@@ -53,5 +55,8 @@ def init_database():
         """)
 
         conn.commit()
+
+    seed_machines(conn)
+    conn.commit()
 
     conn.close()
