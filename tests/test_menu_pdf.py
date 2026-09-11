@@ -13,7 +13,17 @@ class MenuPdfTests(unittest.TestCase):
         self.addCleanup(self.client.stop)
         contract = json.loads((Path(portal.BASE_DIR) / "clientes-modulos.json").read_text())
         self.keys = {m["slug"] for c in contract["clients"] if c["id"] == "rio-branco" for m in c["modules"]}
-        self.apps = [json.loads((Path(portal.BASE_DIR) / "apps" / key / "app.json").read_text()) for key in self.keys]
+        self.apps = [portal.normalize_app(json.loads((Path(portal.BASE_DIR) / "apps" / key / "app.json").read_text())) for key in self.keys]
+
+    def test_filesystem_loading_preserves_menu_and_permission_catalog(self):
+        with mock.patch.object(portal, "database_apps", return_value=[]), mock.patch.object(portal, "active_external_apps", return_value=[]):
+            apps = portal.list_apps()
+            menu = portal.menu_sections(apps, {"id": 1, "perfil": "admin"})
+            self.assertEqual(10, len(menu["primary"]))
+            catalog = {a["app_key"]: {r["key"] for r in a["recursos"]} for a in portal.permission_catalog()}
+        self.assertIn("estoque_contagem", catalog["riob"])
+        self.assertIn("vendas_orcamentos_relatorio", catalog["riob"])
+        self.assertIn("backup", catalog["riob-email"])
 
     def test_header_order_and_module_groups(self):
         menu = portal.menu_sections(self.apps, {"id": 1, "perfil": "admin"})

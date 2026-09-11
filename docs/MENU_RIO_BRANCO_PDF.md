@@ -111,6 +111,10 @@ Financeiro, Ponto, Store, Cameras e ESXi ficam fora do contrato `rio-branco`, do
 
 ## Implementacao e verificacao
 
+O carregador `normalize_app` preserva `menu_profiles` ao ler os manifests.
+Menu e catalogo de permissoes recebem esse perfil pelo fluxo real
+`filesystem_apps -> list_apps`; os testes cobrem esse carregamento completo.
+
 As paginas HTML em `/apps/` usam `Cache-Control: no-store, no-cache, must-revalidate`.
 Os links do shell para `static/app.js` e `static/style.css` incluem uma versao
 derivada do conteudo, para que uma atualizacao carregue a navegacao e o estilo

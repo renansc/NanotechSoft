@@ -90,7 +90,7 @@ with sync_playwright() as p:
 
     # Actual portal template and CSS, with desktop and compact menu behavior.
     keys = ('riob','riob-email','riob-xml','automacao','chamados','tecnologia','zap')
-    apps = [json.loads((ROOT/'apps'/key/'app.json').read_text()) for key in keys]
+    apps = [portal.normalize_app(json.loads((ROOT/'apps'/key/'app.json').read_text())) for key in keys]
     with portal.app.test_request_context(), mock.patch.object(portal,'configured_client_id',return_value='rio-branco'):
         menu = portal.menu_sections(apps, {'id':1,'nome':'Administrador','perfil':'admin'})
         header = portal.render_template('_topbar.html', menu=menu, usuario={'id':1,'nome':'Administrador','perfil':'admin'}, topbar_title='NanotechSoft')

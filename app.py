@@ -1202,6 +1202,7 @@ def normalize_app(item, origem="filesystem"):
         "temas": item.get("temas") or item.get("themes") or [],
         "menu_groups": item.get("menu_groups") or {},
         "config_groups": item.get("config_groups") or {},
+        "menu_profiles": item.get("menu_profiles") or {},
         "workflow_cards": item.get("workflow_cards") or [],
         "source_dir": str(item.get("source_dir") or "").strip(),
     }
