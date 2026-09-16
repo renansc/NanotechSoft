@@ -1,9 +1,11 @@
 """Catalogo versionado das maquinas industriais do Rio Branco.
 
-Os dados abaixo foram conferidos nos manuais fotografados entregues pela
-operacao. Enderecos de CLP, IPs e setpoints de processo nao aparecem de forma
-confiavel nas fotos e, por isso, ficam deliberadamente fora do catalogo.
+As fontes incluem manuais fotografados e o protocolo de comunicacao da Cyklop
+fornecidos pela operacao. Enderecos, modelos e parametros nao confirmados
+permanecem fora do catalogo.
 """
+
+import os
 
 MACHINES = [
     {
@@ -293,6 +295,126 @@ MACHINES = [
 ]
 
 
+MACHINES.append({
+    "slug": "impressora-laser-cyklop",
+    "nome": "Impressora a laser Cyklop",
+    "tipo": "Impressora / marcadora a laser",
+    "fabricante": "Cyklop",
+    "modelo": "Nao informado",
+    "numero_serie": "",
+    "fabricacao": "",
+    "setor": "A confirmar",
+    "cliente_deploy_id": "rio-branco",
+    "protocolo": "gateway_http",
+    "resumo": "Marcadora a laser Cyklop com protocolo N8 V1.2 (TCP ou RS232). Monitoramento preparado para receber estado e contadores pelo gateway.",
+    "especificacoes": [
+        ("Marca informada pela operacao", "Cyklop"),
+        ("Documento", "Laser communication protocol N8 V1.2.pdf"),
+        ("Versao do protocolo", "V1.2"),
+        ("Interfaces documentadas", "TCP e RS232 (User port / Service port)"),
+        ("Codificacao", "UTF-8"),
+        ("Terminador padrao", ";; (configuravel na interface)"),
+        ("Modelo, serie e setor", "A confirmar no equipamento; N8 consta no nome do arquivo"),
+    ],
+    "pontos": [
+        {
+            "slug": "placa_conectada", "nome": "Conexao com a placa",
+            "grupo": "Comunicacao", "tipo": "booleano", "unidade": "",
+            "limite_min": None, "limite_max": None, "alarme_quando": False,
+            "origem": "GetLinkStatus: 1 = conectada; 0 = desconectada (nao e teste de rede)",
+        },
+        {
+            "slug": "estado_marcacao", "nome": "Estado de marcacao (0 a 7)",
+            "grupo": "Estado", "tipo": "numero", "unidade": "",
+            "limite_min": None, "limite_max": None, "alarme_quando": None,
+            "origem": "GetMarkStatus / MarkStatus; legenda no guia de comunicacao",
+        },
+        {
+            "slug": "contador_total", "nome": "Total de marcacoes",
+            "grupo": "Producao", "tipo": "contador", "unidade": "marcacoes",
+            "limite_min": None, "limite_max": None, "alarme_quando": None,
+            "origem": "GetCount (campo 1), GetMarkedCount ou MarkCount",
+        },
+        {
+            "slug": "contador_atual", "nome": "Contagem atual de marcacoes",
+            "grupo": "Producao", "tipo": "contador", "unidade": "marcacoes",
+            "limite_min": None, "limite_max": None, "alarme_quando": None,
+            "origem": "GetCount (campo 2)",
+        },
+        {
+            "slug": "marcacoes_perdidas", "nome": "Marcacoes perdidas (acumulado)",
+            "grupo": "Producao", "tipo": "contador", "unidade": "marcacoes",
+            "limite_min": None, "limite_max": None, "alarme_quando": None,
+            "origem": "GetCount (campo 3), GetMissedCount ou MissCount",
+        },
+        {
+            "slug": "tempo_marcacao_ms", "nome": "Tempo de uma marcacao",
+            "grupo": "Producao", "tipo": "numero", "unidade": "ms",
+            "limite_min": None, "limite_max": None, "alarme_quando": None,
+            "origem": "GetCount (campo 4)",
+        },
+    ],
+    "documentacao": {
+        "titulo": "Protocolo de comunicacao da impressora a laser Cyklop — N8 V1.2",
+        "arquivo": "documentos/protocolo-comunicacao-laser-cyklop-n8-v1.2.pdf",
+        "rotulo_pdf": "Protocolo de comunicação em PDF",
+        "fontes": "Laser communication protocol N8 V1.2.pdf, fornecido pela operacao (19 paginas). Marca Cyklop informada pela operacao; o PDF nao confirma o modelo fisico.",
+        "operacao": [
+            "Comunicacao TCP ou RS232, dados UTF-8 e terminador padrao ;;. Inicio, Device ID e fim devem corresponder a configuracao da interface.",
+            "Consultas previstas: GetLinkStatus;;, GetMarkStatus;; e GetCount;;. GetCount retorna total, atual, perdidas e tempo de uma marcacao em ms, separados por virgula.",
+            "GetMarkStatus: 0 = ocioso; 1 = simulacao; 2 = marcacao; 3 = pre-visualizacao; 4 = correcao do laser; 5 = correcao da luz vermelha; 6 = emissao forcada do laser; 7 = marcacao rotativa.",
+            "MarkStatus, MarkCount e MissCount sao retornos espontaneos e dependem de habilitacao na interface da maquina.",
+            "O cadastro recebe leituras pelo gateway HTTP existente. Nao existe coletor TCP/RS232 automatico para a Cyklop nesta entrega; permanece aguardando ate receber telemetria real.",
+        ],
+        "manutencao": [
+            "Este arquivo e um protocolo de comunicacao; nao contem plano de manutencao mecanica, eletrica ou optica da impressora.",
+        ],
+        "seguranca": [
+            "A integracao de monitoramento utiliza consultas de leitura. Comandos de acionamento, configuracao, limpeza de contadores e alteracao de mensagens descritos no PDF nao sao executados pelo portal.",
+        ],
+        "lacunas": [
+            "Confirmar modelo, numero de serie, setor, IP/porta TCP ou parametros RS232, Device ID e delimitadores configurados.",
+            "Implementar e validar o gateway de leitura antes da coleta. Contadores acumulados de perdas nao representam, por si, uma falha ativa; limites dependem de validacao operacional.",
+        ],
+    },
+})
+
+
+# Documentos de equipamentos que ainda nao possuem pontos de monitoramento.
+# Nao entram em seed_machines nem reutilizam a identidade de outra maquina.
+DOCUMENTATION_ONLY_MACHINES = [
+    {
+        "slug": "envasadora-zegla-40-50-10-ga",
+        "nome": "Envasadora Zegla 40/50/10 GA",
+        "tipo": "Enchedora de garrafas",
+        "fabricante": "Zegla",
+        "modelo": "RZ-RET-G-40/50/10-GA-GII",
+        "somente_documentacao": True,
+        "resumo": "Documentacao fotografada da enchedora de garrafas Zegla, identificada pelo desenho 2000164575.",
+        "especificacoes": [
+            ("Equipamento", "Enchedora de garrafas"),
+            ("Fabricante", "Zegla"),
+            ("Modelo na capa", "RZ-RET-G-40/50/10-GA-GII"),
+            ("Codigo do desenho", "2000164575"),
+            ("Pedido", "PV.0078-01.06.20"),
+            ("Data na capa", "16/02/2021"),
+        ],
+        "pontos": [],
+        "documentacao": {
+            "titulo": "Manual da Envasadora Zegla 40/50/10 GA",
+            "arquivo": "documentos/envasadora-zegla-40-50-10-ga.pdf",
+            "fontes": "PDF fotografado existente em ProjetoEnchedora (14 paginas). Identificacao conferida na foto da capa IMG_0849.JPG e confirmada pela operacao.",
+        },
+    },
+]
+
+DOCUMENTED_MACHINES = [*MACHINES, *DOCUMENTATION_ONLY_MACHINES]
+
+
+def documented_machine_by_slug(slug):
+    return next((machine for machine in DOCUMENTED_MACHINES if machine["slug"] == slug), None)
+
+
 def machine_by_slug(slug):
     return next((machine for machine in MACHINES if machine["slug"] == slug), None)
 
@@ -300,6 +422,9 @@ def machine_by_slug(slug):
 def seed_machines(conn):
     """Cria o catalogo sem sobrescrever ajustes feitos pela operacao."""
     for machine in MACHINES:
+        cliente = machine.get("cliente_deploy_id", "rio-branco")
+        if cliente and cliente != (os.getenv("CLIENTE_DEPLOY_ID") or os.getenv("NANOTECH_DEPLOY_PROFILE")):
+            continue
         conn.execute(
             """
             INSERT OR IGNORE INTO maquinas(

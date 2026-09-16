@@ -8,6 +8,7 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/common.sh"
 cd_project
 require_compose
 validate_app_sources
+validate_runtime_profile
 
 BRANCH="${1:-}"
 if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then

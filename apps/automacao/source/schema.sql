@@ -1,5 +1,16 @@
 PRAGMA foreign_keys = ON;
 
+CREATE TABLE IF NOT EXISTS documentos_maquinas (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    titulo TEXT NOT NULL,
+    equipamento TEXT NOT NULL DEFAULT '',
+    tipo TEXT NOT NULL CHECK(tipo IN ('manual', 'protocolo', 'documentacao')),
+    descricao TEXT NOT NULL DEFAULT '',
+    nome_arquivo TEXT NOT NULL,
+    conteudo BLOB NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS setores (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     nome TEXT NOT NULL UNIQUE,

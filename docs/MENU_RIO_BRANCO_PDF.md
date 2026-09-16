@@ -126,3 +126,18 @@ Tecnologia usa `#backup-visao`, `#backup-planos` e `#backup-agentes` para seleci
 O backup ZIP e uma exportacao dos e-mails importados e anexos locais: mensagens e metadados em JSON Lines por lote, anexos organizados por ID, marcacao de anexos indisponiveis. Nao inclui senhas/configuracoes das contas, nao acessa POP3/IMAP, nao restaura dados e nao substitui o backup do banco. Usa arquivo temporario e leitura paginada para evitar acumular o arquivo completo em memoria.
 
 Testes: `tests/test_menu_pdf.py`, `tests/check_menu_pdf.py`, `apps/riob/source/tests/test_menu_relatorios.py`, suites existentes de navegacao, acessos, comunicacao e contratos. Fixtures de navegador e backup usam somente dados sinteticos.
+
+## Manuais e protocolos de Automacao
+
+O cadastro e a consulta usam a sessao unica e recursos do manifest, validados
+no servidor. Acesso integral `automacao:*` continua valido; nao ha novas
+concessoes automaticas. Os PDFs enviados ficam no banco local do cliente.
+
+| Menu | Modulo | Funcao | URL | Recurso |
+| --- | --- | --- | --- | --- |
+| CADASTRO | automacao | Manual-documentacao | `/apps/automacao/documentacao/cadastrar` | `documentos_cadastrar` |
+| DOCUMENTOS | automacao | Manuais das maquinas | `/apps/automacao/documentacao` | `documentos` |
+
+A consulta reune os documentos da Rodighero, Brix, Envasadora Zegla e o protocolo
+Cyklop N8 V1.2, alem dos PDFs cadastrados pelo sistema. O cadastro de maquinas
+monitoraveis do Rio Branco inclui a Cyklop, aguardando integracao TCP/RS232.

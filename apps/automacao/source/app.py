@@ -4,11 +4,16 @@ from flask import (
     request,
     jsonify,
     redirect,
+    send_file,
+    abort,
 )
 
+from io import BytesIO
 import json
 import math
 import os
+from pypdf import PdfReader
+from werkzeug.utils import secure_filename
 
 from database import (
     get_connection,
@@ -21,9 +26,11 @@ from driver_service import (
     salvar_leitura_motor,
     start_driver_monitor
 )
-from machine_catalog import MACHINES, machine_by_slug
+from machine_catalog import MACHINES, DOCUMENTED_MACHINES, machine_by_slug, documented_machine_by_slug
 
 app = Flask(__name__)
+MAX_DOCUMENT_BYTES = 20 * 1024 * 1024
+app.config["MAX_CONTENT_LENGTH"] = MAX_DOCUMENT_BYTES + 1024 * 1024
 
 
 @app.route("/")
@@ -136,12 +143,89 @@ def detalhe_maquina(slug):
 
 @app.route("/documentacao")
 def documentacao():
-    return render_template("documentacao.html", maquinas=MACHINES)
+    conn = get_connection()
+    documentos = conn.execute("""
+        SELECT id, titulo, equipamento, tipo, descricao, nome_arquivo, created_at
+        FROM documentos_maquinas ORDER BY created_at DESC, id DESC
+    """).fetchall()
+    conn.close()
+    return render_template("documentacao.html", maquinas=DOCUMENTED_MACHINES, documentos=documentos,
+                           cadastrado=request.args.get("cadastrado") == "1")
+
+
+@app.route("/documentacao/cadastrar", methods=["GET", "POST"])
+def cadastrar_documento():
+    if request.method == "GET":
+        return render_template("documento_cadastro.html")
+
+    titulo = request.form.get("titulo", "").strip()
+    equipamento = request.form.get("equipamento", "").strip()
+    tipo = request.form.get("tipo", "manual").strip()
+    descricao = request.form.get("descricao", "").strip()
+    arquivo = request.files.get("arquivo")
+    erro = None
+    if not titulo or len(titulo) > 160:
+        erro = "Informe um título de até 160 caracteres."
+    elif len(equipamento) > 160 or len(descricao) > 2000:
+        erro = "Use até 160 caracteres no equipamento e 2.000 na descrição."
+    elif tipo not in {"manual", "protocolo", "documentacao"}:
+        erro = "Selecione um tipo de documento válido."
+    elif not arquivo or not arquivo.filename.lower().endswith(".pdf"):
+        erro = "Selecione um arquivo PDF."
+    if erro:
+        return render_template("documento_cadastro.html", erro=erro, valores=request.form), 400
+
+    conteudo = arquivo.read(MAX_DOCUMENT_BYTES + 1)
+    if len(conteudo) > MAX_DOCUMENT_BYTES:
+        return render_template("documento_cadastro.html", erro="O PDF deve ter até 20 MB.", valores=request.form), 413
+    try:
+        if not conteudo.startswith(b"%PDF-"):
+            raise ValueError("Formato invalido")
+        pdf = PdfReader(BytesIO(conteudo))
+        if pdf.is_encrypted or not len(pdf.pages):
+            raise ValueError("PDF protegido ou sem paginas")
+    except Exception:
+        return render_template("documento_cadastro.html", erro="O arquivo deve ser um PDF válido, com páginas e sem senha.", valores=request.form), 400
+
+    nome_arquivo = secure_filename(arquivo.filename)[:180] or "documento.pdf"
+    conn = get_connection()
+    try:
+        with conn:
+            conn.execute("""
+                INSERT INTO documentos_maquinas(titulo, equipamento, tipo, descricao, nome_arquivo, conteudo)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (titulo, equipamento, tipo, descricao, nome_arquivo, conteudo))
+    finally:
+        conn.close()
+    return redirect("/documentacao?cadastrado=1", code=303)
+
+
+@app.route("/documentacao/arquivos/<int:documento_id>")
+def arquivo_documento(documento_id):
+    conn = get_connection()
+    documento = conn.execute(
+        "SELECT nome_arquivo, conteudo FROM documentos_maquinas WHERE id = ?", (documento_id,)
+    ).fetchone()
+    conn.close()
+    if documento is None:
+        abort(404)
+    response = send_file(BytesIO(documento["conteudo"]), mimetype="application/pdf",
+                         download_name=documento["nome_arquivo"], max_age=0)
+    response.headers["Cache-Control"] = "private, no-store"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
+@app.errorhandler(413)
+def documento_muito_grande(error):
+    if request.path == "/documentacao/cadastrar":
+        return render_template("documento_cadastro.html", erro="O PDF deve ter até 20 MB."), 413
+    return jsonify({"erro": "Requisição excede o tamanho permitido."}), 413
 
 
 @app.route("/documentacao/<slug>")
 def documento_maquina(slug):
-    maquina = machine_by_slug(slug)
+    maquina = documented_machine_by_slug(slug)
     if not maquina:
         return redirect("/documentacao")
     return render_template("documento_maquina.html", maquina=maquina)

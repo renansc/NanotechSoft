@@ -160,6 +160,30 @@ Os quatro comandos operacionais canônicos ficam na raiz:
 - `./update.sh` atualiza o código e recria somente as aplicações habilitadas, sem operar bancos.
 - `./git-safe-push.sh` bloqueia arquivos sensíveis/runtime, valida o perfil, cria o commit e envia a branch atual para `origin`.
 
+Os quatro comandos leem o ambiente deste checkout na ordem
+`NANOTECH_ENV_FILE` (quando informado), `.env`, `.env_local`. Variaveis exportadas
+no terminal prevalecem; o mesmo arquivo e passado ao Compose. Cada cliente
+mantem seu checkout, arquivo de ambiente, bancos e volumes. Perfil, cliente e
+modo divergentes sao bloqueados antes de operar servicos, inclusive quando o
+portal existente pertence a outro cliente. Os nomes atuais de projetos,
+containers e volumes sao preservados; nao se cria uma stack por cliente no
+mesmo diretorio. O fallback legado sem configuracao continua `rio-branco`.
+
+O perfil Render publica pelo `render.yaml`; `up.sh`, `down.sh` e `update.sh`
+nao operam Docker local nesse perfil. O Git seguro valida e envia somente o
+codigo no Render. Nos perfis locais, `up.sh` inicia o banco com `--no-recreate`,
+`down.sh` para apenas as aplicacoes e `update.sh` nao opera bancos.
+Publicar no Git nao atualiza automaticamente os demais clientes: cada deploy
+aplica `./update.sh` em seu proprio ambiente e momento autorizado.
+
+Com alteracoes de trabalhos diferentes no mesmo checkout, use
+`./git-safe-push.sh --only CAMINHO -m "descricao" -y`, repetindo `--only` quando
+necessario. Diretorios sao verificados arquivo a arquivo: bancos, uploads,
+anexos, certificados e arquivos `.env` reais sao bloqueados mesmo em subpastas
+ou quando ja estavam no stage. A validacao do Compose nao grava credenciais
+expandidas em arquivo temporario.
+
+
 Os perfis versionados ficam em `deploy/profiles.json`. Selecione um deles com
 `NANOTECH_DEPLOY_PROFILE`: `nanotech`, `rio-branco`, `laboratorio`, `senhor` ou
 `render`. O perfil define o cliente, se existe banco local e se a pilha RioB
@@ -177,7 +201,7 @@ permanentes do projeto.
 
 Os scripts detectam `docker compose`, `docker-compose` ou `podman compose`. Se o Docker CLI nao estiver disponivel no terminal atual, execute os scripts fora de sandboxes que nao exponham Docker, como alguns ambientes Flatpak, ou instale o plugin Compose.
 
-Em um ambiente sem Docker CLI, o `./git-safe` pula Compose/build/health automaticamente e ainda roda as validacoes de Python, manifests e clientes. Use `--skip-compose` quando quiser deixar esse pulo explicito. Use `--skip-whitespace` somente quando precisar ignorar `git diff --check`; por padrao, vendors minificados e binarios ja sao excluidos dessa checagem. Se faltarem dependencias Python locais, a validacao que importa `app.py` vira aviso; instale `requirements.txt` para checar tambem rotas e temas fora do container.
+Em um ambiente sem Docker CLI, o `./git-safe-push.sh` pula Compose/build/health automaticamente e ainda roda as validacoes de Python, manifests e clientes. Use `--skip-compose` quando quiser deixar esse pulo explicito. Use `--skip-whitespace` somente quando precisar ignorar `git diff --check`; por padrao, vendors minificados e binarios ja sao excluidos dessa checagem. Se faltarem dependencias Python locais, a validacao que importa `app.py` vira aviso; instale `requirements.txt` para checar tambem rotas e temas fora do container.
 
 ## Apps dinamicos
 
@@ -344,3 +368,21 @@ classificar seu grupo e recurso no manifest e verificar o menu de usuario restri
 ## Menu do Rio Branco (setembro de 2026)
 
 O cliente `rio-branco` usa o perfil dos manifests definido em [Menu conforme PDF](docs/MENU_RIO_BRANCO_PDF.md): Dash, Cadastro, Relatorio, Dados, Config, Workflow, Monitor, Estoque, Gestao e Docs, com os modulos identificados dentro de cada menu. Os demais clientes mantem a navegacao por modulo. Financeiro, Ponto, Store, Cameras e ESXi estao temporariamente desativados apenas no Rio Branco. Contagem, relatorio de orcamentos e backup de e-mails possuem recursos proprios em Config > Usuarios e acessos; acessos individuais nao sao ampliados automaticamente.
+
+## Protocolo da impressora a laser Cyklop
+
+DOCUMENTOS > Automacao > Manuais das maquinas inclui o PDF original **Laser
+communication protocol N8 V1.2**. A Cyklop tambem integra o inventario de maquinas
+monitoraveis do Rio Branco, com seis pontos de estado e contadores, aguardando
+telemetria pelo gateway. A conexao TCP/RS232 ainda precisa ser implementada e
+configurada. Documento, PDF e monitoramento reutilizam `automacao:*` em Config >
+Usuarios e acessos, com validacao no servidor e sem conceder novas permissoes.
+Detalhes em [Protocolo Cyklop](apps/automacao/source/docs/IMPRESSORA_LASER_CYKLOP.md).
+
+**CADASTRO > Automacao > Manual-documentacao** permite enviar PDFs de ate 20 MB,
+com titulo, equipamento, tipo e descricao. Eles ficam junto dos documentos
+existentes em **DOCUMENTOS > Automacao > Manuais das maquinas**, preservados no
+banco local. Em Usuarios e acessos, `automacao:documentos` libera consulta e
+`automacao:documentos_cadastrar` libera cadastro; `automacao:*` preserva acesso
+integral. O servidor verifica essas permissoes tambem nas URLs diretas e nos
+arquivos; nenhuma permissao individual e concedida automaticamente.

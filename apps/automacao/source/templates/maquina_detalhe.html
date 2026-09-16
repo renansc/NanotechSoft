@@ -16,7 +16,7 @@
     <div class="actions">
         <a href="/documentacao/{{ maquina.slug }}">Abrir guia técnico</a>
         {% if documento %}
-        <a href="/static/{{ documento.documentacao.arquivo }}" target="_blank">Manual fotografado</a>
+        <a href="/static/{{ documento.documentacao.arquivo }}" target="_blank">{{ documento.documentacao.rotulo_pdf or 'Manual fotografado' }}</a>
         {% endif %}
     </div>
     <p>

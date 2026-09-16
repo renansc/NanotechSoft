@@ -5,12 +5,26 @@
 <h1>Documentação das máquinas</h1>
 
 <p>
-Guias técnicos preparados a partir das fotos dos manuais físicos. Cada guia
-separa dados confirmados, recomendações de monitoramento e lacunas que precisam
-ser validadas no equipamento.
+Manuais, protocolos de comunicação e guias das máquinas.
+Abra o guia para conferir a identificação ou consulte o documento em PDF.
 </p>
 
+{% if cadastrado %}
+<p class="notice" role="status">Documento cadastrado. Ele já está disponível nesta lista.</p>
+{% endif %}
+
 <div class="machine-grid">
+{% for documento in documentos %}
+<article class="card machine-card">
+    <h2>{{ documento.titulo }}</h2>
+    {% if documento.equipamento %}<p><b>Equipamento:</b> {{ documento.equipamento }}</p>{% endif %}
+    <p>{{ documento.descricao }}</p>
+    <p class="machine-meta">{{ {'manual': 'Manual', 'protocolo': 'Protocolo de comunicação', 'documentacao': 'Documentação técnica'}[documento.tipo] }} · {{ documento.nome_arquivo }}</p>
+    <div class="actions">
+        <a href="/documentacao/arquivos/{{ documento.id }}" target="_blank" rel="noopener">Abrir PDF</a>
+    </div>
+</article>
+{% endfor %}
 {% for maquina in maquinas %}
 <article class="card machine-card">
     <h2>{{ maquina.nome }}</h2>
@@ -18,7 +32,7 @@ ser validadas no equipamento.
     <p class="machine-meta">{{ maquina.documentacao.fontes }}</p>
     <div class="actions">
         <a href="/documentacao/{{ maquina.slug }}">Consultar guia</a>
-        <a href="/static/{{ maquina.documentacao.arquivo }}" target="_blank">Abrir fotografias em PDF</a>
+        <a href="/static/{{ maquina.documentacao.arquivo }}" target="_blank">{{ maquina.documentacao.rotulo_pdf or 'Abrir fotografias em PDF' }}</a>
     </div>
 </article>
 {% endfor %}

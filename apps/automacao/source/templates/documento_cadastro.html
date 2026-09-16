@@ -1,0 +1,29 @@
+{% extends 'base.html' %}
+{% block content %}
+{% set valores = valores|default({}) %}
+<h1>Manual-documentação</h1>
+<p>Inclua um manual, protocolo de comunicação ou outro documento em PDF.
+Ele ficará disponível em Documentações &gt; Automação &gt; Manual máquinas.</p>
+{% if erro %}<p class="notice danger" role="alert">{{ erro }}</p>{% endif %}
+<form method="post" action="/documentacao/cadastrar" enctype="multipart/form-data" class="card document-form">
+    <label for="titulo">Título *</label>
+    <input id="titulo" name="titulo" required maxlength="160" value="{{ valores.get('titulo', '') }}" placeholder="Ex.: Protocolo de comunicação Cyklop">
+    <label for="equipamento">Equipamento / modelo</label>
+    <input id="equipamento" name="equipamento" maxlength="160" value="{{ valores.get('equipamento', '') }}" placeholder="Ex.: Impressora a laser Cyklop">
+    <label for="tipo">Tipo de documento *</label>
+    <select id="tipo" name="tipo" required>
+        {% for valor, nome in [('manual', 'Manual'), ('protocolo', 'Protocolo de comunicação'), ('documentacao', 'Documentação técnica')] %}
+        <option value="{{ valor }}" {% if valores.get('tipo', 'manual') == valor %}selected{% endif %}>{{ nome }}</option>
+        {% endfor %}
+    </select>
+    <label for="descricao">Descrição</label>
+    <textarea id="descricao" name="descricao" maxlength="2000" rows="4">{{ valores.get('descricao', '') }}</textarea>
+    <label for="arquivo">Arquivo PDF *</label>
+    <input id="arquivo" name="arquivo" type="file" accept="application/pdf,.pdf" required aria-describedby="arquivo-ajuda">
+    <p id="arquivo-ajuda">PDF de até 20 MB, sem senha.</p>
+    <div class="actions">
+        <button type="submit">Cadastrar documento</button>
+        <a href="/documentacao">Ver manuais das máquinas</a>
+    </div>
+</form>
+{% endblock %}

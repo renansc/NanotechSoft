@@ -108,6 +108,24 @@ button:hover{
     align-items:end;
 }
 
+.document-form{
+    display:grid;
+    gap:8px;
+    max-width:800px;
+}
+
+.document-form label{
+    font-weight:bold;
+}
+
+.document-form input,
+.document-form select,
+.document-form textarea{
+    box-sizing:border-box;
+    width:100%;
+    min-width:0;
+}
+
 .form-grid label{
     display:flex;
     flex-direction:column;
@@ -428,8 +446,10 @@ button:hover{
 
 <div class="content">
 
+<!-- nanotech-task:start -->
 {% block content %}
 {% endblock %}
+<!-- nanotech-task:end -->
 
 </div>
 

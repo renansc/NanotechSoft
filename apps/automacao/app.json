@@ -1,9 +1,9 @@
 {
   "app_key": "automacao",
   "nome": "Automacao",
-  "descricao": "Monitoramento industrial e sensores importado do sensoresMonitor.",
+  "descricao": "Monitoramento industrial, sensores, manuais e protocolos de maquinas, incluindo Cyklop laser, envasadora Zegla, Brix e empacotadora.",
   "url": "/apps/automacao",
-  "standalone_url": "/apps/automacao/original/",
+  "standalone_url": "/apps/automacao",
   "icone": "automation",
   "ordem": 50,
   "ativo": true,
@@ -21,41 +21,61 @@
     "dashboards": [
       {
         "nome": "Dashboard Automacao",
-        "url": "/apps/automacao/"
+        "url": "/apps/automacao/",
+        "recurso": "*"
       },
       {
         "nome": "Tempo Real Automacao",
-        "url": "/apps/automacao/tempo-real"
+        "url": "/apps/automacao/tempo-real",
+        "recurso": "*"
       },
       {
         "nome": "Maquinas Automacao",
-        "url": "/apps/automacao/maquinas"
+        "url": "/apps/automacao/maquinas",
+        "recurso": "*"
       }
     ],
     "cadastros": [
       {
         "nome": "Motores Automacao",
-        "url": "/apps/automacao/motores"
+        "url": "/apps/automacao/motores",
+        "recurso": "*"
       },
       {
         "nome": "Drivers Automacao",
-        "url": "/apps/automacao/sensores/drivers"
+        "url": "/apps/automacao/sensores/drivers",
+        "recurso": "*"
       },
       {
         "nome": "Documentacao Automacao",
-        "url": "/apps/automacao/documentacao"
+        "url": "/apps/automacao/documentacao",
+        "recurso": "documentos",
+        "recurso_nome": "Consultar manuais e documentacao"
+      },
+      {
+        "nome": "Manual-documentacao",
+        "url": "/apps/automacao/documentacao/cadastrar",
+        "recurso": "documentos_cadastrar",
+        "recurso_nome": "Cadastrar manuais e documentacao"
       }
     ],
     "relatorios": [
       {
         "nome": "Historico Automacao",
-        "url": "/apps/automacao/historico"
+        "url": "/apps/automacao/historico",
+        "recurso": "*"
       }
     ],
     "workflow": [
       {
         "nome": "Kanban Automacao",
-        "url": "/workflow/automacao"
+        "url": "/workflow/automacao",
+        "recurso": "*"
+      },
+      {
+        "nome": "Alarmes Automacao",
+        "url": "/apps/automacao/alarmes",
+        "recurso": "*"
       }
     ]
   },
@@ -63,14 +83,16 @@
     {
       "nome": "Alarmes Automacao",
       "url": "/apps/automacao/alarmes",
-      "tipo": "Automacao"
+      "tipo": "Automacao",
+      "recurso": "*"
     }
   ],
   "config_groups": {
     "automacao": [
       {
         "nome": "Automacao - Setores",
-        "url": "/apps/automacao/setores"
+        "url": "/apps/automacao/setores",
+        "recurso": "*"
       }
     ]
   },
@@ -91,6 +113,12 @@
         ],
         "cadastros": [
           {
+            "nome": "Manual-documentacao",
+            "url": "/apps/automacao/documentacao/cadastrar",
+            "recurso": "documentos_cadastrar",
+            "recurso_nome": "Cadastrar manuais e documentacao"
+          },
+          {
             "nome": "Equipamentos e tipos - Motores",
             "url": "/apps/automacao/motores",
             "recurso": "*"
@@ -98,11 +126,6 @@
           {
             "nome": "Equipamentos e tipos - Drivers",
             "url": "/apps/automacao/sensores/drivers",
-            "recurso": "*"
-          },
-          {
-            "nome": "Equipamentos e tipos - Maquinas",
-            "url": "/apps/automacao/maquinas",
             "recurso": "*"
           },
           {
@@ -127,6 +150,21 @@
           {
             "nome": "Alarmes",
             "url": "/apps/automacao/alarmes",
+            "recurso": "*"
+          }
+        ],
+        "docs": [
+          {
+            "nome": "Manuais das maquinas",
+            "url": "/apps/automacao/documentacao",
+            "recurso": "documentos",
+            "recurso_nome": "Consultar manuais e documentacao"
+          }
+        ],
+        "workflow": [
+          {
+            "nome": "Kanban Automacao",
+            "url": "/workflow/automacao",
             "recurso": "*"
           }
         ]

@@ -3,8 +3,9 @@
 {% block content %}
 
 <div class="no-print actions">
-    <a href="/maquinas/{{ maquina.slug }}">Monitoramento</a>
-    <a href="/static/{{ maquina.documentacao.arquivo }}" target="_blank">Manual fotografado</a>
+    <a href="/documentacao">Todos os manuais</a>
+    {% if not maquina.somente_documentacao %}<a href="/maquinas/{{ maquina.slug }}">Monitoramento</a>{% endif %}
+    <a href="/static/{{ maquina.documentacao.arquivo }}" target="_blank">{{ maquina.documentacao.rotulo_pdf or 'Manual fotografado' }}</a>
     <button type="button" onclick="window.print()">Imprimir guia</button>
 </div>
 
@@ -28,6 +29,7 @@
         <p class="machine-meta">{{ maquina.documentacao.fontes }}</p>
     </section>
 
+    {% if not maquina.somente_documentacao %}
     <section class="card">
         <h2>Operação e integração</h2>
         <ul class="documentation-list">
@@ -72,6 +74,7 @@
         {% for item in maquina.documentacao.lacunas %}<li>{{ item }}</li>{% endfor %}
         </ul>
     </section>
+    {% endif %}
 </article>
 
 {% endblock %}

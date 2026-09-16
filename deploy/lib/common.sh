@@ -61,6 +61,7 @@ detect_compose() {
 }
 
 require_compose() {
+  [[ "$DEPLOY_MODE" != "cloud-readonly" ]] || die "Render usa o Blueprint render.yaml; nao opera Docker ou bancos locais. Para publicar codigo, use git-safe-push.sh --skip-compose."
   if detect_compose; then
     return 0
   fi
@@ -70,7 +71,11 @@ require_compose() {
 
 compose() {
   require_compose
-  "${COMPOSE_CMD[@]}" "$@"
+  local env_args=()
+  if [[ -n "${NANOTECH_ENV_FILE:-}" ]]; then
+    env_args=(--env-file "$NANOTECH_ENV_FILE")
+  fi
+  "${COMPOSE_CMD[@]}" --project-directory "$PROJECT_DIR" "${env_args[@]}" "$@"
 }
 
 cd_project() {
@@ -78,8 +83,8 @@ cd_project() {
 }
 
 python_cmd() {
-  if [[ -x ".venv/bin/python" ]]; then
-    printf '%s\n' ".venv/bin/python"
+  if [[ -x "$PROJECT_DIR/.venv/bin/python" ]]; then
+    printf '%s\n' "$PROJECT_DIR/.venv/bin/python"
     return 0
   fi
 
@@ -99,7 +104,13 @@ python_cmd() {
 configure_deploy_profile() {
   local py profile_id profiles_file output key value
   py="$(python_cmd)" || die "python nao encontrado para carregar o perfil de deploy"
-  profile_id="${NANOTECH_DEPLOY_PROFILE:-${CLIENTE_DEPLOY_ID:-rio-branco}}"
+  local default_profile="rio-branco"
+  [[ "${RENDER:-}" != "true" ]] || default_profile="render"
+  profile_id="${NANOTECH_DEPLOY_PROFILE:-${CLIENTE_DEPLOY_ID:-$default_profile}}"
+  [[ "$profile_id" != "cloud" ]] || profile_id="render"
+  if [[ "${RENDER:-}" == "true" && "$profile_id" != "render" ]]; then
+    die "o runtime Render exige o perfil render"
+  fi
   profiles_file="${NANOTECH_DEPLOY_PROFILES_FILE:-$PROJECT_DIR/deploy/profiles.json}"
 
   output="$($py - "$profiles_file" "$profile_id" <<'PY'
@@ -146,12 +157,20 @@ PY
     esac
   done <<<"$output"
 
-  if [[ -n "${CLIENTE_DEPLOY_ID:-}" && "$CLIENTE_DEPLOY_ID" != "$DEPLOY_CLIENT_ID" && "${NANOTECH_ALLOW_PROFILE_CLIENT_OVERRIDE:-0}" != "1" ]]; then
+  if [[ -n "${CLIENTE_DEPLOY_ID:-}" && "$CLIENTE_DEPLOY_ID" != "$DEPLOY_CLIENT_ID" ]]; then
     die "CLIENTE_DEPLOY_ID=$CLIENTE_DEPLOY_ID diverge do perfil $DEPLOY_PROFILE_ID ($DEPLOY_CLIENT_ID)"
   fi
+  if [[ -n "${NS_DEPLOY_MODE:-}" && "$NS_DEPLOY_MODE" != "$DEPLOY_MODE" ]]; then
+    die "NS_DEPLOY_MODE diverge do modo do perfil $DEPLOY_PROFILE_ID"
+  fi
 
+  export NANOTECH_DEPLOY_PROFILE="$DEPLOY_PROFILE_ID"
   export CLIENTE_DEPLOY_ID="${CLIENTE_DEPLOY_ID:-$DEPLOY_CLIENT_ID}"
   export NS_DEPLOY_MODE="${NS_DEPLOY_MODE:-$DEPLOY_MODE}"
+  if [[ "$DEPLOY_MODE" == "cloud-readonly" ]]; then
+    export NS_READ_ONLY=1
+    export NS_CACHE_PROVIDER=alwaysdata
+  fi
 
   BUILD_SERVICES=("$APP_SERVICE")
   PROXY_SERVICES=("$PORTAL_PROXY_SERVICE")
@@ -166,7 +185,35 @@ PY
   fi
 }
 
+load_deploy_environment() {
+  local py assignments
+  py="$(python_cmd)" || die "python nao encontrado para ler o ambiente"
+  assignments="$("$py" "$PROJECT_DIR/deploy/environment.py" "$PROJECT_DIR")" || die "arquivo de ambiente invalido"
+  eval "$assignments"
+  APP_URL="http://127.0.0.1:${NOTECHSOFT_APP_PORT:-5600}/login"
+  PORTAL_PROXY_HEALTH_URL="https://127.0.0.1:${NOTECHSOFT_HTTPS_PORT:-443}/healthz"
+  RIOB_PROXY_STATUS_URL="https://127.0.0.1:${RB_HTTPS_PORT:-8899}/api/status"
+}
+
+load_deploy_environment
 configure_deploy_profile
+
+validate_runtime_profile() {
+  local container engine actual_client
+  require_compose
+  container="$(compose ps --all -q "$APP_SERVICE")" || die "nao foi possivel identificar o portal deste projeto Compose"
+  [[ -n "$container" ]] || return 0
+  engine="${COMPOSE_CMD[0]}"
+  [[ "$engine" != "docker-compose" ]] || engine="docker"
+  actual_client="$("$engine" inspect --format '{{json .Config.Env}}' "$container" | "$(python_cmd)" -c '
+import json, sys
+values = dict(item.split("=", 1) for item in json.load(sys.stdin) if "=" in item)
+print(values.get("CLIENTE_DEPLOY_ID", ""))
+')" || die "nao foi possivel conferir o cliente do portal existente"
+  if [[ -n "$actual_client" && "$actual_client" != "$CLIENTE_DEPLOY_ID" ]]; then
+    die "o portal existente pertence a $actual_client; o perfil selecionado e $CLIENTE_DEPLOY_ID. Use o checkout e o ambiente correspondentes, sem trocar o deploy existente."
+  fi
+}
 
 riob_stack_enabled() {
   [[ "$DEPLOY_HAS_RIOB" == "1" ]]

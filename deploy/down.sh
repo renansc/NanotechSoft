@@ -7,6 +7,7 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/common.sh"
 
 cd_project
 require_compose
+validate_runtime_profile
 
 log "parando os servicos do perfil ${DEPLOY_PROFILE_ID} sem remover bancos, volumes ou dados..."
 compose stop "${RUNTIME_SERVICES[@]}"

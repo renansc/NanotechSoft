@@ -8,13 +8,14 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/common.sh"
 cd_project
 require_compose
 validate_app_sources
+validate_runtime_profile
+ensure_riob_import_sources
 
 log "perfil ativo: ${DEPLOY_PROFILE_ID} (${DEPLOY_MODE}), cliente ${CLIENTE_DEPLOY_ID}"
 if local_database_enabled; then
   log "garantindo banco local sem apagar, restaurar ou sincronizar dados..."
-  compose up -d "${DATABASE_SERVICES[@]}"
+  compose up -d --no-recreate "${DATABASE_SERVICES[@]}"
 fi
-ensure_riob_import_sources
 stop_services_outside_profile
 
 log "reconstruindo os servicos de aplicacao habilitados para teste..."

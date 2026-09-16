@@ -1742,6 +1742,19 @@ def enforce_app_permission():
     if not user_is_admin(usuario):
         recursos = get_user_permissions(usuario).get(app_key, set())
         if "*" not in recursos:
+            if app_key == "automacao":
+                relative_automation = path.removeprefix("/apps/automacao").removeprefix("/original").strip("/")
+                if relative_automation == "documentacao/cadastrar":
+                    automation_allowed = "documentos_cadastrar" in recursos
+                elif request.method in {"GET", "HEAD"} and (
+                    relative_automation == "documentacao"
+                    or relative_automation.startswith(("documentacao/", "static/documentos/"))
+                ):
+                    automation_allowed = bool(recursos & {"documentos", "documentos_cadastrar"})
+                else:
+                    automation_allowed = False
+                if not automation_allowed:
+                    return jsonify({"erro": "recurso nao liberado para este usuario"}), 403
             if app_key == "riob-email":
                 relative_email = path.removeprefix("/apps/riob-email").removeprefix("/riob").strip("/")
                 required_email = "backup" if relative_email == "backup" or relative_email.startswith("backup/") else "operacao"
@@ -3310,6 +3323,10 @@ def rewrite_automacao_html(content, prefix="/apps/automacao", apply_theme=True):
 
 def automacao_active_page(subpath):
     path = "/" + (subpath or "")
+    if path.rstrip("/") == "/documentacao/cadastrar":
+        return "cadastros"
+    if path.startswith("/documentacao") and configured_client_id() == "rio-branco":
+        return "docs"
     if path in {"/", ""} or path.startswith("/tempo-real") or path.startswith("/maquinas"):
         return "dashboards"
     if (
@@ -3333,8 +3350,18 @@ def extract_automacao_page(content):
     text = rewrite_automacao_html(content).decode("utf-8", errors="replace")
     style_match = re.search(r"<style>(.*?)</style>", text, flags=re.I | re.S)
     style = style_match.group(1) if style_match else ""
-    style = style.replace(".content", ".automacao-content")
-    style = style.replace("body{", ".automacao-page{")
+    # O CSS legado de button/table/body nao pode reformatar o cabecalho/menu.
+    def scope_rule(match):
+        boundary, selectors = match.groups()
+        if selectors.strip().startswith("@"):
+            return match[0]
+        scoped = []
+        for selector in selectors.split(","):
+            selector = selector.strip()
+            scoped.append(".automacao-content" if selector in {"body", ".content"}
+                          else ".automacao-content " + selector)
+        return boundary + "\n" + ",\n".join(scoped) + " {"
+    style = re.sub(r'(^|[{}])\s*([^{}]+?)\s*\{', scope_rule, style)
     if current_theme_key() == "zapgreen":
         style += """
 .automacao-page,
@@ -3412,7 +3439,8 @@ def extract_automacao_page(content):
 }
 """
 
-    content_match = re.search(
+    content_match = re.search(r'<!-- nanotech-task:start -->(.*?)<!-- nanotech-task:end -->', text, flags=re.S)
+    content_match = content_match or re.search(
         r'<div class="content">\s*(.*?)\s*</div>\s*</body>',
         text,
         flags=re.I | re.S,
@@ -3422,6 +3450,8 @@ def extract_automacao_page(content):
 
 
 def automacao_proxy_response(subpath="", integrated=True):
+    if subpath.strip("/") == "documentacao/cadastrar" and request.content_length and request.content_length > 21 * 1024 * 1024:
+        return "O PDF deve ter ate 20 MB.", 413
     if not ensure_automacao_app():
         return render_template(
             "app_placeholder.html",
@@ -3444,8 +3474,14 @@ def automacao_proxy_response(subpath="", integrated=True):
     data = request.get_data() if request.method in {"POST", "PUT", "PATCH"} else None
     req = urllib.request.Request(upstream_url, data=data, headers=headers, method=request.method)
 
+    # Devolve o 303 ao navegador para evitar reenvio do PDF ao atualizar a tela.
+    class NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, redirect_req, fp, code, msg, redirect_headers, newurl):
+            return None
+
+    opener = urllib.request.build_opener(NoRedirect)
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with opener.open(req, timeout=30) as resp:
             body = resp.read()
             status = resp.status
             content_type = resp.headers.get("Content-Type", "")
@@ -3474,7 +3510,7 @@ def automacao_proxy_response(subpath="", integrated=True):
                 )
             response_headers.append((key, value))
 
-    if "text/html" in content_type:
+    if "text/html" in content_type and not 300 <= status < 400:
         if integrated:
             style, app_content = extract_automacao_page(body)
             body = render_template(

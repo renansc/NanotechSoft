@@ -65,3 +65,29 @@ No PACS principal, use os comandos do próprio repositório:
 Nos destinos, o update ocorre no repositório do componente e na branch `main`.
 O deploy Senhor deve respeitar a janela versionada após 18h no fuso
 `America/Sao_Paulo`.
+
+## Selecao do ambiente pelos comandos
+
+`up.sh`, `down.sh`, `update.sh` e `git-safe-push.sh` continuam sendo os unicos
+comandos publicos, com a mesma sintaxe. Todos leem `NANOTECH_ENV_FILE`, quando
+definido, ou o primeiro arquivo existente entre `.env` e `.env_local` no checkout.
+Seletores do terminal prevalecem. O arquivo e interpretado como dados, sem
+executar comandos de shell, e o Compose recebe esse mesmo arquivo.
+
+Perfil, cliente e modo devem concordar. Antes de operar servicos, os comandos
+conferem o cliente do container do portal existente e recusam operar outro
+cliente. Nomes de servicos, containers e volumes existentes sao mantidos.
+Os perfis representam deploys independentes; trocar uma variavel nao migra nem
+converte um deploy existente. O padrao legado sem seletores e `rio-branco`.
+
+No perfil Render (tambem reconhecido por `CLIENTE_DEPLOY_ID=cloud`), os comandos
+locais de Docker sao bloqueados: o deploy usa o Blueprint. O Git seguro ignora
+Compose nesse perfil, mantendo as validacoes de codigo e a protecao de dados.
+Nos demais perfis, o Git seguro valida somente os servicos do ambiente selecionado.
+
+`up.sh` inicia o banco local com `--no-recreate`; `down.sh` nao para bancos;
+`update.sh` nao os opera. Nao ha restore, copia ou sincronizacao de dados nesses
+fluxos. `--only` no Git seguro verifica cada arquivo dentro dos diretorios pedidos,
+incluindo arquivos ja versionados. Dados de runtime nunca acompanham os PDFs
+tecnicos versionados de Automacao. Testes em `tests/test_deploy_commands.py`
+usam ambientes temporarios e servicos simulados, sem parar clientes reais.

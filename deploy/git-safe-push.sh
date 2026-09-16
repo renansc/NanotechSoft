@@ -44,6 +44,16 @@ EOF
 
 is_risky_path() {
   local path="${1//\\//}"
+  local base="${path##*/}"
+  case "$base" in
+    .env|.env_*|.env.*) [[ "$base" == ".env.example" ]] || return 0 ;;
+    *.db|*.db-*|*.sqlite|*.sqlite-*|*.sqlite3|*.sqlite3-*|*.gdb|*.GDB|*.dump|*.bak|*.pfx|*.p12|*.pem|*.key|*.crt|*.log|*.pyc|*.pyo|*.m3u8|*.tar.gz|*.sql.gz) return 0 ;;
+  esac
+  case "/$path/" in
+    */uploads/*|*/uploads_xml_homologacao/*|*/anexos/*|*/backups/*|*/backup/*|*/certs/*|*/.venv/*|*/__pycache__/*|*/node_modules/*|*/instance/*|*/runtime/*|*/sync-backups/*|*/sync-import/*) return 0 ;;
+  esac
+  [[ "$path" == *.sql && "$path" != "sql/schema.sql" && "$path" != "apps/automacao/source/schema.sql" ]] && return 0
+  [[ "$base" == "kanban-tasks.json" || "$base" == "kanban-tasks.json.lock" ]] && return 0
   [[ "$path" == ".env" ]] && return 0
   [[ "$path" == .env.* && "$path" != ".env.example" ]] && return 0
   [[ "$path" == .env_* ]] && return 0
@@ -101,7 +111,9 @@ run_whitespace_check() {
     ":(exclude)apps/**/docs/vendor/**"
   )
 
-  git diff --check -- "${pathspecs[@]}"
+  if [[ "${#ONLY_PATHS[@]}" -eq 0 ]]; then
+    git diff --check -- "${pathspecs[@]}"
+  fi
   git diff --cached --check -- "${pathspecs[@]}"
 }
 
@@ -114,7 +126,8 @@ run_validations() {
   validate_client_contracts
   validate_portal_integrations
   if [[ "$SKIP_COMPOSE" != "1" ]]; then
-    compose config >/tmp/nanotechsoft-compose-config.yml
+    compose config --quiet
+    validate_runtime_profile
   else
     log "validacao Docker Compose pulada por --skip-compose"
   fi
@@ -125,9 +138,10 @@ run_validations() {
   fi
 
   if [[ "$SKIP_HEALTH" != "1" ]]; then
+    ensure_riob_import_sources
     log "subindo os servicos preservados do perfil ${DEPLOY_PROFILE_ID} para checagem local"
     if local_database_enabled; then
-      compose up -d "${DATABASE_SERVICES[@]}"
+      compose up -d --no-recreate "${DATABASE_SERVICES[@]}"
     fi
     compose up -d --no-deps "${RUNTIME_SERVICES[@]}" "$PORTAL_PROXY_SERVICE"
     if ! wait_for_app 45 2; then
@@ -211,6 +225,12 @@ done
 
 ensure_command git
 cd_project
+if [[ "$DEPLOY_MODE" == "cloud-readonly" ]]; then
+  log "perfil Render: validando somente codigo; deploy pertence ao Blueprint"
+  SKIP_COMPOSE=1
+  SKIP_BUILD=1
+  SKIP_HEALTH=1
+fi
 if [[ "$SKIP_COMPOSE" != "1" ]]; then
   if ! detect_compose; then
     log "Docker Compose nao encontrado; pulando compose/build/health automaticamente"
@@ -229,7 +249,7 @@ log "branch atual: $BRANCH"
 git status --short --branch
 
 log "limpando arquivos sensiveis/runtime do stage"
-mapfile -t STAGED_FILES < <(git diff --cached --name-only)
+mapfile -d '' STAGED_FILES < <(git diff --cached --name-only -z)
 for path in "${STAGED_FILES[@]}"; do
   if is_risky_path "$path"; then
     log "removendo do stage: $path"
@@ -243,7 +263,8 @@ BLOCKED_FILES=()
 if [[ "${#ONLY_PATHS[@]}" -gt 0 ]]; then
   log "modo --only ativo; removendo do stage os arquivos fora do escopo"
   git restore --staged -- .
-  for path in "${ONLY_PATHS[@]}"; do
+  mapfile -d '' SCOPED_FILES < <(git ls-files --modified --deleted --others --exclude-standard -z -- "${ONLY_PATHS[@]}")
+  for path in "${SCOPED_FILES[@]}"; do
     [[ -n "$path" ]] || continue
     if is_risky_path "$path"; then
       BLOCKED_FILES+=("$path")
@@ -272,7 +293,7 @@ if [[ "${#SAFE_FILES[@]}" -gt 0 ]]; then
   git add -- "${SAFE_FILES[@]}"
 fi
 
-mapfile -t FINAL_STAGED < <(git diff --cached --name-only)
+mapfile -d '' FINAL_STAGED < <(git diff --cached --name-only -z)
 if [[ "${#FINAL_STAGED[@]}" -eq 0 ]]; then
   PENDING_COMMITS="$(pending_commit_count)"
   if [[ "$PENDING_COMMITS" -gt 0 ]]; then
