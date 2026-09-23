@@ -61,6 +61,130 @@ def purchase_forecast(
     }
 
 
+def minimum_stock_purchase_quantity(
+    current_stock=0,
+    minimum_stock=0,
+    minimum_lot=0,
+    purchase_multiple=1,
+):
+    """Calcula a reposicao automatica disparada pelo estoque minimo."""
+    current = float(current_stock or 0)
+    minimum = max(0.0, float(minimum_stock or 0))
+    if minimum <= 0 or current > minimum:
+        return 0.0
+    multiple = max(0.001, float(purchase_multiple or 1))
+    requested = max(minimum - current, max(0.0, float(minimum_lot or 0)))
+    if requested <= 0:
+        requested = multiple
+    return round(math.ceil((requested - 0.0000001) / multiple) * multiple, 3)
+
+
+def ensure_minimum_stock_purchase(cur, product_id, current_stock, actor="sistema"):
+    """Cria uma unica compra aberta para um produto no estoque minimo.
+
+    O bloqueio da linha do produto serializa avaliacoes concorrentes. O helper
+    nao confirma a transacao para poder participar do fluxo chamador.
+    """
+    product_id = int(product_id or 0)
+    if product_id <= 0:
+        return None
+    cur.execute(
+        """SELECT id,nome_produto,produto_base_nome,grupo_estoque,unidade,
+        embalagem_tipo_padrao,estoque_minimo
+        FROM estoque_produtos WHERE id=%s AND ativo=1 FOR UPDATE""",
+        (product_id,),
+    )
+    product = cur.fetchone() or {}
+    minimum = float(product.get("estoque_minimo") or 0)
+    if not product or minimum <= 0 or float(current_stock or 0) > minimum:
+        return None
+
+    cur.execute(
+        """SELECT estoque_area,estoque_subgrupo FROM estoque_grupos
+        WHERE codigo=%s AND ativo=1 LIMIT 1""",
+        (product.get("grupo_estoque"),),
+    )
+    group = cur.fetchone() or {}
+    if (
+        str(group.get("estoque_area") or "").upper() == "PRODUCAO"
+        and str(group.get("estoque_subgrupo") or "").upper() == "PRODUTOS"
+    ):
+        return {"created": False, "reason": "produto_acabado"}
+
+    cur.execute(
+        """SELECT id,status FROM compras_solicitacoes
+        WHERE produto_id=%s AND ativo=1 AND status NOT IN ('recebido','cancelado')
+        ORDER BY id DESC LIMIT 1""",
+        (product_id,),
+    )
+    existing = cur.fetchone() or {}
+    if existing:
+        return {
+            "created": False,
+            "reason": "compra_aberta",
+            "id": int(existing.get("id") or 0),
+        }
+
+    cur.execute(
+        """SELECT fornecedor_id,prazo_entrega_dias,lote_minimo,multiplo_compra
+        FROM compras_produto_config WHERE produto_id=%s AND ativo=1 LIMIT 1""",
+        (product_id,),
+    )
+    config = cur.fetchone() or {}
+    quantity = minimum_stock_purchase_quantity(
+        current_stock=current_stock,
+        minimum_stock=minimum,
+        minimum_lot=config.get("lote_minimo"),
+        purchase_multiple=config.get("multiplo_compra") or 1,
+    )
+    if quantity <= 0:
+        return None
+
+    today = datetime.date.today()
+    lead_days = max(1, int(config.get("prazo_entrega_dias") or 7))
+    product_name = str(product.get("produto_base_nome") or product.get("nome_produto") or f"Produto #{product_id}").strip()
+    title = f"Reposicao automatica - {product_name}"[:255]
+    justification = (
+        f"Estoque atual {round(float(current_stock or 0), 3)} atingiu o minimo "
+        f"configurado de {round(minimum, 3)} unidades."
+    )
+    actor = str(actor or "sistema")[:180]
+    cur.execute(
+        """INSERT INTO compras_solicitacoes
+        (titulo,produto_id,fornecedor_id,quantidade,unidade,valor_unitario_previsto,
+         prioridade,status,solicitante,responsavel_id,responsavel_nome,data_necessidade,
+         data_previsao_entrega,justificativa,origem,criado_por)
+        VALUES (%s,%s,%s,%s,%s,0,'alta','solicitado',%s,NULL,'',%s,%s,%s,'estoque_minimo',%s)""",
+        (
+            title,
+            product_id,
+            int(config.get("fornecedor_id") or 0) or None,
+            quantity,
+            "UN",
+            actor,
+            today,
+            today + datetime.timedelta(days=lead_days),
+            justification,
+            actor,
+        ),
+    )
+    purchase_id = int(cur.lastrowid or 0)
+    cur.execute(
+        """INSERT INTO compras_historico
+        (compra_id,acao,status_novo,usuario,detalhes)
+        VALUES (%s,'criado_automaticamente','solicitado',%s,%s)""",
+        (purchase_id, actor, justification[:500]),
+    )
+    return {
+        "created": True,
+        "id": purchase_id,
+        "produto_id": product_id,
+        "quantidade": quantity,
+        "estoque_atual": round(float(current_stock or 0), 3),
+        "estoque_minimo": round(minimum, 3),
+    }
+
+
 def register_gestao_processos_compras(app, services):
     bp = Blueprint("gestao_processos_compras", __name__)
     get_conn = services["get_conn"]

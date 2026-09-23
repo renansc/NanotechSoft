@@ -574,10 +574,11 @@ input[type="file"] {
   text-overflow: ellipsis;
 }
 
-.topo-title span {
+.topbar-user-name {
   display: block;
   max-width: 100%;
   font-size: 12px;
+  color: var(--muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -606,7 +607,7 @@ input[type="file"] {
 .user-account-details dd { margin: 4px 0 0; font-weight: 600; }
 #usuarios, #temas { scroll-margin-top: 80px; }
 
-.user-box {
+.topbar-logo {
   margin-left: auto;
   display: flex;
   align-items: center;
@@ -616,14 +617,26 @@ input[type="file"] {
   min-width: 0;
 }
 
-.user-box > span {
-  max-width: 180px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.topbar-logo img {
+  display: block;
+  width: 120px;
+  height: 44px;
+  object-fit: contain;
 }
 
-.user-box button,
+.topbar-logo [hidden], .logo-preview[hidden] { display: none; }
+.topbar-logo { color: var(--accent-dark); font-weight: 700; white-space: nowrap; }
+.topbar-logo:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.topbar-logout { flex: 0 0 auto; padding: 8px 10px; background: var(--danger); color: #fff; }
+.topbar-logout:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.logo-panel #logoUrl { flex-basis: 100%; }
+.logo-preview { max-width: 240px; max-height: 100px; object-fit: contain; }
+.logo-panel { scroll-margin-top: 80px; }
+[data-config-view][hidden] { display: none; }
+.logo-panel form { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.logo-panel form label { flex-basis: 100%; }
+.logo-panel input { min-width: 0; max-width: 100%; }
+
 .menu-item-logout {
   background: var(--danger);
 }
@@ -661,7 +674,7 @@ input[type="file"] {
 }
 
 .menu-item-logout {
-  display: none;
+  display: block;
   margin-left: auto;
 }
 
@@ -752,7 +765,10 @@ input[type="file"] {
 
 .automacao-content .card {
   border-radius: 8px;
+  min-width: 0;
 }
+
+.automacao-content .card:has(table) { overflow-x: auto; }
 
 .financeiro-app {
   color: inherit;
@@ -1250,7 +1266,6 @@ body.theme-pacsred .financeiro-app .codeBox {
   margin-bottom: 18px;
 }
 
-.config-panel.user-admin-panel,
 .config-panel.client-admin-panel {
   width: 100%;
   max-width: 1100px;
@@ -1506,10 +1521,14 @@ body.theme-pacsred .financeiro-app .codeBox {
 
 
 @media (max-width: 760px) {
-  .topo { gap: 8px; padding-inline: 10px; }
+  .topo { gap: 4px; padding-inline: 8px; }
   .topo-title { flex: 1 1 auto; max-width: none; }
-  .topo h1 { font-size: 16px; }
-  .user-box span { display: none; }
+  .topo h1 { font-size: 14px; }
+  .topo .user-settings-link { width: 30px; height: 34px; flex-basis: 30px; }
+  .topo.compact-menu .menu-toggle { width: 28px; min-width: 28px; padding: 4px; }
+  .topbar-logout { font-size: 12px; padding: 7px; }
+  .topbar-logo img { width: 72px; height: 38px; }
+  .topbar-logo > span { font-size: 12px; }
   .content {
     padding: 16px;
   }
@@ -1538,4 +1557,105 @@ body.theme-pacsred .financeiro-app .codeBox {
   .form-grid.user-security-grid {
     grid-template-columns: 1fr;
   }
+}
+.menu-access-blocked .content { display: none !important; }
+#menuAccessDenied { margin: 24px; padding: 20px; border: 1px solid currentColor; border-radius: 8px; }
+
+/* Usuarios e acessos: largura total e permissoes organizadas por modulo. */
+.config-panel.user-admin-panel {
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+  gap: 20px;
+}
+.user-admin-panel .client-admin-form,
+.user-admin-panel .user-picker,
+.user-admin-panel .form-grid,
+.user-admin-panel fieldset,
+.user-admin-panel label {
+  min-width: 0;
+  max-width: none;
+}
+.user-admin-panel .form-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+}
+.user-admin-panel .client-admin-form { gap: 20px; }
+.user-admin-panel fieldset {
+  margin: 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.user-admin-panel legend { padding: 0 8px; font-weight: 700; }
+.user-admin-panel [data-user-menu-search] { margin: 16px 0; }
+[data-user-permissions-list] { display: grid; gap: 20px; }
+[data-user-permissions-list] > fieldset {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 270px), 1fr));
+  align-items: start;
+  gap: 10px;
+}
+.user-menu-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 14px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+.user-admin-panel input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  margin: 1px 0 0;
+  padding: 0;
+  accent-color: var(--accent);
+}
+.user-menu-choice > span { min-width: 0; overflow-wrap: anywhere; }
+.user-menu-choice small {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+}
+.user-menu-choice:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+[data-user-permissions-list] details {
+  grid-column: 1 / -1;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+[data-user-permissions-list] summary { cursor: pointer; color: var(--muted); }
+[data-user-permissions-list] details .inline-check {
+  display: inline-flex;
+  align-items: flex-start;
+  margin: 12px 20px 0 0;
+  font-weight: 400;
+}
+.user-menu-choice[hidden],
+[data-user-permissions-list] > fieldset[hidden] { display: none; }
+.user-admin-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  justify-content: flex-start;
+  padding: 12px 0;
+  background: var(--surface);
+  border-top: 1px solid var(--line);
+}
+@media (max-width: 1050px) {
+  .user-admin-panel .form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 600px) {
+  .user-admin-panel .form-grid { grid-template-columns: minmax(0, 1fr); }
+  .user-admin-panel fieldset { padding: 10px; }
+  .user-admin-actions { gap: 8px; }
+  .user-admin-actions button { flex: 1 1 auto; }
+  .user-admin-actions .form-msg { flex-basis: 100%; }
 }

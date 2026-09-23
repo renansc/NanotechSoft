@@ -78,7 +78,7 @@
     $("select[name='requesterId']", $("#ticketForm")).value = String(currentUser.id);
   }
 
-  function setView(view, updateUrl = true) {
+  function setView(view, updateUrl = true, loadData = true) {
     const allowed = ["dashboard", "chamados", "agenda", "historico", "documentos"];
     const selected = allowed.includes(view) ? view : "chamados";
     $$('[data-page]').forEach((page) => { page.hidden = page.dataset.page !== selected; });
@@ -86,8 +86,10 @@
     if (updateUrl) {
       const url = new URL(window.location.href);
       url.searchParams.set("view", selected);
-      history.replaceState({}, "", url);
+      if (url.href !== location.href) history.pushState({}, "", url);
+      window.dispatchEvent(new Event("nanotech:navigation"));
     }
+    if (!loadData) return;
     if (selected === "documentos") loadDocuments();
     if (selected === "agenda") loadAgenda();
     if (selected === "historico") searchSolutions();
@@ -607,13 +609,14 @@
   }
 
   async function init() {
+    const initial = new URL(window.location.href).searchParams.get("view") || "chamados";
+    setView(initial, false, false);
     try {
       state.bootstrap = await request("/bootstrap");
       fillSelects();
       bindEvents();
       resetAgendaForm();
       await loadTickets();
-      const initial = new URL(window.location.href).searchParams.get("view") || "chamados";
       setView(initial, false);
     } catch (error) {
       toast(error.message, true);
@@ -621,5 +624,9 @@
     }
   }
 
+  window.addEventListener("popstate", () => {
+    setView(new URL(location.href).searchParams.get("view") || "chamados", false, !!state.bootstrap);
+    window.dispatchEvent(new Event("nanotech:navigation"));
+  });
   init();
 })();

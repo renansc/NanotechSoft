@@ -1,11 +1,13 @@
 """Browser fixtures: no production database, imports, calls or backups."""
 import json
 import re
+import runpy
 import sys
 from pathlib import Path
 from unittest import mock
 
 from playwright.sync_api import sync_playwright
+from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -52,7 +54,7 @@ with sync_playwright() as p:
     page.locator('#estoqueContagemBody input[aria-label=pallets]').fill('1')
     page.locator('#estoqueContagemBody input[aria-label=volumes]').fill('2')
     page.locator('#estoqueContagemBody input[aria-label=unidades]').fill('3')
-    assert page.locator('[data-total]').inner_text() == '123'
+    assert page.locator('[data-total] .estoque-saldo-unidades').inner_text() == 'Total: 123 uni'
     assert page.locator('[data-diferenca]').inner_text() == '-7'
     page.locator('#estoqueContagemBusca').fill('inexistente')
     page.locator('#estoqueContagemBusca').fill('')
@@ -82,7 +84,7 @@ with sync_playwright() as p:
     tech_script = (ROOT / 'apps/tecnologia/source/app.js').read_text()
     page.evaluate('(source)=>{new Function(source)}', tech_script)
     function = tech_script[tech_script.index('  function setView('):tech_script.index('  function openDevice(')]
-    page.add_script_tag(content='const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s)); const loadBackups=()=>{},loadHistory=()=>{},loadLinkUsageReport=()=>{};'+function)
+    page.add_script_tag(content='const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s)); const resources=["*"],loadBackups=()=>{},loadHistory=()=>{},loadLinkUsageReport=()=>{};'+function)
     for section in ('visao','planos','agentes'):
         page.evaluate('(section)=>setView("backup-"+section)', section)
         for element in page.locator('[data-backup-sections]').all():
@@ -104,12 +106,31 @@ with sync_playwright() as p:
     for width in (1440,390):
         page.set_viewport_size({'width':width,'height':1000})
         page.wait_for_timeout(200)
-        if page.locator('[data-menu-toggle]').is_visible():
+        if not page.locator('[data-menu]').is_visible() and page.locator('[data-menu-toggle]').is_visible():
             page.locator('[data-menu-toggle]').click()
         assert page.locator('[data-menu]').is_visible()
         assert page.locator('[data-logout]:visible').count() >= 1
         assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
         page.screenshot(path=f'/tmp/menu-header-{width}.png')
+    assert not errors, errors
+    # Guias existentes continuam dentro do portal e na categoria Documentos,
+    # inclusive ao abrir uma pagina de detalhe sem hash no endereco.
+    automation = ROOT/'apps/automacao/source'
+    machines = runpy.run_path(str(automation/'machine_catalog.py'))['DOCUMENTED_MACHINES']
+    templates = Environment(loader=FileSystemLoader(automation/'templates'),autoescape=select_autoescape())
+    for template, machine in [('documentacao.html',machines[0]),('documento_maquina.html',machines[0]),('documento_maquina.html',machines[-1])]:
+        suffix='' if template=='documentacao.html' else '/'+machine['slug']
+        raw = templates.get_template(template).render(maquinas=machines,maquina=machine).encode()
+        with portal.app.test_request_context(), mock.patch.object(portal,'current_theme_key',return_value='rio_branco'):
+            style,content = portal.extract_automacao_page(raw)
+        html = '<html><body class="theme-rio_branco">'+header+style+'<main class="automacao-content">'+content+'</main></body></html>'
+        page.goto('http://menu.test/apps/automacao/documentacao'+suffix)
+        page.add_style_tag(path=str(ROOT/'static/style.css'))
+        page.add_script_tag(path=str(ROOT/'static/app.js'))
+        page.evaluate("document.dispatchEvent(new Event('DOMContentLoaded'))")
+        assert page.locator('[data-menu-section="docs"]').evaluate("e=>e.classList.contains('active')")
+        assert page.locator('main a[href^="/apps/automacao/static/documentos/"]').count() >= 1
+        assert page.locator('main a[href^="/static/"]').count() == 0
     assert not errors, errors
     print('OK: contagem, CSV, divergencias, relatorio paginado, visoes de backup e menu desktop/mobile.')
     browser.close()

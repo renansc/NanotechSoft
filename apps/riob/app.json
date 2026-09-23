@@ -12,6 +12,13 @@
   "menu_groups": {
     "dashboards": [
       {
+        "nome": "Custo do produto",
+        "url": "/apps/riob#custoProdutoDashboard",
+        "grupo": "RioB",
+        "recurso": "custo_produto_dashboard",
+        "recurso_nome": "Dashboard de custos: diario por grupo e mensal por produto"
+      },
+      {
         "nome": "Painel RioB",
         "url": "/apps/riob#dashboard",
         "recurso": "dashboard"
@@ -39,7 +46,8 @@
       {
         "nome": "Vendas Diaria RioB",
         "url": "/apps/riob#dashboard:vendas_diario",
-        "recurso": "vendas"
+        "recurso": "vendas",
+        "recurso_nome": "Vendas e importacoes (TXT, PDF e SELLOUT)"
       },
       {
         "nome": "Vendas Anual RioB",
@@ -178,6 +186,11 @@
         "url": "/apps/riob#gestaofrota:escala",
         "grupo": "RioB",
         "recurso": "escala"
+      },
+      {
+        "nome": "Pontos de venda",
+        "url": "/apps/riob#vendas:pontosvenda",
+        "recurso": "pontos_venda"
       }
     ],
     "compras": [
@@ -245,6 +258,37 @@
         "nome": "Vendas Anual RioB",
         "url": "/apps/riob#vendas:relatorio_anual",
         "recurso": "vendas"
+      },
+      {
+        "nome": "Contagens, desperdicio e sobras",
+        "url": "/apps/riob#relatorios:contagens",
+        "recurso": "estoque_contagem_relatorio",
+        "recurso_nome": "Relatorio de contagens, desperdicio e sobras"
+      },
+      {
+        "nome": "Visitas dos pontos de venda",
+        "url": "/apps/riob#vendas:pontosvenda_relatorio",
+        "recurso": "pontos_venda"
+      },
+      {
+        "nome": "Cargas da semana",
+        "url": "/apps/riob#relatorios:cargas_semana",
+        "recurso": "vendas"
+      },
+      {
+        "nome": "Variacao de preco",
+        "url": "/apps/riob#vendas:variacao_preco",
+        "recurso": "vendas"
+      },
+      {
+        "nome": "Grupos de embalagem",
+        "url": "/apps/riob#vendas:grupos_embalagem",
+        "recurso": "vendas"
+      },
+      {
+        "nome": "Preco medio",
+        "url": "/apps/riob#vendas:preco_medio",
+        "recurso": "vendas"
       }
     ],
     "import_export": [
@@ -273,6 +317,69 @@
         "nome": "Importar XML Auto RioB",
         "url": "/apps/riob#estoque:importar_xml_auto",
         "recurso": "estoque"
+      },
+      {
+        "nome": "Importar pontos de venda",
+        "url": "/apps/riob#vendas:pontosvenda_importar",
+        "recurso": "pontos_venda"
+      },
+      {
+        "nome": "Base mensal de vendas",
+        "url": "/apps/riob#config:base_vendas",
+        "recurso": "config"
+      }
+    ],
+    "gestao": [
+      {
+        "nome": "Custo do produto",
+        "url": "/apps/riob#custoProduto",
+        "grupo": "RioB",
+        "recurso": "custo_produto",
+        "recurso_nome": "Custo do produto, xarope e precos do XML"
+      },
+      {
+        "nome": "Lista da frota",
+        "url": "/apps/riob#gestaofrota:lista",
+        "recurso": "frota"
+      },
+      {
+        "nome": "Manutencoes",
+        "url": "/apps/riob#gestaofrota:manutencao",
+        "recurso": "frota"
+      },
+      {
+        "nome": "Trocas de oleo",
+        "url": "/apps/riob#gestaofrota:oleo",
+        "recurso": "frota"
+      },
+      {
+        "nome": "Trocas de pneus",
+        "url": "/apps/riob#gestaofrota:pneu",
+        "recurso": "frota"
+      },
+      {
+        "nome": "Abastecimentos",
+        "url": "/apps/riob#gestaofrota:abastecimento",
+        "recurso": "frota"
+      },
+      {
+        "nome": "Lavagens",
+        "url": "/apps/riob#gestaofrota:lavagem",
+        "recurso": "frota"
+      },
+      {
+        "nome": "Custos diarios por grupo",
+        "url": "/apps/riob#custoDiario",
+        "grupo": "RioB",
+        "recurso": "custo_diario",
+        "recurso_nome": "Custos diarios: producao, pessoal, despesas e desperdicios"
+      }
+    ],
+    "docs": [
+      {
+        "nome": "Documentacao RioB",
+        "url": "/apps/riob/docs/",
+        "recurso": "config"
       }
     ]
   },
@@ -317,11 +424,18 @@
         "nome": "Monitor Automacao RioB",
         "url": "/apps/riob#monitor:automacao",
         "recurso": "automacao"
+      }
+    ],
+    "config": [
+      {
+        "nome": "Backup do RioB",
+        "url": "/apps/riob#config:backup",
+        "recurso": "config"
       },
       {
-        "nome": "Modo completo RioB",
-        "url": "/apps/riob/original",
-        "recurso": "*"
+        "nome": "Parametros de orcamentos",
+        "url": "/apps/riob#config:orcamentos",
+        "recurso": "config"
       }
     ]
   },
@@ -329,6 +443,13 @@
     "rio-branco": {
       "menu_groups": {
         "dashboards": [
+          {
+            "nome": "Custo do produto",
+            "url": "/apps/riob#custoProdutoDashboard",
+            "grupo": "RioB",
+            "recurso": "custo_produto_dashboard",
+            "recurso_nome": "Dashboard de custos: diario por grupo e mensal por produto"
+          },
           {
             "nome": "RioB - Fretes",
             "url": "/apps/riob#dashboard",
@@ -357,7 +478,8 @@
           {
             "nome": "Vendas anual",
             "url": "/apps/riob#dashboard:vendas_anual",
-            "recurso": "vendas"
+            "recurso": "vendas",
+            "recurso_nome": "Vendas e importacoes (TXT, PDF e SELLOUT)"
           },
           {
             "nome": "Vendas do dia",
@@ -430,6 +552,11 @@
             "nome": "Escala RioB",
             "url": "/apps/riob#gestaofrota:escala",
             "recurso": "escala"
+          },
+          {
+            "nome": "Pontos de venda",
+            "url": "/apps/riob#vendas:pontosvenda",
+            "recurso": "pontos_venda"
           }
         ],
         "relatorios": [
@@ -463,6 +590,47 @@
             "nome": "Frota",
             "url": "/apps/riob#gestaofrota:relatorios",
             "recurso": "frota"
+          },
+          {
+            "nome": "Contagens, desperdicio e sobras",
+            "url": "/apps/riob#relatorios:contagens",
+            "recurso": "estoque_contagem_relatorio",
+            "recurso_nome": "Relatorio de contagens, desperdicio e sobras"
+          },
+          {
+            "nome": "Compras RioB",
+            "url": "/apps/riob#relatorios:compras",
+            "recurso": "compras"
+          },
+          {
+            "nome": "Vendas Anual RioB",
+            "url": "/apps/riob#vendas:relatorio_anual",
+            "recurso": "vendas"
+          },
+          {
+            "nome": "Visitas dos pontos de venda",
+            "url": "/apps/riob#vendas:pontosvenda_relatorio",
+            "recurso": "pontos_venda"
+          },
+          {
+            "nome": "Cargas da semana",
+            "url": "/apps/riob#relatorios:cargas_semana",
+            "recurso": "vendas"
+          },
+          {
+            "nome": "Variacao de preco",
+            "url": "/apps/riob#vendas:variacao_preco",
+            "recurso": "vendas"
+          },
+          {
+            "nome": "Grupos de embalagem",
+            "url": "/apps/riob#vendas:grupos_embalagem",
+            "recurso": "vendas"
+          },
+          {
+            "nome": "Preco medio",
+            "url": "/apps/riob#vendas:preco_medio",
+            "recurso": "vendas"
           }
         ],
         "import_export": [
@@ -482,17 +650,27 @@
             "recurso": "gestor-emails"
           },
           {
-            "nome": "NF-e / Receita",
-            "url": "/apps/riob#config:nfe",
+            "nome": "Importar XML (Bipe) RioB",
+            "url": "/apps/riob#estoque:importar_xml_bipe",
+            "recurso": "estoque"
+          },
+          {
+            "nome": "Importar XML Auto RioB",
+            "url": "/apps/riob#estoque:importar_xml_auto",
+            "recurso": "estoque"
+          },
+          {
+            "nome": "Importar pontos de venda",
+            "url": "/apps/riob#vendas:pontosvenda_importar",
+            "recurso": "pontos_venda"
+          },
+          {
+            "nome": "Base mensal de vendas",
+            "url": "/apps/riob#config:base_vendas",
             "recurso": "config"
           }
         ],
         "estoque": [
-          {
-            "nome": "Previsao de compras",
-            "url": "/apps/riob#compras:previsao",
-            "recurso": "compras"
-          },
           {
             "nome": "Posicao",
             "url": "/apps/riob#estoque:posicao",
@@ -517,7 +695,115 @@
             "nome": "Contagem",
             "url": "/apps/riob#estoque:contagem",
             "recurso": "estoque_contagem",
-            "recurso_nome": "Contagem de estoque"
+            "recurso_nome": "Contagem por tipo (pallets, CX/PCT e unidades)"
+          }
+        ],
+        "workflow": [
+          {
+            "nome": "Orçamento RioB",
+            "url": "/apps/riob#vendas:orcamento",
+            "recurso": "vendas"
+          },
+          {
+            "nome": "Vendas Diario RioB",
+            "url": "/apps/riob#workflow:vendas_diario",
+            "recurso": "vendas"
+          },
+          {
+            "nome": "Kanban RioB",
+            "url": "/apps/riob#fretes",
+            "recurso": "fretes"
+          },
+          {
+            "nome": "Devolucoes RioB",
+            "url": "/apps/riob#devolucoes",
+            "recurso": "devolucoes"
+          },
+          {
+            "nome": "Comissoes",
+            "url": "/apps/riob#comissao",
+            "grupo": "RioB",
+            "recurso": "comissao"
+          },
+          {
+            "nome": "Gestao de Frota RioB",
+            "url": "/apps/riob#gestaofrota:registrar",
+            "recurso": "frota"
+          },
+          {
+            "nome": "Processos Internos RioB",
+            "url": "/apps/riob#processos",
+            "recurso": "processos"
+          },
+          {
+            "nome": "Compras RioB",
+            "url": "/apps/riob#workflow:compras",
+            "recurso": "compras"
+          }
+        ],
+        "monitor": [
+          {
+            "nome": "Monitor Automacao RioB",
+            "url": "/apps/riob#monitor:automacao",
+            "recurso": "automacao"
+          }
+        ],
+        "gestao": [
+          {
+            "nome": "Custo do produto",
+            "url": "/apps/riob#custoProduto",
+            "grupo": "RioB",
+            "recurso": "custo_produto",
+            "recurso_nome": "Custo do produto, xarope e precos do XML"
+          },
+          {
+            "nome": "Lista da frota",
+            "url": "/apps/riob#gestaofrota:lista",
+            "recurso": "frota"
+          },
+          {
+            "nome": "Manutencoes",
+            "url": "/apps/riob#gestaofrota:manutencao",
+            "recurso": "frota"
+          },
+          {
+            "nome": "Trocas de oleo",
+            "url": "/apps/riob#gestaofrota:oleo",
+            "recurso": "frota"
+          },
+          {
+            "nome": "Trocas de pneus",
+            "url": "/apps/riob#gestaofrota:pneu",
+            "recurso": "frota"
+          },
+          {
+            "nome": "Abastecimentos",
+            "url": "/apps/riob#gestaofrota:abastecimento",
+            "recurso": "frota"
+          },
+          {
+            "nome": "Lavagens",
+            "url": "/apps/riob#gestaofrota:lavagem",
+            "recurso": "frota"
+          },
+          {
+            "nome": "Previsao de compras",
+            "url": "/apps/riob#compras:previsao",
+            "recurso": "compras"
+          },
+          {
+            "nome": "Custos diarios por grupo",
+            "url": "/apps/riob#custoDiario",
+            "grupo": "RioB",
+            "recurso": "custo_diario",
+            "recurso_nome": "Custos diarios: producao, pessoal, despesas e desperdicios"
+          }
+        ],
+        "docs": [
+          {
+            "nome": "Documentacao RioB",
+            "url": "/apps/riob/docs/",
+            "recurso": "config"
           }
         ]
       },
@@ -532,9 +818,42 @@
             "nome": "Status",
             "url": "/apps/riob#config:status",
             "recurso": "config"
+          },
+          {
+            "nome": "SIP RioB",
+            "url": "/apps/riob#config:sip",
+            "recurso": "config"
+          },
+          {
+            "nome": "Vendas RioB",
+            "url": "/apps/riob#config:vendas",
+            "recurso": "config"
+          }
+        ],
+        "config": [
+          {
+            "nome": "Backup do RioB",
+            "url": "/apps/riob#config:backup",
+            "recurso": "config"
+          },
+          {
+            "nome": "NF-e / Receita",
+            "url": "/apps/riob#config:nfe",
+            "recurso": "config"
+          },
+          {
+            "nome": "Parametros de orcamentos",
+            "url": "/apps/riob#config:orcamentos",
+            "recurso": "config"
           }
         ]
       }
     }
-  }
+  },
+  "access_resources": [
+    {
+      "recurso": "estoque_contagem_finalizar",
+      "nome": "Finalizar contagem e ajustar saldo"
+    }
+  ]
 }

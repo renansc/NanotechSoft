@@ -11,7 +11,7 @@
     <iframe
       id="riobIntegratedFrame"
       class="riob-integrated-frame"
-      src="{{ frame_url }}"
+      {% if frame_document is defined %}srcdoc="{{ frame_document }}"{% else %}src="{{ frame_url }}"{% endif %}
       title="{{ app_nome }}"
       loading="eager"
       allow="camera; microphone; clipboard-read; clipboard-write; fullscreen"
@@ -49,7 +49,7 @@
 <script>
 (function () {
   var frame = document.getElementById("riobIntegratedFrame");
-  if (!frame) return;
+  if (!frame || frame.hasAttribute("srcdoc")) return;
 
   function sendHash() {
     var hash = window.location.hash || new URL(frame.src).hash || "";

@@ -84,7 +84,7 @@ O recurso mantem agenda e periodicidade de visitas, vendedor, cliente e rota.
 
 ## Vendas e caches
 
-- `GET /api/vendas/diario`: consulta os pedidos diarios importados, opcionalmente por `?data=AAAA-MM-DD`.
+- `GET /api/vendas/diario`: consulta os pedidos diarios importados, opcionalmente por `?data=AAAA-MM-DD` e `?cliente=CHAVE`; a resposta inclui `clientes_disponiveis` para preencher o filtro.
 - `GET /api/vendas/diario/dashboard`: consolida status, positivacao, volume e
   valor por vendedor. Sem filtro usa a ultima data importada; `?data=AAAA-MM-DD`
   consulta um dia e `?data_inicio=AAAA-MM-DD&data_fim=AAAA-MM-DD` agrega um
@@ -110,7 +110,7 @@ O recurso mantem agenda e periodicidade de visitas, vendedor, cliente e rota.
 - `GET /api/vendas/diario/referencias`: informa as quantidades e os ultimos
   arquivos de clientes e rotas importados.
 - O campo de cidade do popup diario usa obrigatoriamente `comissao_cidades.id`, sincronizado com as cidades e rotas do Kanban RioB. O texto original do TXT/PDF e apenas referencia e nunca e enviado diretamente ao frete.
-- `POST /api/vendas/diario/importar`: dispara a varredura idempotente da pasta ou aceita um TXT manual no campo multipart `arquivo`.
+- `POST /api/vendas/diario/importar`: pelo botao Ler pastas automaticamente, varre TXT/PDF e le o SELLOUT mensal a qualquer horario; aceita tambem um TXT individual no campo multipart `arquivo`, sem disparar SELLOUT. Recurso preservado: `vendas`. A resposta inclui `sellout.status` e eventual erro, independente dos resultados TXT/PDF. SELLOUT automatico roda somente as 08:00 (America/Sao_Paulo), separado da janela TXT/PDF abaixo.
 - O compartilhamento SMB deve estar efetivamente montado no host e ser exposto
   ao container em `/imports/vendas-diario`; a existencia de uma pasta local
   vazia no mesmo caminho nao e considerada uma fonte valida pelo deploy.
@@ -125,6 +125,7 @@ O recurso mantem agenda e periodicidade de visitas, vendedor, cliente e rota.
   PDFs antigos quando nenhuma fonte mudou.
 
 - `GET /api/vendas/relatorio/preco-medio/pdf`
+- `GET /api/vendas/relatorio?tipo_relatorio=percentual_vendas_anual`: compara o volume em hectolitros do ano mais recente com o anterior, ate o ultimo mes disponivel, e aceita filtros `vendedor` e `cliente`.
 - `GET /api/vendas/dashboard`
 - `GET /api/dashboard_vendas`
 - `POST /api/vendas/cache/processar`
@@ -252,6 +253,26 @@ validos mesmo sem chamada textual direta.
   equipe quando o arquivo traz `000-` ou campo vazio. O prefixo do mapa sugere
   o caminhao quando existe veiculo com o mesmo numero no cadastro.
 
+### Carga inicial SELLOUT
+
+`POST /api/vendas/sellout/historico` incorpora CSV historico da pasta Relatorios
+ou o arquivo original de um `import_id`, somente nos meses ausentes da base
+continua. Preserva datas reais, originais e meses existentes; registra auditoria
+por competencia em `vendas_sellout_historico`. Nunca e chamada pelo deploy ou
+agendador. Detalhes em `SELLOUT_AUTOMATICO.md`.
+
 ## Destinos adicionais do menu Rio Branco
 
 `#estoque:contagem` e `#relatorios:orcamentos` sao visoes independentes de Acerto e emissao de orcamentos. Suas APIs e permissoes estao em `API_E_DADOS.md`. Gestao > XML aponta para `/arquivos` e `/abastecimentos?visao=revisao`; esse parametro seleciona o painel de pendencias sem executar uma revisao. Gestao > Email separa `/historico`, `/recuperar` e `/backup`. O mapa completo fica em `docs/MENU_RIO_BRANCO_PDF.md` na raiz.
+
+### Finalizar contagem (11/09/2026)
+
+`POST /api/estoque/contagens/conferir` e `POST /api/estoque/contagens/<id>/finalizar`
+exigem `estoque_contagem_finalizar`. `GET /api/estoque/contagens/relatorio` e
+`/relatorio/pdf` exigem `estoque_contagem_relatorio`. Persistencia, calculo e
+tratamento de concorrencia estao em [CONTAGEM_ESTOQUE.md](CONTAGEM_ESTOQUE.md).
+
+
+## Auditoria de navegacao e tarefas (14/09/2026)
+
+Email publica GET `/gestor-emails/importacao` para o formulario existente de importacao; POST `/gestor-emails/importar` continua a executar a operacao. O portal encaminha `/apps/riob-email/riob/...` com o prefixo do blueprint, preservando `operacao` e `backup`. Inventario completo em `docs/AUDITORIA_ROTAS_RIO_BRANCO.csv` na raiz.

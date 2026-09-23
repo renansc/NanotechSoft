@@ -101,6 +101,8 @@ services:
       RB_EMAIL_AUTO_IMPORT: ${RB_EMAIL_AUTO_IMPORT:-1}
       RB_EMAIL_AUTO_INTERVAL_MINUTES: ${RB_EMAIL_AUTO_INTERVAL_MINUTES:-5}
       RB_EMAIL_TIMEZONE: ${RB_EMAIL_TIMEZONE:-America/Sao_Paulo}
+      RB_SELLOUT_M_AUTO: ${RB_SELLOUT_M_AUTO:-1}
+      RB_SELLOUT_M_ARQUIVO: /imports/sellout/SELLOUT_M.CSV
       RB_VENDAS_DIARIO_DIR: /imports/vendas-diario
       RB_VENDAS_DIARIO_TXT_DIR: /imports/vendas-diario/txt
       RB_VENDAS_DIARIO_PDF_DIR: /imports/vendas-diario/pdf
@@ -121,6 +123,7 @@ services:
       - ./apps/riob/source/certs:/app/certs:ro
       - ./apps/riob/source/ImportarXml:/legacy/ImportarXml:ro
       - ./apps/riob/source/GestorEmails:/legacy/GestorEmails:ro
+      - ${RB_SELLOUT_M_HOST_DIR:-/media/serverwin/INDB/AnalyticsCTA/Dados}:/imports/sellout:ro
       - ${RB_VENDAS_DIARIO_TXT_HOST_DIR:-/media/serverwin/CARGAS/CargasTxt}:/imports/vendas-diario/txt:ro
       - ${RB_VENDAS_DIARIO_PDF_HOST_DIR:-/media/serverwin/CARGAS/VendasDiarioPdfs}:/imports/vendas-diario/pdf:ro
 
@@ -180,6 +183,12 @@ services:
       NANOSTORE_FISCAL_CERT_PASSWORD: ${NANOSTORE_FISCAL_CERT_PASSWORD:-}
       NANOSTORE_NFE_SCHEMA_PATH: ${NANOSTORE_NFE_SCHEMA_PATH:-}
       NANOSTORE_NFE_HOMOLOGATION_TRANSMISSION_ENABLED: ${NANOSTORE_NFE_HOMOLOGATION_TRANSMISSION_ENABLED:-0}
+      NANOSTORE_CORREIOS_API_URL: ${NANOSTORE_CORREIOS_API_URL:-https://api.correios.com.br}
+      NANOSTORE_CORREIOS_USERNAME: ${NANOSTORE_CORREIOS_USERNAME:-}
+      NANOSTORE_CORREIOS_ACCESS_CODE: ${NANOSTORE_CORREIOS_ACCESS_CODE:-}
+      NANOSTORE_CORREIOS_POSTING_CARD: ${NANOSTORE_CORREIOS_POSTING_CARD:-}
+      NANOSTORE_CORREIOS_ORIGIN_POSTAL_CODE: ${NANOSTORE_CORREIOS_ORIGIN_POSTAL_CODE:-}
+      NANOSTORE_CORREIOS_SERVICE_CODE: ${NANOSTORE_CORREIOS_SERVICE_CODE:-}
       NANOSTORE_ENABLE_HTTPS: ${NANOSTORE_ENABLE_HTTPS:-1}
       NANOSTORE_HTTP_PORT: ${NOTECHSOFT_APP_PORT:-5600}
       NANOSTORE_HTTPS_PORT: ${NOTECHSOFT_HTTPS_PORT:-443}
@@ -200,13 +209,24 @@ services:
       TECH_ALERT_REMINDER_HOURS: ${TECH_ALERT_REMINDER_HOURS:-6}
       TECH_ALERT_RECOVERY_MARGIN_PCT: ${TECH_ALERT_RECOVERY_MARGIN_PCT:-5}
       TECH_BACKUP_AGENT_BASE_URL: ${TECH_BACKUP_AGENT_BASE_URL:-}
+      TECH_ARP_TABLE_PATH: /run/host-network/arp
       CHAMADOS_AGENDA_ENABLED: ${CHAMADOS_AGENDA_ENABLED:-1}
       CHAMADOS_AGENDA_INTERVAL_SECONDS: ${CHAMADOS_AGENDA_INTERVAL_SECONDS:-60}
+      CHAMADOS_KANBAN_ENABLED: ${CHAMADOS_KANBAN_ENABLED:-1}
+      CHAMADOS_KANBAN_INTERVAL_SECONDS: ${CHAMADOS_KANBAN_INTERVAL_SECONDS:-10}
+      CHAMADOS_KANBAN_FILE: ${CHAMADOS_KANBAN_FILE:-/srv/conky/kanban-tasks.json}
       LABORATORIO_PACS_URL: ${LABORATORIO_PACS_URL:-}
     ports:
       - "${NOTECHSOFT_APP_PORT:-5600}:5600"
     volumes:
       - ./apps:/app/apps
+      - ${CHAMADOS_KANBAN_HOST_DIR:-/srv/conky}:/srv/conky
+      - type: bind
+        source: ${TECH_HOST_ARP_PATH:-/proc/1/net/arp}
+        target: /run/host-network/arp
+        read_only: true
+        bind:
+          create_host_path: false
     healthcheck:
       test: ["CMD-SHELL", "curl --silent --fail http://127.0.0.1:5600/login >/dev/null"]
       interval: 10s

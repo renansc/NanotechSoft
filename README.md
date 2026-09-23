@@ -4,6 +4,12 @@ Portal Flask + MySQL para centralizar apps instalados dinamicamente.
 
 ## Acesso inicial
 
+Gestao > Tecnologia > Rede inclui busca manual de dispositivos online nao
+cadastrados, em popup com IP, MAC e nome, sem adiciona-los ao monitoramento.
+O recurso `tecnologia:rede_scan` e liberado em Config > Usuarios e acessos junto
+ao acesso a Rede. A varredura nao funciona no Render somente leitura.
+Escopo e limitacoes: [Tecnologia](apps/tecnologia/README.md#gestao--rede).
+
 - Usuario: `admin`
 - Senha: `admin`
 
@@ -183,7 +189,6 @@ anexos, certificados e arquivos `.env` reais sao bloqueados mesmo em subpastas
 ou quando ja estavam no stage. A validacao do Compose nao grava credenciais
 expandidas em arquivo temporario.
 
-
 Os perfis versionados ficam em `deploy/profiles.json`. Selecione um deles com
 `NANOTECH_DEPLOY_PROFILE`: `nanotech`, `rio-branco`, `laboratorio`, `senhor` ou
 `render`. O perfil define o cliente, se existe banco local e se a pilha RioB
@@ -206,6 +211,15 @@ Em um ambiente sem Docker CLI, o `./git-safe-push.sh` pula Compose/build/health 
 ## Apps dinamicos
 
 Os apps ficam dentro de `apps/`. Cada subpasta pode ter um `app.json`; tambem existe a tabela `installed_apps` para cadastro via banco.
+
+**Gestao > Tecnologia > Rede** mostra os equipamentos por icone e nome. O popup
+reune IPs, MACs informados pela coleta (ou pelo cache ARP do servidor quando
+ausentes), consumo registrado no dia e velocidades
+de upload/download da ultima amostra. O recurso `tecnologia:rede` aparece em
+Config > Usuarios e acessos, sem concessao automatica. Periodo medido, dados
+ausentes e limites dos contadores estao no [README de Tecnologia](apps/tecnologia/README.md#gestao--rede).
+O cadastro de equipamento ativo verifica o MAC na primeira coleta e repete a
+verificacao no monitoramento automatico, respeitando a permissao de cadastro.
 
 O módulo **Tecnologia** monitora o link, o roteador, servidores, NVR, relógio
 ponto e impressoras. Além de ICMP/TCP, mede download/upload do link e aceita
@@ -236,8 +250,12 @@ do módulo Tecnologia, mantém intervenções com tempo gasto, exige uma medida
 resolutiva ao concluir e consulta casos semelhantes já resolvidos. Manuais,
 links e anexos podem ser gerais ou vinculados a equipamento/chamado. A agenda
 do módulo programa tarefas, reuniões, orçamentos e retornos com aviso por e-mail
-usando o SMTP local. Os cadastros automáticos de rede do Rio Branco são criados
-somente no perfil `rio-branco`, sem contaminar ambientes Nanotech novos. Consulte
+usando o SMTP local. Os chamados ativos também são sincronizados em duas vias
+com o Kanban do Conky: tarefas novas abrem chamados e mudanças entre Aberto,
+Em atendimento e Aguardando atualizam os respectivos status. Os cadastros automáticos
+de rede do Rio Branco são criados somente na primeira criacao da tabela de
+equipamentos e no perfil `rio-branco`. Reinicios preservam exclusoes e mudancas
+de IP, inclusive quando o cadastro fica vazio. Consulte
 `apps/chamados/README.md` para o fluxo e as rotas.
 
 Em hosts migrados de outro nome de projeto Compose, mantenha
@@ -285,7 +303,12 @@ Usuarios comuns dependem da tabela `usuario_app_permissoes`:
 
 - `app_key`: app liberado, como `financeiro` ou `automacao`
 - `recurso`: funcao do app, como `dashboard`, `contas`, `categorias`, `compras`, `pagar`, `receber`, `config`; use `*` para liberar o app inteiro
-- `permitido`: `1` libera o recurso
+- `permitido`: `1` libera o recurso; em chaves `menu:...`, `0` bloqueia o item
+
+Cada destino do menu aparece individualmente em **Config > Usuarios e acessos**.
+Marcar libera e desmarcar bloqueia para usuarios comuns, inclusive quando ha
+permissao geral para o modulo. A busca localiza itens por nome, modulo ou categoria.
+Administradores mantem acesso integral. Veja o [mapa e as regras por item](docs/ACESSOS_POR_ITEM_MENU.md).
 
 O menu principal e as abas internas do financeiro ocultam recursos sem permissao.
 As rotas `/apps/<app_key>` tambem validam essa permissao no servidor, inclusive
@@ -326,13 +349,34 @@ O tema padrao do portal continua sendo `Rio Branco`. O tema original do financei
 O cadastro usa `GET/POST /api/usuarios` e `PUT /api/usuarios/<id>`. O payload
 `permissoes` mapeia modulo para lista de recursos, por exemplo
 `{"riob": ["vendas", "estoque"]}`. Omitir o campo preserva os acessos.
+As escolhas individuais usam `permissoes_menu`, com modulo, chave do menu e
+valor booleano. Omitir esse campo preserva as escolhas; uma atualizacao parcial
+altera somente as chaves enviadas. Recursos gerais permanecem separados.
 O catalogo retornado por GET respeita o contrato do deploy. As portas auxiliares
 8898/8899 do RioB ficam em loopback; usuarios entram pelo HTTPS principal,
 que aplica a sessao e as autorizacoes antes de encaminhar ao RioB.
 
 ## Menu principal por modulo
 
-O cabecalho reune identificacao, menu e usuario/Sair em uma unica linha.
+O cabecalho mostra o titulo e, abaixo dele, o usuario conectado a esquerda;
+o nome abre Minha conta. A ponta direita exibe a logo cadastrada, preservando
+suas proporcoes. Sair permanece visivel a direita da logo, inclusive com o menu recolhido. `Config > Logo` permite pre-visualizar,
+enviar (PNG/JPEG/WebP ate 2 MB) ou remover a imagem deste ambiente e configurar
+a URL de destino do clique, aberta em nova aba. E possivel salvar somente a URL,
+preservando a imagem. URLs aceitam HTTP/HTTPS; campo vazio usa
+`https://renansc.github.io/`. Sem imagem, a barra sempre mostra `Nanotechsoft`
+com link para esse site, mesmo que uma URL personalizada esteja salva.
+O recurso `sistema:logo`, definido em `portal.app.json`, aparece em
+`Config > Usuarios e acessos > Sistema`; administradores e usuarios com esse
+recurso (ou `sistema:*`) podem alterar a logo e seu link. Nenhum acesso e concedido
+automaticamente. `POST/DELETE /api/config/logo` validam sessao e permissao;
+o Render bloqueia essas escritas. A imagem e validada e normalizada em PNG,
+com ate 640x240 pixels, e persistida em `portal_config.logo_data` no banco do
+ambiente; a URL fica em `portal_config.logo_url`. Remover a imagem preserva a
+URL para uma futura logo. O startup local adiciona as colunas de forma
+idempotente; caches antigos sem elas exibem o tema e o link Nanotechsoft padrao.
+
+O cabecalho reune identificacao, menu e logo em uma unica linha.
 Quando faltar largura, o botao de menu abre a navegacao lateral na mesma linha.
 O icone de usuario abre `Config > Minha conta`, com os dados da sessao atual;
 administradores podem abrir o proprio cadastro em Usuarios e acessos.
@@ -367,7 +411,87 @@ classificar seu grupo e recurso no manifest e verificar o menu de usuario restri
 
 ## Menu do Rio Branco (setembro de 2026)
 
-O cliente `rio-branco` usa o perfil dos manifests definido em [Menu conforme PDF](docs/MENU_RIO_BRANCO_PDF.md): Dash, Cadastro, Relatorio, Dados, Config, Workflow, Monitor, Estoque, Gestao e Docs, com os modulos identificados dentro de cada menu. Os demais clientes mantem a navegacao por modulo. Financeiro, Ponto, Store, Cameras e ESXi estao temporariamente desativados apenas no Rio Branco. Contagem, relatorio de orcamentos e backup de e-mails possuem recursos proprios em Config > Usuarios e acessos; acessos individuais nao sao ampliados automaticamente.
+O cliente `rio-branco` usa o perfil dos manifests definido em [Menu conforme PDF](docs/MENU_RIO_BRANCO_PDF.md): DASHBOARD, WORKFLOW, GESTAO, CADASTRO, RELATORIOS, DADOS, ESTOQUE, MONITOR, CONFIGURAR e DOCUMENTOS, com os modulos identificados dentro de cada menu. Os demais clientes mantem a navegacao por modulo. Financeiro, Ponto, Store, Cameras e ESXi estao temporariamente desativados apenas no Rio Branco. Contagem, relatorio de orcamentos e backup de e-mails possuem recursos proprios em Config > Usuarios e acessos; acessos individuais nao sao ampliados automaticamente.
+
+## Auditoria dos atalhos do Rio Branco
+
+Em 14/09/2026 a auditoria dos atalhos restaurou **DOCUMENTOS > Automacao >
+Manuais das maquinas**, incluindo os guias e PDFs existentes, e moveu os manuais
+de Chamados para DOCUMENTOS. Tambem recuperou os atalhos operacionais e de
+configuracao omitidos pelo perfil anterior. A cobertura compara os destinos dos
+manifests com o menu efetivo, alem das permissoes; veja a auditoria em
+`docs/MENU_RIO_BRANCO_PDF.md`. Arquivos e concessoes existentes sao preservados.
+
+## Finalizacao da contagem de estoque
+
+ESTOQUE > Contagem possui Finalizar contagem: abre conferencia com saldo atual e,
+apos confirmar, ajusta os produtos contados e grava o historico. Faltas entram
+como desperdicio; sobras indicam possivel erro de contagem. RELATORIOS > Contagens,
+desperdicio e sobras consulta os registros por periodo e permite imprimir PDF.
+Em CONFIGURAR > Usuarios e acessos, liberar `estoque_contagem_finalizar` para
+ajustar e `estoque_contagem_relatorio` para consultar; o recurso de leitura
+`estoque_contagem` permanece. Manifests podem declarar `access_resources` para
+acoes internas sem criar atalhos duplicados. Detalhes em
+[Contagem de estoque](apps/riob/source/docs/CONTAGEM_ESTOQUE.md).
+
+
+## Auditoria de navegacao e tarefas (14/09/2026)
+
+A auditoria das telas, rotas e funcoes do Rio Branco esta em [Auditoria de navegacao](docs/AUDITORIA_NAVEGACAO_RIO_BRANCO.md), com inventario CSV, correcoes de atalhos, separacao de tarefas e verificacoes de acesso. Nenhuma permissao individual e concedida automaticamente.
+
+## Identificacao e telas integradas (15/09/2026)
+
+O titulo do cabecalho usa sempre o nome do contrato ativo do deploy, independente
+da funcao e do tema: Rio Branco, Senhor Shopp ou o nome cadastrado no ambiente.
+O icone de conta e o usuario conectado ficam a esquerda; a marca Nanotechsoft
+(ou logo configurada) e Sair ficam a direita. Config e outros apps usam o mesmo
+cabecalho. Sem perfil configurado, o titulo e NanotechSoft.
+
+XML e Email mostram apenas a tarefa selecionada dentro do shell. Seus menus
+legados sao removidos da pagina integrada; formularios, filtros e links internos
+voltam pelo portal sem empilhar cabecalhos. CSVs, PDFs, APIs e previews de e-mail
+preservam seus formatos. As URLs e os recursos XML `*`, Email `operacao` e
+`backup` continuam no catalogo de Usuarios e acessos, sem conceder permissoes.
+O antigo modo completo RioB redireciona para a aplicacao integrada. Documentacao
+RioB possui atalho em Documentos com `riob:config`, validado no servidor tambem
+para URLs diretas e arquivos; nao ha concessao automatica.
+
+Configurar tambem seleciona uma unica tarefa: Minha conta, Temas, Logo, Usuarios
+e acessos, Clientes e modulos ou Backup do portal. As tres ultimas continuam
+exclusivas de administradores, com os mesmos bloqueios nas APIs. Conta e Temas
+continuam comuns a usuarios autenticados; Logo continua usando `sistema:logo`.
+Clientes e Backup possuem atalhos explicitos no menu administrativo.
+
+## Telas por tarefa no portal (15/09/2026)
+
+Os atalhos abrem somente a tarefa selecionada, com o cabecalho e o menu
+principal do deploy. As entradas antigas `/original` redirecionam para a URL
+integrada, preservando caminho, filtros e metodo HTTP. O manifest usa a entrada
+integrada tambem em `standalone_url`. Nao existe segundo menu de aplicativo.
+
+Tecnologia concentra Verificar agora/Testar velocidade na Visao geral, alertas
+de e-mail em Configuracao e explicacoes de escopo em Agentes e protocolos.
+Chamados exibe Novo chamado somente na fila; Agenda, Historico e Documentos
+mostram suas proprias tarefas, inclusive antes do carregamento dos dados.
+Automacao extrai o conteudo entre marcadores do template e aplica seus estilos
+somente dentro da tarefa, preservando os botoes e a identidade do portal.
+
+Os mesmos recursos continuam em Usuarios e acessos: Tecnologia usa dashboard,
+equipamentos, historico, config e backup; Chamados usa dashboard, chamados,
+agenda, historico e documentos; Automacao explicita o recurso existente `*`.
+Nenhuma concessao e criada. Sessao, contrato e bloqueios do servidor continuam
+valendo tambem nos aliases. Testes: `tests/test_module_tasks.py` e
+`tests/check_module_tasks.py`, com dados sinteticos e sem escritas de negocio.
+
+## Correcao de menus de Tecnologia (16/09/2026)
+
+MONITOR > Tecnologia passa a oferecer Monitoramento de link e Monitoramento de
+backups; CONFIGURAR > Tecnologia oferece Planos de backup e Instalar agentes de
+backup. Historico carrega medicoes ao abrir diretamente pelo menu. Os recursos
+existentes sao explicitados no catalogo de Usuarios e acessos e validados pelas
+APIs, sem conceder acessos. A cobertura de Tecnologia, Automacao e Chamados
+compara as telas originais com os menus dos perfis Rio Branco e Nanotech:
+[Auditoria dos tres modulos](docs/AUDITORIA_TRES_MODULOS.md).
 
 ## Protocolo da impressora a laser Cyklop
 
@@ -386,3 +510,47 @@ banco local. Em Usuarios e acessos, `automacao:documentos` libera consulta e
 `automacao:documentos_cadastrar` libera cadastro; `automacao:*` preserva acesso
 integral. O servidor verifica essas permissoes tambem nas URLs diretas e nos
 arquivos; nenhuma permissao individual e concedida automaticamente.
+
+## Custo do produto
+
+GESTAO > RioB > Custo do produto cadastra formulas por produto PET/retornavel,
+com quantidades para 1000 litros, preco automatico da ultima compra de cada item
+e estimativa por litro e por garrafa.
+Reutiliza o cadastro de estoque e exige `riob:custo_produto` em Config > Usuarios
+e acessos, sem conceder permissoes automaticamente. Veja
+[Custo do produto](apps/riob/source/docs/CUSTO_PRODUTO.md).
+
+Custo do produto tambem oferece uma receita compartilhada de **xarope**, com
+rendimento e custo por litro. Cada produto informa sua dose de xarope por
+1000 litros de bebida; os ingredientes sao selecionados no cadastro existente.
+Alterar a base recalcula as estimativas. O recurso continua `riob:custo_produto`,
+identificado como Custo do produto e base de xarope em Usuarios e acessos.
+
+DASHBOARD > RioB > Custo do produto compara o custo atual e mensal por sabor,
+com filtros e grafico. Usa a formula atual com os precos disponiveis ate cada
+mes; nao representa receitas historicas de producao. O recurso de consulta
+`riob:custo_produto_dashboard` e independente do cadastro. Precos vem das NF-e de
+fornecedores importadas; embalagens sem conversao conhecida exigem capacidade.
+Sem compra ou conversao, a estimativa fica pendente. Nenhum acesso e concedido
+automaticamente.
+
+Custo do produto reaproveita os vinculos confirmados entre XML e estoque para
+resolver ingredientes renomeados e consultar o ultimo valor sem exigir pedido
+em Compras. Codigo/fornecedor ou codigo/descricao historica devem identificar
+um unico produto. Acucar em venda a ordem entra na referencia; TO/tonelada
+converte para kg e capacidade de saco ja cadastrada e reutilizada quando a
+apresentacao confirmada corresponde. O catalogo identifica o recurso existente
+`custo_produto` como Custo do produto, xarope e precos do XML; dashboard conserva
+`custo_produto_dashboard`. APIs e bloqueios individuais mantem a autorizacao,
+sem novas concessoes. Detalhes e limites no documento CUSTO_PRODUTO.md do RioB.
+
+Em 23/09/2026, GESTAO > Custos diarios por grupo (`#custoDiario`, recurso
+`custo_diario`) passa a informar producao real, pessoal e despesas por grupo.
+Dashboard de custo do produto mantem o recurso `custo_produto_dashboard` e
+oferece custo diario por litro, garrafa e pacote, alem da comparacao mensal.
+Gastos compartilhados sao rateados pelos litros. Desperdicio vem exclusivamente
+das faltas em contagens finalizadas, agrupadas por setor/grupo de estoque;
+perdas especificas de producao ficam para uma etapa futura. As APIs
+`/api/custo-diario` (GET/PUT) e `/api/custo-diario/dashboard` (GET) validam sessao,
+recursos e bloqueios individuais; nao concedem acesso nem movimentam estoque.
+Regras, snapshots e limites em `apps/riob/source/docs/CUSTO_DIARIO.md` na raiz.

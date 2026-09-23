@@ -4,6 +4,8 @@ import os
 import sys
 import time
 import subprocess
+import fcntl
+import uuid
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -11,27 +13,46 @@ BASE_DIR = Path(__file__).resolve().parent
 # Arquivo local usado pelo Conky
 # Pode alterar por variavel de ambiente, se precisar:
 # export KANBAN_TASKS_FILE="/srv/riob/kanban-tasks.json"
-TASKS_FILE = Path(os.environ.get("KANBAN_TASKS_FILE", "/srv/riob/kanban-tasks.json"))
+DEFAULT_TASKS_FILE = (
+    "/srv/conky/kanban-tasks.json"
+    if Path("/srv/conky").is_dir()
+    else "/srv/kanban/kanban-tasks.json"
+)
+TASKS_FILE = Path(os.environ.get("KANBAN_TASKS_FILE", DEFAULT_TASKS_FILE)).expanduser()
+LOCK_FILE = Path(os.environ.get("KANBAN_LOCK_FILE", str(TASKS_FILE) + ".lock")).expanduser()
 
 # Script de sincronizacao. Sera chamado automaticamente apos salvar alteracoes.
-SYNC_SCRIPT = Path(os.environ.get("KANBAN_SYNC_SCRIPT", "/srv/riob/kanban_sync.py"))
+SYNC_SCRIPT = Path(os.environ.get("KANBAN_SYNC_SCRIPT", str(BASE_DIR / "kanban_sync.py"))).expanduser()
 
-STATUSES = ("today", "todo", "waiting")
+STATUSES = ("todo", "today", "waiting")
 LABELS = {
-    "today": "PARA HOJE",
-    "todo": "A FAZER",
+    "today": "EM ATENDIMENTO",
+    "todo": "ABERTO",
     "waiting": "AGUARDANDO",
 }
 EMPTY = {
-    "today": "nada para hoje",
-    "todo": "sem tarefas",
-    "waiting": "nada aguardando",
+    "today": "nenhum em atendimento",
+    "todo": "nenhum chamado aberto",
+    "waiting": "nenhum aguardando",
 }
 FIRST_CARD_OFFSET = 20
 NEXT_CARD_OFFSET = 20
 ITEM_SLOTS = 6
 MAX_ITEMS = 6
 MAX_TEXT = 30
+
+
+class FileLock:
+    def __enter__(self):
+        LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
+        self.handle = LOCK_FILE.open("w", encoding="utf-8")
+        os.chmod(LOCK_FILE, 0o666)
+        fcntl.flock(self.handle, fcntl.LOCK_EX)
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        fcntl.flock(self.handle, fcntl.LOCK_UN)
+        self.handle.close()
 
 
 def run_sync_background():
@@ -50,7 +71,7 @@ def run_sync_background():
         pass
 
 
-def load_tasks():
+def load_tasks_unlocked():
     if not TASKS_FILE.exists():
         return []
 
@@ -83,7 +104,6 @@ def load_tasks():
         if (
             not task_id.isdigit()
             or int(task_id) <= 0
-            or len(task_id) > 4
             or task_id in ids
         ):
             changed = True
@@ -92,29 +112,46 @@ def load_tasks():
         if original_status != status:
             changed = True
 
-        ids.add(task_id)
-        tasks.append(
-            {
-                "id": task_id,
-                "status": status,
-                "text": text,
-                "created": int(item.get("created", 0) or 0),
-            }
-        )
+        if task_id:
+            ids.add(task_id)
+        now = int(time.time())
+        task = dict(item)
+        task.update({
+            "id": task_id,
+            "status": status,
+            "text": text,
+            "created": int(item.get("created", 0) or now),
+            "updated": int(item.get("updated", 0) or item.get("created", 0) or now),
+            "syncKey": str(item.get("syncKey") or uuid.uuid4().hex),
+        })
+        if task != item:
+            changed = True
+        tasks.append(task)
 
     if changed:
         for index, task in enumerate(sorted(tasks, key=lambda task: task["created"]), 1):
             task["id"] = str(index)
-        save_tasks(tasks, sync=False)
+        save_tasks_unlocked(tasks)
 
     return tasks
 
 
-def save_tasks(tasks, sync=True):
+def load_tasks():
+    with FileLock():
+        return load_tasks_unlocked()
+
+
+def save_tasks_unlocked(tasks):
     TASKS_FILE.parent.mkdir(parents=True, exist_ok=True)
     tmp = TASKS_FILE.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(tasks, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    os.chmod(tmp, 0o666)
     os.replace(tmp, TASKS_FILE)
+
+
+def save_tasks(tasks, sync=True):
+    with FileLock():
+        save_tasks_unlocked(tasks)
 
     if sync:
         run_sync_background()
@@ -128,7 +165,7 @@ def next_task_id(tasks):
 def normalize_status(value):
     aliases = {
         "0": "delete",
-        "1": "today",
+        "2": "today",
         "hoje": "today",
         "today": "today",
         "para-hoje": "today",
@@ -137,11 +174,14 @@ def normalize_status(value):
         "doing": "today",
         "fazendo": "today",
         "andamento": "today",
-        "2": "todo",
+        "ematendimento": "today",
+        "em_atendimento": "today",
+        "1": "todo",
         "afazer": "todo",
         "todo": "todo",
         "to-do": "todo",
         "fazer": "todo",
+        "aberto": "todo",
         "3": "waiting",
         "aguardando": "waiting",
         "waiting": "waiting",
@@ -158,7 +198,7 @@ def normalize_status(value):
 
 def add_task(args):
     if not args:
-        die("uso: kanban.py add [1|2|3|today|todo|waiting] texto")
+        die("uso: kanban.py add [aberto|em_atendimento|aguardando] texto")
 
     status = normalize_status(args[0]) if args else None
     if status == "delete":
@@ -167,27 +207,31 @@ def add_task(args):
     if status:
         text = " ".join(args[1:]).strip()
     else:
-        status = "today"
+        status = "todo"
         text = " ".join(args).strip()
 
     if not text:
         die("informe o texto da tarefa")
 
-    tasks = load_tasks()
-    tasks.append(
-        {
-            "id": next_task_id(tasks),
-            "status": status,
-            "text": text,
-            "created": int(time.time()),
-        }
-    )
-    save_tasks(tasks)
+    with FileLock():
+        tasks = load_tasks_unlocked()
+        tasks.append(
+            {
+                "id": next_task_id(tasks),
+                "status": status,
+                "text": text,
+                "created": int(time.time()),
+                "updated": int(time.time()),
+                "syncKey": uuid.uuid4().hex,
+            }
+        )
+        save_tasks_unlocked(tasks)
+    run_sync_background()
 
 
 def move_task(args):
     if len(args) < 2:
-        die("uso: kanban.py move id 0|1|2|3")
+        die("uso: kanban.py move id 0|aberto|em_atendimento|aguardando")
 
     wanted_id = args[0]
     status = normalize_status(args[1])
@@ -198,14 +242,18 @@ def move_task(args):
         delete_task([wanted_id])
         return
 
-    tasks = load_tasks()
-    for task in tasks:
-        if task["id"] == wanted_id:
-            task["status"] = status
-            save_tasks(tasks)
-            return
+    with FileLock():
+        tasks = load_tasks_unlocked()
+        for task in tasks:
+            if task["id"] == wanted_id:
+                task["status"] = status
+                task["updated"] = int(time.time())
+                save_tasks_unlocked(tasks)
+                break
+        else:
+            die(f"tarefa nao encontrada: {wanted_id}")
 
-    die(f"tarefa nao encontrada: {wanted_id}")
+    run_sync_background()
 
 
 def edit_task(args):
@@ -217,14 +265,18 @@ def edit_task(args):
     if not text:
         die("informe o novo texto da tarefa")
 
-    tasks = load_tasks()
-    for task in tasks:
-        if task["id"] == wanted_id:
-            task["text"] = text
-            save_tasks(tasks)
-            return
+    with FileLock():
+        tasks = load_tasks_unlocked()
+        for task in tasks:
+            if task["id"] == wanted_id:
+                task["text"] = text
+                task["updated"] = int(time.time())
+                save_tasks_unlocked(tasks)
+                break
+        else:
+            die(f"tarefa nao encontrada: {wanted_id}")
 
-    die(f"tarefa nao encontrada: {wanted_id}")
+    run_sync_background()
 
 
 def get_task(args):
@@ -245,11 +297,13 @@ def delete_task(args):
         die("uso: kanban.py delete id")
 
     wanted_id = args[0]
-    tasks = load_tasks()
-    kept = [task for task in tasks if task["id"] != wanted_id]
-    if len(kept) == len(tasks):
-        die(f"tarefa nao encontrada: {wanted_id}")
-    save_tasks(kept)
+    with FileLock():
+        tasks = load_tasks_unlocked()
+        kept = [task for task in tasks if task["id"] != wanted_id]
+        if len(kept) == len(tasks):
+            die(f"tarefa nao encontrada: {wanted_id}")
+        save_tasks_unlocked(kept)
+    run_sync_background()
 
 
 def list_tasks():
@@ -354,8 +408,8 @@ def main():
     else:
         print("uso:")
         print("  kanban.py render")
-        print("  kanban.py add [1|2|3|today|todo|waiting] texto")
-        print("  kanban.py move id 0|1|2|3")
+        print("  kanban.py add [aberto|em_atendimento|aguardando] texto")
+        print("  kanban.py move id 0|aberto|em_atendimento|aguardando")
         print("  kanban.py edit id texto")
         print("  kanban.py get id")
         print("  kanban.py done id")

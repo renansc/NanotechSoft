@@ -6,11 +6,9 @@
         <div class="submenu">
           {% if section.key == 'config' %}
             <span class="submenu-label">Sistema</span>
-            <a class="submenu-item" href="{{ url_for('config_page') }}#temas">Temas</a>
-            <a class="submenu-item" href="{{ url_for('config_page') }}#minha-conta">Minha conta</a>
-            {% if usuario and usuario.perfil == 'admin' %}
-              <a class="submenu-item" href="{{ url_for('config_page') }}#usuarios">Usuarios e acessos</a>
-            {% endif %}
+            {% for item in system_config|default([]) %}
+              <a class="submenu-item" href="{{ item.url }}">{{ item.nome }}</a>
+            {% endfor %}
           {% endif %}
           {% for group in section.groups %}
             <span class="submenu-label">{{ group.nome }}</span>
@@ -77,11 +75,9 @@
     Config <span class="submenu-caret">▾</span>
     <div class="submenu">
       <span class="submenu-label">Sistema</span>
-      <a class="submenu-item submenu-child" href="{{ url_for('config_page') }}#minha-conta">Minha conta</a>
-      <a class="submenu-item submenu-child" href="{{ url_for('config_page') }}#temas">Temas</a>
-      {% if usuario and usuario.perfil == 'admin' %}
-        <a class="submenu-item submenu-child" href="{{ url_for('config_page') }}#usuarios">Usuarios e acessos</a>
-      {% endif %}
+      {% for item in system_config|default([]) %}
+        <a class="submenu-item submenu-child" href="{{ item.url }}">{{ item.nome }}</a>
+      {% endfor %}
       {% if menu.config %}
         {% for group, items in menu.config|groupby("app") %}
           <span class="submenu-label">{{ group }}</span>
@@ -97,5 +93,4 @@
 
   {% endif %}
 
-  <button class="menu-item menu-item-logout" type="button" data-logout>Sair</button>
 </nav>

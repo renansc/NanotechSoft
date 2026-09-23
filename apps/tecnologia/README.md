@@ -6,8 +6,8 @@ roteadores, servidores e impressoras. O código da interface fica em
 
 ## Equipamentos iniciais
 
-Na primeira criação do schema são cadastrados, sem substituir cadastros
-existentes:
+Somente no perfil Rio Branco, quando a tabela de equipamentos ainda nao existe
+antes da criacao do schema, sao cadastrados os equipamentos iniciais:
 
 - link externo `1.1.1.1:443`;
 - roteador/DHCP `192.168.200.1:80`;
@@ -20,6 +20,17 @@ existentes:
 Administradores podem alterar os equipamentos, limites, portas e status ativo
 pela aba **Equipamentos**. A exclusão do equipamento também exclui seu histórico
 de medições.
+
+Reiniciar ou atualizar a aplicacao nao recria equipamentos excluidos nem os IPs
+antigos de equipamentos editados, mesmo que o cadastro tenha ficado vazio.
+Em 23/09/2026 foi corrigida a rotina legada que procurava IPs predefinidos em
+cada startup e os inseria novamente. Inventarios existentes nao recebem essa
+semeadura. Descoberta continua manual e requer confirmacao para cadastrar.
+O recurso `equipamentos` em Config > Usuarios e acessos identifica cadastro,
+exclusao, descoberta e protocolos; as escritas seguem exigindo administrador
+e autorizacao no servidor. `rede` continua sendo somente consulta. Nenhum
+acesso e concedido pela correcao. Regressao coberta em
+`tests/test_technology_network.py`, incluindo cadastro vazio apos exclusoes.
 
 Cada equipamento possui um IP/host principal e pode receber até 12 endereços
 adicionais identificados por interface, por exemplo `Wi-Fi`, `Cabo` e
@@ -117,7 +128,7 @@ de um servidor GLPI. O Zabbix Agent precisa de um servidor/proxy Zabbix. Nesta
 etapa o portal lê o formato aberto do ecossistema Prometheus sem exigir esses
 servidores adicionais.
 
-SNMP e exporters mostram tráfego total por interface. A aba **Configuração**
+SNMP e exporters mostram tráfego total por interface. A tela **Monitoramento de link**
 pode somar download e upload dos endpoints monitorados, comparar os totais com
 a capacidade contratada do link e listar os maiores consumidores no instante
 da coleta. Essa soma é uma estimativa: pode incluir tráfego interno e não cobre
@@ -241,6 +252,8 @@ confirmada localmente ou por inventário de um agente.
 
 ## Rotas
 
+- `GET /apps/tecnologia/api/network`: equipamentos da tela Rede, sem o alvo externo INTERNET.
+- `GET /apps/tecnologia/api/network/<id>`: consumo registrado no dia do equipamento.
 - `GET /apps/tecnologia/api/overview`: equipamentos, última medição e resumo de 24h.
 - `POST /apps/tecnologia/api/probe`: força uma coleta.
 - `POST /apps/tecnologia/api/alerts/test-email`: testa o SMTP (admin).
@@ -432,4 +445,155 @@ Rotas administrativas e do agente:
 
 ## Menu Rio Branco
 
-O perfil Rio Branco organiza os atalhos conforme `docs/MENU_RIO_BRANCO_PDF.md`. Os destinos `#backup-visao`, `#backup-planos` e `#backup-agentes` selecionam, respectivamente, indicadores/execucoes, planos e instalacao/retencao. Todos reutilizam o recurso `backup` e as APIs existentes. `#backup` conserva a visao completa para os demais destinos.
+O perfil Rio Branco organiza os atalhos conforme `docs/MENU_RIO_BRANCO_PDF.md`. Os destinos `#backup-visao`, `#backup-planos` e `#backup-agentes` selecionam, respectivamente, indicadores/execucoes, planos e instalacao/retencao. Todos reutilizam o recurso `backup` e as APIs existentes. `#backup` permanece como URL legada; os menus de todos os perfis oferecem as tres tarefas separadas.
+
+
+## Auditoria de navegacao e tarefas (14/09/2026)
+
+Descobrir impressoras e Descobrir computadores possuem telas separadas em Cadastro, nos hashes `#descoberta-impressoras` e `#descoberta-computadores`, com o recurso existente `equipamentos`. Configuracao fica em Configurar; Ocupacao do link em Relatorios. A navegacao nao dispara varreduras. Detalhes na auditoria de navegacao da raiz.
+
+## Telas por tarefa no portal (15/09/2026)
+
+Os atalhos abrem somente a tarefa selecionada, com o cabecalho e o menu
+principal do deploy. As entradas antigas `/original` redirecionam para a URL
+integrada, preservando caminho, filtros e metodo HTTP. O manifest usa a entrada
+integrada tambem em `standalone_url`. Nao existe segundo menu de aplicativo.
+
+Tecnologia concentra Verificar agora/Testar velocidade na Visao geral, alertas
+de e-mail em Configuracao e explicacoes de escopo em Agentes e protocolos.
+Chamados exibe Novo chamado somente na fila; Agenda, Historico e Documentos
+mostram suas proprias tarefas, inclusive antes do carregamento dos dados.
+Automacao extrai o conteudo entre marcadores do template e aplica seus estilos
+somente dentro da tarefa, preservando os botoes e a identidade do portal.
+
+Os mesmos recursos continuam em Usuarios e acessos: Tecnologia usa dashboard,
+equipamentos, historico, config e backup; Chamados usa dashboard, chamados,
+agenda, historico e documentos; Automacao explicita o recurso existente `*`.
+Nenhuma concessao e criada. Sessao, contrato e bloqueios do servidor continuam
+valendo tambem nos aliases. Testes: `tests/test_module_tasks.py` e
+`tests/check_module_tasks.py`, com dados sinteticos e sem escritas de negocio.
+
+## Acesso individual aos itens do menu
+
+Configurar > Usuarios e acessos apresenta os 13 destinos de Tecnologia
+individualmente. Monitoramento de link, historico, ocupacao do link, descoberta
+de equipamentos e as tres telas de backup podem ser bloqueados separadamente,
+inclusive sobre uma concessao geral anterior. O antigo `#backup` abre a visao
+de monitoramento. Paginas e APIs associadas respeitam as escolhas; a consulta
+dos planos compartilhada pelas telas de backup nao libera alterar planos nem
+baixar instaladores. Veja [regras e mapa](../../docs/ACESSOS_POR_ITEM_MENU.md).
+
+## Correcao de cobertura do menu (16/09/2026)
+
+No Rio Branco, MONITOR > Tecnologia oferece Monitoramento de link
+(`#monitor-link`) e Monitoramento de backups (`#backup-visao`). CONFIGURAR >
+Tecnologia oferece Configuracao e alertas, Planos de backup e Instalar agentes
+de backup. Os atalhos anteriores em Dashboard/Cadastro continuam validos.
+Monitoramento de link mostra estado da internet, ultima velocidade e consumidores;
+a configuracao de limites e alertas permanece em sua propria tela. Relatorios
+mantem Historico da Rede e Ocupacao do link. Nos outros perfis, Tecnologia inclui
+Monitoramento e Documentos; Config oferece planos e instalacao separadamente.
+
+O catalogo de Usuarios e acessos nomeia explicitamente os cinco recursos
+existentes: `dashboard`, `equipamentos`, `historico`, `config` e `backup`.
+Monitoramento de link reutiliza `dashboard`; nenhuma concessao e criada.
+O servidor verifica o recurso das APIs, inclusive URLs diretas: backup exige
+`backup`, historicos exigem `historico`, alertas exigem `config`, cadastros e
+varreduras exigem `equipamentos`; probe e teste de velocidade exigem `dashboard`.
+A leitura de overview e dependencia de dashboard/equipamentos/historico/config.
+O agente continua usando seu token; as acoes administrativas continuam exigindo
+administrador e escritas em cloud continuam bloqueadas.
+
+O HTML recebe as concessoes atuais para recusar hashes nao autorizados. Um
+usuario apenas de backup nao consulta overview. Ao abrir Historico diretamente,
+as medicoes sao carregadas novamente depois dos equipamentos, evitando uma tela
+vazia por ordem de carregamento. O historico de velocidade e consultado mesmo
+sem equipamento selecionado. Nenhum atalho dispara backup, descoberta ou teste
+de velocidade automaticamente.
+
+Verificacoes: `tests/test_module_tasks.py` compara as telas de origem com o menu
+renderizado nos perfis Rio Branco/Nanotech e testa autorizacao das APIs.
+`tests/check_module_tasks.py` verifica conteudo sintetico de link, planos,
+execucoes e historico em desktop/celular, incluindo acessos restritos.
+
+## Gestao > Rede
+
+O botao **Buscar dispositivos** abre um popup com IP, MAC e nome dos dispositivos
+online nao cadastrados. A busca e manual, sem cadastro, gravacao de metricas ou
+inclusao no monitoramento. Redes IPv4 privadas /24 sao derivadas dos IPs dos
+cadastros; o servidor aceita somente uma dessas redes (ate 254 enderecos).
+Confirma presenca por ICMP, NetBIOS ou resposta TCP nas portas 443/80/445/22.
+ARP apenas complementa o MAC; cache antigo sozinho nao significa online.
+Nome vem de NetBIOS ou DNS reverso. Campos ausentes aparecem como indisponiveis.
+IPs principais/adicionais e MACs conhecidos, inclusive de cadastros inativos,
+sao excluidos. Nomes iguais sozinhos nao ocultam um resultado. Equipamentos
+que bloqueiam todas as sondas podem nao aparecer; nao e auditoria exaustiva nem
+classificacao automatica de equipamento indevido. MAC depende da vizinhanca ARP.
+
+`POST /apps/tecnologia/api/network/scan` exige acesso a Rede e o recurso adicional
+`tecnologia:rede_scan` em Config > Usuarios e acessos, ou acesso integral. Bloqueios
+individuais da tela continuam valendo. Nenhuma concessao e criada. Ha uma
+varredura simultanea por processo; nuvem somente leitura recusa a operacao.
+`GET /apps/tecnologia/api/network` informa redes elegiveis e disponibilidade.
+Testes unitarios e de navegador cobrem exclusao, permissao, nuvem, ausencia de
+resposta, campos ausentes e popup em desktop/celular.
+
+`Gestao > Tecnologia > Rede` (`/apps/tecnologia#rede`) apresenta os equipamentos
+cadastrados com icone, nome, IP e estado. A busca filtra nome e enderecos; clicar
+abre popup com nome, nome na rede, IPs, MACs, horario e velocidades de download e
+upload da ultima coleta, alem do consumo recebido, enviado e total no dia.
+Equipamentos inativos continuam identificados; o alvo externo INTERNET fica
+fora desta grade. Atualizar consulta as medicoes armazenadas, sem forcar sondas.
+
+O dia usa `America/Sao_Paulo`, com timestamps persistidos em UTC. O consumo soma
+as diferencas de contadores de bytes comparaveis coletados dentro do dia; nao
+atribui ao dia atual um intervalo que comecou no dia anterior. O popup informa
+o inicio e o fim medidos. Sem duas leituras comparaveis, mostra indisponivel;
+zero exige contadores validos iguais. Reinicios detectados pelo uptime,
+reducao/wrap de contadores, troca de protocolo, fonte ou conjunto de interfaces
+nao geram consumo negativo nem picos artificiais. Esses intervalos sao omitidos
+e o resultado pode ser parcial. A soma inclui trafego interno e multiplas
+interfaces, podendo contar o mesmo trafego em bridges; nao e medicao exclusiva
+de internet nem faturamento. Reinicios nao detectaveis nas amostras permanecem
+uma limitacao dos contadores acumulados.
+
+Os MACs passam a ser coletados da IF-MIB (`ifPhysAddress`) por SNMP e da serie
+`node_network_info.address` em exporters que a exponham. Se a coleta nao informar
+MAC valido, a rotina consulta a tabela ARP do servidor para os IPs IPv4 principal
+e adicionais cadastrados. Aceita somente entradas Ethernet completas, unicast,
+nao nulas e sem conflito de MAC para o mesmo IP. Nunca usa o MAC do gateway no
+lugar do destino. Nomes DNS sem IP cadastrado, IPv6 e destinos fora da tabela
+continuam sem MAC. O cache ARP nao comprova que o equipamento esta online.
+O popup identifica a origem (SNMP/Prometheus ou cache ARP) e a associacao IP/MAC.
+Dados sao persistidos na medicao, sem inventar telemetria de recursos para ICMP.
+SNMP sem contadores de rede retorna valores ausentes.
+
+Adicionar um equipamento ativo, inclusive pela descoberta, executa a primeira
+coleta somente desse dispositivo apos salvar o cadastro. A mesma verificacao de
+MAC se repete nas coletas periodicas. Falhar a coleta nao desfaz o cadastro nem
+retorna falso erro de inclusao: a resposta 201 informa o aviso e o monitor tenta
+novamente. Cadastros inativos nao iniciam sondas. Sem informacao disponivel,
+aparece "Nao informado pela coleta"; medicoes antigas nao sao reescritas.
+
+No Linux, `TECH_ARP_TABLE_PATH` seleciona o arquivo ARP, com padrao `/proc/net/arp`
+fora do Docker. O Compose monta apenas `/proc/1/net/arp` do host em
+`/run/host-network/arp`, somente leitura, e aponta o coletor para esse destino.
+`TECH_HOST_ARP_PATH` substitui a origem da montagem quando necessario. O arquivo
+deve existir no host Linux; nao se cria diretorio automaticamente. Essa montagem
+evita consultar apenas a bridge Docker e nao exige container privilegiado,
+network host ou acesso ao socket Docker. Uma tabela ausente/inacessivel nao
+interrompe a coleta. ARP nao faz varredura nem consulta roteadores por credenciais.
+No Render nao ha leitura ARP local: somente os MACs registrados no cache sao
+apresentados, sem iniciar coletores.
+Os icones locais sao do Lucide 0.468.0, com licenca em `source/icons/LICENSE`.
+
+O novo recurso `tecnologia:rede` e seu item individual aparecem em Config >
+Usuarios e acessos, em ambos os manifests de navegacao. As duas APIs exigem
+essa concessao, ou acesso integral, respeitando bloqueios individuais.
+Nenhuma permissao e concedida automaticamente. A leitura funciona no cache
+cloud sem iniciar coletores. Testes em `tests/test_technology_network.py`,
+`tests/test_module_tasks.py`, `tests/test_individual_menu_access.py` e
+`tests/check_module_tasks.py` cobrem calculo, autorizacao e popup responsivo.
+O catalogo nomeia `rede` com MAC da coleta/ARP e `equipamentos` com verificacao
+inicial de MAC. A inclusao continua exigindo administrador, recurso de cadastro
+e ambiente gravavel; a consulta nao concede permissoes para sondar ou cadastrar.

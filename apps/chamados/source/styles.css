@@ -187,3 +187,18 @@ body.theme-fin-blue .ticketApp .agendaCard, body.theme-zapgreen .ticketApp .agen
   .agendaCard { grid-template-columns: 1fr; }
   .agendaActions { justify-content: flex-start; }
 }
+
+/* Cabecalho e navegacao unicos do portal. */
+.ticketApp { max-width: none; padding: 0; background: transparent; }
+.ticketApp .filterHead { flex-wrap: wrap; }
+.ticketApp {
+  --ticket-bg: var(--bg, #f4f6f8);
+  --ticket-panel: var(--panel, #fff);
+  --ticket-ink: var(--text, #1e2933);
+  --ticket-muted: var(--muted, #6c7780);
+  --ticket-line: var(--line, #dfe5e9);
+  --ticket-primary: var(--accent, #285f8f);
+  --ticket-primary-dark: var(--accent-dark, #174368);
+}
+.ticketApp main, .ticketView, .ticketView > *, .ticketApp .panel { min-width: 0; }
+.ticketApp .tableWrap { max-width: 100%; }

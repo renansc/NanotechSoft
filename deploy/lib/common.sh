@@ -297,7 +297,7 @@ ensure_riob_import_sources() {
       printf '%s' "$compose_json" | "$py" -c '
 import json, sys
 config = json.load(sys.stdin)
-targets = {"/imports/vendas-diario/txt", "/imports/vendas-diario/pdf"}
+targets = {"/imports/vendas-diario/txt", "/imports/vendas-diario/pdf", "/imports/sellout"}
 for volume in config.get("services", {}).get("riob-app", {}).get("volumes", []):
     if isinstance(volume, dict) and volume.get("type") == "bind" and volume.get("target") in targets:
         print(volume.get("source") or "")

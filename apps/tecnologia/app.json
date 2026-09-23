@@ -3,7 +3,7 @@
   "nome": "Tecnologia",
   "descricao": "Monitoramento de internet, rede, servidores e backups externos.",
   "url": "/apps/tecnologia",
-  "standalone_url": "/apps/tecnologia/original",
+  "standalone_url": "/apps/tecnologia",
   "icone": "network",
   "ordem": 120,
   "ativo": true,
@@ -18,11 +18,19 @@
     "pacsred"
   ],
   "menu_groups": {
+    "gestao": [
+      {"nome": "Rede", "url": "/apps/tecnologia#rede", "recurso": "rede"}
+    ],
     "dashboards": [
       {
         "nome": "Dashboard Tecnologia",
         "url": "/apps/tecnologia",
         "recurso": "dashboard"
+      },
+      {
+        "nome": "Visao de backups",
+        "url": "/apps/tecnologia#backup-visao",
+        "recurso": "backup"
       }
     ],
     "cadastros": [
@@ -30,6 +38,16 @@
         "nome": "Equipamentos Tecnologia",
         "url": "/apps/tecnologia#equipamentos",
         "grupo": "Tecnologia",
+        "recurso": "equipamentos"
+      },
+      {
+        "nome": "Descobrir impressoras",
+        "url": "/apps/tecnologia#descoberta-impressoras",
+        "recurso": "equipamentos"
+      },
+      {
+        "nome": "Descobrir computadores",
+        "url": "/apps/tecnologia#descoberta-computadores",
         "recurso": "equipamentos"
       }
     ],
@@ -43,6 +61,25 @@
         "nome": "Ocupação do Link",
         "url": "/apps/tecnologia#ocupacao-link",
         "recurso": "historico"
+      }
+    ],
+    "monitor": [
+      {
+        "nome": "Monitoramento de link",
+        "url": "/apps/tecnologia#monitor-link",
+        "recurso": "dashboard"
+      },
+      {
+        "nome": "Monitoramento de backups",
+        "url": "/apps/tecnologia#backup-visao",
+        "recurso": "backup"
+      }
+    ],
+    "docs": [
+      {
+        "nome": "Agentes e protocolos",
+        "url": "/apps/tecnologia#protocolos",
+        "recurso": "equipamentos"
       }
     ]
   },
@@ -59,8 +96,13 @@
         "recurso": "config"
       },
       {
-        "nome": "Tecnologia - Backup",
-        "url": "/apps/tecnologia#backup",
+        "nome": "Planos de backup",
+        "url": "/apps/tecnologia#backup-planos",
+        "recurso": "backup"
+      },
+      {
+        "nome": "Instalar agentes de backup",
+        "url": "/apps/tecnologia#backup-agentes",
         "recurso": "backup"
       }
     ]
@@ -92,26 +134,24 @@
             "recurso": "backup"
           },
           {
-            "nome": "Instalar agentes",
+            "nome": "Instalar agentes de backup",
             "url": "/apps/tecnologia#backup-agentes",
             "recurso": "backup"
           },
           {
-            "nome": "Configuracao",
-            "url": "/apps/tecnologia#config",
-            "recurso": "config"
+            "nome": "Descobrir impressoras",
+            "url": "/apps/tecnologia#descoberta-impressoras",
+            "recurso": "equipamentos"
+          },
+          {
+            "nome": "Descobrir computadores",
+            "url": "/apps/tecnologia#descoberta-computadores",
+            "recurso": "equipamentos"
           }
         ],
         "relatorios": [
           {
             "nome": "Historico",
-            "url": "/apps/tecnologia#historico",
-            "recurso": "historico"
-          }
-        ],
-        "gestao": [
-          {
-            "nome": "Serie temporal",
             "url": "/apps/tecnologia#historico",
             "recurso": "historico"
           },
@@ -121,15 +161,72 @@
             "recurso": "historico"
           }
         ],
+        "gestao": [
+          {"nome": "Rede", "url": "/apps/tecnologia#rede", "recurso": "rede"}
+        ],
         "docs": [
           {
             "nome": "Agentes e protocolos",
             "url": "/apps/tecnologia#protocolos",
             "recurso": "equipamentos"
           }
+        ],
+        "monitor": [
+          {
+            "nome": "Monitoramento de link",
+            "url": "/apps/tecnologia#monitor-link",
+            "recurso": "dashboard"
+          },
+          {
+            "nome": "Monitoramento de backups",
+            "url": "/apps/tecnologia#backup-visao",
+            "recurso": "backup"
+          }
         ]
       },
-      "config_groups": {}
+      "config_groups": {
+        "config": [
+          {
+            "nome": "Configuracao e alertas",
+            "url": "/apps/tecnologia#config",
+            "recurso": "config"
+          },
+          {
+            "nome": "Planos de backup",
+            "url": "/apps/tecnologia#backup-planos",
+            "recurso": "backup"
+          },
+          {
+            "nome": "Instalar agentes de backup",
+            "url": "/apps/tecnologia#backup-agentes",
+            "recurso": "backup"
+          }
+        ]
+      }
     }
-  }
+  },
+  "access_resources": [
+    {"recurso": "rede_scan", "nome": "Rede: buscar dispositivos online nao cadastrados (sem monitorar)"},
+    {"recurso": "rede", "nome": "Rede: equipamentos, MAC da coleta/ARP e consumo diario"},
+    {
+      "recurso": "dashboard",
+      "nome": "Visao geral e monitoramento de link"
+    },
+    {
+      "recurso": "equipamentos",
+      "nome": "Equipamentos, verificacao inicial de MAC, exclusao e descoberta"
+    },
+    {
+      "recurso": "historico",
+      "nome": "Historico da rede e ocupacao do link"
+    },
+    {
+      "recurso": "config",
+      "nome": "Configuracao e alertas"
+    },
+    {
+      "recurso": "backup",
+      "nome": "Backups: planos, execucoes e agentes"
+    }
+  ]
 }

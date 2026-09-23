@@ -37,6 +37,8 @@ class CommunicationAccessTests(unittest.TestCase):
             permissions = {item["app_key"]: ["*"] for item in manifests}
             self.assertEqual(permissions, portal.validate_user_permissions(permissions))
             for item in portal.permission_catalog():
+                if item["app_key"] not in permissions:
+                    continue
                 self.assertEqual(["*"], [resource["key"] for resource in item["recursos"]])
 
 

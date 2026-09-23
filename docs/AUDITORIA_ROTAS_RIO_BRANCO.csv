@@ -1,0 +1,446 @@
+arquivo,linha,funcao,metodos,rota,tipo,acesso
+app.py,770,healthz,GET,/healthz,infraestrutura,"Sessao unica, contrato, catalogo ou verificacao de saude"
+app.py,792,healthz_database,GET,/healthz/database,infraestrutura,"Sessao unica, contrato, catalogo ou verificacao de saude"
+app.py,907,healthz_cache,GET,/healthz/cache,infraestrutura,"Sessao unica, contrato, catalogo ou verificacao de saude"
+app.py,2216,login_page,GET,/login,infraestrutura,"Sessao unica, contrato, catalogo ou verificacao de saude"
+app.py,2224,portal,GET,/,infraestrutura,Entrada do cliente / Configurar
+app.py,2241,select_cloud_client,GET,/cloud/client/<client_id>,infraestrutura,Entrada do cliente / Configurar
+app.py,2253,config_page,GET,/config,infraestrutura,Entrada do cliente / Configurar
+app.py,2265,api_config_logo,"POST,DELETE",/api/config/logo,acao_da_tela,/config
+app.py,2519,api_users,GET,/api/usuarios,acao_da_tela,/config
+app.py,2529,api_update_user,POST,/api/usuarios,acao_da_tela,/config
+app.py,2529,api_update_user,PUT,/api/usuarios/<int:user_id>,acao_da_tela,/config
+app.py,2612,api_delete_user,DELETE,/api/usuarios/<int:user_id>,acao_da_tela,/config
+app.py,2638,api_backup_export,GET,/api/backup/export,acao_da_tela,/config
+app.py,2655,api_backup_import,POST,/api/backup/import,acao_da_tela,/config
+app.py,2680,workflow_kanban_page,GET,/workflow/<app_key>,infraestrutura,Proxy/menu do modulo; destino depende do parametro
+app.py,2894,healthz_riob,GET,/healthz/riob,infraestrutura,"Sessao unica, contrato, catalogo ou verificacao de saude"
+app.py,3339,riob_proxy,"GET,POST,PUT,PATCH,DELETE,OPTIONS",/apps/riob,infraestrutura,Proxy/menu do modulo; destino depende do parametro
+app.py,3339,riob_proxy,"GET,POST,PUT,PATCH,DELETE,OPTIONS",/apps/riob/,infraestrutura,Proxy/menu do modulo; destino depende do parametro
+app.py,3339,riob_proxy,"GET,POST,PUT,PATCH,DELETE,OPTIONS",/apps/riob/<path:subpath>,infraestrutura,Proxy/menu do modulo; destino depende do parametro
+app.py,3375,riob_module_proxy,"GET,POST,PUT,PATCH,DELETE,OPTIONS",/apps/<app_key>/riob,infraestrutura,Proxy/menu do modulo; destino depende do parametro
+app.py,3375,riob_module_proxy,"GET,POST,PUT,PATCH,DELETE,OPTIONS",/apps/<app_key>/riob/,infraestrutura,Proxy/menu do modulo; destino depende do parametro
+app.py,3375,riob_module_proxy,"GET,POST,PUT,PATCH,DELETE,OPTIONS",/apps/<app_key>/riob/<path:subpath>,infraestrutura,Proxy/menu do modulo; destino depende do parametro
+app.py,3392,app_placeholder,GET,/apps/<app_key>,infraestrutura,Proxy/menu do modulo; destino depende do parametro
+app.py,3857,automacao_proxy_root,"GET,POST,PUT,PATCH,DELETE",/apps/automacao,infraestrutura,Proxy/menu do modulo; destino depende do parametro
+app.py,3863,automacao_original_root,"GET,POST,PUT,PATCH,DELETE",/apps/automacao/original,infraestrutura,Proxy/menu do modulo; destino depende do parametro
+app.py,3870,automacao_original_proxy,"GET,POST,PUT,PATCH,DELETE",/apps/automacao/original/,infraestrutura,Proxy/menu do modulo; destino depende do parametro
+app.py,3870,automacao_original_proxy,"GET,POST,PUT,PATCH,DELETE",/apps/automacao/original/<path:subpath>,infraestrutura,Proxy/menu do modulo; destino depende do parametro
+app.py,3877,automacao_proxy,"GET,POST,PUT,PATCH,DELETE",/apps/automacao/,infraestrutura,Proxy/menu do modulo; destino depende do parametro
+app.py,3877,automacao_proxy,"GET,POST,PUT,PATCH,DELETE",/apps/automacao/<path:subpath>,infraestrutura,Proxy/menu do modulo; destino depende do parametro
+app.py,4320,nanoponto_proxy_root,"GET,POST,PUT,PATCH,DELETE",/apps/nanoponto,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,4326,nanoponto_original_root,"GET,POST,PUT,PATCH,DELETE",/apps/nanoponto/original,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,4333,nanoponto_original_proxy,"GET,POST,PUT,PATCH,DELETE",/apps/nanoponto/original/,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,4333,nanoponto_original_proxy,"GET,POST,PUT,PATCH,DELETE",/apps/nanoponto/original/<path:subpath>,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,4340,nanoponto_proxy,"GET,POST,PUT,PATCH,DELETE",/apps/nanoponto/,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,4340,nanoponto_proxy,"GET,POST,PUT,PATCH,DELETE",/apps/nanoponto/<path:subpath>,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,4785,zap_public_webhook_proxy,"GET,POST",/apps/zap/webhooks/whatsapp,infraestrutura,Proxy/menu do modulo; destino depende do parametro
+app.py,4790,zap_public_uploads_proxy,GET,/apps/zap/public/uploads/<path:subpath>,infraestrutura,Proxy/menu do modulo; destino depende do parametro
+app.py,4796,zap_proxy_root,"GET,POST,PUT,PATCH,DELETE",/apps/zap,infraestrutura,Proxy/menu do modulo; destino depende do parametro
+app.py,4802,zap_original_root,"GET,POST,PUT,PATCH,DELETE",/apps/zap/original,infraestrutura,Proxy/menu do modulo; destino depende do parametro
+app.py,4809,zap_original_proxy,"GET,POST,PUT,PATCH,DELETE",/apps/zap/original/,infraestrutura,Proxy/menu do modulo; destino depende do parametro
+app.py,4809,zap_original_proxy,"GET,POST,PUT,PATCH,DELETE",/apps/zap/original/<path:subpath>,infraestrutura,Proxy/menu do modulo; destino depende do parametro
+app.py,4816,zap_proxy,"GET,POST,PUT,PATCH,DELETE",/apps/zap/,infraestrutura,Proxy/menu do modulo; destino depende do parametro
+app.py,4816,zap_proxy,"GET,POST,PUT,PATCH,DELETE",/apps/zap/<path:subpath>,infraestrutura,Proxy/menu do modulo; destino depende do parametro
+app.py,5101,nanostore_proxy_root,"GET,POST,PUT,PATCH,DELETE",/apps/nanostore,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,5107,nanostore_original_root,"GET,POST,PUT,PATCH,DELETE",/apps/nanostore/original,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,5114,nanostore_original_proxy,"GET,POST,PUT,PATCH,DELETE",/apps/nanostore/original/,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,5114,nanostore_original_proxy,"GET,POST,PUT,PATCH,DELETE",/apps/nanostore/original/<path:subpath>,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,5121,nanostore_proxy,"GET,POST,PUT,PATCH,DELETE",/apps/nanostore/,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,5121,nanostore_proxy,"GET,POST,PUT,PATCH,DELETE",/apps/nanostore/<path:subpath>,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,5314,gpsmusical_static_root,GET,/apps/gpsmusical,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,5320,gpsmusical_original_root,GET,/apps/gpsmusical/original,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,5326,gpsmusical_original_static,GET,/apps/gpsmusical/original/<path:subpath>,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,5332,gpsmusical_static,GET,/apps/gpsmusical/<path:subpath>,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,5338,bpa_static_root,GET,/apps/bpa,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,5344,bpa_original_root,GET,/apps/bpa/original,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,5350,bpa_original_static,GET,/apps/bpa/original/<path:subpath>,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,5356,bpa_static,GET,/apps/bpa/<path:subpath>,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,5362,tatoo_static_root,GET,/apps/tatoo,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,5368,tatoo_original_root,GET,/apps/tatoo/original,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,5374,tatoo_original_static,GET,/apps/tatoo/original/<path:subpath>,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,5380,tatoo_static,GET,/apps/tatoo/<path:subpath>,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,6142,chamados_bootstrap_api,GET,/apps/chamados/api/bootstrap,acao_da_tela,/apps/chamados?view=chamados
+app.py,6244,chamados_agenda_api,"GET,POST",/apps/chamados/api/agenda,acao_da_tela,/apps/chamados?view=agenda
+app.py,6299,chamados_agenda_update_api,PUT,/apps/chamados/api/agenda/<int:agenda_id>,acao_da_tela,/apps/chamados?view=agenda
+app.py,6349,chamados_tickets_api,"GET,POST",/apps/chamados/api/tickets,acao_da_tela,/apps/chamados?view=chamados
+app.py,6437,chamados_ticket_api,"GET,PUT",/apps/chamados/api/tickets/<int:chamado_id>,acao_da_tela,/apps/chamados?view=chamados
+app.py,6559,chamados_intervention_api,POST,/apps/chamados/api/tickets/<int:chamado_id>/interventions,acao_da_tela,/apps/chamados?view=chamados
+app.py,6627,chamados_intervention_update_api,PUT,/apps/chamados/api/tickets/<int:chamado_id>/interventions/<int:intervencao_id>,acao_da_tela,/apps/chamados?view=chamados
+app.py,6699,chamados_similar_api,GET,/apps/chamados/api/similar,acao_da_tela,/apps/chamados?view=historico
+app.py,6716,chamados_documents_api,"GET,POST",/apps/chamados/api/documents,acao_da_tela,/apps/chamados?view=documentos
+app.py,6830,chamados_document_update_api,PUT,/apps/chamados/api/documents/<int:document_id>,acao_da_tela,/apps/chamados?view=documentos
+app.py,6929,chamados_document_download_api,GET,/apps/chamados/api/documents/<int:document_id>/download,acao_da_tela,/apps/chamados?view=documentos
+app.py,6953,chamados_static_root,GET,/apps/chamados,acao_da_tela,/apps/chamados?view=chamados
+app.py,6959,chamados_original_root,GET,/apps/chamados/original,acao_da_tela,/apps/chamados?view=chamados
+app.py,6965,chamados_original_static,GET,/apps/chamados/original/<path:subpath>,acao_da_tela,/apps/chamados?view=chamados
+app.py,6971,chamados_static,GET,/apps/chamados/<path:subpath>,acao_da_tela,/apps/chamados?view=chamados
+app.py,8501,tecnologia_backup_jobs_api,GET,/apps/tecnologia/api/backup/jobs,acao_da_tela,/apps/tecnologia#backup-planos
+app.py,8533,tecnologia_backup_create_api,POST,/apps/tecnologia/api/backup/jobs,acao_da_tela,/apps/tecnologia#backup-planos
+app.py,8574,tecnologia_backup_job_api,"PUT,DELETE",/apps/tecnologia/api/backup/jobs/<int:backup_id>,acao_da_tela,/apps/tecnologia#backup-planos
+app.py,8621,tecnologia_backup_rotate_token_api,POST,/apps/tecnologia/api/backup/jobs/<int:backup_id>/rotate-token,acao_da_tela,/apps/tecnologia#backup-planos
+app.py,8643,tecnologia_backup_run_now_api,POST,/apps/tecnologia/api/backup/jobs/<int:backup_id>/run-now,acao_da_tela,/apps/tecnologia#backup-planos
+app.py,8679,tecnologia_backup_agent_script_api,GET,/apps/tecnologia/api/backup/agent-script,acao_da_tela,/apps/tecnologia#backup-planos
+app.py,8693,tecnologia_backup_windows_installer_api,GET,/apps/tecnologia/api/backup/windows-installer,acao_da_tela,/apps/tecnologia#backup-planos
+app.py,8706,tecnologia_backup_agent_config_api,GET,/apps/tecnologia/api/backup/agent/<agent_id>/config,acao_da_tela,/apps/tecnologia#backup-planos
+app.py,8727,tecnologia_backup_agent_report_api,POST,/apps/tecnologia/api/backup/agent/<agent_id>/report,acao_da_tela,/apps/tecnologia#backup-planos
+app.py,8799,tecnologia_overview_api,GET,/apps/tecnologia/api/overview,acao_da_tela,/apps/tecnologia#dashboard
+app.py,8819,tecnologia_alert_config_api,"GET,PUT",/apps/tecnologia/api/alerts/config,acao_da_tela,/apps/tecnologia#config
+app.py,8839,tecnologia_alert_test_email_api,POST,/apps/tecnologia/api/alerts/test-email,acao_da_tela,/apps/tecnologia#config
+app.py,8866,tecnologia_probe_api,POST,/apps/tecnologia/api/probe,acao_da_tela,/apps/tecnologia#dashboard
+app.py,8882,tecnologia_speed_test_api,POST,/apps/tecnologia/api/speed-test,acao_da_tela,/apps/tecnologia#dashboard
+app.py,8893,tecnologia_speed_history_api,GET,/apps/tecnologia/api/speed-history,acao_da_tela,/apps/tecnologia#dashboard
+app.py,8919,tecnologia_history_api,GET,/apps/tecnologia/api/history,acao_da_tela,/apps/tecnologia#historico
+app.py,8961,tecnologia_link_usage_history_api,GET,/apps/tecnologia/api/link-usage-history,acao_da_tela,/apps/tecnologia#ocupacao-link
+app.py,9018,tecnologia_printer_usage_api,GET,/apps/tecnologia/api/devices/<int:device_id>/print-usage,acao_da_tela,/apps/tecnologia#equipamentos
+app.py,9072,tecnologia_create_device_api,POST,/apps/tecnologia/api/devices,acao_da_tela,/apps/tecnologia#equipamentos
+app.py,9133,tecnologia_device_api,"PUT,DELETE",/apps/tecnologia/api/devices/<int:device_id>,acao_da_tela,/apps/tecnologia#equipamentos
+app.py,9211,tecnologia_discover_printers_api,POST,/apps/tecnologia/api/discover-printers,acao_da_tela,/apps/tecnologia#dashboard
+app.py,9238,tecnologia_discover_computers_api,POST,/apps/tecnologia/api/discover-computers,acao_da_tela,/apps/tecnologia#dashboard
+app.py,9260,tecnologia_static_root,GET,/apps/tecnologia,acao_da_tela,/apps/tecnologia#dashboard
+app.py,9267,tecnologia_original_root,GET,/apps/tecnologia/original,acao_da_tela,/apps/tecnologia#dashboard
+app.py,9273,tecnologia_original_static,GET,/apps/tecnologia/original/<path:subpath>,acao_da_tela,/apps/tecnologia#dashboard
+app.py,9279,tecnologia_static,GET,/apps/tecnologia/<path:subpath>,acao_da_tela,/apps/tecnologia#dashboard
+app.py,9441,financeiro_page,GET,/apps/financeiro,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,9465,financeiro_original_page,GET,/apps/financeiro/original,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,9488,financeiro_static,GET,/apps/financeiro/static/<path:filename>,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,9501,financeiro_state_api,"GET,PUT",/apps/financeiro/api/state,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,9538,financeiro_titles_report_pdf_api,POST,/apps/financeiro/api/titles-report-pdf,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,9621,financeiro_import_pdf_api,POST,/apps/financeiro/api/import-pdf,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,9651,financeiro_import_installments_pdf_api,POST,/apps/financeiro/api/import-installments-pdf,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,9681,finance_reminders_run,POST,/api/finance/reminders/run,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,9687,finance_ai_status,GET,/api/finance/ai-status,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,9699,finance_purchase_research,POST,/api/finance/purchase-research,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,9705,finance_attachments,"GET,POST,DELETE",/api/finance/attachments,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,9789,finance_attachment_payment_code_info,GET,/api/finance/attachments/payment-code-info,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,9810,finance_attachment_payment_code_image,GET,/api/finance/attachments/payment-code-image,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,9862,finance_pix_code,POST,/api/finance/pix-code,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,9904,finance_attachment_decode,POST,/api/finance/attachments/decode,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,9909,api_login,POST,/api/login,infraestrutura,"Sessao unica, contrato, catalogo ou verificacao de saude"
+app.py,9950,api_logout,POST,/api/logout,infraestrutura,"Sessao unica, contrato, catalogo ou verificacao de saude"
+app.py,9957,api_me,GET,/api/me,infraestrutura,"Sessao unica, contrato, catalogo ou verificacao de saude"
+app.py,9966,api_apps,GET,/api/apps,infraestrutura,"Sessao unica, contrato, catalogo ou verificacao de saude"
+app.py,9975,api_client_contracts,GET,/api/clientes-modulos,infraestrutura,"Sessao unica, contrato, catalogo ou verificacao de saude"
+app.py,9981,api_active_client_contract,GET,/api/clientes-modulos/ativo,infraestrutura,"Sessao unica, contrato, catalogo ou verificacao de saude"
+app.py,10001,api_create_client_contract,POST,/api/clientes-modulos/clientes,infraestrutura,"Sessao unica, contrato, catalogo ou verificacao de saude"
+app.py,10014,api_update_client_contract,PUT,/api/clientes-modulos/clientes/<client_id>,infraestrutura,"Sessao unica, contrato, catalogo ou verificacao de saude"
+app.py,10029,api_delete_client_contract,DELETE,/api/clientes-modulos/clientes/<client_id>,infraestrutura,"Sessao unica, contrato, catalogo ou verificacao de saude"
+app.py,10042,api_config_theme,POST,/api/config/theme,acao_da_tela,/config
+apps/riob/source/server.py,13540,relatorio,GET,/api/relatorio,acao_da_tela,/apps/riob#gestaofrota:escala
+apps/riob/source/server.py,13555,status,GET,/api/status,acao_da_tela,/apps/riob#config:status
+apps/riob/source/server.py,13651,monitor_boot,GET,/api/monitor_boot,acao_da_tela,/apps/riob#monitor:automacao
+apps/riob/source/server.py,13656,backup,GET,/api/backup,acao_da_tela,/apps/riob#config:backup
+apps/riob/source/server.py,13764,backup_full,GET,/api/backup/full,acao_da_tela,/apps/riob#config:backup
+apps/riob/source/server.py,13817,listar_logs_exclusoes,GET,/api/logs_exclusoes,acao_da_tela,/apps/riob#config:logs
+apps/riob/source/server.py,13846,sip_config_api,"GET,PUT",/api/sip/config,acao_da_tela,/apps/riob#config:sip
+apps/riob/source/server.py,13866,nfe_config_api,"GET,PUT",/api/nfe/config,acao_da_tela,/apps/riob#config:nfe
+apps/riob/source/server.py,13875,nfe_dfe_sincronizar_api,POST,/api/nfe/df-e/sincronizar,acao_da_tela,/apps/riob#config:nfe
+apps/riob/source/server.py,13893,nfe_dfe_consultar_chave_api,POST,/api/nfe/df-e/consultar_chave,acao_da_tela,/apps/riob#config:nfe
+apps/riob/source/server.py,13931,sip_freepbx_sync_api,POST,/api/sip/freepbx/sync,acao_da_tela,/apps/riob#config:sip
+apps/riob/source/server.py,13953,sip_me,GET,/api/sip/me,acao_da_tela,/apps/riob#config:sip
+apps/riob/source/server.py,13993,sip_cert_pem,GET,/api/sip/cert.pem,acao_da_tela,/apps/riob#config:sip
+apps/riob/source/server.py,14011,sip_cert_crt,GET,/api/sip/cert.crt,acao_da_tela,/apps/riob#config:sip
+apps/riob/source/server.py,14029,app_cert_pem,GET,/api/app/cert.pem,acao_da_tela,/apps/riob#config:status
+apps/riob/source/server.py,14043,app_cert_crt,GET,/api/app/cert.crt,acao_da_tela,/apps/riob#config:status
+apps/riob/source/server.py,14057,ca_cert_pem,GET,/api/ca/cert.pem,acao_da_tela,/apps/riob#config:sip
+apps/riob/source/server.py,14071,ca_cert_crt,GET,/api/ca/cert.crt,acao_da_tela,/apps/riob#config:sip
+apps/riob/source/server.py,14086,certs_pkcs12_bundle,GET,/api/certs.p12,acao_da_tela,/apps/riob#config:sip
+apps/riob/source/server.py,14086,certs_pkcs12_bundle,GET,/api/certs.pfx,acao_da_tela,/apps/riob#config:sip
+apps/riob/source/server.py,14105,sip_windows_install_script,GET,/api/sip/windows-install.ps1,acao_da_tela,/apps/riob#config:sip
+apps/riob/source/server.py,14164,sip_linux_install_script,GET,/api/sip/linux-install.sh,acao_da_tela,/apps/riob#config:sip
+apps/riob/source/server.py,14307,sip_apple_mobileconfig,GET,/api/sip/apple.mobileconfig,acao_da_tela,/apps/riob#config:sip
+apps/riob/source/server.py,14376,dashboard,GET,/api/dashboard,acao_da_tela,/apps/riob#dashboard
+apps/riob/source/server.py,18999,importar_fretes_xml_saidas_white_river,POST,/api/fretes/importar-xml-saidas-white-river,acao_da_tela,/apps/riob#fretes
+apps/riob/source/server.py,19127,dashboard_estoque,GET,/api/dashboard_estoque,acao_da_tela,/apps/riob#dashboard:estoque
+apps/riob/source/server.py,19148,relatorio_estoque_comprometido,GET,/api/estoque/relatorio-comprometido,acao_da_tela,/apps/riob#estoque:posicao
+apps/riob/source/server.py,19156,relatorio_estoque_comprometido_pdf,GET,/api/estoque/relatorio-comprometido/pdf,acao_da_tela,/apps/riob#estoque:posicao
+apps/riob/source/server.py,19171,listar_importacoes_xml_estoque,GET,/api/estoque/importacoes-xml,acao_da_tela,/apps/riob#estoque:posicao
+apps/riob/source/server.py,19325,descartar_importacoes_xml_estoque,POST,/api/estoque/importacoes-xml/descartar,acao_da_tela,/apps/riob#estoque:posicao
+apps/riob/source/server.py,19488,criar_regras_classificacao_xml,POST,/api/estoque/importacoes-xml/classificacao-regras,acao_da_tela,/apps/riob#estoque:posicao
+apps/riob/source/server.py,19523,desativar_regra_classificacao_xml,DELETE,/api/estoque/importacoes-xml/classificacao-regras/<int:regra_id>,acao_da_tela,/apps/riob#estoque:posicao
+apps/riob/source/server.py,19565,detalhar_importacao_xml_estoque,GET,/api/estoque/importacoes-xml/detalhe,acao_da_tela,/apps/riob#estoque:posicao
+apps/riob/source/server.py,19600,preparar_lote_importacoes_xml_estoque,POST,/api/estoque/importacoes-xml/lote/preparar,acao_da_tela,/apps/riob#estoque:posicao
+apps/riob/source/server.py,19732,alterar_logistica_importacao_xml_estoque,PUT,/api/estoque/importacoes-xml/logistica,acao_da_tela,/apps/riob#estoque:posicao
+apps/riob/source/server.py,19813,listar_fretes_importacao_xml_estoque,GET,/api/estoque/importacoes-xml/fretes,acao_da_tela,/apps/riob#estoque:posicao
+apps/riob/source/server.py,19903,listar_xml_pendentes_frete,GET,/api/fretes/<int:id>/xml-pendentes,acao_da_tela,/apps/riob#fretes
+apps/riob/source/server.py,20471,vincular_xml_pendente_frete,POST,/api/fretes/<int:id>/xml-pendentes/vincular,acao_da_tela,/apps/riob#fretes
+apps/riob/source/server.py,20886,desvincular_xml_pendente_frete,POST,/api/fretes/<int:id>/xml-pendentes/desvincular,acao_da_tela,/apps/riob#fretes
+apps/riob/source/server.py,21053,confirmar_importacao_xml_estoque,POST,/api/estoque/importacoes-xml/confirmar,acao_da_tela,/apps/riob#estoque:posicao
+apps/riob/source/server.py,21534,criar_movimento_estoque,POST,/api/estoque,acao_da_tela,/apps/riob#estoque:posicao
+apps/riob/source/server.py,21628,listar_movimentos_estoque,GET,/api/estoque,acao_da_tela,/apps/riob#estoque:posicao
+apps/riob/source/server.py,21693,atualizar_movimento_estoque,PUT,/api/estoque/<int:movimento_id>,acao_da_tela,/apps/riob#estoque:posicao
+apps/riob/source/server.py,21783,excluir_movimento_estoque,DELETE,/api/estoque/<int:movimento_id>,acao_da_tela,/apps/riob#estoque:posicao
+apps/riob/source/server.py,21826,saldo_estoque,GET,/api/estoque/saldo,acao_da_tela,/apps/riob#estoque:posicao
+apps/riob/source/server.py,21830,posicao_estoque,GET,/api/estoque/posicao,acao_da_tela,/apps/riob#estoque:posicao
+apps/riob/source/server.py,21834,listar_grupos_estoque,GET,/api/estoque/grupos,acao_da_tela,/apps/riob#estoque:posicao
+apps/riob/source/server.py,21844,criar_grupo_estoque,POST,/api/estoque/grupos,acao_da_tela,/apps/riob#estoque:posicao
+apps/riob/source/server.py,21895,atualizar_grupo_estoque,PUT,/api/estoque/grupos/<int:grupo_id>,acao_da_tela,/apps/riob#estoque:posicao
+apps/riob/source/server.py,21959,excluir_grupo_estoque,DELETE,/api/estoque/grupos/<int:grupo_id>,acao_da_tela,/apps/riob#estoque:posicao
+apps/riob/source/server.py,21986,listar_produtos_estoque,GET,/api/estoque/produtos,acao_da_tela,/apps/riob#estoque:posicao
+apps/riob/source/server.py,22047,listar_lotes_estoque,GET,/api/estoque/lotes,acao_da_tela,/apps/riob#estoque:posicao
+apps/riob/source/server.py,22123,detalhe_lote_estoque,GET,/api/estoque/lotes/<path:lote_codigo>,acao_da_tela,/apps/riob#estoque:posicao
+apps/riob/source/server.py,22215,listar_lotes_rastreabilidade,GET,/api/estoque/rastreabilidade/lotes,acao_da_tela,/apps/riob#estoque:posicao
+apps/riob/source/server.py,22276,verificar_lotes_rastreabilidade,POST,/api/estoque/rastreabilidade/verificar,acao_da_tela,/apps/riob#estoque:posicao
+apps/riob/source/server.py,22298,atualizar_vinculo_rastreabilidade,PUT,/api/estoque/rastreabilidade/vinculos/<int:vinculo_id>,acao_da_tela,/apps/riob#estoque:posicao
+apps/riob/source/server.py,22376,consultar_lote_rastreabilidade,GET,/api/estoque/rastreabilidade/lote,acao_da_tela,/apps/riob#estoque:posicao
+apps/riob/source/server.py,22462,criar_produto_estoque,POST,/api/estoque/produtos,acao_da_tela,/apps/riob#estoque:posicao
+apps/riob/source/server.py,22549,atualizar_produto_estoque,PUT,/api/estoque/produtos/<int:produto_id>,acao_da_tela,/apps/riob#estoque:posicao
+apps/riob/source/server.py,22649,ajustar_produto_estoque,POST,/api/estoque/produtos/<int:produto_id>/ajuste,acao_da_tela,/apps/riob#estoque:posicao
+apps/riob/source/server.py,22748,excluir_produto_estoque,DELETE,/api/estoque/produtos/<int:produto_id>,acao_da_tela,/apps/riob#estoque:posicao
+apps/riob/source/server.py,22765,listar_conferencias_estoque,GET,/api/estoque/conferencias,acao_da_tela,/apps/riob#estoque:posicao
+apps/riob/source/server.py,22790,detalhar_conferencia_estoque,GET,/api/estoque/conferencias/<int:conferencia_id>,acao_da_tela,/apps/riob#estoque:posicao
+apps/riob/source/server.py,22807,preview_nfe_estoque,POST,/api/estoque/nfe/preview,acao_da_tela,/apps/riob#estoque:posicao
+apps/riob/source/server.py,22822,preview_nfe_estoque_fabrica,POST,/api/estoque/nfe/preview_fabrica,acao_da_tela,/apps/riob#estoque:posicao
+apps/riob/source/server.py,22855,portal_retorno_nfe_estoque,POST,/api/estoque/nfe/portal_retorno,acao_da_tela,/apps/riob#estoque:posicao
+apps/riob/source/server.py,22935,ocr_nfe_estoque,POST,/api/estoque/nfe/ocr,acao_da_tela,/apps/riob#estoque:posicao
+apps/riob/source/server.py,22953,ocr_itens_nfe_estoque,POST,/api/estoque/nfe/ocr_itens,acao_da_tela,/apps/riob#estoque:posicao
+apps/riob/source/server.py,22971,ocr_preview_abastecimento,POST,/api/abastecimentos/ocr_preview,acao_da_tela,/apps/riob#gestaofrota:abastecimento
+apps/riob/source/server.py,22995,barcode_preview_abastecimento,POST,/api/abastecimentos/barcode_preview,acao_da_tela,/apps/riob#gestaofrota:abastecimento
+apps/riob/source/server.py,23019,azure_itens_nfe_estoque,POST,/api/estoque/nfe/azure_itens,acao_da_tela,/apps/riob#estoque:posicao
+apps/riob/source/server.py,23037,preview_nfe_estoque_dfe,POST,/api/estoque/nfe/preview_dfe,acao_da_tela,/apps/riob#estoque:posicao
+apps/riob/source/server.py,23067,ocr_preview_manutencao,POST,/api/manutencoes/ocr_preview,acao_da_tela,/apps/riob#gestaofrota:manutencao
+apps/riob/source/server.py,23291,direcionar_lote_nfe_estoque,POST,/api/estoque/nfe/direcionar/lote,acao_da_tela,/apps/riob#estoque:posicao
+apps/riob/source/server.py,23437,direcionar_nfe_estoque,POST,/api/estoque/nfe/direcionar,acao_da_tela,/apps/riob#estoque:posicao
+apps/riob/source/server.py,23542,importar_nfe_estoque,POST,/api/estoque/nfe/import,acao_da_tela,/apps/riob#estoque:posicao
+apps/riob/source/server.py,23575,confirmar_conferencia_estoque,POST,/api/estoque/conferencias/<int:conferencia_id>/confirmar,acao_da_tela,/apps/riob#estoque:posicao
+apps/riob/source/server.py,23704,servir_foto_devolucao,GET,/api/devolucoes/fotos/<path:filename>,acao_da_tela,/apps/riob#devolucoes
+apps/riob/source/server.py,23708,listar_fotos_devolucao,GET,/api/devolucoes/<int:id>/fotos,acao_da_tela,/apps/riob#devolucoes
+apps/riob/source/server.py,23721,deletar_devolucao,DELETE,/api/devolucoes/<int:id>,acao_da_tela,/apps/riob#devolucoes
+apps/riob/source/server.py,23745,atualizar_devolucao,PUT,/api/devolucoes/<int:id>,acao_da_tela,/apps/riob#devolucoes
+apps/riob/source/server.py,23789,listar_devolucoes,GET,/api/devolucoes,acao_da_tela,/apps/riob#devolucoes
+apps/riob/source/server.py,23886,criar_devolucao,POST,/api/devolucoes,acao_da_tela,/apps/riob#devolucoes
+apps/riob/source/server.py,23979,criar_frete,POST,/api/fretes,acao_da_tela,/apps/riob#fretes
+apps/riob/source/server.py,24252,unificar_frete,POST,/api/fretes/<int:id>/unificar,acao_da_tela,/apps/riob#fretes
+apps/riob/source/server.py,24430,desagrupar_frete,POST,/api/fretes/<int:id>/desagrupar,acao_da_tela,/apps/riob#fretes
+apps/riob/source/server.py,24535,deletar_frete,DELETE,/api/fretes/<int:id>,acao_da_tela,/apps/riob#fretes
+apps/riob/source/server.py,24572,atualizar_frete,"PUT,PATCH",/api/fretes/<int:id>,acao_da_tela,/apps/riob#fretes
+apps/riob/source/server.py,24801,listar_fretes,GET,/api/fretes,acao_da_tela,/apps/riob#fretes
+apps/riob/source/server.py,24813,listar_notas_saida_frete,GET,/api/fretes/<int:id>/notas-saida,acao_da_tela,/apps/riob#fretes
+apps/riob/source/server.py,25153,usuario_logado_api,GET,/api/me,acao_contextual,"Minha conta / balao Comunicacao (Chat, IA e Telefonia)"
+apps/riob/source/server.py,25173,chat_conversa,GET,/api/chat/conversa,acao_contextual,"Minha conta / balao Comunicacao (Chat, IA e Telefonia)"
+apps/riob/source/server.py,25250,chat_download_anexo,GET,/api/chat/mensagens/<int:mensagem_id>/anexo,acao_contextual,"Minha conta / balao Comunicacao (Chat, IA e Telefonia)"
+apps/riob/source/server.py,25285,chat_enviar_mensagem,POST,/api/chat/mensagens,acao_contextual,"Minha conta / balao Comunicacao (Chat, IA e Telefonia)"
+apps/riob/source/server.py,25352,chat_marcar_lidas,PUT,/api/chat/marcar_lidas,acao_contextual,"Minha conta / balao Comunicacao (Chat, IA e Telefonia)"
+apps/riob/source/server.py,25389,chat_unread,GET,/api/chat/unread,acao_contextual,"Minha conta / balao Comunicacao (Chat, IA e Telefonia)"
+apps/riob/source/server.py,25431,listar_pontos_venda,GET,/api/pontos_venda,acao_da_tela,/apps/riob#vendas:pontosvenda
+apps/riob/source/server.py,25550,criar_ponto_venda,POST,/api/pontos_venda,acao_da_tela,/apps/riob#vendas:pontosvenda
+apps/riob/source/server.py,25582,atualizar_ponto_venda,PUT,/api/pontos_venda/<int:item_id>,acao_da_tela,/apps/riob#vendas:pontosvenda
+apps/riob/source/server.py,25615,deletar_ponto_venda,DELETE,/api/pontos_venda/<int:item_id>,acao_da_tela,/apps/riob#vendas:pontosvenda
+apps/riob/source/server.py,25731,importar_pontos_venda_csv,POST,/api/pontos_venda/importar_csv,acao_da_tela,/apps/riob#vendas:pontosvenda
+apps/riob/source/server.py,25751,relatorio_pontos_venda,GET,/api/pontos_venda/relatorio,acao_da_tela,/apps/riob#vendas:pontosvenda
+apps/riob/source/server.py,25835,listar_comissao_lancamentos,GET,/api/comissao/lancamentos,acao_da_tela,/apps/riob#comissao
+apps/riob/source/server.py,25990,exportar_comissao_lancamentos_xlsx,GET,/api/comissao/lancamentos/exportar-xlsx,acao_da_tela,/apps/riob#comissao
+apps/riob/source/server.py,26019,criar_comissao_lancamento,POST,/api/comissao/lancamentos,acao_da_tela,/apps/riob#comissao
+apps/riob/source/server.py,26106,editar_comissao_lancamento,"PUT,PATCH",/api/comissao/lancamentos/<int:item_id>,acao_da_tela,/apps/riob#comissao
+apps/riob/source/server.py,26195,deletar_comissao_lancamento,DELETE,/api/comissao/lancamentos/<int:item_id>,acao_da_tela,/apps/riob#comissao
+apps/riob/source/server.py,26215,listar_comissao_cadastros,GET,/api/comissao/cadastros,acao_da_tela,/apps/riob#comissao
+apps/riob/source/server.py,26248,criar_comissao_cadastro,POST,/api/comissao/cadastros,acao_da_tela,/apps/riob#comissao
+apps/riob/source/server.py,26274,deletar_comissao_cadastro,DELETE,/api/comissao/cadastros/<int:item_id>,acao_da_tela,/apps/riob#comissao
+apps/riob/source/server.py,26293,listar_comissao_cidades,GET,/api/comissao/cidades,acao_da_tela,/apps/riob#comissao
+apps/riob/source/server.py,26311,criar_comissao_cidade,POST,/api/comissao/cidades,acao_da_tela,/apps/riob#comissao
+apps/riob/source/server.py,26325,deletar_comissao_cidade,DELETE,/api/comissao/cidades/<int:item_id>,acao_da_tela,/apps/riob#comissao
+apps/riob/source/server.py,30518,vendas_meses_api,GET,/api/vendas/meses,acao_da_tela,/apps/riob#vendas:relatorio
+apps/riob/source/server.py,33908,relatorios_comissao,GET,/api/comissao/relatorios,acao_da_tela,/apps/riob#comissao
+apps/riob/source/server.py,33914,relatorios_comissao_pdf,GET,/api/comissao/relatorios/pdf,acao_da_tela,/apps/riob#comissao
+apps/riob/source/server.py,33924,relatorio_vendas,GET,/api/vendas/relatorio,acao_da_tela,/apps/riob#vendas:relatorio
+apps/riob/source/server.py,34042,relatorio_vendas_preco_medio_pdf,GET,/api/vendas/relatorio/preco-medio/pdf,acao_da_tela,/apps/riob#vendas:relatorio
+apps/riob/source/server.py,34064,dashboard_vendas,GET,/api/vendas/dashboard,acao_da_tela,/apps/riob#vendas:relatorio
+apps/riob/source/server.py,34078,dashboard_vendas_painel,GET,/api/dashboard_vendas,acao_da_tela,/apps/riob#dashboard:vendas_anual
+apps/riob/source/server.py,34231,vendas_diario_api,GET,/api/vendas/diario,acao_da_tela,/apps/riob#workflow:vendas_diario
+apps/riob/source/server.py,34340,vendas_diario_dashboard_api,GET,/api/vendas/diario/dashboard,acao_da_tela,/apps/riob#workflow:vendas_diario
+apps/riob/source/server.py,34843,vendas_diario_kanban_api,GET,/api/vendas/diario/kanban,acao_da_tela,/apps/riob#workflow:vendas_diario
+apps/riob/source/server.py,35075,vendas_diario_cargas_semana_api,GET,/api/vendas/diario/cargas-semana,acao_da_tela,/apps/riob#relatorios:cargas_semana
+apps/riob/source/server.py,35288,vendas_diario_kanban_conciliar_api,POST,/api/vendas/diario/kanban/conciliar,acao_da_tela,/apps/riob#workflow:vendas_diario
+apps/riob/source/server.py,35299,vendas_diario_kanban_status_api,PUT,/api/vendas/diario/kanban/<int:card_id>/status,acao_da_tela,/apps/riob#workflow:vendas_diario
+apps/riob/source/server.py,35318,vendas_diario_kanban_unir_api,POST,/api/vendas/diario/kanban/<int:card_id>/unir,acao_da_tela,/apps/riob#workflow:vendas_diario
+apps/riob/source/server.py,35365,vendas_diario_kanban_separar_api,POST,/api/vendas/diario/kanban/<int:card_id>/separar,acao_da_tela,/apps/riob#workflow:vendas_diario
+apps/riob/source/server.py,35388,vendas_diario_kanban_card_api,"PUT,DELETE",/api/vendas/diario/kanban/<int:card_id>,acao_da_tela,/apps/riob#workflow:vendas_diario
+apps/riob/source/server.py,35443,vendas_diario_kanban_enviar_frete_api,POST,/api/vendas/diario/kanban/<int:card_id>/enviar-frete,acao_da_tela,/apps/riob#workflow:vendas_diario
+apps/riob/source/server.py,35526,vendas_diario_importar_api,POST,/api/vendas/diario/importar,acao_da_tela,/apps/riob#workflow:vendas_diario
+apps/riob/source/server.py,35642,vendas_diario_importar_carga_pdf_api,POST,/api/vendas/diario/importar-carga-pdf,acao_da_tela,/apps/riob#workflow:vendas_diario
+apps/riob/source/server.py,35690,vendas_diario_importar_clientes_api,POST,/api/vendas/diario/importar-clientes,acao_da_tela,/apps/riob#workflow:vendas_diario
+apps/riob/source/server.py,35734,vendas_diario_importar_rotas_api,POST,/api/vendas/diario/importar-rotas,acao_da_tela,/apps/riob#workflow:vendas_diario
+apps/riob/source/server.py,35762,vendas_diario_referencias_api,GET,/api/vendas/diario/referencias,acao_da_tela,/apps/riob#workflow:vendas_diario
+apps/riob/source/server.py,35785,vendas_diario_vendedores_api,GET,/api/vendas/diario/vendedores,acao_da_tela,/apps/riob#workflow:vendas_diario
+apps/riob/source/server.py,36223,vendas_orcamentos_config_api,"GET,PUT",/api/vendas/orcamentos/config,acao_da_tela,/apps/riob#vendas:orcamento
+apps/riob/source/server.py,36286,vendas_orcamentos_api,"GET,POST",/api/vendas/orcamentos,acao_da_tela,/apps/riob#vendas:orcamento
+apps/riob/source/server.py,36356,vendas_orcamentos_relatorio_api,GET,/api/vendas/orcamentos/relatorio,acao_da_tela,/apps/riob#relatorios:orcamentos
+apps/riob/source/server.py,36403,vendas_orcamento_detalhe_api,"GET,PUT",/api/vendas/orcamentos/<int:orcamento_id>,acao_da_tela,/apps/riob#vendas:orcamento
+apps/riob/source/server.py,36460,vendas_orcamento_pdf_api,GET,/api/vendas/orcamentos/<int:orcamento_id>/pdf,acao_da_tela,/apps/riob#vendas:orcamento
+apps/riob/source/server.py,36478,vendas_config_api,"GET,PUT",/api/vendas/config,acao_da_tela,/apps/riob#vendas:relatorio
+apps/riob/source/server.py,36501,vendas_cache_importar,POST,/api/vendas/cache/importar,acao_da_tela,/apps/riob#vendas:relatorio
+apps/riob/source/server.py,36573,vendas_cache_processar,POST,/api/vendas/cache/processar,acao_da_tela,/apps/riob#vendas:relatorio
+apps/riob/source/server.py,36615,vendas_cache_ativar,PUT,/api/vendas/cache/<cache_id>/ativar,acao_da_tela,/apps/riob#vendas:relatorio
+apps/riob/source/server.py,36641,vendas_cache_excluir,DELETE,/api/vendas/cache/<cache_id>,acao_da_tela,/apps/riob#vendas:relatorio
+apps/riob/source/server.py,37127,escala_pdf,"GET,POST",/api/escala/pdf,acao_da_tela,/apps/riob#gestaofrota:escala
+apps/riob/source/server.py,37220,escala_sorteio_regras_listar,GET,/api/escala/sorteio-regras,acao_da_tela,/apps/riob#gestaofrota:escala
+apps/riob/source/server.py,37240,escala_sorteio_regras_criar,POST,/api/escala/sorteio-regras,acao_da_tela,/apps/riob#gestaofrota:escala
+apps/riob/source/server.py,37292,escala_sorteio_regras_excluir,DELETE,/api/escala/sorteio-regras/<int:regra_id>,acao_da_tela,/apps/riob#gestaofrota:escala
+apps/riob/source/server.py,37316,importar_cargas_csv,POST,/api/cargas/importar_csv,acao_da_tela,/apps/riob#gestaofrota:cargas
+apps/riob/source/server.py,37334,importar_cargas_pdf,POST,/api/cargas/importar_pdf,acao_da_tela,/apps/riob#gestaofrota:cargas
+apps/riob/source/server.py,37358,detalhes_carga_importada,GET,/api/cargas/<int:carga_id>/detalhes,acao_da_tela,/apps/riob#gestaofrota:cargas
+apps/riob/source/server.py,37563,listar_rotas_cargas,GET,/api/cargas/rotas,acao_da_tela,/apps/riob#gestaofrota:cargas
+apps/riob/source/server.py,37584,criar_rota_carga,POST,/api/cargas/rotas,acao_da_tela,/apps/riob#gestaofrota:cargas
+apps/riob/source/server.py,37626,atualizar_rota_carga,PUT,/api/cargas/rotas/<int:rota_id>,acao_da_tela,/apps/riob#gestaofrota:cargas
+apps/riob/source/server.py,37674,excluir_rota_carga,DELETE,/api/cargas/rotas/<int:rota_id>,acao_da_tela,/apps/riob#gestaofrota:cargas
+apps/riob/source/server.py,37696,listar_generico,GET,/api/<tabela>,acao_contextual,Cadastro > Colaboradores/Veiculos/Cargas; escala usa os mesmos registros
+apps/riob/source/server.py,37792,criar_generico,POST,/api/<tabela>,acao_contextual,Cadastro > Colaboradores/Veiculos/Cargas; escala usa os mesmos registros
+apps/riob/source/server.py,37925,atualizar_generico,PUT,/api/<tabela>/<int:id>,acao_contextual,Cadastro > Colaboradores/Veiculos/Cargas; escala usa os mesmos registros
+apps/riob/source/server.py,38131,deletar_generico,DELETE,/api/<tabela>/<int:id>,acao_contextual,Cadastro > Colaboradores/Veiculos/Cargas; escala usa os mesmos registros
+apps/riob/source/server.py,38196,listar_vinculos_abastecimentos_xml,GET,/api/abastecimentos/importacoes-xml,acao_da_tela,/apps/riob#gestaofrota:abastecimento
+apps/riob/source/server.py,38314,sincronizar_vinculos_abastecimentos_xml,POST,/api/abastecimentos/importacoes-xml/sincronizar,acao_da_tela,/apps/riob#gestaofrota:abastecimento
+apps/riob/source/server.py,38325,listar_abastecimentos,GET,/api/abastecimentos,acao_da_tela,/apps/riob#gestaofrota:abastecimento
+apps/riob/source/server.py,38397,liberar_abastecimento,POST,/api/abastecimentos/liberar,acao_da_tela,/apps/riob#gestaofrota:abastecimento
+apps/riob/source/server.py,38486,concluir_abastecimento,PUT,/api/abastecimentos/<int:abastecimento_id>/abastecer,acao_da_tela,/apps/riob#gestaofrota:abastecimento
+apps/riob/source/server.py,38572,editar_abastecimento,PUT,/api/abastecimentos/<int:abastecimento_id>,acao_da_tela,/apps/riob#gestaofrota:abastecimento
+apps/riob/source/server.py,38714,importar_nfe_abastecimento,POST,/api/abastecimentos/<int:abastecimento_id>/importar_nfe,acao_da_tela,/apps/riob#gestaofrota:abastecimento
+apps/riob/source/server.py,38755,importar_nfe_dfe_abastecimento,POST,/api/abastecimentos/<int:abastecimento_id>/importar_nfe_dfe,acao_da_tela,/apps/riob#gestaofrota:abastecimento
+apps/riob/source/server.py,38826,excluir_abastecimento,DELETE,/api/abastecimentos/<int:abastecimento_id>,acao_da_tela,/apps/riob#gestaofrota:abastecimento
+apps/riob/source/server.py,38878,pdf_abastecimento,GET,/api/abastecimentos/<int:abastecimento_id>/pdf,acao_da_tela,/apps/riob#gestaofrota:abastecimento
+apps/riob/source/server.py,38902,listar_pre_lancamentos_manutencao_xml,GET,/api/manutencoes/importacoes-xml,acao_da_tela,/apps/riob#gestaofrota:manutencao
+apps/riob/source/server.py,38949,descartar_pre_lancamento_manutencao_xml,POST,/api/manutencoes/importacoes-xml/<int:pre_lancamento_id>/descartar,acao_da_tela,/apps/riob#gestaofrota:manutencao
+apps/riob/source/server.py,39001,devolver_pre_lancamentos_manutencao_estoque,POST,/api/manutencoes/importacoes-xml/devolver-estoque,acao_da_tela,/apps/riob#gestaofrota:manutencao
+apps/riob/source/server.py,39098,criar_manutencao,POST,/api/manutencoes,acao_da_tela,/apps/riob#gestaofrota:manutencao
+apps/riob/source/server.py,39280,listar_manutencoes,GET,/api/manutencoes,acao_da_tela,/apps/riob#gestaofrota:manutencao
+apps/riob/source/server.py,39328,criar_troca_oleo,POST,/api/trocas_oleo,acao_da_tela,/apps/riob#gestaofrota:oleo
+apps/riob/source/server.py,39361,listar_trocas_oleo,GET,/api/trocas_oleo,acao_da_tela,/apps/riob#gestaofrota:oleo
+apps/riob/source/server.py,39395,criar_troca_pneu,POST,/api/trocas_pneu,acao_da_tela,/apps/riob#gestaofrota:pneu
+apps/riob/source/server.py,39453,criar_lavagem,POST,/api/lavagens,acao_da_tela,/apps/riob#gestaofrota:lavagem
+apps/riob/source/server.py,39492,listar_lavagens,GET,/api/lavagens,acao_da_tela,/apps/riob#gestaofrota:lavagem
+apps/riob/source/server.py,39532,listar_trocas_pneu,GET,/api/trocas_pneu,acao_da_tela,/apps/riob#gestaofrota:pneu
+apps/riob/source/server.py,39615,relatorio_frota_pdf,GET,/api/frota_relatorio,acao_da_tela,/apps/riob#gestaofrota:relatorios
+apps/riob/source/server.py,39903,frota_resumo,GET,/api/frota_resumo,acao_da_tela,/apps/riob#gestaofrota:lista
+apps/riob/source/server.py,39951,dashboard_frota,GET,/api/dashboard_frota,acao_da_tela,/apps/riob#dashboard:frota
+apps/riob/source/server.py,40154,frota_historico,GET,/api/frota_historico/<int:veiculo_id>,acao_da_tela,/apps/riob#gestaofrota:lista
+apps/riob/source/server.py,40430,agent_ia_chat,POST,/api/agent/chat,acao_contextual,"Minha conta / balao Comunicacao (Chat, IA e Telefonia)"
+apps/riob/source/server.py,40524,index,GET,/,infraestrutura,Shell RioB ou arquivo estatico
+apps/riob/source/server.py,40524,index,GET,/RioBranco.html,infraestrutura,Shell RioB ou arquivo estatico
+apps/riob/source/server.py,40531,docs_index,GET,/docs,acao_da_tela,/apps/riob/docs/
+apps/riob/source/server.py,40531,docs_index,GET,/docs/,acao_da_tela,/apps/riob/docs/
+apps/riob/source/server.py,40535,docs_files,GET,/docs/<path:filename>,acao_da_tela,/apps/riob/docs/
+apps/riob/source/server.py,40540,monitor_esxi_proxy,"GET,POST,PUT,PATCH,DELETE,OPTIONS",/monitor/esxi/,fora_do_contrato,Modulo desativado no Rio Branco
+apps/riob/source/server.py,40540,monitor_esxi_proxy,"GET,POST,PUT,PATCH,DELETE,OPTIONS",/monitor/esxi/<path:subpath>,fora_do_contrato,Modulo desativado no Rio Branco
+apps/riob/source/server.py,40545,monitor_cameras_proxy,"GET,POST,PUT,PATCH,DELETE,OPTIONS",/monitor/cameras/,fora_do_contrato,Modulo desativado no Rio Branco
+apps/riob/source/server.py,40545,monitor_cameras_proxy,"GET,POST,PUT,PATCH,DELETE,OPTIONS",/monitor/cameras/<path:subpath>,fora_do_contrato,Modulo desativado no Rio Branco
+apps/riob/source/server.py,40550,monitor_automacao_proxy,"GET,POST,PUT,PATCH,DELETE,OPTIONS",/monitor/automacao/,acao_da_tela,/apps/riob#monitor:automacao
+apps/riob/source/server.py,40550,monitor_automacao_proxy,"GET,POST,PUT,PATCH,DELETE,OPTIONS",/monitor/automacao/<path:subpath>,acao_da_tela,/apps/riob#monitor:automacao
+apps/riob/source/server.py,40554,static_files,GET,/<path:path>,infraestrutura,Shell RioB ou arquivo estatico
+apps/riob/source/server.py,40699,vendas_sellout_historico_api,POST,/api/vendas/sellout/historico,acao_da_tela,/apps/riob#vendas:relatorio
+apps/riob/source/legacy_services.py,990,index,"GET,POST",/importar-xml/,acao_da_tela,/apps/riob-xml/riob
+apps/riob/source/legacy_services.py,1048,importar_com_progresso,POST,/importar-xml/importar-com-progresso,acao_da_tela,/apps/riob-xml/riob
+apps/riob/source/legacy_services.py,1081,status_importacao,GET,/importar-xml/status-importacao/<job_id>,acao_da_tela,/apps/riob-xml/riob
+apps/riob/source/legacy_services.py,1090,config,"GET,POST",/importar-xml/config,acao_da_tela,/apps/riob-xml/riob/config
+apps/riob/source/legacy_services.py,1123,arquivos,GET,/importar-xml/arquivos,acao_da_tela,/apps/riob-xml/riob/arquivos
+apps/riob/source/legacy_services.py,1141,estoque,GET,/importar-xml/estoque,acao_da_tela,/apps/riob-xml/riob/estoque
+apps/riob/source/legacy_services.py,1177,abastecimentos,GET,/importar-xml/abastecimentos,acao_da_tela,/apps/riob-xml/riob/abastecimentos
+apps/riob/source/legacy_services.py,1337,revisar_abastecimento,"GET,POST",/importar-xml/abastecimentos/<int:xml_id>,acao_da_tela,/apps/riob-xml/riob/abastecimentos
+apps/riob/source/legacy_services.py,1567,exportar_estoque,GET,/importar-xml/estoque/exportar,acao_da_tela,/apps/riob-xml/riob/estoque
+apps/riob/source/legacy_services.py,1572,exportar_abastecimentos,GET,/importar-xml/abastecimentos/exportar,acao_da_tela,/apps/riob-xml/riob/abastecimentos
+apps/riob/source/legacy_services.py,4130,index,GET,/gestor-emails/,acao_da_tela,/apps/riob-email/riob/?painel=resumo
+apps/riob/source/legacy_services.py,4213,pagina_importacao,GET,/gestor-emails/importacao,acao_da_tela,/apps/riob-email/riob/importacao
+apps/riob/source/legacy_services.py,4225,pagina_historico,GET,/gestor-emails/historico,acao_da_tela,/apps/riob-email/riob/historico
+apps/riob/source/legacy_services.py,4235,pagina_recuperar,GET,/gestor-emails/recuperar,acao_da_tela,/apps/riob-email/riob/recuperar
+apps/riob/source/legacy_services.py,4244,pagina_backup,GET,/gestor-emails/backup,acao_da_tela,/apps/riob-email/riob/backup
+apps/riob/source/legacy_services.py,4253,exportar_backup,POST,/gestor-emails/backup/download,acao_da_tela,/apps/riob-email/riob/backup
+apps/riob/source/legacy_services.py,4298,fornecedores,"GET,POST",/gestor-emails/fornecedores,acao_da_tela,/apps/riob-email/riob/fornecedores
+apps/riob/source/legacy_services.py,4427,config,"GET,POST",/gestor-emails/config,acao_da_tela,/apps/riob-email/riob/config
+apps/riob/source/legacy_services.py,4582,importar,POST,/gestor-emails/importar,acao_da_tela,/apps/riob-email/riob/?painel=resumo
+apps/riob/source/legacy_services.py,4596,importar_historico_xml,POST,/gestor-emails/importar-historico-xml,acao_da_tela,/apps/riob-email/riob/historico
+apps/riob/source/legacy_services.py,4621,recuperar_conteudo,POST,/gestor-emails/recuperar-conteudo,acao_da_tela,/apps/riob-email/riob/recuperar
+apps/riob/source/legacy_services.py,4655,status_importacao,GET,/gestor-emails/status-importacao,acao_da_tela,/apps/riob-email/riob/?painel=resumo
+apps/riob/source/legacy_services.py,4665,emails_page,GET,/gestor-emails/emails,acao_da_tela,/apps/riob-email/riob/emails
+apps/riob/source/legacy_services.py,4791,email_detail,GET,/gestor-emails/email/<int:email_id>,acao_da_tela,/apps/riob-email/riob/emails
+apps/riob/source/legacy_services.py,4842,anexos_page,GET,/gestor-emails/anexos,acao_da_tela,/apps/riob-email/riob/anexos
+apps/riob/source/legacy_services.py,4868,download,GET,/gestor-emails/download/<int:attachment_id>,acao_da_tela,/apps/riob-email/riob/anexos
+apps/riob/source/gestao_processos_compras.py,326,processes_api,"GET,POST",/api/processos-internos,acao_da_tela,/apps/riob#processos
+apps/riob/source/gestao_processos_compras.py,353,process_item_api,"PUT,DELETE",/api/processos-internos/<int:item_id>,acao_da_tela,/apps/riob#processos
+apps/riob/source/gestao_processos_compras.py,388,process_types_api,"GET,POST",/api/processos-internos/tipos,acao_da_tela,/apps/riob#cadastros:processos_tipos
+apps/riob/source/gestao_processos_compras.py,410,process_type_item_api,"PUT,DELETE",/api/processos-internos/tipos/<int:item_id>,acao_da_tela,/apps/riob#cadastros:processos_tipos
+apps/riob/source/gestao_processos_compras.py,546,purchases_api,"GET,POST",/api/compras/solicitacoes,acao_da_tela,/apps/riob#workflow:compras
+apps/riob/source/gestao_processos_compras.py,574,purchase_item_api,"PUT,DELETE",/api/compras/solicitacoes/<int:item_id>,acao_da_tela,/apps/riob#workflow:compras
+apps/riob/source/gestao_processos_compras.py,736,purchase_forecast_api,GET,/api/compras/previsao,acao_da_tela,/apps/riob#compras:previsao
+apps/riob/source/gestao_processos_compras.py,740,purchase_product_config_api,PUT,/api/compras/produtos/<int:product_id>/config,acao_da_tela,/apps/riob#workflow:compras
+apps/riob/source/gestao_processos_compras.py,806,purchase_suppliers_api,"GET,POST",/api/compras/fornecedores,acao_da_tela,/apps/riob#cadastros:compras_fornecedores
+apps/riob/source/gestao_processos_compras.py,843,purchase_supplier_item_api,"PUT,DELETE",/api/compras/fornecedores/<int:supplier_id>,acao_da_tela,/apps/riob#cadastros:compras_fornecedores
+apps/riob/source/gestao_processos_compras.py,869,purchase_supplier_contact_api,PATCH,/api/compras/fornecedores/<int:supplier_id>/contato,acao_da_tela,/apps/riob#cadastros:compras_fornecedores
+apps/riob/source/gestao_processos_compras.py,885,process_dashboard_api,GET,/api/dashboard_processos,acao_da_tela,/apps/riob#dashboard:processos
+apps/riob/source/gestao_processos_compras.py,889,purchase_dashboard_api,GET,/api/dashboard_compras,acao_da_tela,/apps/riob#dashboard:compras
+apps/riob/source/gestao_processos_compras.py,919,process_report_api,GET,/api/processos-internos/relatorio,acao_da_tela,/apps/riob#relatorios:processos
+apps/riob/source/gestao_processos_compras.py,923,process_report_pdf_api,GET,/api/processos-internos/relatorio/pdf,acao_da_tela,/apps/riob#relatorios:processos
+apps/riob/source/gestao_processos_compras.py,930,purchase_report_api,GET,/api/compras/relatorio,acao_da_tela,/apps/riob#relatorios:compras
+apps/riob/source/gestao_processos_compras.py,934,purchase_report_pdf_api,GET,/api/compras/relatorio/pdf,acao_da_tela,/apps/riob#relatorios:compras
+apps/riob/source/estoque_contagem.py,113,conferir,POST,/api/estoque/contagens/conferir,acao_da_tela,/apps/riob#estoque:contagem
+apps/riob/source/estoque_contagem.py,163,finalizar,POST,/api/estoque/contagens/<int:cid>/finalizar,acao_da_tela,/apps/riob#estoque:contagem
+apps/riob/source/estoque_contagem.py,252,relatorio,GET,/api/estoque/contagens/relatorio,acao_da_tela,/apps/riob#relatorios:contagens
+apps/riob/source/estoque_contagem.py,258,pdf,GET,/api/estoque/contagens/relatorio/pdf,acao_da_tela,/apps/riob#relatorios:contagens
+apps/automacao/source/app.py,37,dashboard,GET,/,acao_da_tela,/apps/automacao/
+apps/automacao/source/app.py,83,maquinas,GET,/maquinas,acao_da_tela,/apps/automacao/maquinas
+apps/automacao/source/app.py,109,detalhe_maquina,GET,/maquinas/<slug>,acao_da_tela,/apps/automacao/maquinas
+apps/automacao/source/app.py,145,documentacao,GET,/documentacao,acao_da_tela,/apps/automacao/documentacao
+apps/automacao/source/app.py,157,cadastrar_documento,"GET,POST",/documentacao/cadastrar,acao_da_tela,/apps/automacao/documentacao
+apps/automacao/source/app.py,204,arquivo_documento,GET,/documentacao/arquivos/<int:documento_id>,acao_da_tela,/apps/automacao/documentacao
+apps/automacao/source/app.py,227,documento_maquina,GET,/documentacao/<slug>,acao_da_tela,/apps/automacao/documentacao
+apps/automacao/source/app.py,235,api_maquinas,GET,/api/maquinas,acao_da_tela,/apps/automacao/maquinas
+apps/automacao/source/app.py,262,api_ultima_leitura_maquina,GET,/api/maquinas/<slug>/ultima,acao_da_tela,/apps/automacao/maquinas
+apps/automacao/source/app.py,281,api_receber_leitura_maquina,POST,/api/maquinas/<slug>/leituras,acao_da_tela,/apps/automacao/maquinas
+apps/automacao/source/app.py,369,editar_motor,GET,/motor/editar/<int:id>,acao_da_tela,/apps/automacao/motores
+apps/automacao/source/app.py,393,salvar_motor,POST,/motor/salvar/<int:id>,acao_da_tela,/apps/automacao/motores
+apps/automacao/source/app.py,422,ultima,GET,/api/ultima,acao_da_tela,/apps/automacao/motores
+apps/automacao/source/app.py,445,excluir_motor,GET,/motor/excluir/<int:id>,acao_da_tela,/apps/automacao/motores
+apps/automacao/source/app.py,460,motores,GET,/motores,acao_da_tela,/apps/automacao/motores
+apps/automacao/source/app.py,490,novo_motor,POST,/motor/novo,acao_da_tela,/apps/automacao/motores
+apps/automacao/source/app.py,513,historico,GET,/historico,acao_da_tela,/apps/automacao/historico
+apps/automacao/source/app.py,535,alarmes,GET,/alarmes,acao_da_tela,/apps/automacao/alarmes
+apps/automacao/source/app.py,553,setores,GET,/setores,acao_da_tela,/apps/automacao/setores
+apps/automacao/source/app.py,571,novo_setor,POST,/setor/novo,acao_da_tela,/apps/automacao/setores
+apps/automacao/source/app.py,593,tempo_real,GET,/tempo-real,acao_da_tela,/apps/automacao/tempo-real
+apps/automacao/source/app.py,615,api_tempo_real,GET,/api/tempo-real,acao_da_tela,/apps/automacao/tempo-real
+apps/automacao/source/app.py,666,sensores,GET,/sensores,acao_da_tela,/apps/automacao/sensores/drivers
+apps/automacao/source/app.py,671,sensores_drivers,GET,/sensores/drivers,acao_da_tela,/apps/automacao/sensores/drivers
+apps/automacao/source/app.py,701,novo_driver,POST,/sensores/drivers/novo,acao_da_tela,/apps/automacao/sensores/drivers
+apps/automacao/source/app.py,746,detalhe_driver,GET,/sensores/drivers/<int:id>,acao_da_tela,/apps/automacao/sensores/drivers
+apps/automacao/source/app.py,805,salvar_driver,POST,/sensores/drivers/<int:id>/salvar,acao_da_tela,/apps/automacao/sensores/drivers
+apps/automacao/source/app.py,845,excluir_driver,GET,/sensores/drivers/<int:id>/excluir,acao_da_tela,/apps/automacao/sensores/drivers
+apps/automacao/source/app.py,864,ler_driver_agora,POST,/sensores/drivers/<int:id>/ler-agora,acao_da_tela,/apps/automacao/sensores/drivers
+apps/automacao/source/app.py,875,nova_tag_driver,POST,/sensores/drivers/<int:id>/tags/novo,acao_da_tela,/apps/automacao/sensores/drivers
+apps/automacao/source/app.py,910,excluir_tag_driver,GET,/sensores/drivers/tags/<int:tag_id>/excluir,acao_da_tela,/apps/automacao/sensores/drivers
+apps/automacao/source/app.py,939,api_ultima_leitura_driver,GET,/api/sensores/drivers/<int:id>/ultima,acao_da_tela,/apps/automacao/sensores/drivers
+apps/automacao/source/app.py,963,api_ler_driver,POST,/api/sensores/drivers/<int:id>/ler,acao_da_tela,/apps/automacao/sensores/drivers
+apps/automacao/source/app.py,970,receber_leitura,POST,/api/leitura,acao_da_tela,/apps/automacao/motores
+apps/zap/source/app/routes.py,446,index,GET,/,acao_da_tela,/apps/zap
+apps/zap/source/app/routes.py,463,login,"GET,POST",/login,integracao,Sessao/WhatsApp/Google; nao e pagina de menu
+apps/zap/source/app/routes.py,479,logout,GET,/logout,integracao,Sessao/WhatsApp/Google; nao e pagina de menu
+apps/zap/source/app/routes.py,489,settings,GET,/settings,acao_da_tela,/apps/zap/settings
+apps/zap/source/app/routes.py,534,calendar,GET,/calendar,acao_da_tela,/apps/zap/calendar
+apps/zap/source/app/routes.py,534,calendar,GET,/agenda,acao_da_tela,/apps/zap/calendar
+apps/zap/source/app/routes.py,566,docs,GET,/docs,acao_da_tela,/apps/zap/docs
+apps/zap/source/app/routes.py,572,api_dashboard,GET,/api/dashboard,acao_da_tela,/apps/zap
+apps/zap/source/app/routes.py,621,api_integration_status,GET,/api/integrations/status,acao_da_tela,/apps/zap/settings
+apps/zap/source/app/routes.py,627,api_create_ticket,POST,/api/tickets,acao_da_tela,/apps/zap
+apps/zap/source/app/routes.py,681,api_update_ticket,PATCH,/api/tickets/<int:ticket_id>,acao_da_tela,/apps/zap
+apps/zap/source/app/routes.py,711,api_delete_ticket,DELETE,/api/tickets/<int:ticket_id>,acao_da_tela,/apps/zap
+apps/zap/source/app/routes.py,726,api_get_ticket,GET,/api/tickets/<int:ticket_id>,acao_da_tela,/apps/zap
+apps/zap/source/app/routes.py,780,api_ticket_read,POST,/api/tickets/<int:ticket_id>/read,acao_da_tela,/apps/zap
+apps/zap/source/app/routes.py,789,api_ticket_labels,POST,/api/tickets/<int:ticket_id>/labels,acao_da_tela,/apps/zap
+apps/zap/source/app/routes.py,800,api_add_message,POST,/api/messages,acao_da_tela,/apps/zap
+apps/zap/source/app/routes.py,826,api_ticket_message,POST,/api/tickets/<int:ticket_id>/messages,acao_da_tela,/apps/zap
+apps/zap/source/app/routes.py,898,api_upload,POST,/api/uploads,acao_da_tela,/apps/zap
+apps/zap/source/app/routes.py,912,uploaded_file,GET,/uploads/<path:filename>,acao_da_tela,/apps/zap
+apps/zap/source/app/routes.py,918,public_uploaded_file,GET,/public/uploads/<path:filename>,integracao,Sessao/WhatsApp/Google; nao e pagina de menu
+apps/zap/source/app/routes.py,925,api_poll_messages,GET,/api/messages/poll,acao_da_tela,/apps/zap
+apps/zap/source/app/routes.py,960,api_save_setting,POST,/api/settings,acao_da_tela,/apps/zap/settings
+apps/zap/source/app/routes.py,973,api_save_settings_bulk,POST,/api/settings/bulk,acao_da_tela,/apps/zap/settings
+apps/zap/source/app/routes.py,990,api_database_backup_push,POST,/api/database/backup/push,acao_da_tela,/apps/zap/settings
+apps/zap/source/app/routes.py,1023,api_database_backup_pull,POST,/api/database/backup/pull,acao_da_tela,/apps/zap/settings
+apps/zap/source/app/routes.py,1057,api_create_user,POST,/api/users,acao_da_tela,/apps/zap/settings
+apps/zap/source/app/routes.py,1083,api_update_user,PATCH,/api/users/<int:user_id>,acao_da_tela,/apps/zap/settings
+apps/zap/source/app/routes.py,1109,api_save_state,POST,/api/config/states,acao_da_tela,/apps/zap/settings
+apps/zap/source/app/routes.py,1130,api_save_department,POST,/api/config/departments,acao_da_tela,/apps/zap/settings
+apps/zap/source/app/routes.py,1149,api_save_label,POST,/api/config/labels,acao_da_tela,/apps/zap/settings
+apps/zap/source/app/routes.py,1161,api_save_quick_reply,POST,/api/config/quick-replies,acao_da_tela,/apps/zap/settings
+apps/zap/source/app/routes.py,1177,api_agenda_sync,POST,/api/agenda/sync,acao_da_tela,/apps/zap/calendar
+apps/zap/source/app/routes.py,1193,api_agenda_preview,GET,/api/agenda/preview,acao_da_tela,/apps/zap/calendar
+apps/zap/source/app/routes.py,1205,api_run_reminders,POST,/api/reminders/run,acao_da_tela,/apps/zap/settings
+apps/zap/source/app/routes.py,1256,api_whatsapp_send,POST,/api/whatsapp/send,acao_da_tela,/apps/zap
+apps/zap/source/app/routes.py,1364,google_callback,GET,/integrations/google/callback,integracao,Sessao/WhatsApp/Google; nao e pagina de menu
+apps/zap/source/app/routes.py,1374,whatsapp_webhook,"GET,POST",/webhooks/whatsapp,integracao,Sessao/WhatsApp/Google; nao e pagina de menu

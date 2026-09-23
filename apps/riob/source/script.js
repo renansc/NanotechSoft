@@ -2279,13 +2279,13 @@ function toggleRelatoriosSubmenu(ev){
 function openRelatoriosView(ev, view = "estoque_comprometido"){
   if (ev) { ev.preventDefault(); ev.stopPropagation(); }
   const menu = document.querySelector('.menu-item.has-submenu[data-tab="relatorios"]');
-  window.__relatoriosView = ["estoque_comprometido", "processos", "compras", "orcamentos"].includes(view) ? view : "estoque_comprometido";
+  window.__relatoriosView = ["estoque_comprometido", "processos", "compras", "orcamentos", "contagens", "cargas_semana"].includes(view) ? view : "estoque_comprometido";
   showTab("relatorios", menu);
   _fecharSubmenuAposNavegacao(menu);
 }
 
 function setRelatoriosView(view = "estoque_comprometido"){
-  const nextView = ["estoque_comprometido", "processos", "compras", "orcamentos"].includes(view) ? view : "estoque_comprometido";
+  const nextView = ["estoque_comprometido", "processos", "compras", "orcamentos", "contagens", "cargas_semana"].includes(view) ? view : "estoque_comprometido";
   window.__relatoriosView = nextView;
   document.querySelectorAll("#submenuRelatorios .submenu-item").forEach((item) => {
     item.classList.toggle("active", item.dataset.relatoriosView === nextView);
@@ -2294,7 +2294,15 @@ function setRelatoriosView(view = "estoque_comprometido"){
   document.getElementById("relatoriosViewProcessos")?.classList.toggle("hidden", nextView !== "processos");
   document.getElementById("relatoriosViewCompras")?.classList.toggle("hidden", nextView !== "compras");
   document.getElementById("relatoriosViewOrcamentos")?.classList.toggle("hidden", nextView !== "orcamentos");
-  if (nextView === "orcamentos") {
+  document.getElementById("relatoriosViewContagens")?.classList.toggle("hidden", nextView !== "contagens");
+  document.getElementById("vendasDiarioCargasSemana")?.classList.toggle("hidden", nextView !== "cargas_semana");
+  if (nextView === "cargas_semana") {
+    const semana = document.getElementById("vendasDiarioSemana");
+    if (semana && !semana.value) semana.value = _semanaIsoVendasDiario();
+    carregarCargasSemanaVendasDiario();
+  } else if (nextView === "contagens") {
+    carregarRelatorioContagens(1);
+  } else if (nextView === "orcamentos") {
     carregarRelatorioOrcamentos(1);
   } else if (nextView === "estoque_comprometido") {
     carregarRelatorioEstoqueComprometido().catch((erro) => console.warn("relatorio estoque comprometido erro:", erro));
@@ -2374,9 +2382,12 @@ function setDashboardView(view){
 async function carregarDashboardVendasDiario(){
   const inputInicio = document.getElementById("dashVendasDiarioDataInicio");
   const inputFim = document.getElementById("dashVendasDiarioDataFim");
+  const clienteSelect = document.getElementById("dashVendasDiarioCliente");
+  const clienteFiltro = clienteSelect?.value || "";
   const params = new URLSearchParams();
   if (inputInicio?.value) params.set("data_inicio", inputInicio.value);
   if (inputFim?.value) params.set("data_fim", inputFim.value);
+  if (clienteFiltro) params.set("cliente", clienteFiltro);
   const resp = await apiFetch(`/api/vendas/diario/dashboard${params.toString() ? `?${params}` : ""}`);
   const data = await resp.json().catch(() => ({}));
   const info = document.getElementById("dashVendasDiarioInfo");
@@ -2388,10 +2399,11 @@ async function carregarDashboardVendasDiario(){
   const dataFim = data?.periodo?.data_fim || data.data_ref || "";
   if (inputInicio && dataInicio) inputInicio.value = dataInicio;
   if (inputFim && dataFim) inputFim.value = dataFim;
+  _vendasPreencherSelectClientes(data?.clientes_disponiveis || [], data?.filtros?.cliente || clienteFiltro, "dashVendasDiarioCliente", "Todos os clientes");
   if (info) info.textContent = dataInicio
     ? (dataInicio === dataFim
-      ? `Posição de ${dataInicio.split("-").reverse().join("/")}.`
-      : `Período de ${dataInicio.split("-").reverse().join("/")} a ${dataFim.split("-").reverse().join("/")}.`)
+      ? `Posição de ${dataInicio.split("-").reverse().join("/")}${clienteFiltro ? " para o cliente selecionado" : ""}.`
+      : `Período de ${dataInicio.split("-").reverse().join("/")} a ${dataFim.split("-").reverse().join("/")}${clienteFiltro ? " para o cliente selecionado" : ""}.`)
     : "Nenhuma venda diária importada.";
   const resumo = data?.resumo || {};
   const cards = document.getElementById("dashVendasDiarioCards");
@@ -2535,10 +2547,20 @@ function renderDashboardMixEmbalagens(payload = {}) {
   _dashboardVendasRenderMixEmbalagens(payload);
 }
 
+async function _vendasCarregarMeses(selectId) {
+  const resp = await apiFetch("/api/vendas/meses");
+  const data = await resp.json();
+  if (!resp.ok) throw new Error(data.erro || "Falha ao consultar meses de vendas.");
+  const atual = document.getElementById(selectId)?.value || "";
+  _vendasPreencherSelectMeses(data.meses_disponiveis || [], atual || data.mes_atual || "", selectId);
+  return document.getElementById(selectId)?.value || "";
+}
+
 async function carregarDashboardBonificacoes(force = false) {
   const infoEl = document.getElementById("dashVendasArquivoInfo");
   if (infoEl) infoEl.textContent = "Carregando dashboard de bonificações...";
-  const resp = await apiFetch("/api/vendas/relatorio?tipo_relatorio=bonificacoes");
+  const mes = await _vendasCarregarMeses("dashVendasMes");
+  const resp = await apiFetch(`/api/vendas/relatorio?tipo_relatorio=bonificacoes&mes=${encodeURIComponent(mes)}`);
   const data = await resp.json().catch(() => ({}));
   if (!resp.ok) {
     const erro = data?.erro || "Falha ao carregar dashboard de bonificações.";
@@ -2552,7 +2574,8 @@ async function carregarDashboardBonificacoes(force = false) {
 async function carregarDashboardVariacao(force = false) {
   const infoEl = document.getElementById("dashVendasArquivoInfo");
   if (infoEl) infoEl.textContent = "Carregando dashboard de variação de preço...";
-  const resp = await apiFetch("/api/vendas/relatorio?tipo_relatorio=variacao_preco");
+  const mes = await _vendasCarregarMeses("dashVendasMes");
+  const resp = await apiFetch(`/api/vendas/relatorio?tipo_relatorio=variacao_preco&mes=${encodeURIComponent(mes)}`);
   const data = await resp.json().catch(() => ({}));
   if (!resp.ok) {
     const erro = data?.erro || "Falha ao carregar dashboard de variação de preço.";
@@ -2566,7 +2589,8 @@ async function carregarDashboardVariacao(force = false) {
 async function carregarDashboardMixEmbalagens(force = false) {
   const infoEl = document.getElementById("dashVendasArquivoInfo");
   if (infoEl) infoEl.textContent = "Carregando dashboard de grupos embalagem...";
-  const resp = await apiFetch("/api/vendas/relatorio?tipo_relatorio=grupos_embalagem");
+  const mes = await _vendasCarregarMeses("dashVendasMes");
+  const resp = await apiFetch(`/api/vendas/relatorio?tipo_relatorio=grupos_embalagem&mes=${encodeURIComponent(mes)}`);
   const data = await resp.json().catch(() => ({}));
   if (!resp.ok) {
     const erro = data?.erro || "Falha ao carregar dashboard de grupos embalagem.";
@@ -2783,6 +2807,7 @@ function openWorkflowView(ev, view){
     ? "vendasDiarioWorkflow"
     : (targetView === "compras" ? "comprasGestao" : targetView);
   if (targetView === "compras") window.__comprasView = "kanban";
+  if (targetView === "comissao") window.__comissaoView = "lancamento";
   showTab(targetTab, menu);
   document.querySelectorAll("#submenuWorkflow .submenu-item").forEach((item) => {
     item.classList.toggle("active", item.dataset.workflowView === targetView);
@@ -2909,6 +2934,10 @@ function toggleGestaoFrotaSubmenu(ev){
 function openGestaoFrotaView(ev, view){
   if (ev){ ev.preventDefault(); ev.stopPropagation(); }
   const menu = document.querySelector('.menu-item.has-submenu[data-tab="gestaofrota"]');
+  if (["manutencao", "oleo", "pneu", "abastecimento", "lavagem"].includes(view)) {
+    window.__gestaoRegistroView = view;
+    view = "registrar";
+  }
   window.__gestaoView = view;
   showTab("gestaofrota", menu);
 
@@ -3089,12 +3118,13 @@ function openVendasView(ev, view){
   }
   const menu = document.querySelector('.menu-item.has-submenu[data-tab="vendas"]');
   document.querySelectorAll("#submenuVendas .submenu-item").forEach((x) => x.classList.remove("active"));
-  const relatorioModo = ["relatorio_anual", "vendas_anual", "percentual_vendas_anual"].includes(rawView) ? "vendas_anual" : "";
-  const targetView = rawView === "pontosvenda" ? "pontosvenda" : (rawView === "orcamento" ? "orcamento" : "relatorio");
+  const relatorioModo = ["relatorio_anual", "vendas_anual", "percentual_vendas_anual"].includes(rawView)
+    ? "vendas_anual" : (["variacao_preco", "grupos_embalagem", "preco_medio"].includes(rawView) ? rawView : "bonificacoes");
+  const targetView = ["pontosvenda", "pontosvenda_relatorio", "pontosvenda_importar"].includes(rawView) ? "pontosvenda" : (rawView === "orcamento" ? "orcamento" : "relatorio");
   const itemAtivo = document.querySelector(`#submenuVendas .submenu-item[data-vendas-view="${targetView}"]`);
 
   if (targetView === "pontosvenda") {
-    window.__pontosVendaView = "cadastro";
+    window.__pontosVendaView = rawView === "pontosvenda_relatorio" ? "relatorio" : (rawView === "pontosvenda_importar" ? "importar" : "cadastro");
     showTab("pontosvenda", menu);
     if (itemAtivo) itemAtivo.classList.add("active");
   } else {
@@ -3400,8 +3430,11 @@ async function carregarListaOrcamentosVendas(){
 
 async function carregarVendasDiario(){
   const dataInput = document.getElementById("vendasDiarioData");
+  const clienteInput = document.getElementById("vendasDiarioCliente");
+  const clienteFiltro = clienteInput?.value || "";
   const params = new URLSearchParams();
   if (dataInput?.value) params.set("data", dataInput.value);
+  if (clienteFiltro) params.set("cliente", clienteFiltro);
   const resp = await apiFetch(`/api/vendas/diario${params.toString() ? `?${params}` : ""}`);
   const data = await resp.json().catch(() => ({}));
   const info = document.getElementById("vendasDiarioInfo");
@@ -3410,6 +3443,7 @@ async function carregarVendasDiario(){
     return;
   }
   if (dataInput && data.data_ref) dataInput.value = data.data_ref;
+  _vendasPreencherSelectClientes(data?.clientes_disponiveis || [], data?.filtros?.cliente || clienteFiltro, "vendasDiarioCliente", "Todos os clientes");
   if (info) info.textContent = `TXT: ${data?.importacao?.diretorio_txt || data?.importacao?.diretorio || "-"} | PDF: ${data?.importacao?.diretorio_pdf || "-"} | Importacao automatica: ${data?.importacao?.horario || "08:00"}`;
   const resumo = data?.resumo || {};
   const cards = document.getElementById("vendasDiarioResumo");
@@ -3552,10 +3586,10 @@ function _semanaIsoVendasDiario(dataValor){
 }
 
 function abrirCargasSemanaVendasDiario(){
+  openRelatoriosView(null, "cargas_semana");
   const painel = document.getElementById("vendasDiarioCargasSemana");
   const semanaInput = document.getElementById("vendasDiarioSemana");
   if (!painel || !semanaInput) return;
-  painel.classList.remove("hidden");
   if (!semanaInput.value) {
     const datas = (window.__vendasDiarioKanbanCards || [])
       .map((item) => String(item?.data_ref || ""))
@@ -3563,7 +3597,6 @@ function abrirCargasSemanaVendasDiario(){
       .sort();
     semanaInput.value = _semanaIsoVendasDiario(datas.at(-1) || "");
   }
-  carregarCargasSemanaVendasDiario();
   painel.scrollIntoView({behavior: "smooth", block: "start"});
   try { semanaInput.showPicker?.(); } catch {}
 }
@@ -3760,8 +3793,8 @@ function selecionarArquivoVendasDiario(){
 
 async function importarVendasDiario(){
   const info = document.getElementById("vendasDiarioInfo");
-  if (info) info.textContent = "Importando arquivos TXT...";
   const arquivo = document.getElementById("vendasDiarioArquivo")?.files?.[0];
+  if (info) info.textContent = arquivo ? "Importando arquivo TXT..." : "Lendo pastas TXT, PDF e SELLOUT mensal...";
   const options = {method: "POST"};
   if (arquivo) {
     const form = new FormData();
@@ -3774,19 +3807,33 @@ async function importarVendasDiario(){
     if (info) info.textContent = data?.erro || "Falha ao importar vendas diario.";
     return;
   }
+  if (data?.processando) {
+    if (info) info.textContent = "Ja existe uma leitura de pastas em andamento. Aguarde e tente novamente.";
+    return;
+  }
   const imported = (data?.resultados || []).filter((item) => item.status === "importado").length;
   const txtCount = Number(data?.txt?.arquivos || 0);
   const pdfCount = Number(data?.pdf?.arquivos || 0);
   const importedDate = String(data?.data_ref || "");
   const dateInput = document.getElementById("vendasDiarioData");
   if (dateInput && importedDate) dateInput.value = importedDate;
-  if (info) info.textContent = txtCount || pdfCount
-    ? `${imported} novo(s) importado(s). Lidos ${txtCount} TXT e ${pdfCount} PDF.`
-    : `${imported} arquivo(s) novo(s) importado(s).`;
+  const sellout = data?.sellout;
+  const selloutStatus = {
+    importado: "SELLOUT mensal atualizado.",
+    ja_importado: "SELLOUT mensal sem alteracoes.",
+    processando: "SELLOUT mensal em processamento por outra leitura; tente novamente ao terminar.",
+    desabilitado: "SELLOUT mensal desabilitado em Configurar > Vendas.",
+    erro: `Falha ao ler SELLOUT mensal: ${sellout?.erro || "consulte os logs"}. Base anterior preservada.`,
+  };
+  const importMessage = arquivo
+    ? `${imported} arquivo(s) novo(s) importado(s).`
+    : `${imported} novo(s) importado(s). Lidos ${txtCount} TXT e ${pdfCount} PDF. ${selloutStatus[sellout?.status] || ""}`;
+  if (info) info.textContent = importMessage;
   const input = document.getElementById("vendasDiarioArquivo");
   if (input) input.value = "";
   selecionarArquivoVendasDiario();
   await carregarVendasDiario();
+  if (info) info.textContent = importMessage;
 }
 
 async function importarVendasDiarioPasta(){
@@ -4057,6 +4104,7 @@ function renderDashboardVendas(payload = {}) {
 function setPontosVendaView(view){
   window.__pontosVendaView = view;
   pontosVendaState.view = view;
+  document.getElementById("pontosVendaViewImportar")?.classList.toggle("hidden", view !== "importar");
   const vCadastro = document.getElementById("pontosVendaViewCadastro");
   const vRelatorio = document.getElementById("pontosVendaViewRelatorio");
   if (vCadastro) vCadastro.classList.toggle("hidden", view !== "cadastro");
@@ -4446,6 +4494,7 @@ function renderRelatorioVendas(payload = {}){
   const meses = Array.isArray(payload?.meses_disponiveis) ? payload.meses_disponiveis : [];
   const resumo = payload?.resumo_geral || {};
   const vendedores = Array.isArray(payload?.vendedores) ? payload.vendedores : [];
+  const vendedoresDisponiveis = Array.isArray(payload?.vendedores_disponiveis) ? payload.vendedores_disponiveis : vendedores;
   const cidades = Array.isArray(payload?.cidades) ? payload.cidades : [];
   const produtos = Array.isArray(payload?.produtos) ? payload.produtos : [];
   const detalhes = Array.isArray(payload?.detalhes_vendedor) ? payload.detalhes_vendedor : [];
@@ -4463,9 +4512,10 @@ function renderRelatorioVendas(payload = {}){
     tipoSelect.value = tipoRelatorio;
   }
   _vendasPreencherSelectMeses(meses, mesAtual, "vendasRelMes");
-  _vendasPreencherSelectVendedores(vendedores, vendedorFiltro);
+  _vendasPreencherSelectVendedores(vendedoresDisponiveis, vendedorFiltro);
 
   if (tipoRelatorio === "resumo" || tipoRelatorio === "bonificacoes") {
+    _vendasPreencherSelectClientes(clientesDisponiveis, clienteFiltro, "vendasRelCliente", "Todos os clientes");
     const infoEl = document.getElementById("vendasRelArquivoInfo");
     if (infoEl) {
       const parts = [];
@@ -4473,6 +4523,7 @@ function renderRelatorioVendas(payload = {}){
       parts.push(`Atualizado em: ${arquivo.atualizado_em || "-"}`);
       parts.push(`Mês: ${_vendasMesLabelTexto(mesAtual)}`);
       if (vendedorFiltro) parts.push(`Vendedor: ${vendedorFiltro}`);
+      if (clienteFiltro) parts.push(`Cliente: ${clienteFiltro}`);
       infoEl.textContent = parts.join(" | ");
     }
 
@@ -4505,10 +4556,11 @@ function renderRelatorioVendas(payload = {}){
 
     const detalhesHint = document.getElementById("vendasRelDetalhesHint");
     if (detalhesHint) {
-      if (vendedorFiltro) {
-        detalhesHint.textContent = `Mostrando detalhe individual para ${vendedorFiltro} no mês ${_vendasMesLabelTexto(mesAtual)}.`;
+      if (vendedorFiltro || clienteFiltro) {
+        const alvo = [vendedorFiltro ? `vendedor ${vendedorFiltro}` : "", clienteFiltro ? `cliente ${clienteFiltro}` : ""].filter(Boolean).join(" e ");
+        detalhesHint.textContent = `Mostrando detalhe para ${alvo} no mês ${_vendasMesLabelTexto(mesAtual)}.`;
       } else {
-        detalhesHint.textContent = "Selecione vendedor para ver o detalhe individual.";
+        detalhesHint.textContent = "Selecione vendedor ou cliente para ver o detalhe individual.";
       }
     }
 
@@ -4527,7 +4579,7 @@ function renderRelatorioVendas(payload = {}){
           <td>${_escHtml(_fmtMoneyVendas(item.bonificacao))}</td>
           <td>${_escHtml(_fmtMoneyVendas(item.valor_liquido))}</td>
         </tr>
-      `).join("") : '<tr><td colspan="10">Selecione vendedor para carregar os detalhes.</td></tr>';
+      `).join("") : '<tr><td colspan="10">Selecione vendedor ou cliente para carregar os detalhes.</td></tr>';
     }
     return;
   }
@@ -4848,6 +4900,7 @@ async function carregarRelatorioVendas(){
   const infoEl = document.getElementById("vendasRelArquivoInfo");
   if (infoEl) infoEl.textContent = "Carregando relatorios vendas...";
 
+  await _vendasCarregarMeses("vendasRelMes");
   const params = new URLSearchParams();
   const tipoRelatorio = "bonificacoes";
   const mes = document.getElementById("vendasRelMes")?.value || vendasState.mes || "";
@@ -5038,7 +5091,7 @@ function _vendasPreencherSelectMeses(meses, selected = "", selectId = "vendasRel
   const current = String(selected || select.value || "");
   const values = Array.isArray(meses) ? meses : [];
   const fallbackValues = values.length ? values : (current ? [current] : []);
-  const options = ['<option value="">Último mês processado</option>'].concat(
+  const options = ['<option value="">Último mês disponível</option>'].concat(
     fallbackValues.map((mes) => `<option value="${_escHtml(mes)}">${_escHtml(_vendasMesLabelTexto(mes))}</option>`)
   );
   select.innerHTML = options.join("");
@@ -5796,11 +5849,11 @@ function toggleConfigSubmenu(ev){
 function openConfigView(ev, view){
   if (ev){ ev.preventDefault(); ev.stopPropagation(); }
   const menu = document.querySelector('.menu-item.has-submenu[data-tab="config"]');
-  window.__configView = (view === "logs" || view === "cameras" || view === "sip" || view === "nfe" || view === "vendas") ? view : "status";
+  window.__configView = (view === "orcamentos" || view === "base_vendas" || view === "backup" || view === "logs" || view === "cameras" || view === "sip" || view === "nfe" || view === "vendas") ? view : "status";
   showTab("config", menu);
 
   document.querySelectorAll("#submenuConfig .submenu-item").forEach(x=>x.classList.remove("active"));
-  const map = { status: 0, logs: 1, cameras: 2, sip: 3, nfe: 4, vendas: 5 };
+  const map = { status: 0, logs: 1, cameras: 2, sip: 3, nfe: 4, vendas: 5, backup: 6, orcamentos: 7, base_vendas: 8 };
   const target = map[window.__configView] ?? 0;
   const items = document.querySelectorAll("#submenuConfig .submenu-item");
   if (items && items[target]) items[target].classList.add("active");
@@ -6221,6 +6274,10 @@ function _vendasConfigAtualizarRegras(regras = null) {
 
 function preencherConfigVendas(cfg = {}, fonte = {}, imports = [], meta = {}){
   vendasConfigState = cfg || {};
+  const continua = cfg.active_cache_id === "sellout-mensal-continuo";
+  document.querySelectorAll("[data-vendas-legado]").forEach(el => el.classList.toggle("hidden", continua));
+  const fluxo = document.getElementById("vendasConfigFluxo");
+  if (fluxo) fluxo.textContent = continua ? "Base contínua no banco. O SELLOUT é verificado automaticamente; o histórico já incorporado permanece disponível." : "Importe o arquivo de vendas para iniciar.";
   _vendasCacheLocalAtualizarAtivo(cfg?.active_cache_id || "");
   const habilitado = document.getElementById("vendasConfigHabilitado");
   const sourceType = document.getElementById("vendasConfigSourceType");
@@ -6239,24 +6296,29 @@ function preencherConfigVendas(cfg = {}, fonte = {}, imports = [], meta = {}){
       : `Configuracao pronta para preenchimento. Origem: ${cfg.source_type || "-"}`;
   }
   if (fonteEl) {
-    const nome = fonte?.name || fonte?.path || fonte?.message || "-";
+    const nome = continua ? "SELLOUT_M.CSV — atualização automática" : (fonte?.name || fonte?.path || fonte?.message || "-");
     fonteEl.textContent = `Fonte atual: ${nome}`;
   }
   if (body) {
     const rows = Array.isArray(imports) ? imports : [];
     body.innerHTML = rows.length ? rows.map((item) => `
       <tr>
-        <td><input type="checkbox" ${item.active ? "checked" : ""} onchange="ativarCacheVendas('${_escJsString(item.id || "")}', this.checked)"></td>
-        <td>${_escHtml(item.source_name || "-")}</td>
+        <td>${continua ? "Em uso" : `<input type="checkbox" ${item.active ? "checked" : ""} onchange="ativarCacheVendas('${_escJsString(item.id || "")}', this.checked)">`}</td>
+        <td>${_escHtml(continua ? "Base contínua de vendas" : (item.source_name || "-"))}</td>
         <td>${_escHtml(_fmtNumVendas(item.rows_importadas || 0))}</td>
-        <td>${_escHtml(item.importado_em || "-")}</td>
+        <td>${_escHtml(item.updated_at || item.importado_em || "-")}</td>
         <td>${_escHtml(item.cache_exists ? `${item.status || "-"} | cache pronto` : (item.status || "-"))}</td>
-        <td><button type="button" onclick="excluirCacheVendas('${_escJsString(item.id || "")}')">Excluir</button></td>
+        <td>${continua ? "Automático" : `<button type="button" onclick="excluirCacheVendas('${_escJsString(item.id || "")}')">Excluir</button>`}</td>
       </tr>
     `).join("") : '<tr><td colspan="6">Nenhum cache importado ainda.</td></tr>';
   }
   _vendasConfigAtualizarRegras(meta?.regras_importacao || null);
   _vendasConfigAtualizarIndicador(cfg, fonte, imports, meta);
+  if (continua) {
+    if (resumo) resumo.textContent = "Uma base acumulada para os relatórios e dashboards.";
+    const status = document.getElementById("vendasConfigStatus");
+    if (status) status.textContent = "Importação automática ativa. Nenhum processamento manual de cache é necessário.";
+  }
 }
 
 async function carregarConfigVendas(){
@@ -6490,13 +6552,19 @@ async function excluirCacheVendas(cacheId){
 }
 
 function setConfigView(view){
-  window.__configView = (view === "logs" || view === "cameras" || view === "sip" || view === "nfe" || view === "vendas") ? view : "status";
+  const mensagens = document.getElementById("vendasConfigMensagens");
+  const mount = document.getElementById(view === "base_vendas" ? "vendasBaseMensagensMount" : "vendasConfigMensagensMount");
+  if (mensagens && mount) mount.appendChild(mensagens);
+  window.__configView = (view === "orcamentos" || view === "base_vendas" || view === "backup" || view === "logs" || view === "cameras" || view === "sip" || view === "nfe" || view === "vendas") ? view : "status";
+  document.getElementById("configViewOrcamentos")?.classList.toggle("hidden", window.__configView !== "orcamentos");
+  document.getElementById("configViewBaseVendas")?.classList.toggle("hidden", window.__configView !== "base_vendas");
   const vStatus = document.getElementById("configViewStatus");
   const vLogs = document.getElementById("configViewLogs");
   const vCameras = document.getElementById("configViewCameras");
   const vSip = document.getElementById("configViewSip");
   const vNfe = document.getElementById("configViewNfe");
   const vVendas = document.getElementById("configViewVendas");
+  document.getElementById("configViewBackup")?.classList.toggle("hidden", window.__configView !== "backup");
   if (vStatus) vStatus.classList.toggle("hidden", window.__configView !== "status");
   if (vLogs) vLogs.classList.toggle("hidden", window.__configView !== "logs");
   if (vCameras) vCameras.classList.toggle("hidden", window.__configView !== "cameras");
@@ -6512,9 +6580,8 @@ function setConfigView(view){
   }
   if (window.__configView === "sip") carregarConfigSip().catch(()=>{});
   if (window.__configView === "nfe") carregarConfigNfe().catch(()=>{});
-  if (window.__configView === "vendas") Promise.all([
-    carregarConfigVendas(), carregarConfigOrcamentoVendas(),
-  ]).catch(()=>{});
+  if (["vendas", "base_vendas"].includes(window.__configView)) carregarConfigVendas().catch(()=>{});
+  if (window.__configView === "orcamentos") carregarConfigOrcamentoVendas().catch(()=>{});
 }
 
 
@@ -6725,13 +6792,13 @@ function showTab(tabId, el) {
     toggleChatPopup(true).catch(() => {});
   }
   if (tabId === "config") {
-    if (!window.__configView || !["status", "logs", "cameras", "sip", "nfe", "vendas"].includes(window.__configView)) {
+    if (!window.__configView || !["status", "logs", "cameras", "sip", "nfe", "vendas", "backup", "orcamentos", "base_vendas"].includes(window.__configView)) {
       window.__configView = "status";
     }
     setConfigView(window.__configView);
   }
   if (tabId === "pontosvenda") {
-    if (!window.__pontosVendaView || !["cadastro", "relatorio"].includes(window.__pontosVendaView)) {
+    if (!window.__pontosVendaView || !["cadastro", "relatorio", "importar"].includes(window.__pontosVendaView)) {
       window.__pontosVendaView = "cadastro";
     }
     setPontosVendaView(window.__pontosVendaView);
@@ -6741,6 +6808,13 @@ function showTab(tabId, el) {
       window.__estoqueView = "posicao";
     }
     setEstoqueView(window.__estoqueView);
+  }
+  if (tabId === "custoDiario") carregarCustoDiario();
+  if (tabId === "custoProdutoDashboard") {
+    abrirVisaoCustoDashboard();
+  }
+  if (tabId === "custoProduto") {
+    carregarCustoProduto();
   }
   if (tabId === "processosInternos") {
     carregarProcessosInternos().catch((erro) => console.warn("processos internos erro:", erro));
@@ -16978,6 +17052,7 @@ function _estoqueProdutoCadastroNormalizado(item = {}){
     unidade: String(item.unidade || "").trim(),
     embalagem_tipo_padrao: _estoqueEmbalagemPadrao(item.embalagem_tipo_padrao || item.embalagem_tipo || item.unidade || ""),
     fator_embalagem_padrao: fatorCadastro > 0 ? fatorCadastro : 1,
+    estoque_minimo: Math.max(0, Number(item.estoque_minimo || 0) || 0),
     cadastro_explicitado: Number(item.cadastro_explicitado || 0) === 1 ? 1 : 0,
     pallet_meta: item.pallet_meta || {},
   };
@@ -18889,6 +18964,7 @@ function limparProdutoEstoqueCadastro(fecharFormulario = true){
     "estoqueCadastroBaseNome",
     "estoqueCadastroEmbalagem",
     "estoqueCadastroFator",
+    "estoqueCadastroMinimo",
     "estoqueCadastroSaldoAtual",
     "estoqueCadastroAjusteQuantidade",
     "estoqueCadastroAjusteMotivo",
@@ -19107,6 +19183,7 @@ function renderProdutosEstoqueCadastro(){
         item.codigos_manual?.length ? `Manual: ${item.codigos_manual.join(", ")}` : "",
       ].filter(Boolean).map((linha) => `<br><small>${_escHtml(linha)}</small>`).join("")}</td>
       <td>${_escHtml(_estoqueFormatQtd(_saldoProdutoCadastroAtual(item)))}</td>
+      <td>${_escHtml(_estoqueFormatQtd(item.estoque_minimo || 0))}</td>
       <td>${_escHtml(item.embalagem_tipo_padrao || item.unidade || "UN")}</td>
       <td>${_escHtml(_estoqueFormatQtd(item.fator_embalagem_padrao || 0))}</td>
       <td>
@@ -19114,7 +19191,7 @@ function renderProdutosEstoqueCadastro(){
         <button type="button" onclick="excluirProdutoEstoqueCadastro(${Number(item.id || 0)})">Excluir</button>
       </td>
     </tr>
-  `, 8) : `<tr><td colspan="8">${todos.length ? "Nenhum produto encontrado com os filtros informados." : "Nenhum produto cadastrado."}</td></tr>`;
+  `, 9) : `<tr><td colspan="9">${todos.length ? "Nenhum produto encontrado com os filtros informados." : "Nenhum produto cadastrado."}</td></tr>`;
 }
 
 async function carregarProdutosEstoqueCadastro(){
@@ -19123,7 +19200,7 @@ async function carregarProdutosEstoqueCadastro(){
   try {
     await ensureProdutosEstoqueCache();
   } catch (err) {
-    body.innerHTML = `<tr><td colspan="8">Falha ao carregar cadastros.</td></tr>`;
+    body.innerHTML = `<tr><td colspan="9">Falha ao carregar cadastros.</td></tr>`;
     return;
   }
   renderProdutosEstoqueCadastro();
@@ -19406,6 +19483,7 @@ function editarProdutoEstoqueCadastro(id){
     estoqueCadastroBaseNome: item.produto_base_nome || "",
     estoqueCadastroEmbalagem: item.embalagem_tipo_padrao || item.unidade || "",
     estoqueCadastroFator: item.fator_embalagem_padrao || "",
+    estoqueCadastroMinimo: item.estoque_minimo || "",
     estoqueCadastroSaldoAtual: "",
     estoqueCadastroAjusteQuantidade: "",
     estoqueCadastroAjusteMotivo: "",
@@ -19438,6 +19516,7 @@ async function salvarProdutoEstoqueCadastro(){
     produto_base_nome: (document.getElementById("estoqueCadastroBaseNome")?.value || "").trim(),
     embalagem_tipo_padrao: (document.getElementById("estoqueCadastroEmbalagem")?.value || "").trim(),
     fator_embalagem_padrao: Number((document.getElementById("estoqueCadastroFator")?.value || "").trim() || 1),
+    estoque_minimo: Math.max(0, Number((document.getElementById("estoqueCadastroMinimo")?.value || "").trim() || 0)),
     codigos_nfe_entrada: (document.getElementById("estoqueCadastroCodigosNfeEntrada")?.value || "").trim(),
     codigos_sellout: (document.getElementById("estoqueCadastroCodigosSellout")?.value || "").trim(),
     codigos_nfe_saida: (document.getElementById("estoqueCadastroCodigosNfeSaida")?.value || "").trim(),
@@ -19445,6 +19524,10 @@ async function salvarProdutoEstoqueCadastro(){
   };
   if (!(payload.fator_embalagem_padrao > 0)) {
     payload.fator_embalagem_padrao = 1;
+  }
+  if (!Number.isFinite(payload.estoque_minimo) || payload.estoque_minimo < 0) {
+    alert("Informe um estoque minimo igual ou maior que zero.");
+    return;
   }
   if (!payload.nome_produto && !payload.codigo_barras && !payload.codigo_produto_nfe) {
     alert("Informe ao menos o produto, codigo de barras ou codigo NF-e.");
@@ -19488,6 +19571,7 @@ async function salvarProdutoEstoqueCadastro(){
     ajustePayload = { quantidade_ajuste, motivo_ajuste: motivoInformado };
   }
   const editId = Number(estoqueState.cadastroProdutoEditId || 0);
+  payload.avaliar_estoque_minimo = !ajustePayload;
   const status = document.getElementById("estoqueCadastroStatus");
   if (status) status.textContent = ajustePayload
     ? "Salvando cadastro e aplicando acerto de estoque..."
@@ -19530,9 +19614,14 @@ async function salvarProdutoEstoqueCadastro(){
   const mensagemSucesso = dataAjuste
     ? `Cadastro e acerto salvos. Saldo: ${_estoqueFormatQtd(dataAjuste?.saldo_antes)} -> ${_estoqueFormatQtd(dataAjuste?.saldo_depois)}.`
     : "Cadastro de embalagem salvo com sucesso.";
+  const compraAutomatica = [...(data?.compras_automaticas || []), ...(dataAjuste?.compras_automaticas || [])]
+    .find((item) => item?.created);
+  const mensagemFinal = compraAutomatica
+    ? `${mensagemSucesso} Solicitacao de compra #${Number(compraAutomatica.id)} aberta automaticamente.`
+    : mensagemSucesso;
   limparProdutoEstoqueCadastro();
   const listaStatus = document.getElementById("estoqueCadastroListaStatus");
-  if (listaStatus) listaStatus.textContent = mensagemSucesso;
+  if (listaStatus) listaStatus.textContent = mensagemFinal;
   if (window.__dashView === "estoque") await renderDashboardEstoque();
 }
 
@@ -20729,7 +20818,7 @@ async function carregarSaldoEstoque(){
   if (!body) return;
   const resp = await apiFetch("/api/estoque/posicao");
   if (!resp.ok) {
-    body.innerHTML = `<tr><td colspan="9">Erro ao carregar posicao do estoque.</td></tr>`;
+    body.innerHTML = `<tr><td colspan="10">Erro ao carregar posicao do estoque.</td></tr>`;
     if (resumo) resumo.textContent = "Nao foi possivel carregar a posicao atual do estoque.";
     return;
   }
@@ -20767,10 +20856,11 @@ function renderSaldoEstoqueFiltrado(){
       <td>${_estoqueFormatPalletHtml(r, r.entradas_total)}</td>
       <td>${_estoqueFormatPalletHtml(r, r.saidas_total)}</td>
       <td>${_estoqueFormatPalletHtml(r, r.quantidade_atual)}</td>
+      <td>${_escHtml(_estoqueFormatQtd(r.estoque_minimo || 0))}${Number(r.estoque_minimo || 0) > 0 && Number(r.quantidade_atual || 0) <= Number(r.estoque_minimo || 0) ? '<br><small class="estoque-pack-hint">Minimo atingido</small>' : ""}</td>
       <td>R$ ${_escHtml(_fmtMoney(r.ultimo_valor))}</td>
       <td>${_escHtml(_fmtDateBr(r.ultima_movimentacao))}</td>
     </tr>
-  `, 9) : `<tr><td colspan="9">Sem itens no estoque para os filtros selecionados.</td></tr>`;
+  `, 10) : `<tr><td colspan="10">Sem itens no estoque para os filtros selecionados.</td></tr>`;
 }
 
 let contagemEstoque = null;
@@ -20801,14 +20891,26 @@ function resultadoContagemEstoque(produto){
   return {total, diferenca: Math.round((total - meta.saldo) * 1000) / 1000};
 }
 
+function formatarQuantidadeContagem(produto, total, fatores = produto.contagemMeta){
+  return _estoqueFormatPalletHtml({
+    ...produto,
+    pallet_meta: {
+      unidades_por_pallet: fatores?.porPallet || 0,
+      unidades_por_volume: fatores?.porVolume || 0,
+      rotulo_volume: _acertoEstoqueVolumeLabel(produto),
+    },
+    fatores_embalagem_origem: fatores?.porVolume > 1 ? [fatores.porVolume] : [],
+  }, total);
+}
+
 function atualizarContagemEstoque(id, campo, value){
   const produto = contagemEstoque?.produtos.find(p => Number(p.id) === id);
-  if (!produto || !["pallets","volumes","unidades"].includes(campo)) return;
+  if (!produto || contagemEstoque.finalizada || !["pallets","volumes","unidades"].includes(campo)) return;
   produto.contagem[campo] = value;
   const resultado = resultadoContagemEstoque(produto);
   const row = document.querySelector(`#estoqueContagemBody tr[data-id="${id}"]`);
   if (!row) return;
-  row.querySelector('[data-total]').textContent = resultado?.erro ? "Quantidade invalida" : resultado ? _estoqueFormatQtd(resultado.total) : "Nao contado";
+  row.querySelector('[data-total]').innerHTML = resultado?.erro ? "Quantidade invalida" : resultado ? formatarQuantidadeContagem(produto, resultado.total) : "Nao contado";
   row.querySelector('[data-diferenca]').textContent = resultado && !resultado.erro ? _estoqueFormatQtd(resultado.diferenca) : "-";
 }
 
@@ -20817,20 +20919,26 @@ function renderContagemEstoque(){
   if (!body || !contagemEstoque) return;
   const query = _estoqueTextoBusca(document.getElementById("estoqueContagemBusca")?.value || "");
   const rows = contagemEstoque.produtos.filter(p => _estoqueTextoBusca([p.nome_produto,p.produto_base_nome,p.codigo_barras,p.codigo_produto_nfe].join(" ")).includes(query));
-  body.innerHTML = rows.map(p => {
+  body.innerHTML = _estoqueLinhasAgrupadas(rows, p => {
     const r = resultadoContagemEstoque(p);
+    const volumeLabel = _acertoEstoqueVolumeLabel(p);
+    const volumeTexto = volumeLabel === "caixas" ? "Caixas (CX)" : volumeLabel === "pacotes" ? "Pacotes (PCT)" : volumeLabel;
     return `<tr data-id="${Number(p.id)}"><td>${_escHtml(p.produto_base_nome || p.nome_produto)}<br><small>${_escHtml(p.codigo_barras || p.codigo_produto_nfe || "")}</small></td>
-      <td>${_escHtml(_estoqueFormatQtd(p.contagemMeta.saldo))}</td>
-      ${["pallets","volumes","unidades"].map(k => `<td><input type="number" aria-label="${k}" min="0" step="${k === "unidades" ? "0.001" : "1"}" value="${_escAttr(p.contagem[k])}" ${k === "pallets" && !p.contagemMeta.porPallet || k === "volumes" && !p.contagemMeta.porVolume ? "disabled" : ""} oninput="atualizarContagemEstoque(${Number(p.id)},'${k}',this.value)">${k === "volumes" ? `<small>${_escHtml(_acertoEstoqueVolumeLabel(p))} x ${p.contagemMeta.porVolume}</small>` : ""}</td>`).join("")}
-      <td data-total>${r?.erro ? "Quantidade invalida" : r ? _escHtml(_estoqueFormatQtd(r.total)) : "Nao contado"}</td>
+      <td>${formatarQuantidadeContagem(p, p.contagemMeta.saldo)}</td>
+      ${["pallets","volumes","unidades"].map(k => `<td><input type="number" aria-label="${k}" title="${_escAttr(k === "volumes" ? volumeTexto : k === "unidades" ? "Unidades soltas" : "Pallets")}" min="0" step="${k === "unidades" ? "0.001" : "1"}" value="${_escAttr(p.contagem[k])}" ${contagemEstoque.finalizada || k === "pallets" && !p.contagemMeta.porPallet || k === "volumes" && !p.contagemMeta.porVolume ? "disabled" : ""} oninput="atualizarContagemEstoque(${Number(p.id)},'${k}',this.value)">${k === "volumes" ? `<small>${_escHtml(volumeTexto)}${p.contagemMeta.porVolume > 0 ? ` x ${_escHtml(_estoqueFormatQtd(p.contagemMeta.porVolume))}` : ""}</small>` : ""}</td>`).join("")}
+      <td data-total>${r?.erro ? "Quantidade invalida" : r ? formatarQuantidadeContagem(p, r.total) : "Nao contado"}</td>
       <td data-diferenca>${r && !r.erro ? _escHtml(_estoqueFormatQtd(r.diferenca)) : "-"}</td></tr>`;
-  }).join("") || '<tr><td colspan="7">Nenhum produto encontrado.</td></tr>';
-  document.getElementById("estoqueContagemStatus").textContent = `Saldo consultado em ${new Date(contagemEstoque.data).toLocaleString("pt-BR")}.`;
+  }, 7) || '<tr><td colspan="7">Nenhum produto encontrado.</td></tr>';
+  document.getElementById("estoqueContagemStatus").textContent = contagemEstoque.finalizada ? `Contagem #${contagemEstoque.finalizada} finalizada e salva no historico.` : `Saldo consultado em ${new Date(contagemEstoque.data).toLocaleString("pt-BR")}.`;
+  const finish = document.getElementById("estoqueContagemFinalizar");
+  if (finish) finish.disabled = !!contagemEstoque.finalizada;
+  document.getElementById("estoqueContagemObservacao").disabled = !!contagemEstoque.finalizada;
 }
 
 async function novaContagemEstoque(){
-  if (contagemEstoque?.produtos.some(p => resultadoContagemEstoque(p)) && !confirm("Iniciar nova contagem? Exporte a contagem atual antes de continuar.")) return;
+  if (contagemEstoque?.produtos.some(p => resultadoContagemEstoque(p)) && !contagemEstoque.finalizada && !confirm("Iniciar nova contagem? Exporte a contagem atual antes de continuar.")) return;
   contagemEstoque = null;
+  document.getElementById("estoqueContagemObservacao").value = "";
   await carregarContagemEstoque().catch(e => { document.getElementById("estoqueContagemStatus").textContent = e.message; });
 }
 

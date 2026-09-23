@@ -53,6 +53,44 @@ class HeaderNavigationTests(unittest.TestCase):
         self.assertIn('data-edit-current-user="42"', html)
         self.assertIn("data-user-admin", html)
 
+    def test_deploy_identity_is_shared_by_all_page_templates(self):
+        context = self.context()
+        for deploy in ('Rio Branco', 'Senhor Shopp', 'Nanotech', 'Render'):
+            for template in ('config.html', 'integrated_frame.html', 'integrated_app.html', 'portal.html', 'app_placeholder.html'):
+                with self.subTest(deploy=deploy, template=template), portal.app.test_request_context():
+                    html = portal.render_template(template, **context, deploy_name=deploy,
+                                                  app_nome='XML', frame_url='/apps/riob/embed')
+                    self.assertIn('<h1>' + deploy + '</h1>', html)
+                    self.assertEqual(1, html.count('data-logout'))
+                    self.assertLess(html.index('</nav>'), html.index('data-logout'))
+                    self.assertLess(html.index('data-logout'), html.index('</header>'))
+
+    def test_deploy_name_comes_from_selected_contract(self):
+        for client_id, name in [('rio-branco', 'Rio Branco'), ('senhor', 'Senhor Shopp'), ('cloud', 'Render')]:
+            with self.subTest(client_id=client_id), portal.app.test_request_context(), mock.patch.object(
+                portal, 'configured_client_id', return_value=client_id
+            ), mock.patch.object(portal, 'client_contracts_payload', return_value={'activeClient': {'nome': name}}), mock.patch.object(
+                portal, 'list_apps', return_value=[]
+            ), mock.patch.object(portal, 'visible_apps_for_user', return_value=[]), mock.patch.object(
+                portal, 'menu_sections', return_value={}
+            ), mock.patch.object(portal, 'get_config', return_value={'tema': 'fin-blue'}):
+                self.assertEqual(name, portal.portal_context({'id': 42, 'perfil': 'admin'})['deploy_name'])
+
+    def test_documentation_requires_config_and_original_returns_to_shell(self):
+        user = {'id': 42, 'perfil': 'usuario'}
+        for resources, allowed in [({'config'}, True), ({'*'}, True), ({'vendas'}, False)]:
+            for suffix in ('docs/', 'docs/documentacao.html', 'docs/README.md'):
+                with self.subTest(resources=resources, suffix=suffix), portal.app.test_request_context(
+                    '/apps/riob/' + suffix
+                ), mock.patch.object(portal, 'current_user_or_logout', return_value=user), mock.patch.object(
+                    portal, 'allowed_app_keys', return_value={'riob'}
+                ), mock.patch.object(portal, 'get_user_permissions', return_value={'riob': resources}):
+                    result = portal.enforce_app_permission()
+                    self.assertIsNone(result) if allowed else self.assertEqual(403, result[1])
+        with portal.app.test_request_context('/apps/riob/original'):
+            portal.session['usuario_id'] = 42
+            self.assertEqual('/apps/riob/', portal.riob_proxy('original').location)
+
     def test_account_requires_valid_session(self):
         with portal.app.test_request_context("/config"):
             self.assertEqual("/login", portal.config_page().location)

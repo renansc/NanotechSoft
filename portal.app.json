@@ -1,0 +1,48 @@
+{
+  "app_key": "sistema",
+  "nome": "Sistema",
+  "config_groups": {
+    "sistema": [
+      {
+        "nome": "Minha conta",
+        "url": "/config#minha-conta",
+        "authenticated": true
+      },
+      {
+        "nome": "Temas",
+        "url": "/config#temas",
+        "authenticated": true
+      },
+      {
+        "nome": "Logo",
+        "url": "/config#logo",
+        "recurso": "logo",
+        "recurso_nome": "Configurar logo e link do cabecalho"
+      },
+      {
+        "nome": "Usuarios e acessos",
+        "url": "/config#usuarios",
+        "admin_only": true
+      },
+      {
+        "nome": "Clientes e modulos",
+        "url": "/config#clientes",
+        "admin_only": true
+      },
+      {
+        "nome": "Backup do portal",
+        "url": "/config#backup",
+        "admin_only": true
+      }
+    ]
+  },
+  "menu_groups": {
+    "portal": [
+      {
+        "nome": "Portal de aplicativos",
+        "url": "/",
+        "authenticated": true
+      }
+    ]
+  }
+}

@@ -3,7 +3,7 @@
   "nome": "Chamados",
   "descricao": "Requisições e histórico de manutenção de TI, predial, elétrica e demais áreas.",
   "url": "/apps/chamados?view=chamados",
-  "standalone_url": "/apps/chamados/original?view=chamados",
+  "standalone_url": "/apps/chamados?view=chamados",
   "icone": "clipboard-list",
   "ordem": 110,
   "ativo": true,
@@ -78,13 +78,6 @@
             "recurso": "dashboard"
           }
         ],
-        "cadastros": [
-          {
-            "nome": "Manuais e Documentações",
-            "url": "/apps/chamados?view=documentos",
-            "recurso": "documentos"
-          }
-        ],
         "relatorios": [
           {
             "nome": "Histórico de Soluções",
@@ -104,6 +97,13 @@
             "nome": "Agenda de Tarefas",
             "url": "/apps/chamados?view=agenda",
             "recurso": "agenda"
+          }
+        ],
+        "docs": [
+          {
+            "nome": "Manuais e Documentações",
+            "url": "/apps/chamados?view=documentos",
+            "recurso": "documentos"
           }
         ]
       },

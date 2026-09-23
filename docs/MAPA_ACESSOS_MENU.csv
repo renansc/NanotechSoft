@@ -1,0 +1,141 @@
+app,categorias,nome,url,recurso_menu,recurso_herdado,restricao
+riob,Dashboard,Custo do produto,/apps/riob#custoProdutoDashboard,menu:c90e453111f9eaea3f98af5e,custo_produto_dashboard,individual
+riob,Dashboard,RioB - Fretes,/apps/riob#dashboard,menu:cbeea23572deac751ded76e5,dashboard,individual
+riob,Dashboard,Frota,/apps/riob#dashboard:frota,menu:366c98f7534ba9cbd4508c29,frota,individual
+riob,Dashboard,Estoque,/apps/riob#dashboard:estoque,menu:21f5be6919ebcc21a3a52794,estoque,individual
+riob,Dashboard,Processos operacionais,/apps/riob#dashboard:processos,menu:fa4a4dab0dfb836cbd9af372,processos,individual
+riob,Dashboard,Compras,/apps/riob#dashboard:compras,menu:21032090ac812f15f4c3459a,compras,individual
+riob,Dashboard,Vendas anual,/apps/riob#dashboard:vendas_anual,menu:eecc25ee1acbb4df4c2a70ec,vendas,individual
+riob,Dashboard,Vendas do dia,/apps/riob#dashboard:vendas_diario,menu:82f697cd63a28767eabf7822,vendas,individual
+riob,Dashboard,Bonificacoes de vendas,/apps/riob#dashboard:bonificacoes,menu:ef2fca0eec1e5fbd86e730c6,vendas,individual
+riob,Dashboard,Variacao de preco,/apps/riob#dashboard:variacao_preco,menu:8f9bf130adedc45ac1a062df,vendas,individual
+riob,Dashboard,Grupos de embalagem,/apps/riob#dashboard:grupos_embalagem,menu:b3f60d39903c8db380fd3272,vendas,individual
+riob,Dashboard,Comissoes de vendas,/apps/riob#dashboard:comissoes,menu:9fe3b52d188391e1f7326c85,comissao,individual
+riob,Cadastro,Colaboradores RioB,/apps/riob#cadastros:colaboradores,menu:7b40bcdfdc56c8126595d7e5,colaboradores,individual
+riob,Cadastro,Veiculos RioB,/apps/riob#cadastros:veiculos,menu:01d5837b66e30f12e5614c23,veiculos,individual
+riob,Cadastro,Comissoes,/apps/riob#cadastros:comissao,menu:f948e71ccc9cfd9e776dfa0b,comissao,individual
+riob,Cadastro,Cadastrar produtos RioB,/apps/riob#cadastros:estoque_produtos,menu:459d1dd0dfec145501c92f11,estoque,individual
+riob,Cadastro,Grupos de estoque RioB,/apps/riob#cadastros:estoque_grupos,menu:c5de8255f4360285b67a2505,estoque,individual
+riob,Cadastro,Tipos de processos RioB,/apps/riob#cadastros:processos_tipos,menu:eb35042a6a871915a97da68e,processos,individual
+riob,Cadastro,Fornecedores e compras RioB,/apps/riob#cadastros:compras_fornecedores,menu:5b07c0b1f255196bf8f9368d,compras,individual
+riob,Cadastro,Cargas RioB,/apps/riob#gestaofrota:cargas,menu:1b53a20822248f3f5ade1c2e,cargas,individual
+riob,Cadastro,Escala RioB,/apps/riob#gestaofrota:escala,menu:90c1e424d054e0fe7294534a,escala,individual
+riob,Cadastro,Pontos de venda,/apps/riob#vendas:pontosvenda,menu:bbb08e534e7a7fc48f4eb251,pontos_venda,individual
+riob,Relatorios,Vendas,/apps/riob#vendas:relatorio,menu:faab8ba794e431d6b9d7a752,vendas,individual
+riob,Relatorios,Orcamentos gerados,/apps/riob#relatorios:orcamentos,menu:bc150f32f7524519e0442dac,vendas_orcamentos_relatorio,individual
+riob,Relatorios,Estoque comprometido,/apps/riob#relatorios:estoque_comprometido,menu:e5f7d8e92544ad82a55d08de,estoque,individual
+riob,Relatorios,Processos operacionais,/apps/riob#relatorios:processos,menu:69a479f4a3c2fa0ae4eedfaa,processos,individual
+riob,Relatorios,Comissoes,/apps/riob#comissao:relatorios,menu:17c056452d531cfff1de9e8e,comissao,individual
+riob,Relatorios,Frota,/apps/riob#gestaofrota:relatorios,menu:9b11b1e65013592f9dd34d2e,frota,individual
+riob,Relatorios,"Contagens, desperdicio e sobras",/apps/riob#relatorios:contagens,menu:fd516554088fd339ce500c55,estoque_contagem_relatorio,individual
+riob,Relatorios,Compras RioB,/apps/riob#relatorios:compras,menu:7c7c0b7f5547b81766340f1c,compras,individual
+riob,Relatorios,Vendas Anual RioB,/apps/riob#vendas:relatorio_anual,menu:724b3ed2539d35a7d98da86a,vendas,individual
+riob,Relatorios,Visitas dos pontos de venda,/apps/riob#vendas:pontosvenda_relatorio,menu:a41c4d7028501f84c9b70944,pontos_venda,individual
+riob,Relatorios,Cargas da semana,/apps/riob#relatorios:cargas_semana,menu:435226e063277c68d411eaa3,vendas,individual
+riob,Relatorios,Variacao de preco,/apps/riob#vendas:variacao_preco,menu:d5e6fd15fd8af2257db33f1b,vendas,individual
+riob,Relatorios,Grupos de embalagem,/apps/riob#vendas:grupos_embalagem,menu:354b1b42084cc5daa06bb31d,vendas,individual
+riob,Relatorios,Preco medio,/apps/riob#vendas:preco_medio,menu:4a4fa10c47ffd6cce2b73497,vendas,individual
+riob,Dados,Vendas do dia,/apps/riob#workflow:vendas_diario_importar,menu:17d6c6810ddc6d27695a7e5a,vendas,individual
+riob,Dados,Comissoes,/apps/riob#comissao:exportar,menu:e3715fc21aee0c058370e495,comissao,individual
+riob,Dados,E-mails,/apps/riob#monitor:gestor_emails,menu:454e18ed23f50b5ff2b3b7be,gestor-emails,individual
+riob,Dados,Importar XML (Bipe) RioB,/apps/riob#estoque:importar_xml_bipe,menu:63742746ef78af542cf013e5,estoque,individual
+riob,Dados,Importar XML Auto RioB,/apps/riob#estoque:importar_xml_auto,menu:ce55f84eaf08e528e9fe0231,estoque,individual
+riob,Dados,Importar pontos de venda,/apps/riob#vendas:pontosvenda_importar,menu:cd3eb3690290c8cc6645f28f,pontos_venda,individual
+riob,Dados,Base mensal de vendas,/apps/riob#config:base_vendas,menu:cfb36618767762673e142758,config,individual
+riob,Estoque,Posicao,/apps/riob#estoque:posicao,menu:156e24bfcca09fa65d2ac76f,estoque,individual
+riob,Estoque,Movimentar,/apps/riob#estoque:movimentar,menu:f720d235fdc106ee4f77b724,estoque,individual
+riob,Estoque,Rastreio,/apps/riob#estoque:rastreio,menu:20f1c2c271cf9f27e7e4c67b,estoque,individual
+riob,Estoque,Acerto,/apps/riob#estoque:acerto,menu:386b37f5413833d0db350562,estoque,individual
+riob,Estoque,Contagem,/apps/riob#estoque:contagem,menu:5a6ac949f446fdcf96a985bd,estoque_contagem,individual
+riob,Workflow,Orçamento RioB,/apps/riob#vendas:orcamento,menu:9dbc0b0b00fa70b694fc8372,vendas,individual
+riob,Workflow,Vendas Diario RioB,/apps/riob#workflow:vendas_diario,menu:a98750eca8bf230bc31a5abd,vendas,individual
+riob,Workflow,Kanban RioB,/apps/riob#fretes,menu:ff935a546a9d0b49972e7baa,fretes,individual
+riob,Workflow,Devolucoes RioB,/apps/riob#devolucoes,menu:a286912f80ffb3b316a52463,devolucoes,individual
+riob,Workflow,Comissoes,/apps/riob#comissao,menu:27f02aae67f3a19141514d56,comissao,individual
+riob,Workflow,Gestao de Frota RioB,/apps/riob#gestaofrota:registrar,menu:122bf0fb3cf0e1b1af7aab79,frota,individual
+riob,Workflow,Processos Internos RioB,/apps/riob#processos,menu:96e9f50f8447659ff5841b30,processos,individual
+riob,Workflow,Compras RioB,/apps/riob#workflow:compras,menu:83a21906c39d9539839d655f,compras,individual
+riob,Monitor,Monitor Automacao RioB,/apps/riob#monitor:automacao,menu:41e7d2ea18b4cb21a2295456,automacao,individual
+riob,Gestao,Custo do produto,/apps/riob#custoProduto,menu:02c382ce20308eaea2e5a983,custo_produto,individual
+riob,Gestao,Lista da frota,/apps/riob#gestaofrota:lista,menu:d4fd540309c229e945b6c68d,frota,individual
+riob,Gestao,Manutencoes,/apps/riob#gestaofrota:manutencao,menu:1f81be5be8bb6f392d6387d5,frota,individual
+riob,Gestao,Trocas de oleo,/apps/riob#gestaofrota:oleo,menu:b413ba1eebe1811fbe466ecd,frota,individual
+riob,Gestao,Trocas de pneus,/apps/riob#gestaofrota:pneu,menu:4a259ca19ba8d1e1728654c7,frota,individual
+riob,Gestao,Abastecimentos,/apps/riob#gestaofrota:abastecimento,menu:aa89d02c818e242352edf726,frota,individual
+riob,Gestao,Lavagens,/apps/riob#gestaofrota:lavagem,menu:bad8f24b7affcdf22a15bf3a,frota,individual
+riob,Gestao,Previsao de compras,/apps/riob#compras:previsao,menu:3747cc034386363beebeef62,compras,individual
+riob,Documentos,Documentacao RioB,/apps/riob/docs/,menu:a259b0683c1d1cd42891e9c3,config,individual
+riob,Configurar,Logs,/apps/riob#config:logs,menu:5ff6d351e82be58d23bf9eb0,config,individual
+riob,Configurar,Status,/apps/riob#config:status,menu:878fba509566ba6c3f519b8b,config,individual
+riob,Configurar,SIP RioB,/apps/riob#config:sip,menu:f6d3f9959f8110d4ffc088da,config,individual
+riob,Configurar,Vendas RioB,/apps/riob#config:vendas,menu:32ae10236c327175f8a57ff9,config,individual
+riob,Configurar,Backup do RioB,/apps/riob#config:backup,menu:0882d4bad04e34071aed6638,config,individual
+riob,Configurar,NF-e / Receita,/apps/riob#config:nfe,menu:70aae0b62d33937d6554f11a,config,individual
+riob,Configurar,Parametros de orcamentos,/apps/riob#config:orcamentos,menu:7be8e9d3d22fa5a6d6f6e64a,config,individual
+riob-email,Dashboard,Painel de e-mails,/apps/riob-email/riob/?painel=resumo,menu:f2f65336d510df5320ac6360,operacao,individual
+riob-email,Cadastro,Fornecedores,/apps/riob-email/riob/fornecedores,menu:fe8f0f42e196dc717d19aba0,operacao,individual
+riob-email,Monitor,Status de e-mails,/apps/riob-email/riob/?painel=status,menu:d7407f00bc36e7a0e79b3fbb,operacao,individual
+riob-email,Gestao,Anexos de e-mail,/apps/riob-email/riob/anexos,menu:c201292643d527fdad27c68e,operacao,individual
+riob-email,Gestao,E-mails,/apps/riob-email/riob/emails,menu:50faadbbf7df7880811e9e62,operacao,individual
+riob-email,Gestao / Dados,Backup de e-mails e anexos,/apps/riob-email/riob/backup,menu:bda28c7f49bb82584cadc976,backup,individual
+riob-email,Gestao / Dados,Importar historico XML,/apps/riob-email/riob/historico,menu:6111c8c5d154918aab59c289,operacao,individual
+riob-email,Gestao,Recuperar conteudo,/apps/riob-email/riob/recuperar,menu:35265f11c8c6e87ddf00e657,operacao,individual
+riob-email,Dados,Importar e-mails,/apps/riob-email/riob/importacao,menu:412c9c7a26daeee26167465b,operacao,individual
+riob-email,Configurar,Contas de e-mail,/apps/riob-email/riob/config,menu:60ce0ecc31a91fe5e89e5b61,operacao,individual
+riob-xml,Estoque,Estoque de XMLs recebidos,/apps/riob-xml/riob/estoque,menu:c3250b1ccc1e65631abd8785,*,individual
+riob-xml,Estoque,Abastecimentos de XMLs recebidos,/apps/riob-xml/riob/abastecimentos,menu:749c33011a4b1814c92f2d13,*,individual
+riob-xml,Gestao,Arquivos XML,/apps/riob-xml/riob/arquivos,menu:9bea2f07d917e2a7b9db4167,*,individual
+riob-xml,Gestao,Revisao de abastecimentos,/apps/riob-xml/riob/abastecimentos?visao=revisao,menu:6d1bb46a63def39f0b8bb16c,*,individual
+riob-xml,Dados,Importar XML,/apps/riob-xml/riob,menu:0cfe1d601acb2d63336cfd00,*,individual
+riob-xml,Configurar,Configuracao da empresa,/apps/riob-xml/riob/config,menu:49303eb8bd9397b85cec61d1,*,individual
+automacao,Dashboard,Dashboard Automacao,/apps/automacao/,menu:d524a650e1464c26deb0cad4,*,individual
+automacao,Dashboard,Maquinas Automacao,/apps/automacao/maquinas,menu:6ebce06cc93af059375b65ea,*,individual
+automacao,Cadastro,Manual-documentacao,/apps/automacao/documentacao/cadastrar,menu:6a8655474412d3fa2586d48b,documentos_cadastrar,individual
+automacao,Cadastro,Equipamentos e tipos - Motores,/apps/automacao/motores,menu:f67b51a6a973328dfffe7853,*,individual
+automacao,Cadastro,Equipamentos e tipos - Drivers,/apps/automacao/sensores/drivers,menu:63bccce04bb1060b0b750308,*,individual
+automacao,Cadastro,Setores,/apps/automacao/setores,menu:31c62b1a1b8f97054e031884,*,individual
+automacao,Monitor,Tempo real,/apps/automacao/tempo-real,menu:d72c012f848a1ccae155a8c8,*,individual
+automacao,Gestao,Historico,/apps/automacao/historico,menu:fc902fdc5a68c0c669e6e376,*,individual
+automacao,Gestao,Alarmes,/apps/automacao/alarmes,menu:cf7a4b695b26d8cdf35e8471,*,individual
+automacao,Documentos,Manuais das maquinas,/apps/automacao/documentacao,menu:392ab1ceb5dfab43ff1ca428,documentos,individual
+automacao,Workflow,Kanban Automacao,/workflow/automacao,menu:20d8d7819190ad9ee0952492,*,individual
+chamados,Dashboard,Indicadores de Chamados,/apps/chamados?view=dashboard,menu:0623142fa0583507af89803e,dashboard,individual
+chamados,Relatorios,Histórico de Soluções,/apps/chamados?view=historico,menu:c0421ce3105f3135db949bd1,historico,individual
+chamados,Workflow,Chamados e Manutenções,/apps/chamados?view=chamados,menu:1cd6362880b1e72056105e1a,chamados,individual
+chamados,Gestao,Agenda de Tarefas,/apps/chamados?view=agenda,menu:58c79cbc86ba7fbe9441f185,agenda,individual
+chamados,Documentos,Manuais e Documentações,/apps/chamados?view=documentos,menu:3e98c3c8eb9f9727874817e4,documentos,individual
+tecnologia,Dashboard,Visao geral,/apps/tecnologia#dashboard,menu:a02a3ca9b0d15c8d773a5190,dashboard,individual
+tecnologia,Dashboard / Monitor,Visao de backups,/apps/tecnologia#backup-visao,menu:a190f96021eda9cf674faafe,backup,individual
+tecnologia,Cadastro,Equipamentos,/apps/tecnologia#equipamentos,menu:91ce0dea441980ff2eef5afc,equipamentos,individual
+tecnologia,Cadastro / Configurar,Planos de backup,/apps/tecnologia#backup-planos,menu:88442d9a03471de62caece07,backup,individual
+tecnologia,Cadastro / Configurar,Instalar agentes de backup,/apps/tecnologia#backup-agentes,menu:9e6ec815f6c46ad81643bd34,backup,individual
+tecnologia,Cadastro,Descobrir impressoras,/apps/tecnologia#descoberta-impressoras,menu:379329d5758fc747452950c6,equipamentos,individual
+tecnologia,Cadastro,Descobrir computadores,/apps/tecnologia#descoberta-computadores,menu:1a2b42d03f4fbf13650dd906,equipamentos,individual
+tecnologia,Relatorios,Historico,/apps/tecnologia#historico,menu:2c4481e5155a9a6720f13d47,historico,individual
+tecnologia,Relatorios,Ocupacao do link,/apps/tecnologia#ocupacao-link,menu:9df30e4f9d81e3008bb571bb,historico,individual
+tecnologia,Gestao,Rede,/apps/tecnologia#rede,menu:957d6b6e12622777f7c441cb,rede,individual
+tecnologia,Documentos,Agentes e protocolos,/apps/tecnologia#protocolos,menu:991740f5bf2559f553b15e38,equipamentos,individual
+tecnologia,Monitor,Monitoramento de link,/apps/tecnologia#monitor-link,menu:06c3d54a1cbae7ce200b7a08,dashboard,individual
+tecnologia,Configurar,Configuracao e alertas,/apps/tecnologia#config,menu:f8f3b5a58fc5a821a2ed0634,config,individual
+zap,Dashboard,Status de entradas,/apps/zap,menu:774319fb53f392e9a7020e72,workflow,individual
+zap,Cadastro / Configurar,Estados do fluxo,/apps/zap/settings?secao=estados,menu:26a5bbb7bd4658575c6f9875,settings,individual
+zap,Cadastro,Departamentos,/apps/zap/settings?secao=departamentos,menu:1e9008c3444e1b34972854a8,settings,individual
+zap,Cadastro,Etiquetas,/apps/zap/settings?secao=etiquetas,menu:63935f92384b8681b33374c8,settings,individual
+zap,Cadastro,Respostas rapidas,/apps/zap/settings?secao=respostas,menu:71b0a91cd1bb6e5b9cf15fb5,settings,individual
+zap,Documentos,Guia do Gestor,/apps/zap/docs,menu:080f2a7e0adfef19de0384ce,docs,individual
+zap,Gestao,Agenda compartilhada,/apps/zap/calendar,menu:6fdc990e28e4b9bdc1906654,agenda,individual
+zap,Monitor,Status das integracoes,/apps/zap/settings?secao=status,menu:1d78cd811b68573004e8cb29,settings,individual
+zap,Configurar,Webhook WhatsApp,/apps/zap/settings?secao=webhook,menu:ce9243e733d0c069b147ce76,settings,individual
+zap,Configurar,WhatsApp Business,/apps/zap/settings?secao=whatsapp,menu:65f734167d61f29791ba74d0,settings,individual
+zap,Configurar,Backup AlwaysData,/apps/zap/settings?secao=backup,menu:6ffb48d13085e882e1207d44,settings,individual
+zap,Configurar,Configurar agenda,/apps/zap/settings?secao=agenda,menu:342f4805d0e811925636c7fa,settings,individual
+zap,Configurar,Lembretes,/apps/zap/settings?secao=lembretes,menu:b73eb5e967d2502a1757d99c,settings,individual
+zap,Configurar,Integracoes extras,/apps/zap/settings?secao=integracoes,menu:d94f83c9d1d79f378d429b77,settings,individual
+zap,Configurar,Usuarios do Zap,/apps/zap/settings?secao=usuarios,menu:f5470d9f4d385fa036e766b7,settings,individual
+zap,Configurar,Configuracao atual,/apps/zap/settings?secao=valores,menu:5977910a3ccab846f7c01ab7,settings,individual
+sistema,Configurar,Minha conta,/config#minha-conta,menu:7be1e43c8d809ebe2727f8c5,,individual
+sistema,Configurar,Temas,/config#temas,menu:fd0d156c1475ae2b285098c7,,individual
+sistema,Configurar,Logo,/config#logo,menu:bf87d20dbcc707e6b00e0882,logo,individual
+sistema,Configurar,Usuarios e acessos,/config#usuarios,menu:c85b8c08be5346b41771b444,,administrador
+sistema,Configurar,Clientes e modulos,/config#clientes,menu:741771de9bfde9d03bbc5268,,administrador
+sistema,Configurar,Backup do portal,/config#backup,menu:9c6229fa7b489c7e7b89c371,,administrador

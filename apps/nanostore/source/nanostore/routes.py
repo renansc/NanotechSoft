@@ -2,6 +2,9 @@ from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from difflib import SequenceMatcher
 from concurrent.futures import ThreadPoolExecutor
+import base64
+import hashlib
+import hmac
 from io import BytesIO
 import json
 import os
@@ -18,15 +21,24 @@ from cryptography.hazmat.primitives import serialization
 from flask import Blueprint, Response, abort, jsonify, render_template, request, send_file
 from PIL import Image, UnidentifiedImageError
 from sqlalchemy import and_, case, func, or_
+from sqlalchemy.exc import IntegrityError
 from zoneinfo import ZoneInfo
 from werkzeug.exceptions import HTTPException
 
 from .extensions import db
 from .documents import build_fiscal_pdf, build_order_pdf
+from .correios import CorreiosClient, CorreiosError
 from .fiscal import build_signed_simulation, fiscal_certificate_status, load_fiscal_identity
 from .nfe import build_homologation_nfe, transmit_homologation_nfe
 from .tax import icms_code_profile, valid_gtin, validate_issuer, validate_product
 from .store_modes import STORE_MODES, resolve_store_mode
+from .marketplaces import (
+    MARKETPLACE_CHANNELS,
+    marketplace_catalog,
+    marketplace_channel,
+    normalize_marketplace_provider,
+    validate_credential_env_prefix,
+)
 from .models import (
     CashMovement,
     CashSession,
@@ -38,6 +50,10 @@ from .models import (
     InventoryCountItem,
     FinancialEntry,
     InternalChatMessage,
+    MarketplaceAccount,
+    MarketplaceOrderLink,
+    MarketplaceProductMapping,
+    MarketplaceSyncEvent,
     PharmacyCategory,
     PharmacyCustomer,
     PharmacyLot,
@@ -48,6 +64,9 @@ from .models import (
     PharmacySupplier,
     PurchaseOrder,
     PurchaseOrderItem,
+    Shipment,
+    ShipmentEvent,
+    ShipmentItem,
     StockMovement,
     WorkflowStage,
     WorkflowTicket,
@@ -532,6 +551,156 @@ def _serialize_sale(sale):
             for item in sale.items.order_by(PharmacySaleItem.id.asc()).all()
         ],
     }
+
+
+def _marketplace_webhook_secret(account):
+    return os.environ.get(f"{account.credential_env_prefix}_WEBHOOK_SECRET", "").strip()
+
+
+def _serialize_marketplace_account(account):
+    _, channel = marketplace_channel(account.provider)
+    channel = channel or {}
+    return {
+        "id": account.id,
+        "provider": account.provider,
+        "provider_label": channel.get("label") or account.provider,
+        "name": account.name,
+        "seller_id": account.seller_id,
+        "shop_url": account.shop_url,
+        "credential_env_prefix": account.credential_env_prefix,
+        "credentials_configured": bool(_marketplace_webhook_secret(account)),
+        "status": account.status,
+        "enabled": bool(account.enabled),
+        "sync_orders": bool(account.sync_orders),
+        "sync_inventory": bool(account.sync_inventory),
+        "sync_logistics": bool(account.sync_logistics),
+        "last_sync_at": account.last_sync_at.isoformat() + "Z" if account.last_sync_at else "",
+        "last_error": account.last_error,
+        "capabilities": channel.get("capabilities") or [],
+        "connection_mode": channel.get("connection_mode") or "",
+        "webhook_path": f"api/marketplaces/accounts/{account.id}/webhook",
+        "mapping_count": account.product_mappings.count(),
+        "order_count": account.order_links.count(),
+    }
+
+
+def _serialize_marketplace_mapping(mapping):
+    stock = db.session.query(func.coalesce(func.sum(PharmacyLot.quantity_available), 0)).filter(
+        PharmacyLot.product_id == mapping.product_id
+    ).scalar()
+    return {
+        "id": mapping.id,
+        "account_id": mapping.account_id,
+        "account_label": (
+            f"{(MARKETPLACE_CHANNELS.get(mapping.account.provider) or {}).get('label', mapping.account.provider)}"
+            f" · {mapping.account.name}"
+        ) if mapping.account else "",
+        "product_id": mapping.product_id,
+        "product_sku": mapping.product.sku if mapping.product else "",
+        "product_name": mapping.product.name if mapping.product else "",
+        "external_product_id": mapping.external_product_id,
+        "external_sku": mapping.external_sku,
+        "sync_inventory": bool(mapping.sync_inventory),
+        "sync_price": bool(mapping.sync_price),
+        "current_stock": float(stock or 0),
+        "last_stock_sent": float(mapping.last_stock_sent) if mapping.last_stock_sent is not None else None,
+        "last_sync_at": mapping.last_sync_at.isoformat() + "Z" if mapping.last_sync_at else "",
+    }
+
+
+def _serialize_marketplace_event(event):
+    return {
+        "id": event.id,
+        "account_id": event.account_id,
+        "event_key": event.event_key,
+        "direction": event.direction,
+        "entity_type": event.entity_type,
+        "entity_id": event.entity_id,
+        "event_type": event.event_type,
+        "status": event.status,
+        "attempts": event.attempts,
+        "error": event.error,
+        "processed_at": event.processed_at.isoformat() + "Z" if event.processed_at else "",
+        "created_at": event.created_at.isoformat() + "Z",
+    }
+
+
+def _serialize_shipment(shipment):
+    return {
+        "id": shipment.id,
+        "sale_id": shipment.sale_id,
+        "sale_code": shipment.sale.code if shipment.sale else "",
+        "customer_name": shipment.sale.customer_name if shipment.sale else "",
+        "carrier": shipment.carrier,
+        "service_code": shipment.service_code,
+        "tracking_code": shipment.tracking_code or "",
+        "tracking_url": (
+            "https://rastreamento.correios.com.br/app/index.php"
+            if shipment.carrier == "correios" and shipment.tracking_code else ""
+        ),
+        "status": shipment.status,
+        "origin_postal_code": shipment.origin_postal_code,
+        "destination_postal_code": shipment.destination_postal_code,
+        "estimated_delivery_date": shipment.estimated_delivery_date.isoformat() if shipment.estimated_delivery_date else "",
+        "posted_at": shipment.posted_at.isoformat() + "Z" if shipment.posted_at else "",
+        "delivered_at": shipment.delivered_at.isoformat() + "Z" if shipment.delivered_at else "",
+        "last_checked_at": shipment.last_checked_at.isoformat() + "Z" if shipment.last_checked_at else "",
+        "last_error": shipment.last_error,
+        "items": [
+            {
+                "id": item.id,
+                "sale_item_id": item.sale_item_id,
+                "product_id": item.sale_item.product_id if item.sale_item else None,
+                "sku": item.sale_item.product.sku if item.sale_item and item.sale_item.product else "",
+                "product_name": item.sale_item.product.name if item.sale_item and item.sale_item.product else "",
+                "quantity": float(item.quantity or 0),
+            }
+            for item in shipment.items.order_by(ShipmentItem.id.asc()).all()
+        ],
+        "events": [
+            {
+                "id": event.id,
+                "status_code": event.status_code,
+                "description": event.description,
+                "location": event.location,
+                "occurred_at": event.occurred_at.isoformat() + "Z",
+                "source": event.source,
+            }
+            for event in shipment.events.order_by(ShipmentEvent.occurred_at.desc(), ShipmentEvent.id.desc()).all()
+        ],
+        "created_at": shipment.created_at.isoformat() + "Z",
+    }
+
+
+def _shipment_status_from_description(description):
+    normalized = "".join(
+        char for char in unicodedata.normalize("NFKD", str(description or "").lower())
+        if not unicodedata.combining(char)
+    )
+    if "entregue ao destinatario" in normalized or "objeto entregue" in normalized:
+        return "delivered"
+    if "saiu para entrega" in normalized or "em rota de entrega" in normalized:
+        return "out_for_delivery"
+    if "postado" in normalized:
+        return "posted"
+    if any(term in normalized for term in ("em transito", "encaminhado", "transferencia", "unidade de distribuicao")):
+        return "in_transit"
+    if any(term in normalized for term in ("devolvido", "devolucao", "nao entregue", "aguardando retirada")):
+        return "exception"
+    return "in_transit"
+
+
+def _sync_sale_delivery_from_shipments(sale):
+    shipments = [item for item in sale.shipments.all() if item.status != "cancelled"]
+    if not shipments:
+        return
+    statuses = {item.status for item in shipments}
+    if statuses and statuses == {"delivered"}:
+        sale.delivery_status = "delivered"
+    elif statuses.intersection({"posted", "in_transit", "out_for_delivery"}):
+        sale.delivery_status = "out_for_delivery"
+    elif statuses.intersection({"preparing"}) and sale.delivery_status in {"new", "picking"}:
+        sale.delivery_status = "ready"
 
 
 def _serialize_sale_report(sale):
@@ -1216,6 +1385,20 @@ def index():
             and_(PharmacySale.completed_at >= day_start, PharmacySale.completed_at < day_end),
         ),
     ).order_by(PharmacySale.created_at.desc(), PharmacySale.id.desc()).limit(200).all()
+    marketplace_accounts = MarketplaceAccount.query.order_by(
+        MarketplaceAccount.provider.asc(), MarketplaceAccount.name.asc()
+    ).all()
+    marketplace_mappings = MarketplaceProductMapping.query.order_by(
+        MarketplaceProductMapping.account_id.asc(), MarketplaceProductMapping.id.desc()
+    ).limit(300).all()
+    marketplace_events = MarketplaceSyncEvent.query.order_by(
+        MarketplaceSyncEvent.created_at.desc(), MarketplaceSyncEvent.id.desc()
+    ).limit(30).all()
+    shipments = Shipment.query.order_by(Shipment.created_at.desc(), Shipment.id.desc()).limit(200).all()
+    shipment_sales = PharmacySale.query.filter(
+        PharmacySale.fulfillment_type == "delivery",
+        PharmacySale.status != "cancelled",
+    ).order_by(PharmacySale.created_at.desc(), PharmacySale.id.desc()).limit(300).all()
     menu_sections = [
         {"id": "inicio", "title": "Inicio", "description": "Visao geral e indicadores"},
         {"id": "workflow", "title": "Workflow", "description": "Kanban, WhatsApp e chat interno"},
@@ -1254,6 +1437,13 @@ def index():
         store_mode=store_mode,
         store_modes=STORE_MODES,
         can_change_store_mode=_can_change_store_mode(),
+        marketplace_catalog=marketplace_catalog(),
+        marketplace_accounts=[_serialize_marketplace_account(item) for item in marketplace_accounts],
+        marketplace_mappings=[_serialize_marketplace_mapping(item) for item in marketplace_mappings],
+        marketplace_events=[_serialize_marketplace_event(item) for item in marketplace_events],
+        shipments=[_serialize_shipment(item) for item in shipments],
+        correios_status=CorreiosClient().public_status(),
+        shipment_sales=shipment_sales,
     )
 
 
@@ -2022,6 +2212,260 @@ def api_sale_fulfillment(sale_id):
     return jsonify({"ok": True, "sale": _serialize_sale(sale)})
 
 
+def _shipment_tracking_code(value, carrier):
+    code = re.sub(r"[^A-Za-z0-9]", "", str(value or "")).upper()
+    if carrier == "correios" and code and not re.fullmatch(r"[A-Z]{2}\d{9}[A-Z]{2}", code):
+        raise ValueError("Codigo dos Correios deve ter 13 caracteres no formato AA123456789BR.")
+    return code or None
+
+
+def _shipment_items_payload(sale, raw_items=None):
+    requested = {}
+    if raw_items:
+        for raw in raw_items:
+            if not isinstance(raw, dict) or not raw.get("sale_item_id"):
+                raise ValueError("Item de remessa invalido.")
+            sale_item_id = int(raw["sale_item_id"])
+            quantity = _to_decimal(raw.get("quantity"), "quantidade da remessa")
+            if quantity <= 0:
+                raise ValueError("Quantidade da remessa deve ser maior que zero.")
+            requested[sale_item_id] = requested.get(sale_item_id, Decimal("0")) + quantity
+
+    result = []
+    for sale_item in sale.items.order_by(PharmacySaleItem.id.asc()).all():
+        allocated = db.session.query(func.coalesce(func.sum(ShipmentItem.quantity), 0)).join(Shipment).filter(
+            ShipmentItem.sale_item_id == sale_item.id,
+            Shipment.status != "cancelled",
+        ).scalar()
+        available = Decimal(sale_item.quantity or 0) - Decimal(allocated or 0)
+        quantity = requested.pop(sale_item.id, None) if raw_items else available
+        if quantity is None:
+            continue
+        if quantity > available:
+            raise ValueError(f"Quantidade de {sale_item.product.name} excede o saldo ainda nao rastreado.")
+        if quantity > 0:
+            result.append((sale_item, quantity))
+    if requested:
+        raise ValueError("Um dos itens nao pertence ao pedido informado.")
+    if not result:
+        raise ValueError("Todos os produtos deste pedido ja estao vinculados a remessas.")
+    return result
+
+
+@bp.route("/api/shipments", methods=["GET", "POST"])
+def api_shipments():
+    if request.method == "GET":
+        query = Shipment.query
+        sale_id = request.args.get("sale_id", type=int)
+        status = (request.args.get("status") or "").strip().lower()
+        search = (request.args.get("q") or "").strip()
+        if sale_id:
+            query = query.filter_by(sale_id=sale_id)
+        if status:
+            query = query.filter_by(status=status)
+        if search:
+            like = f"%{search}%"
+            query = query.join(PharmacySale).outerjoin(ShipmentItem).outerjoin(
+                PharmacySaleItem, ShipmentItem.sale_item_id == PharmacySaleItem.id
+            ).outerjoin(PharmacyProduct, PharmacySaleItem.product_id == PharmacyProduct.id).filter(or_(
+                Shipment.tracking_code.ilike(like),
+                PharmacySale.code.ilike(like),
+                PharmacySale.customer_name.ilike(like),
+                PharmacyProduct.sku.ilike(like),
+                PharmacyProduct.name.ilike(like),
+            )).distinct()
+        shipments = query.order_by(Shipment.created_at.desc(), Shipment.id.desc()).limit(300).all()
+        return jsonify({"ok": True, "shipments": [_serialize_shipment(item) for item in shipments]})
+
+    payload = request.get_json(force=True)
+    sale = db.session.get(PharmacySale, payload.get("sale_id")) or abort(404, "Pedido nao encontrado.")
+    if sale.status == "cancelled" or sale.delivery_status == "cancelled":
+        abort(400, "Pedido cancelado nao pode gerar remessa.")
+    carrier = (payload.get("carrier") or "correios").strip().lower()
+    if carrier not in {"correios", "marketplace", "transportadora", "retirada"}:
+        abort(400, "Transportador invalido.")
+    try:
+        tracking_code = _shipment_tracking_code(payload.get("tracking_code"), carrier)
+        shipment_items = _shipment_items_payload(sale, payload.get("items"))
+        estimated_date = _parse_date(payload.get("estimated_delivery_date"), "previsao de entrega") \
+            if payload.get("estimated_delivery_date") else None
+    except ValueError as exc:
+        abort(400, str(exc))
+    customer = sale.customer
+    destination_postal_code = re.sub(
+        r"\D", "", str(payload.get("destination_postal_code") or (customer.postal_code if customer else ""))
+    )
+    client = CorreiosClient()
+    service_code = str(payload.get("service_code") or client.default_service_code or "").strip()
+    origin_postal_code = re.sub(
+        r"\D", "", str(payload.get("origin_postal_code") or client.origin_postal_code or "")
+    )
+    if carrier == "correios" and _to_bool(payload.get("calculate_estimate")):
+        try:
+            estimate = client.estimate_delivery(destination_postal_code, service_code)
+            estimated_date = date.fromisoformat(estimate["estimated_delivery_date"]) \
+                if estimate.get("estimated_delivery_date") else None
+            origin_postal_code = estimate["origin_postal_code"]
+            destination_postal_code = estimate["destination_postal_code"]
+        except CorreiosError as exc:
+            abort(502, str(exc))
+    shipment = Shipment(
+        sale_id=sale.id,
+        carrier=carrier,
+        service_code=service_code,
+        tracking_code=tracking_code,
+        status="preparing",
+        origin_postal_code=origin_postal_code,
+        destination_postal_code=destination_postal_code,
+        estimated_delivery_date=estimated_date,
+    )
+    db.session.add(shipment)
+    db.session.flush()
+    for sale_item, quantity in shipment_items:
+        db.session.add(ShipmentItem(
+            shipment_id=shipment.id, sale_item_id=sale_item.id, quantity=quantity
+        ))
+    db.session.add(ShipmentEvent(
+        shipment_id=shipment.id,
+        event_key=f"created:{shipment.id}",
+        status_code="preparing",
+        description="Remessa criada e produtos vinculados para rastreio.",
+        occurred_at=datetime.utcnow(),
+        source="nanostore",
+    ))
+    _sync_sale_delivery_from_shipments(sale)
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        abort(409, "Este codigo de rastreio ja esta vinculado a outra remessa.")
+    return jsonify({"ok": True, "shipment": _serialize_shipment(shipment)}), 201
+
+
+@bp.route("/api/shipments/<int:shipment_id>", methods=["GET", "PATCH"])
+def api_shipment_detail(shipment_id):
+    shipment = db.session.get(Shipment, shipment_id) or abort(404, "Remessa nao encontrada.")
+    if request.method == "GET":
+        return jsonify({"ok": True, "shipment": _serialize_shipment(shipment)})
+    payload = request.get_json(force=True)
+    old_status = shipment.status
+    status = (payload.get("status") or shipment.status).strip().lower()
+    allowed = {"preparing", "posted", "in_transit", "out_for_delivery", "delivered", "exception", "cancelled"}
+    if status not in allowed:
+        abort(400, "Status de rastreio invalido.")
+    try:
+        if "tracking_code" in payload:
+            shipment.tracking_code = _shipment_tracking_code(payload.get("tracking_code"), shipment.carrier)
+        if "estimated_delivery_date" in payload:
+            shipment.estimated_delivery_date = _parse_date(
+                payload.get("estimated_delivery_date"), "previsao de entrega"
+            ) if payload.get("estimated_delivery_date") else None
+    except ValueError as exc:
+        abort(400, str(exc))
+    shipment.service_code = str(payload.get("service_code") or shipment.service_code or "").strip()
+    shipment.status = status
+    if status == "posted" and not shipment.posted_at:
+        shipment.posted_at = datetime.utcnow()
+    if status == "delivered" and not shipment.delivered_at:
+        shipment.delivered_at = datetime.utcnow()
+    if status != old_status:
+        now = datetime.utcnow()
+        db.session.add(ShipmentEvent(
+            shipment_id=shipment.id,
+            event_key=f"manual:{status}:{now.isoformat()}",
+            status_code=status,
+            description=str(payload.get("description") or f"Status alterado para {status}.").strip(),
+            location=str(payload.get("location") or "").strip(),
+            occurred_at=now,
+            source="manual",
+        ))
+    _sync_sale_delivery_from_shipments(shipment.sale)
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        abort(409, "Este codigo de rastreio ja esta vinculado a outra remessa.")
+    return jsonify({"ok": True, "shipment": _serialize_shipment(shipment)})
+
+
+def _shipment_event_datetime(value):
+    raw = str(value or "").replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError:
+        return datetime.utcnow()
+    if parsed.tzinfo:
+        return parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    return parsed
+
+
+@bp.route("/api/shipments/<int:shipment_id>/refresh", methods=["POST"])
+def api_shipment_refresh(shipment_id):
+    shipment = db.session.get(Shipment, shipment_id) or abort(404, "Remessa nao encontrada.")
+    if shipment.carrier != "correios" or not shipment.tracking_code:
+        abort(400, "Informe um codigo dos Correios para atualizar o rastreio.")
+    client = CorreiosClient()
+    try:
+        tracking = client.track(shipment.tracking_code)
+        if not shipment.estimated_delivery_date and shipment.destination_postal_code and shipment.service_code:
+            estimate = client.estimate_delivery(shipment.destination_postal_code, shipment.service_code)
+            if estimate.get("estimated_delivery_date"):
+                shipment.estimated_delivery_date = date.fromisoformat(estimate["estimated_delivery_date"])
+    except CorreiosError as exc:
+        shipment.last_checked_at = datetime.utcnow()
+        shipment.last_error = str(exc)
+        db.session.commit()
+        return jsonify({"ok": False, "error": str(exc), "shipment": _serialize_shipment(shipment)}), 502
+
+    newest = None
+    created = 0
+    for raw_event in tracking.get("events") or []:
+        occurred_at = _shipment_event_datetime(raw_event.get("occurred_at"))
+        event_key = hashlib.sha256("|".join([
+            str(raw_event.get("code") or ""), str(raw_event.get("description") or ""),
+            str(raw_event.get("location") or ""), occurred_at.isoformat(),
+        ]).encode()).hexdigest()
+        event = ShipmentEvent.query.filter_by(shipment_id=shipment.id, event_key=event_key).first()
+        if not event:
+            db.session.add(ShipmentEvent(
+                shipment_id=shipment.id,
+                event_key=event_key,
+                status_code=str(raw_event.get("code") or "")[:40],
+                description=str(raw_event.get("description") or "Evento dos Correios")[:500],
+                location=str(raw_event.get("location") or "")[:255],
+                occurred_at=occurred_at,
+                source="correios_cws",
+                raw_json=json.dumps(raw_event.get("raw") or {}, ensure_ascii=False, default=str),
+            ))
+            created += 1
+        if newest is None or occurred_at > newest[0]:
+            newest = (occurred_at, raw_event)
+    if newest:
+        status = _shipment_status_from_description(newest[1].get("description"))
+        shipment.status = status
+        if status in {"posted", "in_transit", "out_for_delivery", "delivered"} and not shipment.posted_at:
+            shipment.posted_at = newest[0]
+        if status == "delivered":
+            shipment.delivered_at = newest[0]
+    shipment.last_checked_at = datetime.utcnow()
+    shipment.last_error = ""
+    _sync_sale_delivery_from_shipments(shipment.sale)
+    db.session.commit()
+    return jsonify({"ok": True, "new_events": created, "shipment": _serialize_shipment(shipment)})
+
+
+@bp.route("/api/shipping/correios/estimate", methods=["POST"])
+def api_correios_estimate():
+    payload = request.get_json(force=True)
+    try:
+        estimate = CorreiosClient().estimate_delivery(
+            payload.get("destination_postal_code"), payload.get("service_code")
+        )
+    except CorreiosError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 502
+    return jsonify({"ok": True, "estimate": estimate})
+
+
 @bp.route("/api/fiscal/status")
 def api_fiscal_status():
     transmission_enabled = os.getenv("NANOSTORE_NFE_HOMOLOGATION_TRANSMISSION_ENABLED", "").strip().lower() in {
@@ -2285,6 +2729,609 @@ def api_order_pdf(sale_id):
         document, mimetype="application/pdf", as_attachment=False,
         download_name=f"{sale.code}-{format_name}.pdf",
     )
+
+
+def _require_marketplace_admin():
+    profile = (request.headers.get("X-Portal-Usuario-Perfil") or "").strip().lower()
+    if profile and profile != "admin":
+        abort(403, "Somente administradores podem configurar canais de venda.")
+
+
+def _marketplace_account_payload(account, payload):
+    provider, channel = marketplace_channel(payload.get("provider") or account.provider if account else payload.get("provider"))
+    if not channel:
+        abort(400, "Canal de venda nao suportado.")
+    name = (payload.get("name") or (account.name if account else "")).strip()
+    if not name:
+        abort(400, "Informe um nome para a conta ou loja.")
+    try:
+        env_prefix = validate_credential_env_prefix(
+            payload.get("credential_env_prefix") or (account.credential_env_prefix if account else "")
+        )
+    except ValueError as exc:
+        abort(400, str(exc))
+    capabilities = set(channel.get("capabilities") or [])
+    return {
+        "provider": provider,
+        "name": name,
+        "seller_id": (payload.get("seller_id") if "seller_id" in payload else (account.seller_id if account else "") or "").strip(),
+        "shop_url": (payload.get("shop_url") if "shop_url" in payload else (account.shop_url if account else "") or "").strip(),
+        "credential_env_prefix": env_prefix,
+        "enabled": _to_bool(payload.get("enabled", account.enabled if account else False)),
+        "sync_orders": "orders" in capabilities and _to_bool(payload.get("sync_orders", account.sync_orders if account else True)),
+        "sync_inventory": "inventory" in capabilities and _to_bool(payload.get("sync_inventory", account.sync_inventory if account else False)),
+        "sync_logistics": "logistics" in capabilities and _to_bool(payload.get("sync_logistics", account.sync_logistics if account else False)),
+    }
+
+
+@bp.route("/api/marketplaces/catalog")
+def api_marketplace_catalog():
+    return jsonify({
+        "ok": True,
+        "channels": marketplace_catalog(),
+        "accounts": [_serialize_marketplace_account(item) for item in MarketplaceAccount.query.order_by(
+            MarketplaceAccount.provider.asc(), MarketplaceAccount.name.asc()
+        ).all()],
+    })
+
+
+@bp.route("/api/marketplaces/accounts", methods=["GET", "POST"])
+def api_marketplace_accounts():
+    if request.method == "GET":
+        accounts = MarketplaceAccount.query.order_by(
+            MarketplaceAccount.provider.asc(), MarketplaceAccount.name.asc()
+        ).all()
+        return jsonify({"ok": True, "accounts": [_serialize_marketplace_account(item) for item in accounts]})
+
+    _require_marketplace_admin()
+    payload = request.get_json(force=True)
+    values = _marketplace_account_payload(None, payload)
+    account = MarketplaceAccount(**values)
+    account.status = "ready" if account.enabled and os.environ.get(
+        f"{account.credential_env_prefix}_WEBHOOK_SECRET", ""
+    ).strip() else "pending"
+    db.session.add(account)
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        abort(409, "Ja existe uma conta com este nome neste canal.")
+    return jsonify({"ok": True, "account": _serialize_marketplace_account(account)}), 201
+
+
+@bp.route("/api/marketplaces/accounts/<int:account_id>", methods=["PATCH"])
+def api_marketplace_account_detail(account_id):
+    _require_marketplace_admin()
+    account = db.session.get(MarketplaceAccount, account_id) or abort(404, "Conta de canal nao encontrada.")
+    values = _marketplace_account_payload(account, request.get_json(force=True))
+    for key, value in values.items():
+        setattr(account, key, value)
+    account.status = "ready" if account.enabled and _marketplace_webhook_secret(account) else "pending"
+    if not account.enabled:
+        account.status = "disabled"
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        abort(409, "Ja existe uma conta com este nome neste canal.")
+    return jsonify({"ok": True, "account": _serialize_marketplace_account(account)})
+
+
+@bp.route("/api/marketplaces/mappings", methods=["GET", "POST"])
+def api_marketplace_mappings():
+    if request.method == "GET":
+        query = MarketplaceProductMapping.query
+        account_id = request.args.get("account_id", type=int)
+        if account_id:
+            query = query.filter_by(account_id=account_id)
+        mappings = query.order_by(MarketplaceProductMapping.account_id.asc(), MarketplaceProductMapping.id.desc()).all()
+        return jsonify({"ok": True, "mappings": [_serialize_marketplace_mapping(item) for item in mappings]})
+
+    _require_marketplace_admin()
+    payload = request.get_json(force=True)
+    account = db.session.get(MarketplaceAccount, payload.get("account_id")) or abort(404, "Conta de canal nao encontrada.")
+    product = db.session.get(PharmacyProduct, payload.get("product_id")) or abort(404, "Produto local nao encontrado.")
+    external_product_id = str(payload.get("external_product_id") or "").strip()
+    if not external_product_id:
+        abort(400, "Informe o identificador do produto no canal.")
+    mapping = MarketplaceProductMapping.query.filter_by(
+        account_id=account.id, product_id=product.id
+    ).first()
+    if not mapping:
+        mapping = MarketplaceProductMapping(account_id=account.id, product_id=product.id)
+        db.session.add(mapping)
+    mapping.external_product_id = external_product_id
+    mapping.external_sku = str(payload.get("external_sku") or product.sku).strip()
+    mapping.sync_inventory = _to_bool(payload.get("sync_inventory", True))
+    mapping.sync_price = _to_bool(payload.get("sync_price", False))
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        abort(409, "Este produto externo ja esta vinculado a outro produto local.")
+    return jsonify({"ok": True, "mapping": _serialize_marketplace_mapping(mapping)}), 201
+
+
+@bp.route("/api/marketplaces/mappings/<int:mapping_id>", methods=["DELETE"])
+def api_marketplace_mapping_delete(mapping_id):
+    _require_marketplace_admin()
+    mapping = db.session.get(MarketplaceProductMapping, mapping_id) or abort(404, "Mapeamento nao encontrado.")
+    db.session.delete(mapping)
+    db.session.commit()
+    return jsonify({"ok": True})
+
+
+@bp.route("/api/marketplaces/events")
+def api_marketplace_events():
+    query = MarketplaceSyncEvent.query
+    account_id = request.args.get("account_id", type=int)
+    if account_id:
+        query = query.filter_by(account_id=account_id)
+    events = query.order_by(MarketplaceSyncEvent.created_at.desc(), MarketplaceSyncEvent.id.desc()).limit(200).all()
+    return jsonify({"ok": True, "events": [_serialize_marketplace_event(item) for item in events]})
+
+
+@bp.route("/api/marketplaces/inventory/queue", methods=["POST"])
+def api_marketplace_inventory_queue():
+    _require_marketplace_admin()
+    payload = request.get_json(silent=True) or {}
+    query = MarketplaceProductMapping.query.join(MarketplaceAccount).filter(
+        MarketplaceAccount.enabled.is_(True),
+        MarketplaceAccount.sync_inventory.is_(True),
+        MarketplaceProductMapping.sync_inventory.is_(True),
+    )
+    if payload.get("account_id"):
+        query = query.filter(MarketplaceProductMapping.account_id == int(payload["account_id"]))
+    created = 0
+    for mapping in query.all():
+        current_stock = db.session.query(func.coalesce(func.sum(PharmacyLot.quantity_available), 0)).filter(
+            PharmacyLot.product_id == mapping.product_id
+        ).scalar()
+        stock_text = format(Decimal(current_stock or 0), "f")
+        event_key = f"inventory:{mapping.id}:{stock_text}"
+        if MarketplaceSyncEvent.query.filter_by(account_id=mapping.account_id, event_key=event_key).first():
+            continue
+        db.session.add(MarketplaceSyncEvent(
+            account_id=mapping.account_id,
+            event_key=event_key,
+            direction="outbound",
+            entity_type="inventory",
+            entity_id=mapping.external_product_id,
+            event_type="inventory.update",
+            status="pending",
+            payload_json=json.dumps({
+                "external_product_id": mapping.external_product_id,
+                "external_sku": mapping.external_sku,
+                "local_sku": mapping.product.sku,
+                "quantity": stock_text,
+            }, ensure_ascii=False),
+        ))
+        created += 1
+    db.session.commit()
+    return jsonify({
+        "ok": True,
+        "queued": created,
+        "message": "Itens colocados na fila. O envio externo depende do adaptador e das credenciais do canal.",
+    })
+
+
+def _marketplace_address(value):
+    if isinstance(value, str):
+        return value.strip()
+    if not isinstance(value, dict):
+        return ""
+    parts = [
+        value.get("address_1") or value.get("street") or value.get("address"),
+        value.get("number") or value.get("address_number"),
+        value.get("address_2") or value.get("neighborhood"),
+        value.get("city"), value.get("state"), value.get("postcode") or value.get("postal_code"),
+    ]
+    return ", ".join(str(item).strip() for item in parts if str(item or "").strip())
+
+
+def _normalize_woocommerce_order(payload):
+    billing = payload.get("billing") if isinstance(payload.get("billing"), dict) else {}
+    shipping = payload.get("shipping") if isinstance(payload.get("shipping"), dict) else {}
+    customer_name = " ".join(filter(None, [
+        str(shipping.get("first_name") or billing.get("first_name") or "").strip(),
+        str(shipping.get("last_name") or billing.get("last_name") or "").strip(),
+    ])).strip()
+    items = []
+    for item in payload.get("line_items") or []:
+        if not isinstance(item, dict):
+            continue
+        quantity = Decimal(str(item.get("quantity") or "0"))
+        subtotal = Decimal(str(item.get("subtotal") or "0"))
+        total = Decimal(str(item.get("total") or subtotal))
+        items.append({
+            "external_product_id": str(item.get("variation_id") or item.get("product_id") or item.get("id") or ""),
+            "sku": str(item.get("sku") or "").strip(),
+            "quantity": format(quantity, "f"),
+            "unit_price": format((subtotal / quantity if quantity else Decimal("0")), "f"),
+            "discount_amount": format(max(subtotal - total, Decimal("0")), "f"),
+        })
+    status = str(payload.get("status") or "").strip().lower()
+    return {
+        "external_order_id": str(payload.get("id") or payload.get("number") or "").strip(),
+        "external_status": status,
+        "logistics_status": str(payload.get("shipping_status") or "").strip(),
+        "payment_status": "paid" if payload.get("date_paid") or status in {"processing", "completed"} else "pending",
+        "customer": {
+            "name": customer_name or "Cliente WooCommerce",
+            "phone": shipping.get("phone") or billing.get("phone") or "",
+            "email": shipping.get("email") or billing.get("email") or "",
+            "document": billing.get("cpf") or billing.get("cnpj") or "",
+            "address": _marketplace_address(shipping or billing),
+            "city": shipping.get("city") or billing.get("city") or "",
+            "state": shipping.get("state") or billing.get("state") or "",
+            "postal_code": shipping.get("postcode") or billing.get("postcode") or "",
+        },
+        "items": items,
+        "notes": str(payload.get("customer_note") or "").strip(),
+        "carrier": "woocommerce",
+        "service_code": "",
+        "tracking_code": "",
+        "estimated_delivery_date": "",
+    }
+
+
+def _normalize_canonical_marketplace_order(payload):
+    order = payload.get("order") if isinstance(payload.get("order"), dict) else payload
+    customer = order.get("customer") if isinstance(order.get("customer"), dict) else {}
+    shipping = order.get("shipping") if isinstance(order.get("shipping"), dict) else {}
+    items = []
+    for item in order.get("items") or []:
+        if not isinstance(item, dict):
+            continue
+        items.append({
+            "external_product_id": str(item.get("external_product_id") or item.get("product_id") or "").strip(),
+            "sku": str(item.get("sku") or item.get("external_sku") or "").strip(),
+            "quantity": str(item.get("quantity") or "0"),
+            "unit_price": str(item.get("unit_price") or item.get("price") or "0"),
+            "discount_amount": str(item.get("discount_amount") or "0"),
+        })
+    return {
+        "external_order_id": str(order.get("external_order_id") or order.get("order_id") or order.get("id") or "").strip(),
+        "external_status": str(order.get("external_status") or order.get("status") or "").strip().lower(),
+        "logistics_status": str(order.get("logistics_status") or shipping.get("status") or "").strip().lower(),
+        "payment_status": str(order.get("payment_status") or ("paid" if order.get("paid") else "pending")).strip().lower(),
+        "customer": {
+            "name": str(customer.get("name") or order.get("customer_name") or "Cliente do marketplace").strip(),
+            "phone": customer.get("phone") or order.get("customer_phone") or "",
+            "email": customer.get("email") or "",
+            "document": customer.get("document") or "",
+            "address": _marketplace_address(shipping.get("address") or customer.get("address") or order.get("delivery_address")),
+            "city": shipping.get("city") or customer.get("city") or "",
+            "state": shipping.get("state") or customer.get("state") or "",
+            "postal_code": shipping.get("postal_code") or customer.get("postal_code") or "",
+        },
+        "items": items,
+        "notes": str(order.get("notes") or "").strip(),
+        "carrier": str(shipping.get("carrier") or order.get("carrier") or "marketplace").strip().lower(),
+        "service_code": str(shipping.get("service_code") or order.get("service_code") or "").strip(),
+        "tracking_code": str(shipping.get("tracking_code") or order.get("tracking_code") or "").strip(),
+        "estimated_delivery_date": str(
+            shipping.get("estimated_delivery_date") or order.get("estimated_delivery_date") or ""
+        ).strip(),
+    }
+
+
+def _marketplace_product_for_item(account, item):
+    external_product_id = str(item.get("external_product_id") or "").strip()
+    sku = str(item.get("sku") or "").strip()
+    mapping = None
+    if external_product_id:
+        mapping = MarketplaceProductMapping.query.filter_by(
+            account_id=account.id, external_product_id=external_product_id
+        ).first()
+    if not mapping and sku:
+        mapping = MarketplaceProductMapping.query.filter(
+            MarketplaceProductMapping.account_id == account.id,
+            func.lower(MarketplaceProductMapping.external_sku) == sku.lower(),
+        ).first()
+    if mapping:
+        return mapping.product
+    if sku:
+        return PharmacyProduct.query.filter(func.lower(PharmacyProduct.sku) == sku.lower()).first()
+    return None
+
+
+def _marketplace_customer(order):
+    customer_data = order.get("customer") or {}
+    phone = "".join(ch for ch in str(customer_data.get("phone") or "") if ch.isdigit())
+    document = "".join(ch for ch in str(customer_data.get("document") or "") if ch.isdigit())
+    customer = None
+    if document:
+        customer = PharmacyCustomer.query.filter_by(document=document).first()
+    if not customer and phone:
+        customer = PharmacyCustomer.query.filter_by(phone=phone).first()
+    if not customer:
+        customer = PharmacyCustomer(
+            name=str(customer_data.get("name") or "Cliente do marketplace").strip(),
+            document=document,
+            phone=phone,
+            address=str(customer_data.get("address") or "").strip(),
+            city=str(customer_data.get("city") or "").strip(),
+            state=str(customer_data.get("state") or "").strip().upper()[:2],
+            postal_code=str(customer_data.get("postal_code") or "").strip(),
+        )
+        db.session.add(customer)
+        db.session.flush()
+    return customer
+
+
+def _sync_marketplace_order_shipment(account, sale, order):
+    tracking_code = re.sub(r"[^A-Za-z0-9]", "", str(order.get("tracking_code") or "")).upper()
+    logistics_status = str(order.get("logistics_status") or "").lower()
+    if not tracking_code and not logistics_status:
+        return None
+    carrier_raw = str(order.get("carrier") or "marketplace").strip().lower()
+    carrier = "correios" if "correio" in carrier_raw else "marketplace"
+    shipment = None
+    if tracking_code:
+        shipment = Shipment.query.filter_by(carrier=carrier, tracking_code=tracking_code).first()
+    if not shipment:
+        shipment = sale.shipments.filter_by(carrier=carrier).order_by(Shipment.id.desc()).first()
+    if not shipment:
+        shipment = Shipment(
+            sale_id=sale.id,
+            carrier=carrier,
+            tracking_code=tracking_code or None,
+            status="preparing",
+        )
+        db.session.add(shipment)
+        db.session.flush()
+        for sale_item in sale.items.order_by(PharmacySaleItem.id.asc()).all():
+            db.session.add(ShipmentItem(
+                shipment_id=shipment.id,
+                sale_item_id=sale_item.id,
+                quantity=Decimal(sale_item.quantity or 0),
+            ))
+    elif tracking_code and not shipment.tracking_code:
+        shipment.tracking_code = tracking_code
+    shipment.service_code = str(order.get("service_code") or shipment.service_code or "").strip()
+    estimated_raw = str(order.get("estimated_delivery_date") or "").strip()
+    if estimated_raw:
+        try:
+            shipment.estimated_delivery_date = date.fromisoformat(estimated_raw[:10])
+        except ValueError:
+            shipment.last_error = "Previsao externa invalida; informe a data manualmente."
+    mapped_status = {
+        "processing": "preparing", "picking": "preparing", "packing": "preparing",
+        "ready": "preparing", "ready_to_ship": "preparing", "packed": "preparing",
+        "posted": "posted", "shipped": "in_transit", "in_transit": "in_transit",
+        "out_for_delivery": "out_for_delivery", "delivered": "delivered", "completed": "delivered",
+    }.get(logistics_status)
+    if mapped_status:
+        shipment.status = mapped_status
+        occurred_at = datetime.utcnow()
+        event_key = hashlib.sha256(
+            f"marketplace:{account.id}:{sale.external_order_id}:{logistics_status}".encode()
+        ).hexdigest()
+        if not ShipmentEvent.query.filter_by(shipment_id=shipment.id, event_key=event_key).first():
+            db.session.add(ShipmentEvent(
+                shipment_id=shipment.id,
+                event_key=event_key,
+                status_code=logistics_status[:40],
+                description=f"Status logistico recebido de {account.provider}: {logistics_status}.",
+                occurred_at=occurred_at,
+                source=account.provider,
+            ))
+        if mapped_status in {"posted", "in_transit", "out_for_delivery", "delivered"} and not shipment.posted_at:
+            shipment.posted_at = occurred_at
+        if mapped_status == "delivered":
+            shipment.delivered_at = occurred_at
+    _sync_sale_delivery_from_shipments(sale)
+    return shipment
+
+
+def _create_marketplace_sale(account, order):
+    external_order_id = order.get("external_order_id")
+    if not external_order_id:
+        raise ValueError("Pedido externo sem identificador.")
+    if not order.get("items"):
+        raise ValueError("Pedido externo sem itens.")
+    existing = MarketplaceOrderLink.query.filter_by(
+        account_id=account.id, external_order_id=external_order_id
+    ).first()
+    if existing:
+        existing.external_status = order.get("external_status") or existing.external_status
+        existing.logistics_status = order.get("logistics_status") or existing.logistics_status
+        existing.last_synced_at = datetime.utcnow()
+        logistics_status = (order.get("logistics_status") or order.get("external_status") or "").lower()
+        local_status = {
+            "processing": "picking", "picking": "picking", "packing": "picking",
+            "ready": "ready", "ready_to_ship": "ready", "packed": "ready",
+            "shipped": "out_for_delivery", "out_for_delivery": "out_for_delivery",
+            "delivered": "delivered", "completed": "completed",
+        }.get(logistics_status)
+        if local_status:
+            existing.sale.delivery_status = local_status
+            existing.sale.completed_at = datetime.utcnow() if local_status == "completed" else None
+        _sync_marketplace_order_shipment(account, existing.sale, order)
+        return existing.sale, existing, False
+
+    local_items = []
+    missing = []
+    for item in order["items"]:
+        product = _marketplace_product_for_item(account, item)
+        if not product:
+            missing.append(item.get("sku") or item.get("external_product_id") or "sem identificador")
+            continue
+        local_items.append({
+            "product_id": product.id,
+            "quantity": item.get("quantity"),
+            "unit_price": item.get("unit_price"),
+            "discount_amount": item.get("discount_amount"),
+        })
+    if missing:
+        raise ValueError("Mapeie os produtos externos antes de importar: " + ", ".join(missing[:10]))
+
+    customer = _marketplace_customer(order)
+    digest = hashlib.sha256(f"{account.id}:{external_order_id}".encode()).hexdigest()[:12].upper()
+    sale = PharmacySale(
+        code=f"MKT-{account.id}-{digest}",
+        customer_name=customer.name,
+        customer_phone=customer.phone,
+        source_channel=account.provider,
+        status="open",
+        notes=order.get("notes") or "",
+        external_order_id=external_order_id,
+        customer_id=customer.id,
+        fulfillment_type="delivery",
+        delivery_address=order.get("customer", {}).get("address") or "",
+        delivery_status="new",
+    )
+    db.session.add(sale)
+    db.session.flush()
+    subtotal, discount_total = _add_sale_items(sale, local_items, movement_type="marketplace_sale")
+    sale.subtotal_amount = subtotal
+    sale.discount_amount = discount_total
+    sale.total_amount = (subtotal - discount_total).quantize(Decimal("0.01"))
+    paid = order.get("payment_status") in {"paid", "approved", "authorized", "completed"}
+    db.session.add(FinancialEntry(
+        entry_type="receivable",
+        category="Venda marketplace",
+        description=f"Recebimento da venda {sale.code}",
+        counterparty=sale.customer_name,
+        amount=sale.total_amount,
+        status="paid" if paid else "open",
+        due_date=date.today(),
+        paid_at=datetime.utcnow() if paid else None,
+        source_ref=sale.code,
+        notes=sale.notes,
+    ))
+    if paid:
+        db.session.add(PharmacyPayment(
+            sale_id=sale.id,
+            method="marketplace",
+            provider=account.provider,
+            amount=sale.total_amount,
+            status="paid",
+            transaction_reference=external_order_id,
+            paid_at=datetime.utcnow(),
+        ))
+        sale.status = "paid"
+    _ensure_workflow_ticket_for_sale(sale)
+    link = MarketplaceOrderLink(
+        account_id=account.id,
+        sale_id=sale.id,
+        external_order_id=external_order_id,
+        external_status=order.get("external_status") or "",
+        logistics_status=order.get("logistics_status") or "",
+    )
+    db.session.add(link)
+    db.session.flush()
+    _sync_marketplace_order_shipment(account, sale, order)
+    return sale, link, True
+
+
+def _verify_marketplace_webhook(account, raw_body):
+    secret = _marketplace_webhook_secret(account)
+    if not secret:
+        abort(503, "Configure o segredo do webhook somente na variavel de ambiente da conta.")
+    signatures = []
+    wc_signature = (request.headers.get("X-WC-Webhook-Signature") or "").strip()
+    if wc_signature:
+        signatures.append((wc_signature, base64.b64encode(hmac.new(
+            secret.encode(), raw_body, hashlib.sha256
+        ).digest()).decode()))
+    relay_signature = (request.headers.get("X-NanoStore-Signature") or "").strip()
+    if relay_signature:
+        signatures.append((relay_signature.removeprefix("sha256="), hmac.new(
+            secret.encode(), raw_body, hashlib.sha256
+        ).hexdigest()))
+    if not signatures or not any(hmac.compare_digest(received, expected) for received, expected in signatures):
+        abort(401, "Assinatura do webhook invalida.")
+
+
+@bp.route("/api/marketplaces/accounts/<int:account_id>/webhook", methods=["POST"])
+def api_marketplace_webhook(account_id):
+    account = db.session.get(MarketplaceAccount, account_id) or abort(404, "Conta de canal nao encontrada.")
+    if not account.enabled or not account.sync_orders:
+        abort(409, "A entrada de pedidos desta conta esta desativada.")
+    raw_body = request.get_data(cache=True)
+    if len(raw_body) > 1024 * 1024:
+        abort(413, "Evento excede o limite de 1 MB.")
+    _verify_marketplace_webhook(account, raw_body)
+    payload = request.get_json(force=True)
+    event_key = (
+        request.headers.get("X-NanoStore-Event-Id")
+        or request.headers.get("X-WC-Webhook-Delivery-ID")
+        or hashlib.sha256(raw_body).hexdigest()
+    ).strip()[:160]
+    existing_event = MarketplaceSyncEvent.query.filter_by(account_id=account.id, event_key=event_key).first()
+    if existing_event:
+        link = MarketplaceOrderLink.query.filter_by(
+            account_id=account.id, external_order_id=existing_event.entity_id
+        ).first()
+        return jsonify({
+            "ok": True, "duplicate": True,
+            "event": _serialize_marketplace_event(existing_event),
+            "sale": _serialize_sale(link.sale) if link else None,
+        })
+
+    order = _normalize_woocommerce_order(payload) if account.provider == "woocommerce" and "line_items" in payload \
+        else _normalize_canonical_marketplace_order(payload)
+    event_type = (request.headers.get("X-WC-Webhook-Topic") or payload.get("event") or "order.received").strip()[:80]
+    event = MarketplaceSyncEvent(
+        account_id=account.id,
+        event_key=event_key,
+        direction="inbound",
+        entity_type="order",
+        entity_id=order.get("external_order_id") or "",
+        event_type=event_type,
+        status="processing",
+        attempts=1,
+        payload_json=json.dumps(payload, ensure_ascii=False, default=str),
+    )
+    db.session.add(event)
+    try:
+        if order.get("external_status") in {"cancelled", "canceled", "refunded", "failed"} and not MarketplaceOrderLink.query.filter_by(
+            account_id=account.id, external_order_id=order.get("external_order_id")
+        ).first():
+            event.status = "ignored"
+            event.error = "Cancelamento recebido antes da importacao; nenhuma baixa de estoque foi feita."
+            event.processed_at = datetime.utcnow()
+            db.session.commit()
+            return jsonify({"ok": True, "ignored": True, "event": _serialize_marketplace_event(event)})
+        sale, link, created = _create_marketplace_sale(account, order)
+        cancellation_statuses = {"cancelled", "canceled", "refunded", "failed"}
+        if not created and order.get("external_status") in cancellation_statuses:
+            event.status = "review_required"
+            event.error = "Cancelamento externo aguarda estorno auditavel de pagamento e estoque no NanoStore."
+        else:
+            event.status = "processed" if created else "duplicate_order"
+        event.processed_at = datetime.utcnow()
+        account.last_sync_at = datetime.utcnow()
+        account.last_error = ""
+        account.status = "ready"
+        db.session.commit()
+        return jsonify({
+            "ok": True, "created": created,
+            "event": _serialize_marketplace_event(event),
+            "sale": _serialize_sale(sale),
+        }), (201 if created else 200)
+    except (ValueError, TypeError, InvalidOperation) as exc:
+        db.session.rollback()
+        blocked = MarketplaceSyncEvent(
+            account_id=account.id,
+            event_key=event_key,
+            direction="inbound",
+            entity_type="order",
+            entity_id=order.get("external_order_id") or "",
+            event_type=event_type,
+            status="blocked",
+            attempts=1,
+            payload_json=json.dumps(payload, ensure_ascii=False, default=str),
+            error=str(exc),
+            processed_at=datetime.utcnow(),
+        )
+        account = db.session.get(MarketplaceAccount, account_id)
+        account.last_error = str(exc)
+        db.session.add(blocked)
+        db.session.commit()
+        return jsonify({"ok": False, "error": str(exc), "event": _serialize_marketplace_event(blocked)}), 422
 
 
 @bp.route("/api/payments/process", methods=["POST"])

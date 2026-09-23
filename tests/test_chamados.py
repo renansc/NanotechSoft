@@ -29,6 +29,7 @@ class ChamadosTests(unittest.TestCase):
         self.assertIn("CREATE TABLE IF NOT EXISTS chamados_intervencoes (", schema)
         self.assertIn("CREATE TABLE IF NOT EXISTS chamados_documentos (", schema)
         self.assertIn("CREATE TABLE IF NOT EXISTS chamados_agenda (", schema)
+        self.assertIn("CREATE TABLE IF NOT EXISTS chamados_conky_sync (", schema)
         self.assertTrue(any(item["recurso"] == "agenda" for item in manifest["menu_groups"]["workflow"]))
         self.assertTrue(any(item["recurso"] == "agenda" for item in manifest["workflow_cards"]))
 
@@ -307,6 +308,74 @@ class ChamadosTests(unittest.TestCase):
         self.assertIn("/similar", javascript)
         self.assertIn("/agenda", javascript)
         self.assertIn("submitAgenda", javascript)
+
+    def test_conky_status_mapping_preserves_triage_until_column_changes(self):
+        self.assertEqual("todo", portal.CHAMADO_TO_CONKY["ABERTO"])
+        self.assertEqual("todo", portal.CHAMADO_TO_CONKY["TRIAGEM"])
+        self.assertEqual("today", portal.CHAMADO_TO_CONKY["EM_ATENDIMENTO"])
+        self.assertEqual("waiting", portal.CHAMADO_TO_CONKY["AGUARDANDO"])
+
+        cursor = mock.MagicMock()
+        ticket = {"id": 7, "titulo": "Revisar servidor", "status": "TRIAGEM"}
+        unchanged_task = {
+            "status": "todo", "text": "Revisar servidor",
+            "syncedStatus": "todo", "syncedText": "Revisar servidor",
+        }
+        changed_task = {**unchanged_task, "status": "today"}
+
+        self.assertFalse(portal._update_chamado_from_conky(cursor, unchanged_task, ticket))
+        self.assertTrue(portal._update_chamado_from_conky(cursor, changed_task, ticket))
+        update_params = cursor.execute.call_args_list[0].args[1]
+        self.assertEqual("EM_ATENDIMENTO", update_params[1])
+
+    def test_conky_task_creates_ticket_and_persists_link_metadata(self):
+        connection = mock.MagicMock()
+        cursor = connection.cursor.return_value
+        cursor.lastrowid = 55
+        cursor.fetchall.side_effect = [
+            [],
+            [{
+                "id": 55, "protocolo": "CH-2026-000055", "titulo": "Trocar toner",
+                "status": "ABERTO", "created_at": dt.datetime(2026, 9, 3, 12, 0),
+                "updated_at": dt.datetime(2026, 9, 3, 12, 0),
+                "sync_key": "abc123", "tarefa_id": "1",
+            }],
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            task_file = Path(temp_dir) / "kanban-tasks.json"
+            task_file.write_text(json.dumps([{
+                "id": "1", "status": "todo", "text": "Trocar toner",
+                "created": 1, "updated": 1, "syncKey": "abc123",
+            }]), encoding="utf-8")
+            with mock.patch.object(portal, "get_conn", return_value=connection):
+                result = portal.sync_chamados_conky(task_file)
+            persisted = json.loads(task_file.read_text(encoding="utf-8"))[0]
+
+        self.assertEqual(1, result["created"])
+        self.assertEqual("55", persisted["id"])
+        self.assertEqual(55, persisted["ticketId"])
+        self.assertEqual("CH-2026-000055", persisted["protocol"])
+        executed_sql = "\n".join(call.args[0] for call in cursor.execute.call_args_list)
+        self.assertIn("INSERT INTO chamados\n", executed_sql)
+        self.assertIn("INSERT INTO chamados_conky_sync", executed_sql)
+        connection.commit.assert_called()
+
+    def test_conky_legacy_save_recovers_link_instead_of_duplicating_ticket(self):
+        task = {
+            "id": "2", "status": "today", "text": "gps integrar vendas",
+            "created": 1, "updated": 2, "syncKey": "temporary-new-key",
+        }
+        linked = [{
+            "id": 12, "sync_key": "stable-key", "tarefa_id": "2",
+            "titulo": "gps integrar vendas", "status": "ABERTO",
+        }]
+
+        by_key, recovered = portal._recover_chamado_conky_links([task], linked)
+
+        self.assertEqual(1, recovered)
+        self.assertEqual("stable-key", task["syncKey"])
+        self.assertEqual(12, task["ticketId"])
+        self.assertIn("stable-key", by_key)
 
     def test_javascript_has_valid_syntax_in_chrome(self):
         browser = shutil.which("google-chrome") or shutil.which("chromium") or shutil.which("node")

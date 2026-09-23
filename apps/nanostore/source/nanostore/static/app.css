@@ -1206,6 +1206,74 @@ h3 {
   min-width: 180px;
 }
 
+.marketplace-hub-card {
+  overflow: hidden;
+}
+
+.marketplace-channel-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.marketplace-channel-card {
+  align-content: start;
+}
+
+.marketplace-channel-card p,
+.marketplace-channel-card a {
+  margin: 0;
+}
+
+.marketplace-channel-card a {
+  color: var(--primary);
+  font-weight: 700;
+}
+
+.shipment-list {
+  margin-top: 14px;
+}
+
+.shipment-product-list,
+.shipment-timeline {
+  display: grid;
+  gap: 6px;
+}
+
+.shipment-product-list span {
+  padding: 7px 9px;
+  border-radius: 7px;
+  background: var(--paper);
+  color: var(--ink);
+  font-size: 0.9rem;
+}
+
+.shipment-timeline {
+  padding-left: 12px;
+  border-left: 3px solid var(--accent);
+}
+
+.shipment-timeline > div {
+  display: grid;
+  grid-template-columns: minmax(125px, auto) minmax(180px, 1fr) minmax(120px, auto);
+  gap: 10px;
+  align-items: baseline;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.shipment-timeline strong {
+  color: var(--ink);
+}
+
+@media (max-width: 760px) {
+  .shipment-timeline > div {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+}
+
 .filter-chip {
   background: var(--paper);
   color: var(--ink);

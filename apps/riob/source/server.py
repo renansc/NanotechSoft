@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify, send_from_directory, send_file, Respo
 import mysql.connector
 import subprocess
 import datetime
+from zoneinfo import ZoneInfo
 import base64
 import csv
 import io
@@ -39,6 +40,9 @@ from html.parser import HTMLParser
 from urllib.parse import urlparse, unquote
 import paramiko
 import nfe_ws
+from sellout_auto import preparar_mensal, snapshot_estavel, particionar_historico, proxima_leitura_diaria
+from estoque_contagem import ensure_contagem_schema, register_estoque_contagem
+from custo_produto import ensure_custo_produto_schema, register_custo_produto
 from vendas_diario import discover_txt_files, intervalo_semana_iso, parse_report, read_report, volume_item_sql
 from vendas_carga_pdf import parse_carga_pdf, parse_cargas_pdf
 from vendas_referencias import (
@@ -112,7 +116,7 @@ def _frontend_asset_version():
         return re.sub(r"[^0-9A-Za-z_.-]", "", configured) or str(int(time.time()))
 
     digest = hashlib.sha256()
-    for rel_path in ("RioBranco.html", "script.js", "gestao_processos_compras.js", "style.css", "vendor/jssip.min.js"):
+    for rel_path in ("RioBranco.html", "script.js", "gestao_processos_compras.js", "estoque_contagem.js", "custo_produto.js", "custo_diario.js", "style.css", "vendor/jssip.min.js"):
         path = os.path.join(BASE_DIR, rel_path)
         try:
             st = os.stat(path)
@@ -688,6 +692,9 @@ def ensure_schema():
         conn = get_conn()
         cur = conn.cursor()
 
+        ensure_contagem_schema(cur)
+        ensure_custo_produto_schema(cur)
+
         # 1) Novas colunas em veiculos para intervalos (se não existirem)
         # - intervalo_manut_km: quantos KM entre manutenções
         # - intervalo_oleo_km: quantos KM entre trocas de óleo
@@ -1160,6 +1167,7 @@ def ensure_schema():
             unidade VARCHAR(30) DEFAULT '',
             embalagem_tipo_padrao VARCHAR(30) DEFAULT '',
             fator_embalagem_padrao DECIMAL(12,3) DEFAULT 1,
+            estoque_minimo DECIMAL(14,3) NOT NULL DEFAULT 0,
             origem_cadastro VARCHAR(40) DEFAULT 'manual',
             ativo TINYINT(1) NOT NULL DEFAULT 1,
             criado_em DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -1929,6 +1937,17 @@ def ensure_schema():
         )
         """)
         cur.execute("""
+        CREATE TABLE IF NOT EXISTS vendas_sellout_historico (
+            import_id VARCHAR(32) NOT NULL,
+            competencia DATE NOT NULL,
+            source_path VARCHAR(500) NOT NULL,
+            source_signature VARCHAR(700) NOT NULL,
+            rows_importadas INT NOT NULL,
+            importado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (import_id, competencia)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+        cur.execute("""
         CREATE TABLE IF NOT EXISTS vendas_diario_importacoes (
             id BIGINT AUTO_INCREMENT PRIMARY KEY,
             data_ref DATE NOT NULL,
@@ -2669,6 +2688,10 @@ def ensure_schema():
             pass
         try:
             cur.execute("ALTER TABLE estoque_produtos ADD COLUMN origem_cadastro VARCHAR(40) DEFAULT 'manual'")
+        except Exception:
+            pass
+        try:
+            cur.execute("ALTER TABLE estoque_produtos ADD COLUMN estoque_minimo DECIMAL(14,3) NOT NULL DEFAULT 0 AFTER fator_embalagem_padrao")
         except Exception:
             pass
         try:
@@ -4501,17 +4524,17 @@ def _buscar_produto_cadastro_por_referencias(cur, codigo_produto="", codigo_barr
         origem_codigo="sellout",
     )
 
-def _saldo_atual_produto_estoque(cur, codigo_barras="", codigo_produto_nfe="", nome_produto=""):
+def _saldo_atual_produto_estoque(cur, codigo_barras="", codigo_produto_nfe="", nome_produto="", linhas=None, retornar_linha=False):
     referencia = {
         "codigo_barras": _normalizar_codigo_barras(codigo_barras),
         "codigo_produto_nfe": _codigo_produto_nfe_saida(codigo_produto_nfe),
         "nome_produto": _as_str(nome_produto),
     }
     if not (referencia["codigo_barras"] or referencia["codigo_produto_nfe"] or referencia["nome_produto"]):
-        return 0.0
+        return {} if retornar_linha else 0.0
 
     meta_ref = _estoque_produto_meta(referencia)
-    rows = (_estoque_resumo_produtos_data().get("rows") or [])
+    rows = linhas if linhas is not None else (_estoque_resumo_produtos_data().get("rows") or [])
     comparacoes = []
     if referencia["codigo_barras"]:
         comparacoes.append(
@@ -4539,8 +4562,75 @@ def _saldo_atual_produto_estoque(cur, codigo_barras="", codigo_produto_nfe="", n
     for combina in comparacoes:
         for item in rows:
             if combina(item):
-                return _as_float(item.get("quantidade_atual"), 0.0)
-    return 0.0
+                return item if retornar_linha else _as_float(item.get("quantidade_atual"), 0.0)
+    return {} if retornar_linha else 0.0
+
+
+def _avaliar_estoque_minimo_produtos(produto_ids, usuario="sistema"):
+    """Reavalia produtos apos o commit e abre compras sem duplicar pendencias."""
+    ids = sorted({_as_int(item, 0) for item in (produto_ids or []) if _as_int(item, 0) > 0})
+    if not ids:
+        return []
+    try:
+        estoque = _estoque_resumo_produtos_data()
+    except Exception:
+        app.logger.exception("Falha ao calcular saldos para avaliar estoque minimo")
+        return []
+    saldos = {
+        _as_int(row.get("produto_id"), 0): _as_float(row.get("quantidade_atual"), 0.0)
+        for row in (estoque.get("rows") or [])
+        if _as_int(row.get("produto_id"), 0) > 0
+    }
+    estoque_rows = estoque.get("rows") or []
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    resultados = []
+    try:
+        for produto_id in ids:
+            produto = _carregar_produto_estoque_por_id(cur, produto_id) or {}
+            saldo_atual = saldos.get(produto_id)
+            if saldo_atual is None and produto:
+                meta = _estoque_produto_meta(produto)
+                base_key = _as_str(meta.get("produto_base_key"))
+                codigo_barras = _normalizar_codigo_barras(produto.get("codigo_barras"))
+                codigo_nfe = _codigo_produto_chave(produto.get("codigo_produto_nfe"))
+                nome = _produto_nome_normalizado(produto.get("produto_base_nome") or produto.get("nome_produto"))
+                equivalente = None
+                comparacoes = []
+                if codigo_barras:
+                    comparacoes.append(lambda row: _normalizar_codigo_barras(row.get("codigo_barras")) == codigo_barras)
+                if codigo_nfe:
+                    comparacoes.append(lambda row: _codigo_produto_chave(row.get("codigo_produto_nfe")) == codigo_nfe)
+                if base_key:
+                    comparacoes.append(lambda row: _as_str(row.get("produto_base_key")) == base_key)
+                if nome:
+                    comparacoes.append(lambda row: _produto_nome_normalizado(row.get("produto_base_nome") or row.get("nome_produto")) == nome)
+                for compara in comparacoes:
+                    equivalente = next((row for row in estoque_rows if compara(row)), None)
+                    if equivalente:
+                        break
+                if equivalente:
+                    saldo_atual = _as_float(equivalente.get("quantidade_atual"), 0.0)
+            resultado = ensure_minimum_stock_purchase(
+                cur,
+                produto_id,
+                saldo_atual if saldo_atual is not None else 0.0,
+                actor=usuario or "sistema",
+            )
+            if resultado:
+                resultados.append(resultado)
+        conn.commit()
+        return resultados
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        app.logger.exception("Falha ao avaliar estoque minimo para compra automatica")
+        return []
+    finally:
+        cur.close()
+        conn.close()
 
 def _listar_itens_carga_estoque(cur, carga_id):
     cur.execute("""
@@ -4599,6 +4689,7 @@ def _baixar_estoque_carga(cur, carga_id, usuario="desconhecido"):
     total_itens = 0
     insuficiencias = []
     produtos_criados = 0
+    produtos_movimentados = set()
     destino_setor = _as_str(carga.get("veiculo_numero")) or _as_str(carga.get("nome")) or "Caminhao"
     numero_nota = f"CARGA-{_as_str(carga.get('mapa_numero')) or carga_id}"
 
@@ -4636,6 +4727,8 @@ def _baixar_estoque_carga(cur, carga_id, usuario="desconhecido"):
             )
         if produto_criado:
             produtos_criados += 1
+        if _as_int(produto.get("id"), 0) > 0 and _as_float(produto.get("estoque_minimo"), 0.0) > 0:
+            produtos_movimentados.add(_as_int(produto.get("id"), 0))
 
         saldo_antes = _saldo_atual_produto_estoque(
             cur,
@@ -4703,6 +4796,7 @@ def _baixar_estoque_carga(cur, carga_id, usuario="desconhecido"):
         "nome": _as_str(carga.get("nome")),
         "itens_baixados": total_itens,
         "produtos_criados": produtos_criados,
+        "produto_ids": sorted(produtos_movimentados),
         "insuficiencias": insuficiencias,
         "ja_baixada": False,
     }
@@ -4729,6 +4823,7 @@ def _importar_cargas_pdf_bytes(pdf_bytes, source_name="", veiculo_override="", u
     fretes_criados = 0
     fretes_atualizados = 0
     cargas_baixadas = 0
+    produtos_movimentados = set()
     try:
         for pagina in paginas:
             mapa_numero = _as_str(pagina.get("mapa_numero"))
@@ -4910,6 +5005,7 @@ def _importar_cargas_pdf_bytes(pdf_bytes, source_name="", veiculo_override="", u
                 baixa = _sincronizar_baixa_estoque_frete(cur, antes_frete, depois_frete, usuario=usuario)
                 if baixa and baixa.get("ok") and not baixa.get("ja_baixada"):
                     cargas_baixadas += 1
+                    produtos_movimentados.update(baixa.get("produto_ids") or [])
             else:
                 cur.execute("""
                     INSERT INTO fretes
@@ -4937,6 +5033,7 @@ def _importar_cargas_pdf_bytes(pdf_bytes, source_name="", veiculo_override="", u
         cur.close()
         conn.close()
 
+    compras_automaticas = _avaliar_estoque_minimo_produtos(produtos_movimentados, usuario)
     return {
         "ok": True,
         "arquivo": source_name,
@@ -4946,6 +5043,7 @@ def _importar_cargas_pdf_bytes(pdf_bytes, source_name="", veiculo_override="", u
         "fretes_criados": fretes_criados,
         "fretes_atualizados": fretes_atualizados,
         "cargas_baixadas": cargas_baixadas,
+        "compras_automaticas": compras_automaticas,
     }
 
 def _importar_cargas_csv_texto(texto, source_name="", veiculo_override="") -> dict:
@@ -8062,7 +8160,7 @@ def _importar_nfe_abastecimento_por_xml_text(abastecimento_id, xml_text, chave_a
 _ESTOQUE_PRODUTO_SELECT = """
     SELECT id, codigo_barras, codigo_produto_nfe, nome_produto, grupo_estoque,
            produto_base_nome, unidade, embalagem_tipo_padrao,
-           fator_embalagem_padrao, origem_cadastro, ativo, criado_em, atualizado_em
+           fator_embalagem_padrao, estoque_minimo, origem_cadastro, ativo, criado_em, atualizado_em
     FROM estoque_produtos
 """
 
@@ -8108,7 +8206,7 @@ def _buscar_produto_codigo_origem(cur, codigo="", origem_tipo=""):
         SELECT p.id, p.codigo_barras, p.codigo_produto_nfe, p.nome_produto,
                p.grupo_estoque, p.produto_base_nome, p.unidade,
                p.embalagem_tipo_padrao, p.fator_embalagem_padrao,
-               p.origem_cadastro, p.criado_em, p.atualizado_em
+               p.estoque_minimo, p.origem_cadastro, p.criado_em, p.atualizado_em
         FROM estoque_produtos p
         JOIN estoque_produto_codigos pc ON pc.produto_id=p.id
         WHERE pc.ativo=1 AND p.ativo=1 AND pc.codigo_norm=%s
@@ -8230,7 +8328,7 @@ def _buscar_produto_estoque(cur, codigo_barras="", codigo_produto_nfe="", nome_p
     if codigo_barras:
         cur.execute("""
             SELECT id, codigo_barras, codigo_produto_nfe, nome_produto, grupo_estoque, produto_base_nome, unidade,
-                   embalagem_tipo_padrao, fator_embalagem_padrao, origem_cadastro, criado_em, atualizado_em
+                   embalagem_tipo_padrao, fator_embalagem_padrao, estoque_minimo, origem_cadastro, criado_em, atualizado_em
             FROM estoque_produtos
             WHERE ativo=1 AND codigo_barras=%s
             ORDER BY id DESC
@@ -8247,7 +8345,7 @@ def _buscar_produto_estoque(cur, codigo_barras="", codigo_produto_nfe="", nome_p
     if codigo_produto_nfe and not origem_codigo_norm:
         cur.execute("""
             SELECT id, codigo_barras, codigo_produto_nfe, nome_produto, grupo_estoque, produto_base_nome, unidade,
-                   embalagem_tipo_padrao, fator_embalagem_padrao, origem_cadastro, criado_em, atualizado_em
+                   embalagem_tipo_padrao, fator_embalagem_padrao, estoque_minimo, origem_cadastro, criado_em, atualizado_em
             FROM estoque_produtos
             WHERE ativo=1 AND codigo_produto_nfe=%s
             ORDER BY id DESC
@@ -8259,7 +8357,7 @@ def _buscar_produto_estoque(cur, codigo_barras="", codigo_produto_nfe="", nome_p
     if codigo_produto_norm and not origem_codigo_norm:
         cur.execute("""
             SELECT id, codigo_barras, codigo_produto_nfe, nome_produto, grupo_estoque, produto_base_nome, unidade,
-                   embalagem_tipo_padrao, fator_embalagem_padrao, origem_cadastro, criado_em, atualizado_em
+                   embalagem_tipo_padrao, fator_embalagem_padrao, estoque_minimo, origem_cadastro, criado_em, atualizado_em
             FROM estoque_produtos
             WHERE ativo=1 AND TRIM(LEADING '0' FROM COALESCE(codigo_produto_nfe, ''))=%s
             ORDER BY id DESC
@@ -8272,7 +8370,7 @@ def _buscar_produto_estoque(cur, codigo_barras="", codigo_produto_nfe="", nome_p
     if nome_produto:
         cur.execute("""
             SELECT id, codigo_barras, codigo_produto_nfe, nome_produto, grupo_estoque, produto_base_nome, unidade,
-                   embalagem_tipo_padrao, fator_embalagem_padrao, origem_cadastro, criado_em, atualizado_em
+                   embalagem_tipo_padrao, fator_embalagem_padrao, estoque_minimo, origem_cadastro, criado_em, atualizado_em
             FROM estoque_produtos
             WHERE ativo=1 AND nome_produto=%s
             ORDER BY id DESC
@@ -8284,7 +8382,7 @@ def _buscar_produto_estoque(cur, codigo_barras="", codigo_produto_nfe="", nome_p
     if nome_produto_norm:
         cur.execute("""
             SELECT id, codigo_barras, codigo_produto_nfe, nome_produto, grupo_estoque, produto_base_nome, unidade,
-                   embalagem_tipo_padrao, fator_embalagem_padrao, origem_cadastro, criado_em, atualizado_em
+                   embalagem_tipo_padrao, fator_embalagem_padrao, estoque_minimo, origem_cadastro, criado_em, atualizado_em
             FROM estoque_produtos
             WHERE ativo=1
             ORDER BY id DESC
@@ -8311,7 +8409,7 @@ def _buscar_produto_estoque(cur, codigo_barras="", codigo_produto_nfe="", nome_p
     if origem_codigo_norm and codigo_produto_nfe:
         cur.execute("""
             SELECT id, codigo_barras, codigo_produto_nfe, nome_produto, grupo_estoque, produto_base_nome, unidade,
-                   embalagem_tipo_padrao, fator_embalagem_padrao, origem_cadastro, criado_em, atualizado_em
+                   embalagem_tipo_padrao, fator_embalagem_padrao, estoque_minimo, origem_cadastro, criado_em, atualizado_em
             FROM estoque_produtos
             WHERE ativo=1 AND codigo_produto_nfe=%s
             ORDER BY id DESC
@@ -8323,7 +8421,7 @@ def _buscar_produto_estoque(cur, codigo_barras="", codigo_produto_nfe="", nome_p
     if origem_codigo_norm and codigo_produto_norm:
         cur.execute("""
             SELECT id, codigo_barras, codigo_produto_nfe, nome_produto, grupo_estoque, produto_base_nome, unidade,
-                   embalagem_tipo_padrao, fator_embalagem_padrao, origem_cadastro, criado_em, atualizado_em
+                   embalagem_tipo_padrao, fator_embalagem_padrao, estoque_minimo, origem_cadastro, criado_em, atualizado_em
             FROM estoque_produtos
             WHERE ativo=1 AND TRIM(LEADING '0' FROM COALESCE(codigo_produto_nfe, ''))=%s
             ORDER BY id DESC
@@ -8458,6 +8556,7 @@ def _produto_estoque_publico(row, codigos_por_origem=None):
         "unidade": _as_str(row.get("unidade")),
         "embalagem_tipo_padrao": _as_str(row.get("embalagem_tipo_padrao")),
         "fator_embalagem_padrao": fator_padrao,
+        "estoque_minimo": max(0.0, _as_float(row.get("estoque_minimo"), 0.0)),
         "origem_cadastro": _as_str(row.get("origem_cadastro")) or "manual",
         "ativo": bool(_as_int(row.get("ativo"), 1)),
         "criado_em": _fmt_dt(row.get("criado_em")),
@@ -8583,6 +8682,7 @@ def _carregar_produto_estoque_por_id(cur, produto_id):
             unidade,
             embalagem_tipo_padrao,
             fator_embalagem_padrao,
+            estoque_minimo,
             origem_cadastro,
             ativo,
             criado_em,
@@ -14319,6 +14419,7 @@ def _carregar_lookup_produtos_estoque(cur):
             unidade,
             embalagem_tipo_padrao,
             fator_embalagem_padrao,
+            estoque_minimo,
             origem_cadastro,
             ativo,
             criado_em,
@@ -14352,7 +14453,7 @@ def _carregar_lookup_produtos_estoque(cur):
         SELECT pc.origem_tipo, pc.codigo_norm, p.id, p.codigo_barras,
                p.codigo_produto_nfe, p.nome_produto, p.grupo_estoque,
                p.produto_base_nome, p.unidade, p.embalagem_tipo_padrao,
-               p.fator_embalagem_padrao, p.origem_cadastro, p.ativo,
+               p.fator_embalagem_padrao, p.estoque_minimo, p.origem_cadastro, p.ativo,
                p.criado_em, p.atualizado_em
         FROM estoque_produto_codigos pc
         JOIN estoque_produtos p ON p.id=pc.produto_id
@@ -14436,6 +14537,7 @@ def _estoque_merge_row(target, aliases, row):
         "saidas_dia": 0.0,
         "saidas_semana": 0.0,
         "quantidade_atual": 0.0,
+        "estoque_minimo": max(0.0, _as_float(row.get("estoque_minimo"), 0.0)),
         "quantidade_comprometida": 0.0,
         "vendas_dia": 0.0,
         "vendas_semana": 0.0,
@@ -14457,6 +14559,7 @@ def _estoque_merge_row(target, aliases, row):
         atual["produto_id"] = produto_id
         atual["produto_cadastrado"] = True
         atual["produto_ativo"] = bool(_as_int(row.get("produto_ativo"), 1))
+        atual["estoque_minimo"] = max(0.0, _as_float(row.get("estoque_minimo"), 0.0))
 
     if codigo_barras and not atual.get("codigo_barras"):
         atual["codigo_barras"] = codigo_barras
@@ -14992,7 +15095,7 @@ def _estoque_aplicar_comprometimentos_vendas_diario(cur, produtos_lookup, linhas
     return {f"vendas_diario:{root_id}" for root_id in root_ids}
 
 
-def _estoque_resumo_produtos_data(incluir_fornecedores=True):
+def _estoque_resumo_produtos_data(incluir_fornecedores=True, somente_saldos=False):
     hoje = datetime.date.today()
     inicio_semana = hoje - datetime.timedelta(days=(hoje.weekday() + 1) % 7)
     dias_semana_decorridos = max(1, min(7, (hoje - inicio_semana).days + 1))
@@ -15110,6 +15213,7 @@ def _estoque_resumo_produtos_data(incluir_fornecedores=True):
                 "produto_base_nome": cadastro.get("produto_base_nome"),
                 "embalagem_tipo_padrao": cadastro.get("embalagem_tipo_padrao"),
                 "fator_embalagem_padrao": cadastro.get("fator_embalagem_padrao"),
+                "estoque_minimo": cadastro.get("estoque_minimo"),
             }
             item = _estoque_merge_row(linhas, aliases, row)
             item["entradas_total"] += _as_float(row.get("entradas_total"), 0.0)
@@ -15123,6 +15227,16 @@ def _estoque_resumo_produtos_data(incluir_fornecedores=True):
                 item["ultimo_valor"] = _as_float(row.get("ultimo_valor"), item.get("ultimo_valor"))
             elif not item.get("ultima_movimentacao"):
                 item["ultimo_valor"] = _as_float(row.get("ultimo_valor"), item.get("ultimo_valor"))
+
+        if somente_saldos:
+            # Conferencia de inventario usa apenas o saldo canonico. Nao consulta
+            # indicadores de vendas, cujo carregamento pode iniciar importacoes.
+            return {"rows": [{
+                key: item.get(key) for key in (
+                    "produto_id", "produto_base_key", "produto_base_nome", "nome_produto",
+                    "codigo_barras", "codigo_produto_nfe", "quantidade_atual", "ultimo_valor",
+                )
+            } for item in linhas.values()]}
 
         cur.execute("""
             SELECT
@@ -15207,8 +15321,8 @@ def _estoque_resumo_produtos_data(incluir_fornecedores=True):
                 SELECT
                     produto,
                     MAX(produto_codigo) AS produto_codigo,
-                    COALESCE(SUM(CASE WHEN data_ref=%s THEN quantidade ELSE 0 END), 0) AS vendas_dia,
-                    COALESCE(SUM(CASE WHEN data_ref BETWEEN %s AND %s THEN quantidade ELSE 0 END), 0) AS vendas_semana,
+                    COALESCE(SUM(CASE WHEN RIGHT(data_texto,8) <> '(mensal)' AND data_ref=%s THEN quantidade ELSE 0 END), 0) AS vendas_dia,
+                    COALESCE(SUM(CASE WHEN RIGHT(data_texto,8) <> '(mensal)' AND data_ref BETWEEN %s AND %s THEN quantidade ELSE 0 END), 0) AS vendas_semana,
                     COALESCE(SUM(CASE WHEN data_ref BETWEEN %s AND %s THEN quantidade ELSE 0 END), 0) AS vendas_mes_atual
                 FROM vendas_relatorio_itens
                 WHERE import_id=%s AND data_ref BETWEEN %s AND %s
@@ -15377,6 +15491,7 @@ def _estoque_resumo_produtos_data(incluir_fornecedores=True):
             "saidas_dia": saidas_dia,
             "saidas_semana": saidas_semana,
             "quantidade_atual": quantidade_atual,
+            "estoque_minimo": round(max(0.0, _as_float(item.get("estoque_minimo"), 0.0)), 3),
             "quantidade_comprometida": quantidade_comprometida,
             "vendas_dia": vendas_dia,
             "vendas_semana": vendas_semana,
@@ -21224,6 +21339,8 @@ def confirmar_importacao_xml_estoque():
             movimentos.append(
                 {
                     "xml_item_id": xml_item_id,
+                    "produto_id": _as_int(produto.get("id"), 0),
+                    "estoque_minimo": _as_float(produto.get("estoque_minimo"), 0.0),
                     "codigo_barras": codigo_barras,
                     "codigo_produto": codigo_produto,
                     "numero_nota": numero_nota,
@@ -21388,12 +21505,16 @@ def confirmar_importacao_xml_estoque():
         cur.close()
         conn.close()
 
+    compras_automaticas = _avaliar_estoque_minimo_produtos(
+        [movimento.get("produto_id") for movimento in movimentos if _as_float(movimento.get("estoque_minimo"), 0.0) > 0], usuario
+    )
     return jsonify(
         {
             "ok": True,
             "movimentos_criados": len(movimentos),
             "produtos_criados": produtos_criados,
             "regras_fator_atualizadas": regras_fator_atualizadas,
+            "compras_automaticas": compras_automaticas,
             "tipo_movimento": movimentos[0]["tipo_movimento"] if movimentos else "",
             "frete": (
                 {
@@ -21493,12 +21614,16 @@ def criar_movimento_estoque():
     finally:
         cur.close()
         conn.close()
+    compras_automaticas = _avaliar_estoque_minimo_produtos(
+        [produto.get("id")] if _as_float(produto.get("estoque_minimo"), 0.0) > 0 else [], usuario
+    )
     return jsonify({
         "ok": True,
         "id": movimento_id,
         "lote_codigo": lote_codigo,
         "produto": _produto_estoque_publico(produto),
         "produto_criado": bool(produto_criado),
+        "compras_automaticas": compras_automaticas,
     })
 
 @app.route("/api/estoque", methods=["GET"])
@@ -21592,6 +21717,12 @@ def atualizar_movimento_estoque(movimento_id):
                     )
                 }
             ), 409
+        produto_anterior = _buscar_produto_estoque(
+            cur,
+            codigo_barras=row.get("codigo_barras"),
+            codigo_produto_nfe=row.get("codigo_produto_nfe"),
+            nome_produto=row.get("nome_produto"),
+        ) or {}
 
         codigo_barras = _normalizar_codigo_barras(data.get("codigo_barras")) if "codigo_barras" in data else _as_str(row.get("codigo_barras"))
         codigo_produto_nfe = _codigo_produto_nfe_saida(data.get("codigo_produto_nfe")) if "codigo_produto_nfe" in data else _as_str(row.get("codigo_produto_nfe"))
@@ -21631,7 +21762,21 @@ def atualizar_movimento_estoque(movimento_id):
             movimento_id,
         ))
         conn.commit()
-        return jsonify({"ok": True})
+        produto_atual = _buscar_produto_estoque(
+            cur,
+            codigo_barras=codigo_barras,
+            codigo_produto_nfe=codigo_produto_nfe,
+            nome_produto=nome_produto,
+        ) or {}
+        compras_automaticas = _avaliar_estoque_minimo_produtos(
+            [
+                produto.get("id")
+                for produto in (produto_anterior, produto_atual)
+                if _as_float(produto.get("estoque_minimo"), 0.0) > 0
+            ],
+            usuario,
+        )
+        return jsonify({"ok": True, "compras_automaticas": compras_automaticas})
     finally:
         cur.close()
         conn.close()
@@ -21643,7 +21788,7 @@ def excluir_movimento_estoque(movimento_id):
     try:
         cur.execute(
             """
-            SELECT id, referencia_tipo
+            SELECT id,referencia_tipo,codigo_barras,codigo_produto_nfe,nome_produto
             FROM estoque_movimentos
             WHERE id=%s
             LIMIT 1
@@ -21662,9 +21807,19 @@ def excluir_movimento_estoque(movimento_id):
                     )
                 }
             ), 409
+        produto = _buscar_produto_estoque(
+            cur,
+            codigo_barras=row.get("codigo_barras"),
+            codigo_produto_nfe=row.get("codigo_produto_nfe"),
+            nome_produto=row.get("nome_produto"),
+        ) or {}
         cur.execute("DELETE FROM estoque_movimentos WHERE id=%s", (movimento_id,))
         conn.commit()
-        return jsonify({"ok": True})
+        compras_automaticas = _avaliar_estoque_minimo_produtos(
+            [produto.get("id")] if _as_float(produto.get("estoque_minimo"), 0.0) > 0 else [],
+            _usuario_ator_req(),
+        )
+        return jsonify({"ok": True, "compras_automaticas": compras_automaticas})
     finally:
         cur.close()
         conn.close()
@@ -21844,6 +21999,7 @@ def listar_produtos_estoque():
             unidade,
             embalagem_tipo_padrao,
             fator_embalagem_padrao,
+            estoque_minimo,
             origem_cadastro,
             ativo,
             criado_em,
@@ -22318,6 +22474,7 @@ def criar_produto_estoque():
     produto_base_nome = _as_str(data.get("produto_base_nome") or data.get("produto_base"))
     embalagem_tipo_padrao = _as_str(data.get("embalagem_tipo_padrao") or data.get("embalagem_tipo"))
     fator_embalagem_padrao = _as_float(data.get("fator_embalagem_padrao"), _as_float(data.get("fator_embalagem"), 1.0))
+    estoque_minimo = max(0.0, _as_float(data.get("estoque_minimo"), 0.0))
     if fator_embalagem_padrao <= 0:
         fator_embalagem_padrao = 1.0
     if not (codigo_barras or codigo_produto_nfe or nome_produto):
@@ -22336,9 +22493,9 @@ def criar_produto_estoque():
             return jsonify({"erro": "ja existe cadastro para este produto"}), 409
         cur.execute("""
             INSERT INTO estoque_produtos
-                (codigo_barras, codigo_produto_nfe, nome_produto, grupo_estoque, produto_base_nome, unidade, embalagem_tipo_padrao, fator_embalagem_padrao, origem_cadastro)
+                (codigo_barras, codigo_produto_nfe, nome_produto, grupo_estoque, produto_base_nome, unidade, embalagem_tipo_padrao, fator_embalagem_padrao, estoque_minimo, origem_cadastro)
             VALUES
-                (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """, (
             codigo_barras,
             codigo_produto_nfe,
@@ -22348,6 +22505,7 @@ def criar_produto_estoque():
             embalagem_tipo_padrao,
             embalagem_tipo_padrao,
             fator_embalagem_padrao,
+            estoque_minimo,
             "manual",
         ))
         produto_id = cur.lastrowid
@@ -22361,21 +22519,27 @@ def criar_produto_estoque():
             "unidade": embalagem_tipo_padrao,
             "embalagem_tipo_padrao": embalagem_tipo_padrao,
             "fator_embalagem_padrao": fator_embalagem_padrao,
+            "estoque_minimo": estoque_minimo,
             "origem_cadastro": "manual",
         }
         if codigos_informados:
             _sincronizar_codigos_produto_estoque(cur, produto_novo, codigos_por_origem)
         conn.commit()
+        compras_automaticas = (
+            _avaliar_estoque_minimo_produtos([produto_id], _usuario_ator_req())
+            if estoque_minimo > 0 and _as_bool(data.get("avaliar_estoque_minimo"), True)
+            else []
+        )
         cur.execute("""
             SELECT id, codigo_barras, codigo_produto_nfe, nome_produto, grupo_estoque, produto_base_nome, unidade,
-                   embalagem_tipo_padrao, fator_embalagem_padrao, origem_cadastro, ativo, criado_em, atualizado_em
+                   embalagem_tipo_padrao, fator_embalagem_padrao, estoque_minimo, origem_cadastro, ativo, criado_em, atualizado_em
             FROM estoque_produtos
             WHERE id=%s
             LIMIT 1
         """, (produto_id,))
         row = cur.fetchone()
         codigos_salvos = _carregar_codigos_produtos_estoque(cur, [produto_id]).get(produto_id, {})
-        return jsonify({"ok": True, "produto": _produto_estoque_publico(row, codigos_salvos)})
+        return jsonify({"ok": True, "produto": _produto_estoque_publico(row, codigos_salvos), "compras_automaticas": compras_automaticas})
     except ValueError as exc:
         conn.rollback()
         return jsonify({"erro": str(exc)}), 409
@@ -22392,7 +22556,7 @@ def atualizar_produto_estoque(produto_id):
     try:
         cur.execute("""
             SELECT id, codigo_barras, codigo_produto_nfe, nome_produto, grupo_estoque, produto_base_nome, unidade,
-                   embalagem_tipo_padrao, fator_embalagem_padrao, origem_cadastro, ativo, criado_em, atualizado_em
+                   embalagem_tipo_padrao, fator_embalagem_padrao, estoque_minimo, origem_cadastro, ativo, criado_em, atualizado_em
             FROM estoque_produtos
             WHERE id=%s AND ativo=1
             LIMIT 1
@@ -22408,6 +22572,7 @@ def atualizar_produto_estoque(produto_id):
         produto_base_nome = _as_str(data.get("produto_base_nome") or data.get("produto_base")) if ("produto_base_nome" in data or "produto_base" in data) else _as_str(row.get("produto_base_nome"))
         embalagem_tipo_padrao = _as_str(data.get("embalagem_tipo_padrao") or data.get("embalagem_tipo")) if ("embalagem_tipo_padrao" in data or "embalagem_tipo" in data) else _as_str(row.get("embalagem_tipo_padrao"))
         fator_embalagem_padrao = _as_float(data.get("fator_embalagem_padrao"), _as_float(data.get("fator_embalagem"), 1.0)) if ("fator_embalagem_padrao" in data or "fator_embalagem" in data) else _as_float(row.get("fator_embalagem_padrao"), 1.0)
+        estoque_minimo = max(0.0, _as_float(data.get("estoque_minimo"), 0.0)) if "estoque_minimo" in data else max(0.0, _as_float(row.get("estoque_minimo"), 0.0))
         if fator_embalagem_padrao <= 0:
             fator_embalagem_padrao = 1.0
 
@@ -22429,7 +22594,8 @@ def atualizar_produto_estoque(produto_id):
                 produto_base_nome=%s,
                 unidade=%s,
                 embalagem_tipo_padrao=%s,
-                fator_embalagem_padrao=%s
+                fator_embalagem_padrao=%s,
+                estoque_minimo=%s
             WHERE id=%s
         """, (
             codigo_barras,
@@ -22440,6 +22606,7 @@ def atualizar_produto_estoque(produto_id):
             embalagem_tipo_padrao,
             embalagem_tipo_padrao,
             fator_embalagem_padrao,
+            estoque_minimo,
             produto_id,
         ))
         produto_atualizado = {
@@ -22453,20 +22620,26 @@ def atualizar_produto_estoque(produto_id):
             "unidade": embalagem_tipo_padrao,
             "embalagem_tipo_padrao": embalagem_tipo_padrao,
             "fator_embalagem_padrao": fator_embalagem_padrao,
+            "estoque_minimo": estoque_minimo,
         }
         if codigos_informados:
             _sincronizar_codigos_produto_estoque(cur, produto_atualizado, codigos_por_origem)
         conn.commit()
+        compras_automaticas = (
+            _avaliar_estoque_minimo_produtos([produto_id], _usuario_ator_req())
+            if estoque_minimo > 0 and _as_bool(data.get("avaliar_estoque_minimo"), True)
+            else []
+        )
         cur.execute("""
             SELECT id, codigo_barras, codigo_produto_nfe, nome_produto, grupo_estoque, produto_base_nome, unidade,
-                   embalagem_tipo_padrao, fator_embalagem_padrao, origem_cadastro, ativo, criado_em, atualizado_em
+                   embalagem_tipo_padrao, fator_embalagem_padrao, estoque_minimo, origem_cadastro, ativo, criado_em, atualizado_em
             FROM estoque_produtos
             WHERE id=%s
             LIMIT 1
         """, (produto_id,))
         row = cur.fetchone()
         codigos_salvos = _carregar_codigos_produtos_estoque(cur, [produto_id]).get(produto_id, {})
-        return jsonify({"ok": True, "produto": _produto_estoque_publico(row, codigos_salvos)})
+        return jsonify({"ok": True, "produto": _produto_estoque_publico(row, codigos_salvos), "compras_automaticas": compras_automaticas})
     except ValueError as exc:
         conn.rollback()
         return jsonify({"erro": str(exc)}), 409
@@ -22507,6 +22680,9 @@ def ajustar_produto_estoque(produto_id):
             quantidade_ajuste = round(_as_float(data.get("quantidade_ajuste"), 0.0), 3)
             quantidade_desejada = round(saldo_antes + quantidade_ajuste, 3)
         if abs(quantidade_ajuste) <= 0:
+            compras_automaticas = _avaliar_estoque_minimo_produtos(
+                [produto_id] if _as_float(produto.get("estoque_minimo"), 0.0) > 0 else [], usuario
+            )
             return jsonify({
                 "ok": True,
                 "produto": _produto_estoque_publico(produto),
@@ -22515,6 +22691,7 @@ def ajustar_produto_estoque(produto_id):
                 "saldo_depois": round(saldo_antes, 3),
                 "motivo_ajuste": motivo,
                 "sem_alteracao": True,
+                "compras_automaticas": compras_automaticas,
             })
         tipo_movimento = "entrada" if quantidade_ajuste > 0 else "saida"
         quantidade_movimento = abs(round(quantidade_ajuste, 3))
@@ -22556,6 +22733,9 @@ def ajustar_produto_estoque(produto_id):
         conn.close()
 
     saldo_depois = quantidade_desejada
+    compras_automaticas = _avaliar_estoque_minimo_produtos(
+        [produto_id] if _as_float(produto.get("estoque_minimo"), 0.0) > 0 else [], usuario
+    )
     return jsonify({
         "ok": True,
         "produto": _produto_estoque_publico(produto),
@@ -22563,6 +22743,7 @@ def ajustar_produto_estoque(produto_id):
         "saldo_antes": round(saldo_antes, 3),
         "saldo_depois": saldo_depois,
         "motivo_ajuste": motivo,
+        "compras_automaticas": compras_automaticas,
     })
 
 @app.route("/api/estoque/produtos/<int:produto_id>", methods=["DELETE"])
@@ -23421,6 +23602,7 @@ def confirmar_conferencia_estoque(conferencia_id):
 
         itens = _listar_itens_conferencia_estoque(cur, conferencia_id)
         total_lancado = 0
+        produtos_movimentados = set()
         for item in itens:
             item_id = _as_int(item.get("id"), 0)
             quantidade_conferida = qtd_por_item.get(item_id, _as_float(item.get("quantidade_conferida"), 0.0))
@@ -23477,6 +23659,8 @@ def confirmar_conferencia_estoque(conferencia_id):
                 usuario,
             ))
             movimento_id = cur.lastrowid
+            if produto_id_selecionado > 0 and _as_float((produto_escolhido or {}).get("estoque_minimo"), 0.0) > 0:
+                produtos_movimentados.add(produto_id_selecionado)
             total_lancado += 1
             cur.execute("""
                 UPDATE estoque_conferencia_itens
@@ -23506,11 +23690,13 @@ def confirmar_conferencia_estoque(conferencia_id):
         conn.close()
 
     _remover_xml_nfe_cache(conferencia.get("chave_acesso"))
+    compras_automaticas = _avaliar_estoque_minimo_produtos(produtos_movimentados, usuario)
 
     return jsonify({
         "ok": True,
         "conferencia": _estoque_conferencia_publica(conferencia),
         "itens": [_estoque_conferencia_item_publico(item) for item in itens],
+        "compras_automaticas": compras_automaticas,
     })
 
 # =========================================================
@@ -24608,7 +24794,10 @@ def atualizar_frete(id):
     conn.commit()
     cursor.close()
     conn.close()
-    return jsonify({"ok": True, "frete": depois, "estoque_baixa": estoque_baixa})
+    compras_automaticas = _avaliar_estoque_minimo_produtos(
+        (estoque_baixa or {}).get("produto_ids") or [], usuario
+    )
+    return jsonify({"ok": True, "frete": depois, "estoque_baixa": estoque_baixa, "compras_automaticas": compras_automaticas})
 
 @app.route("/api/fretes", methods=["GET"])
 def listar_fretes():
@@ -27272,6 +27461,8 @@ def _vendas_db_upsert_import_meta(entry):
             pass
 
 def _vendas_db_update_import_caches(cache_id, bonificacoes_json=None, variacao_preco_json=None, mix_embalagens_json=None, dashboard_vendas_json=None, dashboard_vendas_painel_json=None):
+    if cache_id == "sellout-mensal-continuo":
+        return None
     cache_id = _as_str(cache_id)
     if not cache_id:
         return
@@ -27318,6 +27509,8 @@ def _vendas_db_update_import_caches(cache_id, bonificacoes_json=None, variacao_p
             pass
 
 def _vendas_db_import_cache_json(cache_id, campo):
+    if cache_id == "sellout-mensal-continuo":
+        return None
     cache_id = _as_str(cache_id)
     campo = _as_str(campo)
     if not cache_id or not campo:
@@ -27730,6 +27923,8 @@ def _vendas_cache_imports_publicos(cfg=None):
     active_id = _as_str(cfg.get("active_cache_id"))
     itens = []
     for entry in _vendas_db_list_imports():
+        if active_id == "sellout-mensal-continuo" and entry.get("id") != active_id:
+            continue
         row = dict(entry)
         row["active"] = bool(active_id and _as_str(entry.get("id")) == active_id)
         itens.append(_vendas_cache_entry_publico(row))
@@ -27862,13 +28057,17 @@ def _vendas_importacao_meta(source_path, source_type="csv_relatorios_dir"):
     }
     return cache_id, meta
 
-def _vendas_importar_csv_para_cache(source_path, source_type="csv_relatorios_dir"):
+def _vendas_importar_csv_para_cache(source_path, source_type="csv_relatorios_dir", mensal=None):
     source_path = _as_str(source_path)
     if not source_path or not os.path.exists(source_path):
         raise FileNotFoundError("Arquivo de vendas nao encontrado para importacao.")
 
     cache_id, meta = _vendas_importacao_meta(source_path, source_type)
-    _vendas_db_upsert_import_meta(meta)
+    if mensal is not None:
+        cache_id = "sellout-mensal-continuo"
+        meta.update(id=cache_id, source_type="sellout_mensal_auto", **mensal["meta"])
+    else:
+        _vendas_db_upsert_import_meta(meta)
 
     conn = None
     cur = None
@@ -27904,8 +28103,39 @@ def _vendas_importar_csv_para_cache(source_path, source_type="csv_relatorios_dir
     try:
         conn = get_conn()
         cur = conn.cursor()
-        cur.execute("DELETE FROM vendas_relatorio_itens WHERE import_id=%s", (cache_id,))
-        fieldnames, linhas_relatorio = _vendas_relatorio_dict_rows(source_path)
+        if mensal is not None:
+            cur.execute("SELECT GET_LOCK('riob_sellout_mensal', 0)")
+            if cur.fetchone()[0] != 1:
+                if mensal.get("somente_ausentes"):
+                    raise RuntimeError("Outra importacao SELLOUT esta em andamento. Tente novamente.")
+                return None
+            cur.execute("SELECT source_signature FROM vendas_relatorios_importados WHERE id=%s", (cache_id,))
+            anterior = cur.fetchone()
+            historico = mensal.get("somente_ausentes", False)
+            if not historico and anterior and anterior[0] == meta["source_signature"]:
+                return None
+            if historico:
+                if not anterior:
+                    raise ValueError("Ative a base continua antes de incorporar o historico.")
+                cur.execute("SELECT DISTINCT YEAR(data_ref), MONTH(data_ref) FROM vendas_relatorio_itens WHERE import_id=%s", (cache_id,))
+                existentes = set(cur.fetchall())
+                periodos = [(inicio, fim) for inicio, fim in mensal["periodos"]
+                            if (inicio.year, inicio.month) not in existentes]
+                if not periodos:
+                    return None
+                competencias = {inicio for inicio, _ in periodos}
+                mensal = {**mensal, "periodos": periodos,
+                          "rows": [row for row in mensal["rows"] if row["_competencia"] in competencias]}
+            cur.execute("INSERT IGNORE INTO vendas_relatorios_importados (id) VALUES (%s)", (cache_id,))
+            for inicio, fim in mensal["periodos"]:
+                if historico:
+                    continue
+                cur.execute("DELETE FROM vendas_relatorio_itens WHERE import_id=%s AND data_ref >= %s AND data_ref < %s",
+                            (cache_id, inicio, fim))
+            fieldnames, linhas_relatorio = mensal["fieldnames"], mensal["rows"]
+        else:
+            cur.execute("DELETE FROM vendas_relatorio_itens WHERE import_id=%s", (cache_id,))
+            fieldnames, linhas_relatorio = _vendas_relatorio_dict_rows(source_path)
         colunas_efetivas = _vendas_import_colunas_efetivas(fieldnames, regras_importacao)
         for raw_bruto in linhas_relatorio:
             raw = _vendas_import_reter_colunas(raw_bruto, colunas_efetivas)
@@ -27925,13 +28155,13 @@ def _vendas_importar_csv_para_cache(source_path, source_type="csv_relatorios_dir
                 - _as_float(row.get("bonificacao"), 0.0),
                 2,
             )
-            data_ref = _parse_data_br(row.get("data"))
+            data_ref = (raw_bruto.get("_data_real") or raw_bruto["_competencia"]) if mensal is not None else _parse_data_br(row.get("data"))
             vendedor_key = _as_str(row.get("vendedor_key")) or "SEM VENDEDOR"
             cliente = _as_str(row.get("cliente"))
             cliente_norm = _as_str(raw.get("Cliente"))[:255].strip().upper()
             if not cliente_norm:
                 cliente_norm = cliente.upper()
-            data_texto = _as_str(row.get("data"))
+            data_texto = (data_ref.strftime("%d/%m/%Y") if raw_bruto.get("_data_real") else data_ref.strftime("%m/%Y (mensal)")) if mensal is not None else _as_str(row.get("data"))
             lote.append((
                 cache_id,
                 data_ref,
@@ -27982,6 +28212,36 @@ def _vendas_importar_csv_para_cache(source_path, source_type="csv_relatorios_dir
             if len(lote) >= 500:
                 _flush_rows()
         _flush_rows()
+        if mensal is not None:
+            if not total_rows:
+                raise ValueError("SELLOUT sem linhas aceitas pelas regras; base anterior preservada.")
+            if historico:
+                for inicio, fim in mensal["periodos"]:
+                    cur.execute("""
+                        INSERT INTO vendas_sellout_historico
+                            (import_id, competencia, source_path, source_signature, rows_importadas)
+                        SELECT %s, %s, %s, %s, COUNT(*) FROM vendas_relatorio_itens
+                        WHERE import_id=%s AND data_ref >= %s AND data_ref < %s
+                    """, (cache_id, inicio, meta["source_path"], meta["source_signature"], cache_id, inicio, fim))
+            cur.execute("SELECT COUNT(*) FROM vendas_relatorio_itens WHERE import_id=%s", (cache_id,))
+            total_rows = cur.fetchone()[0]
+            if historico:
+                cur.execute("""
+                    UPDATE vendas_relatorios_importados SET rows_importadas=%s, updated_at=NOW(),
+                        bonificacoes_cache_json=NULL, variacao_preco_cache_json=NULL,
+                        mix_embalagens_cache_json=NULL, dashboard_vendas_json=NULL,
+                        dashboard_vendas_painel_json=NULL WHERE id=%s
+                """, (total_rows, cache_id))
+            else:
+                cur.execute("""
+                    UPDATE vendas_relatorios_importados SET source_type=%s, source_path=%s,
+                        source_name=%s, source_size=%s, source_mtime=%s, source_signature=%s,
+                        rows_importadas=%s, status='pronto', updated_at=NOW(), importado_em=NOW(),
+                        bonificacoes_cache_json=NULL, variacao_preco_cache_json=NULL,
+                        mix_embalagens_cache_json=NULL, dashboard_vendas_json=NULL,
+                        dashboard_vendas_painel_json=NULL WHERE id=%s
+                """, (meta["source_type"], meta["source_path"], meta["source_name"], meta["source_size"],
+                      meta["source_mtime"], meta["source_signature"], total_rows, cache_id))
         conn.commit()
     except Exception:
         try:
@@ -27991,9 +28251,16 @@ def _vendas_importar_csv_para_cache(source_path, source_type="csv_relatorios_dir
             pass
         meta["status"] = "erro"
         meta["updated_at"] = datetime.datetime.now()
-        _vendas_db_upsert_import_meta(meta)
+        if mensal is None:
+            _vendas_db_upsert_import_meta(meta)
         raise
     finally:
+        if mensal is not None and cur:
+            try:
+                cur.execute("SELECT RELEASE_LOCK('riob_sellout_mensal')")
+                cur.fetchone()
+            except Exception:
+                pass
         try:
             if cur:
                 cur.close()
@@ -28008,7 +28275,11 @@ def _vendas_importar_csv_para_cache(source_path, source_type="csv_relatorios_dir
     meta["rows_importadas"] = total_rows
     meta["status"] = "pronto"
     meta["updated_at"] = datetime.datetime.now()
-    _vendas_db_upsert_import_meta(meta)
+    if mensal is None:
+        _vendas_db_upsert_import_meta(meta)
+    else:
+        _vendas_bonificacoes_cache_limpar(cache_id)
+        _vendas_mix_embalagens_cache_limpar(cache_id)
     _vendas_relatorio_cache_limpar(cache_id)
     return _vendas_db_fetch_import(cache_id) or _vendas_db_row_to_entry(meta)
 
@@ -28584,6 +28855,8 @@ def _vendas_bonificacoes_cache_path(cache_id):
     return os.path.join(VENDAS_REPORTS_DIR, f"{cache_id}.json")
 
 def _vendas_bonificacoes_cache_load(cache_id):
+    if cache_id == "sellout-mensal-continuo":
+        return None
     cache_id = _as_str(cache_id)
     if not cache_id:
         return None
@@ -28609,6 +28882,8 @@ def _vendas_bonificacoes_cache_load(cache_id):
     return payload
 
 def _vendas_bonificacoes_cache_save(cache_id, payload):
+    if cache_id == "sellout-mensal-continuo":
+        return None
     cache_id = _as_str(cache_id)
     if not cache_id or not isinstance(payload, dict):
         return None
@@ -29065,6 +29340,12 @@ def _vendas_bonificacoes_agrupar_rows(rows, filtro_vendedor="", filtro_cliente="
     }
 
 def _vendas_relatorio_cache_chave(tipo_relatorio, cache_id, vendedor="", cliente="", mes="", data_inicio="", data_fim="", limite="", extra=""):
+    if cache_id == "sellout-mensal-continuo":
+        # Cada processo consulta a revisao gravada junto com as linhas. Uma
+        # importacao invalida tambem as projecoes em memoria dos outros workers.
+        entry = _vendas_db_fetch_import(cache_id) or {}
+        revisao = (entry.get("source_signature", ""), entry.get("rows_importadas"), entry.get("updated_at"))
+        extra = (_as_str(extra), revisao)
     return (
         "v1",
         _as_str(tipo_relatorio),
@@ -30218,13 +30499,51 @@ def _vendas_bonificacoes_resumo_grupos_finalizar(agrupados):
         })
     return retorno
 
-def _vendas_cache_bonificacoes_carregar(cache_entry, source, cfg, allow_rebuild=True):
+def _vendas_meses_disponiveis_db(cache_id):
+    chave = _vendas_relatorio_cache_chave("meses_db", cache_id)
+    cached = _vendas_relatorio_cache_obter(chave)
+    if cached is not None:
+        return cached
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT DISTINCT EXTRACT(YEAR_MONTH FROM data_ref) FROM vendas_relatorio_itens WHERE import_id=%s AND data_ref IS NOT NULL ORDER BY 1", (cache_id,))
+        meses = [f"{int(row[0]) // 100:04d}-{int(row[0]) % 100:02d}" for row in cur.fetchall()]
+    finally:
+        cur.close()
+        conn.close()
+    _vendas_relatorio_cache_guardar(chave, meses)
+    return meses
+
+
+@app.route("/api/vendas/meses", methods=["GET"])
+def vendas_meses_api():
+    entry, _, _ = _vendas_obter_cache_ativo(force_refresh=False)
+    meses = _vendas_meses_disponiveis_db(entry["id"])
+    return jsonify({"meses_disponiveis": meses, "mes_atual": meses[-1] if meses else ""})
+
+
+def _vendas_cache_bonificacoes_carregar(cache_entry, source, cfg, allow_rebuild=True, mes=None):
     cache_id = _as_str(cache_entry.get("id"))
     payload = _vendas_bonificacoes_cache_load(cache_id)
     if isinstance(payload, dict):
         return payload
-    if not allow_rebuild:
+    if not allow_rebuild and cache_id != "sellout-mensal-continuo":
         return None
+
+    meses = _vendas_meses_disponiveis_db(cache_id) if cache_id == "sellout-mensal-continuo" else []
+    mes_key = _vendas_bonificacoes_normalizar_mes(mes, None, None, meses)
+    mes_key = mes_key or (meses[-1] if meses else "")
+    if cache_id == "sellout-mensal-continuo":
+        chave = _vendas_relatorio_cache_chave("resumo_mes_db", cache_id, mes=mes_key)
+        cached = _vendas_relatorio_cache_obter(chave)
+        if cached is not None:
+            return cached
+        rows = _vendas_bonificacoes_cache_carregar_rows_mes_db(cache_id, mes_key)
+        payload = _vendas_bonificacoes_cache_processar(cache_id, rows, cache_entry, source, cfg)
+        payload["months_order"] = meses
+        _vendas_relatorio_cache_guardar(chave, payload)
+        return payload
 
     conn = None
     cur = None
@@ -30282,7 +30601,7 @@ def _vendas_bonificacoes_payload(cache_entry, source, cfg, mes=None, data_inicio
     elif isinstance(payload_cache_db, dict):
         payload_cache = payload_cache_db
     else:
-        payload_cache = _vendas_cache_bonificacoes_carregar(cache_entry, source, cfg, allow_rebuild=allow_rebuild)
+        payload_cache = _vendas_cache_bonificacoes_carregar(cache_entry, source, cfg, allow_rebuild=allow_rebuild, mes=mes_key_hint)
     if not isinstance(payload_cache, dict):
         return {"erro": "Cache de bonificacoes ainda nao processado. Use Processar relatorios uma vez.", "relatorio_tipo": "bonificacoes"}
     months = payload_cache.get("months") if isinstance(payload_cache, dict) else {}
@@ -30668,6 +30987,8 @@ def _vendas_mix_embalagens_cache_path(cache_id):
     return os.path.join(VENDAS_REPORTS_DIR, f"{cache_id}.mix_embalagens.json")
 
 def _vendas_mix_embalagens_cache_load(cache_id):
+    if cache_id == "sellout-mensal-continuo":
+        return None
     cache_id = _as_str(cache_id)
     if not cache_id:
         return None
@@ -30698,6 +31019,8 @@ def _vendas_mix_embalagens_cache_load(cache_id):
     return None
 
 def _vendas_mix_embalagens_cache_save(cache_id, payload):
+    if cache_id == "sellout-mensal-continuo":
+        return None
     cache_id = _as_str(cache_id)
     if not cache_id or not isinstance(payload, dict):
         return None
@@ -30998,7 +31321,7 @@ def _vendas_cache_mix_embalagens_carregar(cache_entry, source, cfg, allow_rebuil
     payload = _vendas_mix_embalagens_cache_load(cache_id)
     if isinstance(payload, dict):
         return payload
-    if not allow_rebuild:
+    if not allow_rebuild and cache_id != "sellout-mensal-continuo":
         return None
     rows = _vendas_bonificacoes_cache_carregar_rows_db(cache_id)
     return _vendas_mix_embalagens_cache_processar(cache_id, rows, cache_entry, source, cfg)
@@ -31313,7 +31636,7 @@ def _vendas_coletar_relatorio_variacao_preco_sql(cache_entry, source, cfg, filtr
         data_fim = _parse_data_br(data_fim)
     limite_detalhes = max(50, min(_as_int(limite_detalhes, 300), 1000))
 
-    payload_cache = _vendas_cache_bonificacoes_carregar(cache_entry, source, cfg, allow_rebuild=False)
+    payload_cache = _vendas_cache_bonificacoes_carregar(cache_entry, source, cfg, allow_rebuild=False, mes=mes)
     if not isinstance(payload_cache, dict):
         payload_cache = _vendas_bonificacoes_cache_load(cache_id)
     if not isinstance(payload_cache, dict):
@@ -32034,7 +32357,7 @@ def _coletar_dashboard_vendas_evolucao(allow_rebuild=False):
     if isinstance(payload, dict):
         _vendas_relatorio_cache_guardar(cache_key, payload)
         return payload
-    if not allow_rebuild:
+    if not allow_rebuild and cache_id != "sellout-mensal-continuo":
         return {"erro": "Dashboard de vendas ainda nao processado. Use Processar relatorios uma vez."}
 
     conn = None
@@ -32045,7 +32368,7 @@ def _coletar_dashboard_vendas_evolucao(allow_rebuild=False):
         conn = get_conn()
         cur = conn.cursor(dictionary=True)
         cur.execute("""
-            SELECT DISTINCT DATE_FORMAT(data_ref, '%%Y-%%m') AS mes
+            SELECT DISTINCT DATE_FORMAT(data_ref, '%Y-%m') AS mes
             FROM vendas_relatorio_itens
             WHERE import_id=%s AND data_ref IS NOT NULL
             ORDER BY mes ASC
@@ -32068,7 +32391,7 @@ def _coletar_dashboard_vendas_evolucao(allow_rebuild=False):
                     COALESCE(SUM(base.valor_venda), 0) - COALESCE(SUM(base.valor_devolvido), 0) - COALESCE(SUM(base.bonificacao), 0) AS valor_liquido
                 FROM (
                     SELECT
-                        DATE_FORMAT(data_ref, '%%Y-%%m') AS mes,
+                        DATE_FORMAT(data_ref, '%Y-%m') AS mes,
                         COALESCE(NULLIF(vendedor_key_upper, ''), NULLIF(vendedor_key, ''), UPPER(COALESCE(vendedor_nome, '')), 'SEM VENDEDOR') AS vendedor_key,
                         vendedor_codigo,
                         vendedor_nome,
@@ -32238,7 +32561,7 @@ def _coletar_dashboard_vendas_painel(allow_rebuild=False):
         payload_incompleto = None
 
     if isinstance(payload_incompleto, dict):
-        if not allow_rebuild:
+        if not allow_rebuild and cache_id != "sellout-mensal-continuo":
             return {
                 "erro": "Dashboard de vendas ainda nao processado. Use Processar relatorios uma vez.",
                 "dashboard_tipo": "vendas",
@@ -32268,7 +32591,7 @@ def _coletar_dashboard_vendas_painel(allow_rebuild=False):
                 pass
             return payload_incompleto
 
-    if not allow_rebuild:
+    if not allow_rebuild and cache_id != "sellout-mensal-continuo":
         return {"erro": "Dashboard de vendas ainda nao processado. Use Processar relatorios uma vez."}
 
     rows, _ = _vendas_relatorio_base_rows()
@@ -33473,6 +33796,9 @@ def _vendas_intervalo_default(rows):
     return inicio, fim
 
 def _coletar_relatorio_vendas_volume_diario_resumo(filtro_vendedor="", filtro_cliente="", data_inicio=None, data_fim=None):
+    entry, _, _ = _vendas_obter_cache_ativo(force_refresh=False)
+    if entry.get("source_type") == "sellout_mensal_auto":
+        return {"erro": "SELLOUT_M informa somente Mes&Ano. Use os relatorios mensais/anuais; volume por dia exige SELLOUT com datas."}
     rows_base, _ = _vendas_relatorio_base_rows(data_inicio, data_fim)
     if not data_inicio and not data_fim:
         inicio, fim = _vendas_intervalo_default(rows_base)
@@ -33495,6 +33821,9 @@ def _coletar_relatorio_vendas_volume_diario_resumo(filtro_vendedor="", filtro_cl
     }
 
 def _coletar_relatorio_vendas_volume_diario_vendedor(filtro_vendedor="", filtro_cliente="", data_inicio=None, data_fim=None):
+    entry, _, _ = _vendas_obter_cache_ativo(force_refresh=False)
+    if entry.get("source_type") == "sellout_mensal_auto":
+        return {"erro": "SELLOUT_M informa somente Mes&Ano. Use os relatorios mensais/anuais; volume por dia exige SELLOUT com datas."}
     rows_base, _ = _vendas_relatorio_base_rows(data_inicio, data_fim)
     if not data_inicio and not data_fim:
         inicio, fim = _vendas_intervalo_default(rows_base)
@@ -33843,13 +34172,22 @@ def _descobrir_arquivos_por_extensao(directory, extension):
     )
 
 
-def _vendas_diario_importar_pasta():
+def _vendas_diario_importar_pasta(incluir_sellout=False):
     if not _VENDAS_DIARIO_IMPORT_LOCK.acquire(blocking=False):
         return {"processando": True, "resultados": []}
     try:
         txt_files = discover_txt_files(VENDAS_DIARIO_TXT_DIR)
         pdf_files = _descobrir_arquivos_por_extensao(VENDAS_DIARIO_PDF_DIR, ".pdf")
         results = []
+        sellout = None
+        if incluir_sellout:
+            try:
+                sellout = _vendas_sellout_mensal_importar()
+            except Exception as exc:
+                app.logger.exception("Falha na leitura manual do SELLOUT mensal; base preservada")
+                sellout = {"status": "erro", "erro": str(exc)}
+            sellout = {**sellout, "tipo": "sellout", "arquivo": "SELLOUT_M.CSV"}
+            results.append(sellout)
         for path in txt_files:
             try:
                 result = _vendas_diario_importar_arquivo(path)
@@ -33880,9 +34218,10 @@ def _vendas_diario_importar_pasta():
             "processando": False,
             "diretorio": VENDAS_DIARIO_DIR,
             "data_ref": imported_dates[-1] if imported_dates else "",
-            "arquivos": len(txt_files) + len(pdf_files),
+            "arquivos": len(txt_files) + len(pdf_files) + int(incluir_sellout),
             "txt": {"diretorio": VENDAS_DIARIO_TXT_DIR, "arquivos": len(txt_files)},
             "pdf": {"diretorio": VENDAS_DIARIO_PDF_DIR, "arquivos": len(pdf_files)},
+            "sellout": sellout,
             "unificacao": grouping,
             "resultados": results,
         }
@@ -33893,6 +34232,7 @@ def _vendas_diario_importar_pasta():
 @app.route("/api/vendas/diario", methods=["GET"])
 def vendas_diario_api():
     data_ref = _as_str(request.args.get("data"))
+    filtro_cliente = _as_str(request.args.get("cliente"))
     conn = get_conn()
     cur = conn.cursor(dictionary=True)
     try:
@@ -33949,11 +34289,32 @@ def vendas_diario_api():
         """, (data_ref or "1900-01-01",))
         orders = cur.fetchall() or []
         _vendas_diario_preencher_nomes_vendedores(cur, orders)
+        clientes_map = {}
+        for row in orders:
+            chave = _as_str(row.get("cliente_codigo")) or _normalizar_chave_texto(row.get("cliente_nome") or row.get("fantasia")) or "SEM CLIENTE"
+            clientes_map.setdefault(chave, {
+                "chave": chave,
+                "codigo": _as_str(row.get("cliente_codigo")),
+                "cliente": _as_str(row.get("cliente_nome")) or _as_str(row.get("fantasia")) or "SEM CLIENTE",
+                "fantasia": _as_str(row.get("fantasia")),
+                "cidade": _as_str(row.get("cidade")),
+            })
+        clientes_disponiveis = sorted(
+            clientes_map.values(),
+            key=lambda item: (_as_str(item.get("cliente")), _as_str(item.get("chave"))),
+        )
+        if filtro_cliente:
+            orders = [
+                row for row in orders
+                if (_as_str(row.get("cliente_codigo")) or _normalizar_chave_texto(row.get("cliente_nome") or row.get("fantasia")) or "SEM CLIENTE") == filtro_cliente
+            ]
         cur.execute("SELECT DISTINCT data_ref FROM vendas_diario_importacoes ORDER BY data_ref DESC LIMIT 90")
         dates = [_fmt_date(row.get("data_ref")) for row in (cur.fetchall() or [])]
         return jsonify({
             "data_ref": data_ref,
             "datas": dates,
+            "filtros": {"cliente": filtro_cliente},
+            "clientes_disponiveis": clientes_disponiveis,
             "pedidos": orders,
             "resumo": {
                 "pedidos": len(orders),
@@ -33982,6 +34343,7 @@ def vendas_diario_dashboard_api():
     data_ref = _as_str(request.args.get("data"))
     data_inicio_raw = _as_str(request.args.get("data_inicio"))
     data_fim_raw = _as_str(request.args.get("data_fim"))
+    filtro_cliente = _as_str(request.args.get("cliente"))
     data_inicio = _parse_data_br(data_inicio_raw) if data_inicio_raw else None
     data_fim = _parse_data_br(data_fim_raw) if data_fim_raw else None
     if (data_inicio_raw and not data_inicio) or (data_fim_raw and not data_fim):
@@ -34004,6 +34366,12 @@ def vendas_diario_dashboard_api():
         else:
             filtro_data_sql = "p.data_ref=%s"
             filtro_data_params = (data_ref or "1900-01-01",)
+        cliente_chave_sql = "COALESCE(NULLIF(p.cliente_codigo,''), UPPER(TRIM(NULLIF(p.cliente_nome,''))), UPPER(TRIM(NULLIF(p.fantasia,''))), 'SEM CLIENTE')"
+        filtro_cliente_sql = ""
+        filtro_consulta_params = list(filtro_data_params)
+        if filtro_cliente:
+            filtro_cliente_sql = f" AND {cliente_chave_sql}=%s"
+            filtro_consulta_params.append(filtro_cliente)
         volume_sql = volume_item_sql("i")
         cur.execute(f"""
             SELECT p.vendedor_codigo,
@@ -34033,6 +34401,7 @@ def vendas_diario_dashboard_api():
                 GROUP BY codigo
             ) cv ON cv.codigo=CAST(p.vendedor_codigo AS UNSIGNED)
             WHERE {filtro_data_sql}
+              {filtro_cliente_sql}
               AND NOT (
                   EXISTS (
                       SELECT 1 FROM vendas_diario_kanban kpdf
@@ -34061,7 +34430,7 @@ def vendas_diario_dashboard_api():
               )
             GROUP BY p.vendedor_codigo
             ORDER BY valor_bruto DESC, p.vendedor_codigo
-        """, filtro_data_params)
+        """, tuple(filtro_consulta_params))
         sellers = []
         for row in cur.fetchall() or []:
             item = dict(row)
@@ -34079,6 +34448,19 @@ def vendas_diario_dashboard_api():
             item["status"] = "sem_vendas" if positives == 0 else ("atencao" if rate < 30 else "com_vendas")
             sellers.append(item)
         _vendas_diario_preencher_nomes_vendedores(cur, sellers)
+        cur.execute(f"""
+            SELECT
+                {cliente_chave_sql} AS chave,
+                MAX(p.cliente_codigo) AS codigo,
+                MAX(p.cliente_nome) AS cliente,
+                MAX(p.fantasia) AS fantasia,
+                MAX(p.cidade) AS cidade
+            FROM vendas_diario_pedidos p
+            WHERE {filtro_data_sql}
+            GROUP BY {cliente_chave_sql}
+            ORDER BY MAX(COALESCE(NULLIF(p.fantasia,''), NULLIF(p.cliente_nome,''), p.cliente_codigo))
+        """, filtro_data_params)
+        clientes_disponiveis = [dict(row) for row in (cur.fetchall() or [])]
         cur.execute("SELECT DISTINCT data_ref FROM vendas_diario_importacoes ORDER BY data_ref DESC LIMIT 90")
         dates = [_fmt_date(row.get("data_ref")) for row in (cur.fetchall() or [])]
         return jsonify({
@@ -34088,6 +34470,8 @@ def vendas_diario_dashboard_api():
                 "data_fim": _fmt_date(data_fim) if data_fim else data_ref,
             },
             "datas": dates,
+            "filtros": {"cliente": filtro_cliente},
+            "clientes_disponiveis": clientes_disponiveis,
             "vendedores": sellers,
             "resumo": {
                 "vendedores": len(sellers),
@@ -34275,7 +34659,7 @@ def _vendas_diario_sellout_ativo(cur):
     cur.execute("""
         SELECT id, source_name, rows_importadas, importado_em
         FROM vendas_relatorios_importados
-        WHERE ativo=1 AND status='pronto'
+        WHERE ativo=1 AND status='pronto' AND source_type <> 'sellout_mensal_auto'
         ORDER BY importado_em DESC
         LIMIT 1
     """)
@@ -35156,7 +35540,7 @@ def vendas_diario_importar_api():
             return jsonify({"processando": False, "arquivos": 1, "resultados": [result]})
         except Exception as exc:
             return jsonify({"erro": f"Falha ao importar TXT de vendas diario: {str(exc)}"}), 400
-    result = _vendas_diario_importar_pasta()
+    result = _vendas_diario_importar_pasta(incluir_sellout=True)
     code = 202 if result.get("processando") else 200
     return jsonify(result), code
 
@@ -40081,7 +40465,42 @@ def agent_ia_chat():
         return jsonify({"reply": f"Erro no Agent IA: {str(exc)}"}), 500
 
 
-from gestao_processos_compras import register_gestao_processos_compras
+def _estoque_contagem_snapshot(cur, ids, lock=False):
+    cur.execute("SELECT * FROM estoque_produtos WHERE ativo=1 AND id IN (" + ",".join(["%s"] * len(ids)) + ") ORDER BY id" + (" FOR UPDATE" if lock else ""), tuple(ids))
+    products = cur.fetchall()
+    rows = _estoque_resumo_produtos_data(incluir_fornecedores=False, somente_saldos=True).get("rows") or []
+    result = {}
+    for product in products:
+        public = _produto_estoque_publico(product)
+        row = _saldo_atual_produto_estoque(cur, codigo_barras=product.get("codigo_barras"),
+            codigo_produto_nfe=product.get("codigo_produto_nfe"), nome_produto=product.get("nome_produto"),
+            linhas=rows, retornar_linha=True)
+        pack = _estoque_pallet_meta(public)
+        result[product["id"]] = {
+            "produto_id":product["id"],
+            "produto_key":row.get("produto_base_key") or _estoque_produto_meta(product)["produto_base_key"],
+            "nome_produto":product["nome_produto"],
+            "codigo_barras":_normalizar_codigo_barras(product.get("codigo_barras")),
+            "codigo_produto_nfe":_codigo_produto_nfe_saida(product.get("codigo_produto_nfe")),
+            "saldo":round(_as_float(row.get("quantidade_atual"), 0), 3),
+            "valor_unitario":round(_as_float(row.get("ultimo_valor"), 0), 2),
+            "por_pallet":pack["unidades_por_pallet"],
+            "por_volume":pack["unidades_por_volume"] or (public.get("fator_embalagem_padrao") if _as_float(public.get("fator_embalagem_padrao"), 0) > 1 else 0),
+        }
+    return result
+
+
+register_custo_produto(app, {"get_conn": get_conn, "actor": _usuario_ator_req,
+    "pacote": lambda p: _estoque_pallet_meta(p).get("unidades_por_volume")})
+
+
+register_estoque_contagem(app, {
+    "get_conn":get_conn, "snapshot":_estoque_contagem_snapshot,
+    "actor":_usuario_ator_req, "after_commit":_avaliar_estoque_minimo_produtos,
+})
+
+
+from gestao_processos_compras import ensure_minimum_stock_purchase, register_gestao_processos_compras
 
 register_gestao_processos_compras(app, {
     "get_conn": get_conn,
@@ -40253,6 +40672,110 @@ def _iniciar_vendas_diario_scheduler():
 
 
 _iniciar_vendas_diario_scheduler()
+
+
+def _vendas_sellout_mensal_importar():
+    if not _carregar_vendas_config().get("habilitado"):
+        return {"status": "desabilitado"}
+    source = os.environ.get("RB_SELLOUT_M_ARQUIVO", "/imports/sellout/SELLOUT_M.CSV")
+    with snapshot_estavel(source) as (snapshot, assinatura, stat):
+        fieldnames, rows = _vendas_relatorio_dict_rows(snapshot)
+        mensal = preparar_mensal(fieldnames, rows)
+        mensal["meta"] = {
+            "source_path": source, "source_name": "SELLOUT_M.CSV",
+            "source_signature": assinatura + "|" + _vendas_import_regras_assinatura(),
+            "source_size": stat.st_size,
+            "source_mtime": datetime.datetime.fromtimestamp(stat.st_mtime),
+        }
+        entry = _vendas_importar_csv_para_cache(snapshot, mensal=mensal)
+    if entry:
+        _vendas_cache_set_active(entry["id"])
+        app.logger.info("SELLOUT mensal atualizado no banco: %s linhas acumuladas", entry["rows_importadas"])
+        return {"status": "importado", "linhas": entry["rows_importadas"]}
+    entry = _vendas_db_fetch_import("sellout-mensal-continuo") or {}
+    if entry.get("source_signature") != mensal["meta"]["source_signature"]:
+        return {"status": "processando"}
+    if _carregar_vendas_config().get("active_cache_id") != "sellout-mensal-continuo" and entry.get("status") == "pronto":
+        # Recupera tambem eventual interrupcao entre commit e ativacao.
+        _vendas_cache_set_active(entry["id"])
+    return {"status": "ja_importado", "linhas": entry.get("rows_importadas", 0)}
+
+
+@app.route("/api/vendas/sellout/historico", methods=["POST"])
+def vendas_sellout_historico_api():
+    """Carga inicial explicita; nunca chamada pelo startup ou pelo agendador."""
+    if (_as_bool(os.environ.get("RENDER", "0"), False)
+            or _as_bool(os.environ.get("NS_READ_ONLY", "0"), False)
+            or os.environ.get("NS_DEPLOY_MODE") == "cloud-readonly"):
+        return jsonify({"erro": "Importacao indisponivel em modo somente leitura."}), 403
+    data = request.get_json(silent=True) or {}
+    if bool(data.get("import_id")) == bool(data.get("arquivo")):
+        return jsonify({"erro": "Informe import_id ou arquivo historico, exclusivamente."}), 400
+    if data.get("import_id"):
+        entry = _vendas_db_fetch_import(_as_str(data["import_id"])) or {}
+        source = entry.get("source_path", "")
+        if not source or entry.get("source_type") == "sellout_mensal_auto":
+            return jsonify({"erro": "Importacao historica nao encontrada."}), 404
+    else:
+        raiz = os.path.realpath(VENDAS_RELATORIOS_DIR)
+        source = os.path.realpath(os.path.join(raiz, _as_str(data["arquivo"])))
+        if os.path.commonpath([raiz, source]) != raiz:
+            return jsonify({"erro": "Arquivo fora da pasta de relatorios."}), 400
+    if not source.lower().endswith('.csv') or not os.path.isfile(source):
+        return jsonify({"erro": "CSV historico indisponivel."}), 400
+    resultados = []
+    try:
+        with snapshot_estavel(source) as (snapshot, assinatura, stat):
+            fieldnames, rows = _vendas_relatorio_dict_rows(snapshot)
+            with particionar_historico(fieldnames, rows) as partes:
+                for competencia, path, linhas in partes:
+                    # As particoes sao UTF-8; o original CTA e lido em CP1252.
+                    with open(path, "r", encoding="utf-8", newline="") as handle:
+                        registros = csv.DictReader(handle, delimiter=";")
+                        mensal = preparar_mensal(registros.fieldnames, registros, preservar_datas=True)
+                    mensal["somente_ausentes"] = True
+                    mensal["meta"] = {
+                        "source_path": source, "source_name": os.path.basename(source),
+                        "source_signature": assinatura,
+                        "source_size": stat.st_size,
+                        "source_mtime": datetime.datetime.fromtimestamp(stat.st_mtime),
+                    }
+                    entry = _vendas_importar_csv_para_cache(path, mensal=mensal)
+                    resultados.append({"competencia": competencia.strftime("%Y-%m"),
+                                       "status": "importado" if entry else "preservado",
+                                       "linhas_fonte": linhas})
+        return jsonify({"ok": True, "resultados": resultados})
+    except Exception:
+        app.logger.exception("Falha na carga inicial SELLOUT; meses concluidos preservados")
+        return jsonify({"erro": "Falha na carga inicial. Consulte os logs; a repeticao preserva os meses concluidos.",
+                        "resultados": resultados}), 400
+
+
+def _vendas_sellout_mensal_loop():
+    timezone = ZoneInfo("America/Sao_Paulo")
+    while True:
+        target = proxima_leitura_diaria(datetime.datetime.now(timezone))
+        while True:
+            remaining = (target - datetime.datetime.now(timezone)).total_seconds()
+            if remaining <= 0:
+                break
+            time.sleep(min(60, remaining))
+        try:
+            _vendas_sellout_mensal_importar()
+        except Exception:
+            app.logger.exception("SELLOUT mensal indisponivel ou invalido; base preservada. Proxima leitura automatica amanha as 08:00; leitura manual disponivel.")
+
+
+def _iniciar_sellout_mensal_scheduler():
+    if (not _as_bool(os.environ.get("RB_SELLOUT_M_AUTO", "0"), False)
+            or _as_bool(os.environ.get("RENDER", "0"), False)
+            or _as_bool(os.environ.get("NS_READ_ONLY", "0"), False)
+            or os.environ.get("NS_DEPLOY_MODE") == "cloud-readonly"):
+        return
+    threading.Thread(target=_vendas_sellout_mensal_loop, name="sellout-mensal", daemon=True).start()
+
+
+_iniciar_sellout_mensal_scheduler()
 
 if __name__ == "__main__":
     host = os.environ.get("APP_HOST", "0.0.0.0")

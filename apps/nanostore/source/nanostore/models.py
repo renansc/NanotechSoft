@@ -357,3 +357,136 @@ class IntegrationSetting(TimestampMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     key = db.Column(db.String(120), nullable=False, unique=True, index=True)
     value = db.Column(db.Text, default="", nullable=False)
+
+
+class Shipment(TimestampMixin, db.Model):
+    __table_args__ = (
+        db.UniqueConstraint("carrier", "tracking_code", name="uq_shipment_carrier_tracking"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    sale_id = db.Column(db.Integer, db.ForeignKey("pharmacy_sale.id"), nullable=False, index=True)
+    carrier = db.Column(db.String(60), default="correios", nullable=False, index=True)
+    service_code = db.Column(db.String(40), default="", nullable=False, index=True)
+    tracking_code = db.Column(db.String(80), nullable=True, index=True)
+    status = db.Column(db.String(40), default="preparing", nullable=False, index=True)
+    origin_postal_code = db.Column(db.String(12), default="", nullable=False)
+    destination_postal_code = db.Column(db.String(12), default="", nullable=False)
+    estimated_delivery_date = db.Column(db.Date, nullable=True, index=True)
+    posted_at = db.Column(db.DateTime, nullable=True, index=True)
+    delivered_at = db.Column(db.DateTime, nullable=True, index=True)
+    last_checked_at = db.Column(db.DateTime, nullable=True, index=True)
+    last_error = db.Column(db.Text, default="", nullable=False)
+
+    sale = db.relationship("PharmacySale", backref=db.backref("shipments", lazy="dynamic"))
+
+
+class ShipmentItem(TimestampMixin, db.Model):
+    __table_args__ = (
+        db.UniqueConstraint("shipment_id", "sale_item_id", name="uq_shipment_item_sale_item"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    shipment_id = db.Column(db.Integer, db.ForeignKey("shipment.id"), nullable=False, index=True)
+    sale_item_id = db.Column(db.Integer, db.ForeignKey("pharmacy_sale_item.id"), nullable=False, index=True)
+    quantity = db.Column(db.Numeric(12, 3), nullable=False)
+
+    shipment = db.relationship("Shipment", backref=db.backref("items", lazy="dynamic"))
+    sale_item = db.relationship("PharmacySaleItem")
+
+
+class ShipmentEvent(TimestampMixin, db.Model):
+    __table_args__ = (
+        db.UniqueConstraint("shipment_id", "event_key", name="uq_shipment_event_key"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    shipment_id = db.Column(db.Integer, db.ForeignKey("shipment.id"), nullable=False, index=True)
+    event_key = db.Column(db.String(160), nullable=False)
+    status_code = db.Column(db.String(40), default="", nullable=False, index=True)
+    description = db.Column(db.String(500), nullable=False)
+    location = db.Column(db.String(255), default="", nullable=False)
+    occurred_at = db.Column(db.DateTime, nullable=False, index=True)
+    source = db.Column(db.String(40), default="manual", nullable=False, index=True)
+    raw_json = db.Column(db.Text, default="{}", nullable=False)
+
+    shipment = db.relationship("Shipment", backref=db.backref("events", lazy="dynamic"))
+
+
+class MarketplaceAccount(TimestampMixin, db.Model):
+    __table_args__ = (
+        db.UniqueConstraint("provider", "name", name="uq_marketplace_account_provider_name"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    provider = db.Column(db.String(60), nullable=False, index=True)
+    name = db.Column(db.String(120), nullable=False)
+    seller_id = db.Column(db.String(160), default="", nullable=False, index=True)
+    shop_url = db.Column(db.String(500), default="", nullable=False)
+    credential_env_prefix = db.Column(db.String(80), nullable=False)
+    status = db.Column(db.String(30), default="pending", nullable=False, index=True)
+    enabled = db.Column(db.Boolean, default=False, nullable=False, index=True)
+    sync_orders = db.Column(db.Boolean, default=True, nullable=False)
+    sync_inventory = db.Column(db.Boolean, default=False, nullable=False)
+    sync_logistics = db.Column(db.Boolean, default=False, nullable=False)
+    last_sync_at = db.Column(db.DateTime, nullable=True, index=True)
+    last_error = db.Column(db.Text, default="", nullable=False)
+
+
+class MarketplaceProductMapping(TimestampMixin, db.Model):
+    __table_args__ = (
+        db.UniqueConstraint("account_id", "product_id", name="uq_marketplace_mapping_product"),
+        db.UniqueConstraint("account_id", "external_product_id", name="uq_marketplace_mapping_external"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    account_id = db.Column(db.Integer, db.ForeignKey("marketplace_account.id"), nullable=False, index=True)
+    product_id = db.Column(db.Integer, db.ForeignKey("pharmacy_product.id"), nullable=False, index=True)
+    external_product_id = db.Column(db.String(180), nullable=False)
+    external_sku = db.Column(db.String(120), default="", nullable=False, index=True)
+    sync_inventory = db.Column(db.Boolean, default=True, nullable=False)
+    sync_price = db.Column(db.Boolean, default=False, nullable=False)
+    last_stock_sent = db.Column(db.Numeric(12, 3), nullable=True)
+    last_sync_at = db.Column(db.DateTime, nullable=True)
+
+    account = db.relationship("MarketplaceAccount", backref=db.backref("product_mappings", lazy="dynamic"))
+    product = db.relationship("PharmacyProduct")
+
+
+class MarketplaceOrderLink(TimestampMixin, db.Model):
+    __table_args__ = (
+        db.UniqueConstraint("account_id", "external_order_id", name="uq_marketplace_order_external"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    account_id = db.Column(db.Integer, db.ForeignKey("marketplace_account.id"), nullable=False, index=True)
+    sale_id = db.Column(db.Integer, db.ForeignKey("pharmacy_sale.id"), nullable=False, unique=True, index=True)
+    external_order_id = db.Column(db.String(180), nullable=False, index=True)
+    external_status = db.Column(db.String(80), default="", nullable=False, index=True)
+    logistics_status = db.Column(db.String(80), default="", nullable=False, index=True)
+    imported_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    last_synced_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    account = db.relationship("MarketplaceAccount", backref=db.backref("order_links", lazy="dynamic"))
+    sale = db.relationship("PharmacySale", backref=db.backref("marketplace_order_link", uselist=False))
+
+
+class MarketplaceSyncEvent(TimestampMixin, db.Model):
+    __table_args__ = (
+        db.UniqueConstraint("account_id", "event_key", name="uq_marketplace_sync_event_key"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    account_id = db.Column(db.Integer, db.ForeignKey("marketplace_account.id"), nullable=False, index=True)
+    event_key = db.Column(db.String(160), nullable=False)
+    direction = db.Column(db.String(20), nullable=False, index=True)
+    entity_type = db.Column(db.String(40), nullable=False, index=True)
+    entity_id = db.Column(db.String(180), default="", nullable=False, index=True)
+    event_type = db.Column(db.String(80), nullable=False, index=True)
+    status = db.Column(db.String(30), default="pending", nullable=False, index=True)
+    attempts = db.Column(db.Integer, default=0, nullable=False)
+    payload_json = db.Column(db.Text, default="{}", nullable=False)
+    error = db.Column(db.Text, default="", nullable=False)
+    processed_at = db.Column(db.DateTime, nullable=True, index=True)
+
+    account = db.relationship("MarketplaceAccount", backref=db.backref("sync_events", lazy="dynamic"))

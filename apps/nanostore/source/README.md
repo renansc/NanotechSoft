@@ -7,7 +7,7 @@ Sistema de gestao adaptavel a diferentes operacoes comerciais, separado do
 
 - cadastro de categorias, fornecedores e produtos
 - controle por lote, validade e localizacao
-- vendas por balcao, WhatsApp, WooCommerce, WordPress, Mercado Livre e delivery
+- vendas por balcao, delivery e canais externos, com hub omnichannel idempotente
 - faturamento individual e em massa com XML de simulacao assinado
 - pagamentos com base para Pix e maquina de cartao
 - configuracao de provedores e canais
@@ -115,6 +115,120 @@ embalagem e unidade; a opcao fiscal escolhida separadamente preenche o NCM
 oficial. Resultados internos reaproveitam os demais campos comerciais e fiscais,
 sem duplicar a identidade do item. Os valores copiados continuam sujeitos a
 conferencia, especialmente NCM, tributacao, beneficio fiscal e precos.
+
+## Hub omnichannel e marketplaces
+
+`Configuracao > Integracoes` centraliza contas e lojas de WordPress/WooCommerce,
+Shopee, Mercado Livre, iFood, aiqfome, Magazine Luiza/Magalu, Amazon, Facebook
+Marketplace, WhatsApp Business, AliExpress, OLX e eBay. O catalogo informa as
+capacidades e o tipo de acesso de cada canal; algumas plataformas exigem seller,
+aplicativo e homologacao de parceiro, e OLX/Facebook/WhatsApp podem nao oferecer
+o mesmo contrato transacional de pedido, estoque e logistica para toda conta.
+
+O nucleo implementado possui:
+
+- contas separadas por canal e loja, sem gravar tokens ou segredos no banco;
+- mapeamento explicito entre produto local e identificador/SKU externo;
+- vinculo unico entre conta, pedido externo e venda local;
+- webhook assinado e idempotente para WooCommerce e para relays canonicos;
+- baixa do estoque local, recebivel, pagamento externo e entrada no kanban de
+  entrega dentro da mesma transacao;
+- fila auditavel de estoque, eventos bloqueados e erros de conciliacao;
+- rejeicao de pedidos com produto nao mapeado, estoque insuficiente ou preco
+  abaixo da margem local, sem criar venda parcial.
+
+O endpoint de entrada por conta e:
+
+```text
+POST /api/marketplaces/accounts/<account_id>/webhook
+```
+
+WooCommerce envia o corpo nativo e a assinatura
+`X-WC-Webhook-Signature`. Os demais conectores podem usar o envelope canonico e
+`X-NanoStore-Signature: sha256=<hmac>` enquanto seu adaptador oficial estiver em
+homologacao. O identificador `X-NanoStore-Event-Id` torna cada notificacao
+idempotente. Exemplo de envelope:
+
+```json
+{
+  "event": "order.created",
+  "order": {
+    "id": "PEDIDO-123",
+    "status": "approved",
+    "payment_status": "paid",
+    "customer": {"name": "Cliente", "phone": "41999999999"},
+    "shipping": {"address": "Rua Exemplo, 10", "city": "Curitiba", "state": "PR"},
+    "items": [
+      {"external_product_id": "SKU-EXTERNO-1", "sku": "LOCAL-1", "quantity": 2, "unit_price": 15}
+    ]
+  }
+}
+```
+
+As credenciais ficam somente no ambiente. Se a conta usar o prefixo
+`NANOSTORE_ML_LOJA1`, o segredo de webhook deve ser configurado como
+`NANOSTORE_ML_LOJA1_WEBHOOK_SECRET`. Chaves OAuth, tokens e demais segredos dos
+adaptadores futuros devem seguir o mesmo prefixo e nunca ser salvos em
+`IntegrationSetting` ou versionados.
+
+Rotas administrativas do hub:
+
+- `GET /api/marketplaces/catalog`
+- `GET|POST /api/marketplaces/accounts`
+- `PATCH /api/marketplaces/accounts/<account_id>`
+- `GET|POST /api/marketplaces/mappings`
+- `DELETE /api/marketplaces/mappings/<mapping_id>`
+- `GET /api/marketplaces/events`
+- `POST /api/marketplaces/inventory/queue`
+
+A fila de estoque prepara atualizacoes auditaveis, mas nao afirma que elas foram
+enviadas: o despacho depende do adaptador oficial e das credenciais/homologacao
+daquela conta. Cancelamentos externos ficam registrados para conciliacao; eles
+nao estornam automaticamente uma venda local sem aplicar o fluxo auditavel de
+pagamentos e estoque.
+
+## Rastreio de produtos, Correios e previsao de entrega
+
+`Lancamentos > Rastreio` cria uma ou mais remessas para cada pedido de entrega.
+Cada volume registra quais itens e quantidades do pedido transporta, permitindo
+buscar o historico por pedido, cliente, SKU, nome do produto ou codigo de
+rastreio. A mesma unidade vendida nao pode ser alocada acima da sua quantidade
+em remessas ativas.
+
+Cada remessa conserva transportador, servico, CEPs, previsao, postagem, entrega,
+ultima consulta, erro e uma linha do tempo imutavel de eventos. Eventos dos
+Correios sao deduplicados; uma atualizacao repetida nao cria historico duplicado.
+Quando o objeto avanca, o pedido acompanha os estados de preparacao, em transito,
+saida para entrega e entrega concluida. Cancelamento de remessa nao apaga o
+pedido nem movimentos de estoque.
+
+A integracao usa os Correios Web Services (CWS) para token por cartao de
+postagem, prazo nacional e rastreamento. Ela nao compra etiqueta nem realiza
+postagem. Configure somente no ambiente:
+
+```bash
+NANOSTORE_CORREIOS_USERNAME=usuario_meu_correios
+NANOSTORE_CORREIOS_ACCESS_CODE=codigo_de_acesso
+NANOSTORE_CORREIOS_POSTING_CARD=numero_cartao_postagem
+NANOSTORE_CORREIOS_ORIGIN_POSTAL_CODE=80000000
+NANOSTORE_CORREIOS_SERVICE_CODE=codigo_servico_contratado
+```
+
+`NANOSTORE_CORREIOS_API_URL` e opcional e usa por padrao
+`https://api.correios.com.br`. Sem credenciais, o operador ainda pode cadastrar
+o codigo e uma previsao manual; o NanoStore nao fabrica eventos nem prazos.
+
+Rotas do rastreio:
+
+- `GET|POST /api/shipments`
+- `GET|PATCH /api/shipments/<shipment_id>`
+- `POST /api/shipments/<shipment_id>/refresh`
+- `POST /api/shipping/correios/estimate`
+
+A consulta publica manual continua disponivel no site oficial de
+[rastreamento dos Correios](https://rastreamento.correios.com.br/app/index.php),
+e a integracao contratual e administrada no
+[Correios Web Services](https://cws.correios.com.br/).
 
 ## Rodar localmente
 

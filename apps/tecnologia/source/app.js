@@ -8,9 +8,14 @@
   let detailDeviceId = null;
   let toastTimer = null;
   let alertConfigDirty = false;
+  let networkDevices = [];
+  let networkDeviceId = null;
+  let networkGeneration = 0;
+  let networkScanBusy = false;
 
   const $ = (selector) => document.querySelector(selector);
   const $$ = (selector) => [...document.querySelectorAll(selector)];
+  const resources = JSON.parse($(".techApp").dataset.resources || '["*"]');
   const esc = (value) => String(value ?? "").replace(/[&<>'"]/g, (char) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;",
   })[char]);
@@ -135,6 +140,10 @@
     $("#kpiAvailability").textContent = availability == null ? "—" : `${number(availability, 1)}%`;
     $("#kpiDownload").textContent = state.speed?.downloadMbps == null ? "—" : `${number(state.speed.downloadMbps)} Mbps`;
     $("#kpiUpload").textContent = state.speed?.uploadMbps == null ? "—" : `${number(state.speed.uploadMbps)} Mbps`;
+    $("#linkDownload").textContent = $("#kpiDownload").textContent;
+    $("#linkUpload").textContent = $("#kpiUpload").textContent;
+    const internet = active.find((device) => device.tipo === "INTERNET");
+    $("#linkConnection").textContent = internet?.ultimaMetrica?.status || "Aguardando coleta";
   }
 
   function renderDiagnosis() {
@@ -427,6 +436,7 @@
   }
 
   async function loadOverview({ quiet = false } = {}) {
+    if (!resources.includes("*") && !["dashboard", "equipamentos", "historico", "config"].some((resource) => resources.includes(resource))) return;
     try {
       const data = await request("/overview");
       state.devices = data.devices || [];
@@ -438,6 +448,7 @@
       state.monitorIntervalSeconds = data.monitorIntervalSeconds || 60;
       $("#monitorState").textContent = `Coleta automática a cada ${state.monitorIntervalSeconds}s`;
       renderAll();
+      if (!$('[data-page="historico"]').classList.contains("hidden")) await loadHistory();
     } catch (error) {
       $("#monitorState").textContent = "Monitor indisponível";
       if (!quiet) showToast(error.message, true);
@@ -732,21 +743,130 @@
     } catch (error) { showToast(error.message, true); }
   }
 
+  function renderNetwork() {
+    const query = $("#networkSearch").value.trim().toLocaleLowerCase();
+    const devices = networkDevices.filter((device) => `${device.nome} ${device.host} ${(device.networkAddresses || []).map((item) => item.host).join(" ")}`.toLocaleLowerCase().includes(query));
+    const icons = { ROTEADOR: "router", SERVIDOR: "server", COMPUTADOR: "monitor", NOTEBOOK: "laptop", IMPRESSORA: "printer", NVR: "video", RELOGIO_PONTO: "clock" };
+    $("#networkGrid").innerHTML = devices.map((device) => `<button type="button" class="networkDevice" data-network-device="${device.id}">
+      <img src="/apps/tecnologia/icons/${icons[device.tipo] || "network"}.svg" width="40" height="40" alt="">
+      <strong>${esc(device.nome)}</strong><small>${esc(device.host)}</small>
+      ${device.ativo ? statusBadge(device.ultimaMetrica) : '<span class="status">Inativo</span>'}
+    </button>`).join("");
+    $("#networkMessage").textContent = devices.length ? `${devices.length} equipamento(s)` : query ? "Nenhum equipamento encontrado." : "Nenhum equipamento cadastrado.";
+  }
+
+  async function loadNetwork() {
+    const generation = ++networkGeneration;
+    $("#refreshNetwork").disabled = true;
+    try {
+      const data = await request("/network");
+      if (generation !== networkGeneration) return;
+      networkDevices = data.devices || [];
+      $("#openNetworkScan").classList.toggle("hidden", !data.scanAvailable || (!resources.includes("*") && !resources.includes("rede_scan")));
+      if (!networkScanBusy && !$("#networkScanDialog").open) {
+        $("#networkScanSubnet").innerHTML = (data.scanSubnets || []).map((subnet) => `<option value="${esc(subnet)}">${esc(subnet)}</option>`).join("");
+      }
+      renderNetwork();
+    } catch (error) {
+      if (generation !== networkGeneration) return;
+      $("#networkMessage").textContent = error.message;
+      $("#networkGrid").innerHTML = "";
+    } finally {
+      if (generation === networkGeneration) $("#refreshNetwork").disabled = false;
+    }
+  }
+
+  async function runNetworkScan() {
+    if (networkScanBusy) return;
+    if (!$("#networkScanSubnet").value) {
+      $("#networkScanStatus").textContent = "Nenhuma rede IPv4 privada identificada nos cadastros.";
+      return;
+    }
+    networkScanBusy = true;
+    $("#runNetworkScan").disabled = true;
+    $("#networkScanSubnet").disabled = true;
+    $("#networkScanResults").innerHTML = "";
+    $("#networkScanStatus").textContent = "Verificando dispositivos online...";
+    try {
+      const data = await request("/network/scan", { method: "POST", body: JSON.stringify({subnet: $("#networkScanSubnet").value}) });
+      const devices = data.devices || [];
+      $("#networkScanResults").innerHTML = devices.map((device) => `<tr><td>${esc(device.ip)}</td><td>${esc(device.mac || "Não disponível")}</td><td>${esc(device.name || "Não informado")}</td></tr>`).join("");
+      $("#networkScanStatus").textContent = `${devices.length ? `${devices.length} dispositivo(s) online não cadastrado(s)` : "Nenhum dispositivo online não cadastrado encontrado"} · ${data.subnet} · ${new Date(data.checkedAt).toLocaleString("pt-BR")}`;
+    } catch (error) {
+      $("#networkScanStatus").textContent = error.message;
+    } finally {
+      networkScanBusy = false;
+      $("#runNetworkScan").disabled = false;
+      $("#networkScanSubnet").disabled = false;
+    }
+  }
+
+  async function openNetworkDevice(id) {
+    const device = networkDevices.find((item) => item.id === id);
+    if (!device) return;
+    networkDeviceId = id;
+    const metric = device.ultimaMetrica;
+    const telemetry = metric?.telemetry || {};
+    const field = (label, value) => `<div><dt>${esc(label)}</dt><dd>${esc(value)}</dd></div>`;
+    $("#networkTitle").textContent = device.nome;
+    $("#networkDetails").innerHTML = `<dl class="networkFacts">
+      ${field("Nome", device.nome)}
+      ${field("Nome na rede", telemetry.systemName || "Não informado")}
+      ${field("IP / host", (device.networkAddresses || [{host: device.host}]).map((item) => item.host).join(", "))}
+      ${field("MAC", (metric?.macAddresses || telemetry.macAddresses || []).join(", ") || "Não informado pela coleta")}
+      ${field("Origem do MAC", metric?.macSource === "ARP" ? "Cache ARP do servidor" : metric?.macSource || (telemetry.macAddresses?.length ? telemetry.protocol || "Coleta" : "Indisponível"))}
+      ${metric?.macSource === "ARP" ? field("IP associado ao MAC", (metric.macObservations || []).map((item) => `${item.host}: ${item.mac}`).join("; ")) : ""}
+      ${field("Última coleta", dateTime(metric?.checkedAt))}
+      ${field("Estado", device.ativo ? statusLabel(metric) : "Inativo")}
+      ${field("Download na última coleta", telemetry.downloadMbps == null ? "Indisponível" : `${number(telemetry.downloadMbps, 3)} Mbps`)}
+      ${field("Upload na última coleta", telemetry.uploadMbps == null ? "Indisponível" : `${number(telemetry.uploadMbps, 3)} Mbps`)}
+      </dl><h3>Consumo de rede no dia</h3><div id="networkUsage" aria-live="polite">Carregando consumo...</div>`;
+    if (!$("#networkDialog").open) $("#networkDialog").showModal();
+    try {
+      const usage = await request(`/network/${id}`);
+      if (networkDeviceId !== id) return;
+      const available = (value) => value == null ? "Indisponível" : bytes(value);
+      $("#networkUsage").innerHTML = `<dl class="networkFacts">
+        ${field("Recebido (download)", available(usage.downloadBytes))}
+        ${field("Enviado (upload)", available(usage.uploadBytes))}
+        ${field("Total registrado hoje", available(usage.totalBytes))}
+        ${field("Dia (São Paulo)", usage.date.split("-").reverse().join("/"))}
+        </dl><p class="muted">${usage.measuredFrom ? `Período medido: ${esc(dateTime(usage.measuredFrom))} a ${esc(dateTime(usage.measuredUntil))}. Inclui tráfego interno.` : "Sem duas leituras de tráfego comparáveis hoje."}</p>
+        ${usage.omittedIntervals ? '<p class="muted">Consumo parcial: há intervalos sem contadores comparáveis.</p>' : ''}`;
+    } catch (error) {
+      if (networkDeviceId === id) $("#networkUsage").textContent = error.message;
+    }
+  }
+
   function setView(view, updateHash = true) {
-    const requestedView = view;
+    $("#networkDialog").close();
+    $("#networkScanDialog").close();
+    if (view === 'backup') view = 'backup-visao';
+    let requestedView = view;
     const backupSection = view.startsWith("backup-") ? view.slice(7) : "";
     if (["visao", "planos", "agentes"].includes(backupSection)) view = "backup";
     $$('[data-backup-sections]').forEach((element) => {
       element.classList.toggle("hidden", view === "backup" && !!backupSection && !element.dataset.backupSections.split(" ").includes(backupSection));
     });
-    const known = ["dashboard", "equipamentos", "protocolos", "backup", "historico", "ocupacao-link", "config"];
-    if (!known.includes(view)) view = "dashboard";
+    const known = ["rede", "dashboard", "monitor-link", "equipamentos", "protocolos", "backup", "historico", "ocupacao-link", "config", "descoberta-impressoras", "descoberta-computadores"];
+    if (!known.includes(view)) view = requestedView = "dashboard";
+    const destination = $(`.techView[data-page="${view}"]`);
+    if (window.nanotechMenuAllowed?.('/apps/tecnologia#' + requestedView) === false ||
+        (!resources.includes("*") && !resources.includes(destination.dataset.recurso))) {
+      $$(".techView").forEach((element) => element.classList.add("hidden"));
+      showToast("Funcao nao liberada para este usuario.", true);
+      return;
+    }
     $$(".techView").forEach((element) => element.classList.toggle("hidden", element.dataset.page !== view));
     $$(".tab").forEach((element) => element.classList.toggle("active", element.dataset.view === view));
-    if (updateHash) history.replaceState(null, "", view === "dashboard" ? location.pathname : `#${requestedView}`);
+    if (updateHash) {
+      history.pushState(null, "", view === "dashboard" ? location.pathname : `#${requestedView}`);
+      window.dispatchEvent(new Event("nanotech:navigation"));
+    }
     if (view === "historico") loadHistory();
     if (view === "ocupacao-link") loadLinkUsageReport();
     if (view === "backup") loadBackups();
+    if (view === "rede") loadNetwork();
   }
 
   function openDevice(device = null) {
@@ -812,16 +932,23 @@
       critico: $("#deviceCritical").checked,
       ativo: $("#deviceActive").checked,
     };
+    const submit = $("#deviceForm button[type='submit']");
+    const label = submit.textContent;
+    submit.disabled = true;
+    submit.textContent = editingId ? "Salvando..." : "Salvando e verificando...";
     try {
-      await request(editingId ? `/devices/${editingId}` : "/devices", {
+      const saved = await request(editingId ? `/devices/${editingId}` : "/devices", {
         method: editingId ? "PUT" : "POST",
         body: JSON.stringify(payload),
       });
       closeDevice();
       await loadOverview();
-      showToast("Equipamento salvo.");
+      showToast(saved?.warning || "Equipamento salvo.");
     } catch (error) {
       showToast(error.message, true);
+    } finally {
+      submit.disabled = false;
+      submit.textContent = label;
     }
   }
 
@@ -1086,11 +1213,10 @@
 
   async function loadHistory() {
     const deviceId = Number($("#historyDevice").value || state.devices[0]?.id || 0);
-    if (!deviceId) { state.metrics = []; renderHistory(); return; }
     try {
       const hours = Number($("#historyHours").value || 24);
       const [data, speedData] = await Promise.all([
-        request(`/history?deviceId=${deviceId}&hours=${hours}`),
+        deviceId ? request(`/history?deviceId=${deviceId}&hours=${hours}`) : Promise.resolve({ metrics: [] }),
         request(`/speed-history?hours=${hours}`),
       ]);
       state.metrics = data.metrics || [];
@@ -1101,7 +1227,27 @@
     }
   }
 
+  $("#networkSearch").addEventListener("input", renderNetwork);
+  $("#openNetworkScan").addEventListener("click", () => {
+    $("#networkScanDialog").showModal();
+    runNetworkScan();
+  });
+  $("#closeNetworkScan").addEventListener("click", () => $("#networkScanDialog").close());
+  $("#networkScanForm").addEventListener("submit", (event) => { event.preventDefault(); runNetworkScan(); });
+  $("#refreshNetwork").addEventListener("click", loadNetwork);
+  $("#networkGrid").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-network-device]");
+    if (button) openNetworkDevice(Number(button.dataset.networkDevice));
+  });
+  $("#closeNetwork").addEventListener("click", () => $("#networkDialog").close());
+  $("#networkDialog").addEventListener("close", () => { networkDeviceId = null; });
+  $("#networkDialog").addEventListener("click", (event) => {
+    if (event.target !== $("#networkDialog")) return;
+    const bounds = event.target.getBoundingClientRect();
+    if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) event.target.close();
+  });
   $("#probeAll").addEventListener("click", probeAll);
+  $("#refreshLinkMonitor").addEventListener("click", () => loadOverview());
   $("#speedTest").addEventListener("click", runSpeedTest);
   $("#testAlertEmail").addEventListener("click", testAlertEmail);
   $("#alertConfigForm").addEventListener("submit", saveAlertConfiguration);
@@ -1184,5 +1330,6 @@
   setView(location.hash.slice(1) || "dashboard", false);
   loadOverview();
   window.setInterval(() => loadOverview({ quiet: true }), 15000);
+  window.setInterval(() => { if (!$('[data-page="rede"]').classList.contains("hidden")) loadNetwork(); }, 30000);
   window.setInterval(() => { if (location.hash === "#backup" || location.hash.startsWith("#backup-")) loadBackups({ quiet: true }); }, 30000);
 })();

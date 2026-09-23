@@ -8,30 +8,24 @@
 </head>
 <body>
   <div class="techApp">
-    <header class="techHero">
-      <div>
-        <span class="eyebrow">Infraestrutura e conectividade</span>
-        <h1>Monitoramento de Tecnologia</h1>
-        <p>Internet, roteador, servidores, NVR, relógio ponto e impressoras da rede 192.168.200.0/24.</p>
-      </div>
-      <div class="heroActions">
-        <span class="monitorState" id="monitorState">Carregando monitor...</span>
-        <div class="heroButtons"><button class="btn" id="speedTest" type="button">Testar velocidade</button><button class="btn primary" id="probeAll" type="button">Verificar agora</button></div>
-      </div>
-    </header>
-
-    <nav class="techTabs" aria-label="Áreas do módulo">
-      <button class="tab active" data-view="dashboard" type="button">Visão geral</button>
-      <button class="tab" data-view="equipamentos" type="button">Equipamentos</button>
-      <button class="tab" data-view="protocolos" type="button">Agentes e protocolos</button>
-      <button class="tab" data-view="backup" type="button">Backup</button>
-      <button class="tab" data-view="historico" type="button">Histórico</button>
-      <button class="tab" data-view="ocupacao-link" type="button">Ocupação do link</button>
-      <button class="tab" data-view="config" type="button">Configuração</button>
-    </nav>
-
     <main>
-      <section class="techView" data-page="dashboard">
+      <section class="techView hidden" data-page="rede" data-recurso="rede">
+        <div class="panelHead taskHeading">
+          <h2>Rede</h2>
+          <div class="networkTools">
+            <button class="btn hidden" id="openNetworkScan" type="button" title="Buscar dispositivos nao cadastrados"><img src="./icons/network.svg" width="20" height="20" alt="">Buscar dispositivos</button>
+            <input id="networkSearch" type="search" placeholder="Buscar equipamento ou IP" aria-label="Buscar equipamento ou IP">
+            <button class="btn" id="refreshNetwork" type="button" title="Atualizar rede" aria-label="Atualizar rede"><img src="./icons/refresh-cw.svg" width="20" height="20" alt=""></button>
+          </div>
+        </div>
+        <p id="networkMessage" class="muted" role="status">Carregando equipamentos...</p>
+        <div id="networkGrid" class="networkGrid"></div>
+      </section>
+      <section class="techView" data-page="dashboard" data-recurso="dashboard">
+        <div class="panelHead taskHeading">
+          <div><h2>Visao geral da rede</h2><span class="monitorState" id="monitorState">Carregando monitor...</span></div>
+          <div class="heroButtons"><button class="btn" id="speedTest" type="button">Testar velocidade</button><button class="btn primary" id="probeAll" type="button">Verificar agora</button></div>
+        </div>
         <div class="kpiGrid">
           <article class="kpi"><span>Online</span><strong id="kpiOnline">0</strong><small>equipamentos respondendo</small></article>
           <article class="kpi warning"><span>Instáveis</span><strong id="kpiDegraded">0</strong><small>acima dos limites</small></article>
@@ -41,33 +35,15 @@
           <article class="kpi speed"><span>Upload</span><strong id="kpiUpload">—</strong><small>último teste do link</small></article>
         </div>
 
-        <div class="dashboardGrid">
+        <div class="diagnosisGrid">
           <section class="panel diagnosisPanel">
             <div class="panelHead">
               <div><span class="eyebrow">Análise automática</span><h2>Diagnóstico da rede</h2></div>
             </div>
             <div id="diagnosisList" class="diagnosisList"></div>
           </section>
-          <section class="panel scopePanel">
-            <span class="eyebrow">Escopo atual</span>
-            <h2>O que conseguimos medir</h2>
-            <ul>
-              <li>Queda, perda de pacotes, latência e variação até cada equipamento.</li>
-              <li>Disponibilidade das portas críticas: HTTPS, SMB e impressão.</li>
-              <li>Saída para internet e resolução DNS.</li>
-              <li>Download e upload periódicos, CPU, memória, disco e tráfego quando houver agente/SNMP.</li>
-            </ul>
-            <p class="scopeWarning">Consumo por IP depende de NetFlow, sFlow, IPFIX ou API do roteador. O SNMP comum informa o volume total de cada interface.</p>
-          </section>
         </div>
 
-        <section class="panel emailAlertPanel">
-          <div class="panelHead">
-            <div><span class="eyebrow">Avisos automáticos</span><h2>Alertas por e-mail</h2></div>
-            <button class="btn" id="testAlertEmail" type="button">Enviar e-mail de teste</button>
-          </div>
-          <div id="emailAlertStatus" class="emailAlertStatus">Carregando configuração...</div>
-        </section>
 
         <section class="panel">
           <div class="panelHead">
@@ -88,7 +64,20 @@
         </section>
       </section>
 
-      <section class="techView hidden" data-page="protocolos">
+      <section class="techView hidden" data-page="protocolos" data-recurso="equipamentos">
+        <h2>Agentes e protocolos</h2>
+          <section class="panel scopePanel">
+            <span class="eyebrow">Escopo atual</span>
+            <h2>O que conseguimos medir</h2>
+            <ul>
+              <li>Queda, perda de pacotes, latência e variação até cada equipamento.</li>
+              <li>Disponibilidade das portas críticas: HTTPS, SMB e impressão.</li>
+              <li>Saída para internet e resolução DNS.</li>
+              <li>Download e upload periódicos, CPU, memória, disco e tráfego quando houver agente/SNMP.</li>
+            </ul>
+            <p class="scopeWarning">Consumo por IP depende de NetFlow, sFlow, IPFIX ou API do roteador. O SNMP comum informa o volume total de cada interface.</p>
+          </section>
+
         <div class="protocolGrid">
           <section class="panel protocolCard">
             <span class="protocolTag">Rede e dispositivos</span><h2>SNMP</h2>
@@ -117,7 +106,7 @@
         <section class="panel flowPanel"><span class="eyebrow">Limites e segurança</span><h2>Como os dados se completam</h2><div class="protocolFlow"><span>ICMP/TCP<br><small>disponibilidade</small></span><b>+</b><span>SNMP/exporter<br><small>recursos e interfaces</small></span><b>+</b><span>GLPI Agent<br><small>hardware e programas</small></span><b>=</b><span>Diagnóstico completo</span></div></section>
       </section>
 
-      <section class="techView hidden" data-page="equipamentos">
+      <section class="techView hidden" data-page="equipamentos" data-recurso="equipamentos">
         <section class="panel">
           <div class="panelHead">
             <div><span class="eyebrow">Cadastro</span><h2>Equipamentos</h2></div>
@@ -131,6 +120,8 @@
           </div>
         </section>
 
+        </section>
+      <section class="techView hidden" data-page="descoberta-impressoras" data-recurso="equipamentos">
         <section class="panel discoverPanel">
           <div class="panelHead">
             <div><span class="eyebrow">Rede local</span><h2>Descobrir impressoras</h2></div>
@@ -143,6 +134,8 @@
           <div id="discoveryResults" class="discoveryResults muted">Execute a descoberta para localizar novas impressoras.</div>
         </section>
 
+        </section>
+      <section class="techView hidden" data-page="descoberta-computadores" data-recurso="equipamentos">
         <section class="panel discoverPanel">
           <div class="panelHead">
             <div><span class="eyebrow">Estações de trabalho</span><h2>Descobrir computadores</h2></div>
@@ -156,7 +149,7 @@
         </section>
       </section>
 
-      <section class="techView hidden" data-page="historico">
+      <section class="techView hidden" data-page="historico" data-recurso="historico">
         <section class="panel">
           <div class="panelHead"><div><span class="eyebrow">Link de internet</span><h2>Histórico de velocidade</h2></div></div>
           <div class="tableWrap"><table><thead><tr><th>Data</th><th>Status</th><th>Download</th><th>Upload</th><th>Latência</th></tr></thead><tbody id="speedHistoryTable"></tbody></table></div>
@@ -180,7 +173,7 @@
         </section>
       </section>
 
-      <section class="techView hidden" data-page="ocupacao-link">
+      <section class="techView hidden" data-page="ocupacao-link" data-recurso="historico">
         <section class="panel">
           <div class="panelHead historyHead">
             <div><span class="eyebrow">Relatório de Tecnologia</span><h2>Ocupação do link de internet</h2></div>
@@ -227,7 +220,15 @@
         </section>
       </section>
 
-      <section class="techView hidden" data-page="config">
+      <section class="techView hidden" data-page="config" data-recurso="config">
+        <section class="panel emailAlertPanel">
+          <div class="panelHead">
+            <div><span class="eyebrow">Avisos automáticos</span><h2>Alertas por e-mail</h2></div>
+            <button class="btn" id="testAlertEmail" type="button">Enviar e-mail de teste</button>
+          </div>
+          <div id="emailAlertStatus" class="emailAlertStatus">Carregando configuração...</div>
+        </section>
+
         <form class="panel" id="alertConfigForm">
           <div class="panelHead">
             <div><span class="eyebrow">Por ambiente</span><h2>O que será notificado</h2></div>
@@ -256,6 +257,18 @@
           <p class="scopeWarning">Esta ocupação é uma estimativa: soma o tráfego das máquinas com exporter ou SNMP e pode incluir tráfego interno da rede. Identificação exata do consumo da internet por IP exige NetFlow, sFlow, IPFIX ou API do roteador.</p>
         </form>
 
+      </section>
+
+      <section class="techView hidden" data-page="monitor-link" data-recurso="dashboard">
+        <div class="panelHead taskHeading">
+          <h2>Monitoramento de link</h2>
+          <button class="btn" id="refreshLinkMonitor" type="button">Atualizar monitoramento</button>
+        </div>
+        <div class="kpiGrid">
+          <article class="kpi"><span>Internet</span><strong id="linkConnection">—</strong><small>última verificação do link</small></article>
+          <article class="kpi speed"><span>Download</span><strong id="linkDownload">—</strong><small>último teste de velocidade</small></article>
+          <article class="kpi speed"><span>Upload</span><strong id="linkUpload">—</strong><small>último teste de velocidade</small></article>
+        </div>
         <section class="panel">
           <div class="panelHead">
             <div><span class="eyebrow">Última coleta</span><h2>Consumo dos equipamentos monitorados</h2></div>
@@ -267,10 +280,11 @@
               <tbody id="linkConsumersTable"><tr><td colspan="5" class="muted">Nenhum equipamento com telemetria de rede.</td></tr></tbody>
             </table>
           </div>
+          <p class="scopeWarning">Estimativa do tráfego das interfaces monitoradas; pode incluir tráfego interno. Equipamentos sem agente ou SNMP não entram nesta soma.</p>
         </section>
       </section>
 
-      <section class="techView hidden" data-page="backup">
+      <section class="techView hidden" data-page="backup" data-recurso="backup">
         <div class="kpiGrid backupKpis" data-backup-sections="visao">
           <article class="kpi"><span>Planos ativos</span><strong id="backupKpiActive">0</strong><small>configurações em execução</small></article>
           <article class="kpi warning"><span>Exigem atenção</span><strong id="backupKpiWarning">0</strong><small>agente sem contato ou falha</small></article>
@@ -319,6 +333,27 @@
         </section>
       </section>
     </main>
+
+    <dialog id="networkScanDialog" class="networkDialog networkScanDialog" aria-labelledby="networkScanTitle">
+      <div class="panelHead">
+        <h2 id="networkScanTitle">Dispositivos não cadastrados</h2>
+        <button id="closeNetworkScan" class="iconButton" type="button" aria-label="Fechar busca" title="Fechar"><img src="./icons/x.svg" width="20" height="20" alt=""></button>
+      </div>
+      <form id="networkScanForm" class="networkScanForm">
+        <label>Rede<select id="networkScanSubnet" required></select></label>
+        <button id="runNetworkScan" class="btn" type="submit"><img src="./icons/refresh-cw.svg" width="20" height="20" alt="">Verificar</button>
+      </form>
+      <p id="networkScanStatus" role="status" aria-live="polite"></p>
+      <div class="tableWrap"><table class="networkScanTable"><thead><tr><th>IP</th><th>MAC</th><th>Nome</th></tr></thead><tbody id="networkScanResults"></tbody></table></div>
+    </dialog>
+
+    <dialog id="networkDialog" class="networkDialog" aria-labelledby="networkTitle">
+      <div class="panelHead">
+        <h2 id="networkTitle">Equipamento</h2>
+        <button id="closeNetwork" class="iconButton" type="button" aria-label="Fechar" title="Fechar"><img src="./icons/x.svg" width="20" height="20" alt=""></button>
+      </div>
+      <div id="networkDetails"></div>
+    </dialog>
 
     <div class="modal hidden" id="deviceDetailsModal" role="dialog" aria-modal="true" aria-labelledby="deviceDetailsTitle">
       <section class="modalCard deviceDetailsCard">

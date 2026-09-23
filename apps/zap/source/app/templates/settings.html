@@ -3,13 +3,19 @@
 <section class="page-head">
   <div>
     <p class="eyebrow">Configuracao</p>
-    <h1>Parametros do fluxo</h1>
+    <h1>{{ dict(settings_sections)[selected_section] }}</h1>
     <p class="lead">Ajuste WhatsApp, agenda compartilhada, departamentos, lembretes e status das integracoes sem tocar no codigo.</p>
   </div>
 </section>
 
+<nav class="button-row" aria-label="Funcoes do Zap">
+  {% for key, label in settings_sections %}
+  <a class="{{ 'primary-btn' if key == selected_section else 'secondary-btn' }}" href="{{ url_for('main.settings', secao=key) }}" {% if key == selected_section %}aria-current="page"{% endif %}>{{ label }}</a>
+  {% endfor %}
+</nav>
 <section class="settings-grid">
-  <article class="panel">
+  {% if selected_section == "estados" %}
+  <article class="panel" data-settings-section="estados">
     <h2>Estados do fluxo</h2>
     <form id="state-form" class="stack-form">
       <input name="name" placeholder="Nome do estado">
@@ -25,8 +31,10 @@
       {% endfor %}
     </div>
   </article>
+  {% endif %}
 
-  <article class="panel">
+  {% if selected_section == "departamentos" %}
+  <article class="panel" data-settings-section="departamentos">
     <h2>Departamentos</h2>
     <form id="department-form" class="stack-form">
       <input name="name" placeholder="Nome do departamento">
@@ -40,8 +48,10 @@
       {% endfor %}
     </div>
   </article>
+  {% endif %}
 
-  <article class="panel">
+  {% if selected_section == "etiquetas" %}
+  <article class="panel" data-settings-section="etiquetas">
     <h2>Etiquetas</h2>
     <form id="label-form" class="stack-form">
       <input name="name" placeholder="Nome da etiqueta">
@@ -54,8 +64,10 @@
       {% endfor %}
     </div>
   </article>
+  {% endif %}
 
-  <article class="panel">
+  {% if selected_section == "respostas" %}
+  <article class="panel" data-settings-section="respostas">
     <h2>Respostas rapidas</h2>
     <form id="quick-reply-form" class="stack-form">
       <input name="title" placeholder="Titulo">
@@ -69,8 +81,10 @@
       {% endfor %}
     </div>
   </article>
+  {% endif %}
 
-  <article class="panel">
+  {% if selected_section == "webhook" %}
+  <article class="panel" data-settings-section="webhook">
     <h2>Webhook WhatsApp</h2>
     <div class="list-stack">
       <div class="list-item"><strong>Callback URL</strong> <code>{{ whatsapp_webhook_url }}</code></div>
@@ -78,8 +92,10 @@
     </div>
     <p class="muted">Use a URL publica do ngrok ou do dominio final. No modo embutido da Nanotech, a callback fica em <code>/zap/webhooks/whatsapp</code>. Em deploy standalone, fica em <code>/webhooks/whatsapp</code>.</p>
   </article>
+  {% endif %}
 
-  <article class="panel">
+  {% if selected_section == "whatsapp" %}
+  <article class="panel" data-settings-section="whatsapp">
     <h2>WhatsApp Business</h2>
     <form id="whatsapp-settings-form" class="stack-form" data-settings-form>
       <input name="WHATSAPP_TOKEN" placeholder="Access Token" value="{{ settings_map.get('WHATSAPP_TOKEN', '') }}">
@@ -95,9 +111,11 @@
     </form>
     <p class="muted">Se a conversa ainda nao passou pela janela de 24 horas, a Meta normalmente exige um template aprovado para iniciar o contato. Se o app estiver em modo de desenvolvimento, confirme tambem se o numero do destinatario esta liberado para teste no app da Meta.</p>
   </article>
+  {% endif %}
 
   {% if is_admin %}
-  <article class="panel">
+  {% if selected_section == "backup" %}
+  <article class="panel" data-settings-section="backup">
     <h2>Backup AlwaysData</h2>
     <form id="backup-settings-form" class="stack-form">
       <input name="BACKUP_DATABASE_URL" placeholder="mysql+pymysql://usuario:senha@host:3306/banco" value="{{ settings_map.get('BACKUP_DATABASE_URL', '') }}">
@@ -119,8 +137,10 @@
     <p class="muted">O banco local continua sendo o principal. Você pode preencher a URL completa ou os campos separados. Se a senha tiver caracteres especiais, use os campos separados para evitar problemas de parser.</p>
   </article>
   {% endif %}
+  {% endif %}
 
-  <article class="panel">
+  {% if selected_section == "agenda" %}
+  <article class="panel" data-settings-section="agenda">
     <h2>Agenda compartilhada</h2>
     <form id="agenda-settings-form" class="stack-form" data-settings-form>
       <textarea name="GOOGLE_SERVICE_ACCOUNT_JSON" placeholder="JSON da service account">{{ settings_map.get('GOOGLE_SERVICE_ACCOUNT_JSON', '') }}</textarea>
@@ -132,8 +152,10 @@
     </form>
     <p class="muted">A agenda usa Google Sheets como planilha compartilhada, sem depender do Google Calendar.</p>
   </article>
+  {% endif %}
 
-  <article class="panel">
+  {% if selected_section == "lembretes" %}
+  <article class="panel" data-settings-section="lembretes">
     <h2>Lembretes</h2>
     <form id="reminder-settings-form" class="stack-form" data-settings-form>
       <input name="REMINDER_MINUTES" type="number" value="{{ settings_map.get('REMINDER_MINUTES', '120') }}">
@@ -143,8 +165,10 @@
     </form>
     <button class="secondary-btn" id="run-reminders-btn" type="button">Executar lembretes agora</button>
   </article>
+  {% endif %}
 
-  <article class="panel">
+  {% if selected_section == "integracoes" %}
+  <article class="panel" data-settings-section="integracoes">
     <h2>Integracoes extras</h2>
     <form id="integration-settings-form" class="stack-form" data-settings-form>
       <input name="PUBLIC_BASE_URL" placeholder="URL publica (ngrok ou dominio)" value="{{ public_base_url }}">
@@ -155,8 +179,10 @@
       <button class="primary-btn" type="submit">Salvar integracoes</button>
     </form>
   </article>
+  {% endif %}
 
-  <article class="panel">
+  {% if selected_section == "status" %}
+  <article class="panel" data-settings-section="status">
     <h2>Status das integracoes</h2>
     <div class="integration-status-list" id="integration-status-list">
       {% for item in integration_status %}
@@ -168,16 +194,19 @@
     </div>
     <button class="secondary-btn" type="button" id="refresh-integration-status-btn">Atualizar status</button>
   </article>
+  {% endif %}
 
-  <article class="panel">
+  {% if selected_section == "usuarios" %}
+  <article class="panel" data-settings-section="usuarios">
     <h2>Usuarios e senhas</h2>
     {% if is_admin %}
       <form id="user-create-form" class="stack-form">
         <input name="name" placeholder="Nome">
         <input name="email" type="email" placeholder="E-mail">
         <input name="password" type="password" placeholder="Senha inicial">
-        <select name="department_id" data-department-select>
+        <select name="department_id">
           <option value="">Departamento</option>
+          {% for department in departments %}<option value="{{ department.id }}">{{ department.name }}</option>{% endfor %}
         </select>
         <select name="role">
           <option value="operator">Operador</option>
@@ -200,8 +229,10 @@
       <p class="muted">Somente administradores podem criar ou editar usuarios.</p>
     {% endif %}
   </article>
+  {% endif %}
 
-  <article class="panel">
+  {% if selected_section == "valores" %}
+  <article class="panel" data-settings-section="valores">
     <h2>Configuracao atual</h2>
     <p class="muted">Use SQLite local para desempenho e o backup manual no AlwaysData para restauracao ou seguranca extra em producao.</p>
     <div class="list-stack">
@@ -210,8 +241,10 @@
       {% endfor %}
     </div>
   </article>
+  {% endif %}
 </section>
 
+{% if selected_section == "usuarios" %}
 <div class="modal" id="user-modal" aria-hidden="true">
   <div class="modal-card modal-wide">
     <div class="modal-head">
@@ -223,8 +256,9 @@
       <input name="name" placeholder="Nome">
       <input name="email" type="email" placeholder="E-mail">
       <input name="password" type="password" placeholder="Nova senha opcional">
-      <select name="department_id" data-department-select>
+      <select name="department_id">
         <option value="">Departamento</option>
+          {% for department in departments %}<option value="{{ department.id }}">{{ department.name }}</option>{% endfor %}
       </select>
       <select name="role">
         <option value="operator">Operador</option>
@@ -234,4 +268,5 @@
     </form>
   </div>
 </div>
+{% endif %}
 {% endblock %}

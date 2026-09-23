@@ -1617,7 +1617,9 @@ table{width:100%;border-collapse:collapse;background:#fff}th,td{padding:10px;bor
 
 
 def _email_page(body):
-    panel = request.args.get("painel", "")
+    panel = request.args.get("painel", "resumo")
+    if panel not in {"resumo", "status"}:
+        panel = "resumo"
     if request.endpoint == "gestor_emails.index" and panel in {"resumo", "status"}:
         body = f'<div class="email-dashboard-{panel}">{body}</div>'
         body = """<style>
@@ -4205,6 +4207,18 @@ def _supplier_category_options(selected):
         f"{html.escape(label)}</option>"
         for value, label in SUPPLIER_CATEGORIES.items()
     )
+
+
+@EMAIL_BP.get("/importacao")
+def pagina_importacao():
+    return _email_page(f"""<div class="card"><h3>Importar e-mails</h3>
+      <form method="post" action="{url_for('gestor_emails.importar')}">
+        <label>Quantidade maxima de e-mails para verificar por conta</label>
+        <input name="max_emails" type="number" min="1" value="50">
+        <button>Importar agora</button>
+      </form>
+      <p><a href="{url_for('gestor_emails.index', painel='status')}">Acompanhar importacao</a></p>
+      </div>""")
 
 
 @EMAIL_BP.get("/historico")

@@ -154,6 +154,12 @@ If you need context fast, read these files first:
   (`48/4`) uses four, and GFA 200 ml CX24 (`24/2`) uses two. Keep bonus volume
   visible as a subset of total volume, and calculate the monetary bonus
   percentage as bonus value divided by gross sales value.
+- Daily-sales lists and dashboards expose a customer filter without changing
+  the imported source. The annual sales report and dashboard compare year to
+  date volume in hectoliters against the same months of the previous year,
+  showing absolute and percentage increase/decrease and allowing seller and
+  customer filters. Months after the latest imported month must not be counted
+  as decreases.
 - Daily-sales dashboards are live projections of active card sources. A logical
   card deletion must exclude its import/seller source (and every attached source
   of a composed card) from daily summaries and detail immediately, while keeping
@@ -318,6 +324,13 @@ If you need context fast, read these files first:
   and water products remain production suggestions, not purchase suggestions.
   Receipt closes the purchase workflow but never creates an automatic stock
   movement; XML/manual stock confirmation remains the source of truth.
+- Each stock product may define a positive `estoque_minimo`; zero disables the
+  rule. Saving the threshold or committing a stock movement at or below it
+  opens one auditable `compras_solicitacoes` card with
+  `origem=estoque_minimo`. Never create a duplicate while that product has an
+  active purchase. Replenishment respects the product purchase minimum lot and
+  multiple. Finished `PRODUCAO/PRODUTOS` remain production suggestions and do
+  not generate automatic purchases.
 - `Cadastros > Fornecedores e compras` reuses
   `gestor_email_fornecedores` and stores only purchase-specific supplier and
   product parameters in `compras_fornecedor_config` and
@@ -408,4 +421,79 @@ classificar seu grupo e recurso no manifest e verificar o menu de usuario restri
 
 ## Navegacao conforme PDF (10/09/2026)
 
-O perfil Rio Branco e documentado em `docs/MENU_RIO_BRANCO_PDF.md` na raiz. `#estoque:contagem` abre a conferencia separada do Acerto, com rascunho em memoria e exportacao CSV, sem alterar saldos. `#relatorios:orcamentos` lista orcamentos emitidos, com filtros e paginacao, reutilizando o PDF historico. Recursos novos: `estoque_contagem` e `vendas_orcamentos_relatorio`. Email oferece paginas distintas para backup ZIP, importacao de historico XML e recuperacao de conteudo; acesso ao backup exige `riob-email:backup`.
+O perfil Rio Branco e documentado em `docs/MENU_RIO_BRANCO_PDF.md` na raiz. `#estoque:contagem` abre a conferencia separada do Acerto, com rascunho em memoria e exportacao CSV. Desde 11/09/2026, Finalizar contagem abre conferencia e ajusta saldos ao confirmar, com recursos proprios e historico descritos em `docs/CONTAGEM_ESTOQUE.md`. `#relatorios:orcamentos` lista orcamentos emitidos, com filtros e paginacao, reutilizando o PDF historico. Recursos novos: `estoque_contagem` e `vendas_orcamentos_relatorio`. Email oferece paginas distintas para backup ZIP, importacao de historico XML e recuperacao de conteudo; acesso ao backup exige `riob-email:backup`.
+
+## Auditoria do menu (14/09/2026)
+
+A auditoria do menu em 14/09/2026 restaurou atalhos operacionais omitidos de
+Workflow, relatorios de Compras/Vendas Anual, importacao XML, configuracoes de
+SIP/Vendas/modo completo e Monitor Automacao. Recursos e rotas existentes foram
+preservados. O teste `tests/test_menu_pdf.py` da raiz compara todos os destinos
+dos manifests com o menu do cliente; exclusoes de Cameras/ESXi e atalhos do
+popup de Comunicacao sao explicitas. Ver `docs/MENU_RIO_BRANCO_PDF.md` na raiz.
+
+## SELLOUT mensal: agenda e leitura manual
+
+Em 11/09/2026 o usuario definiu leitura mensal automatica somente as 08:00
+(America/Sao_Paulo). Startup agenda a proxima ocorrencia, sem importar; o antigo
+intervalo de 15 minutos nao se aplica ao mensal. O botao Ler pastas automaticamente
+inclui TXT, PDF e SELLOUT mensal em qualquer horario. A varredura periodica TXT/PDF
+nao deve disparar o mensal. Preservar o recurso `vendas`, a validacao do CSV e a
+assinatura contra repeticoes; nao confundir consolidado mensal com confirmacao
+diaria dos cards. Ver `docs/SELLOUT_AUTOMATICO.md`.
+
+
+## Auditoria de navegacao e tarefas (14/09/2026)
+
+A auditoria de 14/09/2026 esta em `docs/AUDITORIA_NAVEGACAO_RIO_BRANCO.md` na raiz. Preservar as telas separadas de backup, base mensal, parametros de orcamentos, importacao de pontos de venda e cargas da semana. Os atalhos diretos de relatorios/frota devem abrir sua tarefa independentemente da navegacao anterior.
+
+## Shell e identidade do deploy (15/09/2026)
+
+O cabecalho compartilhado mantem o nome do contrato do deploy, usuario, marca e
+Sair ao navegar. O proxy integra as paginas XML/Email como tarefas isoladas,
+removendo a navegacao legada; links e formularios voltam pelo portal. Previews,
+APIs e downloads nao recebem shell. Recursos de acesso permanecem nos manifests
+e no servidor. Documentacao RioB fica em Documentos (`riob:config`); o antigo
+modo completo redireciona para a aplicacao integrada. Ver README da raiz e
+`tests/test_riob_xml_proxy.py`, `tests/test_header_navigation.py`.
+
+## Product formula cost
+
+`Gestao > Custo do produto` (`#custoProduto`) reuses active PET/GFA stock
+products. Recipe items must reference active stock product IDs, with manual quantities
+and automatic last supplier NF-e purchase prices. One shared syrup recipe defines its yield in litres; each finished
+product specifies a different syrup dose per 1000 litres of beverage, bottle
+volume and additional ingredients. Recalculate from the current syrup recipe;
+legacy unlinked items, missing doses/purchases and unknown package conversions remain pending. Calculate with Decimal on the server; do not infer real prices,
+move stock or grant access automatically. Both proxy and blueprint enforce
+`custo_produto`; optimistic revisions prevent silent overwrites. See
+`docs/CUSTO_PRODUTO.md` for API, limits and tests.
+
+`#custoProdutoDashboard` and `GET /api/custo-produto/dashboard?ano=YYYY` use the
+separate `custo_produto_dashboard` read permission. Compare current recipes with
+the last supplier purchase available at each month end (today for current month);
+never claim historical recipe snapshots. `custo_produto_compras.py` resolves
+confirmed stock links, typed input aliases or unambiguous exact names, excludes
+internal transfers/discarded invoices and converts compatible units. Explicit
+package capacity is required for unknown units. Client/legacy prices are ignored.
+
+Custo do produto reaproveita os vinculos confirmados entre XML e estoque para
+resolver ingredientes renomeados e consultar o ultimo valor sem exigir pedido
+em Compras. Codigo/fornecedor ou codigo/descricao historica devem identificar
+um unico produto. Acucar em venda a ordem entra na referencia; TO/tonelada
+converte para kg e capacidade de saco ja cadastrada e reutilizada quando a
+apresentacao confirmada corresponde. O catalogo identifica o recurso existente
+`custo_produto` como Custo do produto, xarope e precos do XML; dashboard conserva
+`custo_produto_dashboard`. APIs e bloqueios individuais mantem a autorizacao,
+sem novas concessoes. Detalhes e limites no documento CUSTO_PRODUTO.md do RioB.
+
+Em 23/09/2026, GESTAO > Custos diarios por grupo (`#custoDiario`, recurso
+`custo_diario`) passa a informar producao real, pessoal e despesas por grupo.
+Dashboard de custo do produto mantem o recurso `custo_produto_dashboard` e
+oferece custo diario por litro, garrafa e pacote, alem da comparacao mensal.
+Gastos compartilhados sao rateados pelos litros. Desperdicio vem exclusivamente
+das faltas em contagens finalizadas, agrupadas por setor/grupo de estoque;
+perdas especificas de producao ficam para uma etapa futura. As APIs
+`/api/custo-diario` (GET/PUT) e `/api/custo-diario/dashboard` (GET) validam sessao,
+recursos e bloqueios individuais; nao concedem acesso nem movimentam estoque.
+Regras, snapshots e limites em `apps/riob/source/docs/CUSTO_DIARIO.md` na raiz.

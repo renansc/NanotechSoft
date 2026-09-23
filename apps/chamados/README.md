@@ -53,6 +53,50 @@ ocultados dos seletores do Chamados fora do perfil `rio-branco`.
 Status disponíveis: `ABERTO`, `TRIAGEM`, `EM_ATENDIMENTO`, `AGUARDANDO`,
 `RESOLVIDO`, `FECHADO` e `CANCELADO`.
 
+## Sincronização com o Kanban do Conky
+
+O módulo reconcilia os chamados ativos com o arquivo JSON lido pelo Conky. A
+sincronização é bidirecional: uma tarefa criada com `kanban.py add` abre um
+chamado de categoria TI e prioridade média; chamados criados no portal entram
+automaticamente no Conky. Alterações de título e de coluna feitas no Conky são
+registradas no histórico do chamado.
+
+O número exibido antes do título é sempre o ID do chamado. Por exemplo, mover
+o item `12` altera o chamado `CH-AAAA-000012`; a numeração não muda quando a
+lista é reordenada.
+
+O mapeamento de status é:
+
+| Conky | Chamados |
+| --- | --- |
+| Aberto | `ABERTO` ou `TRIAGEM` |
+| Em atendimento | `EM_ATENDIMENTO` |
+| Aguardando | `AGUARDANDO` |
+
+Como o Conky possui somente três colunas, chamados `RESOLVIDO`, `FECHADO` ou
+`CANCELADO` deixam de ser exibidos nele. Se forem reabertos no portal, voltam a
+aparecer. `TRIAGEM` é exibido em Aberto e continua como `TRIAGEM` até a coluna
+ser alterada no Conky.
+
+No Compose integrado deste host, portal e script usam por padrão
+`/srv/conky/kanban-tasks.json`. O diretório é montado no container do portal e
+permanece como dado de execução fora do Git. Ao executar o script em outro
+diretório, aponte ambos para o mesmo arquivo:
+
+```bash
+export KANBAN_TASKS_FILE=/caminho/kanban-tasks.json
+export CHAMADOS_KANBAN_FILE=/caminho/kanban-tasks.json
+```
+
+Quando o portal estiver em container, monte também o diretório do host em
+`/srv/conky` por meio de `CHAMADOS_KANBAN_HOST_DIR`.
+
+`CHAMADOS_KANBAN_ENABLED=1` liga o reconciliador e
+`CHAMADOS_KANBAN_INTERVAL_SECONDS` define o intervalo (mínimo de cinco
+segundos). Cada tarefa recebe uma `syncKey` persistente; a tabela
+`chamados_conky_sync` usa essa chave para impedir chamados duplicados mesmo
+quando uma execução é interrompida.
+
 ## Sugestões e base de conhecimento
 
 A busca local compara categoria, subcategoria, equipamento, tipo do equipamento
@@ -86,4 +130,29 @@ O login e as permissões são sempre os do portal.
 
 ## Menu Rio Branco
 
-No perfil `rio-branco`, Indicadores ficam em Dash, Manuais e Documentacoes em Cadastro, Historico de Solucoes em Relatorio, Chamados e Manutencoes em Workflow e Agenda de Tarefas em Gestao. Rotas e recursos existentes sao preservados; consulte `docs/MENU_RIO_BRANCO_PDF.md`.
+No perfil `rio-branco`, Indicadores ficam em Dash, Manuais e Documentacoes em
+Documentos, Historico de Solucoes em Relatorio, Chamados e Manutencoes em Workflow
+e Agenda de Tarefas em Gestao. Manuais foram movidos de Cadastro para Documentos
+em 14/09/2026; o recurso `documentos`, arquivos e rotas existentes sao preservados.
+Consulte `docs/MENU_RIO_BRANCO_PDF.md`.
+
+## Telas por tarefa no portal (15/09/2026)
+
+Os atalhos abrem somente a tarefa selecionada, com o cabecalho e o menu
+principal do deploy. As entradas antigas `/original` redirecionam para a URL
+integrada, preservando caminho, filtros e metodo HTTP. O manifest usa a entrada
+integrada tambem em `standalone_url`. Nao existe segundo menu de aplicativo.
+
+Tecnologia concentra Verificar agora/Testar velocidade na Visao geral, alertas
+de e-mail em Configuracao e explicacoes de escopo em Agentes e protocolos.
+Chamados exibe Novo chamado somente na fila; Agenda, Historico e Documentos
+mostram suas proprias tarefas, inclusive antes do carregamento dos dados.
+Automacao extrai o conteudo entre marcadores do template e aplica seus estilos
+somente dentro da tarefa, preservando os botoes e a identidade do portal.
+
+Os mesmos recursos continuam em Usuarios e acessos: Tecnologia usa dashboard,
+equipamentos, historico, config e backup; Chamados usa dashboard, chamados,
+agenda, historico e documentos; Automacao explicita o recurso existente `*`.
+Nenhuma concessao e criada. Sessao, contrato e bloqueios do servidor continuam
+valendo tambem nos aliases. Testes: `tests/test_module_tasks.py` e
+`tests/check_module_tasks.py`, com dados sinteticos e sem escritas de negocio.

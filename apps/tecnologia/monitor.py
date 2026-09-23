@@ -14,6 +14,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from pathlib import Path
 from typing import Any
 
 
@@ -297,6 +298,122 @@ def _previous_telemetry(device: dict[str, Any]) -> dict[str, Any]:
     return telemetry if isinstance(telemetry, dict) else {}
 
 
+def network_scan_subnets(devices):
+    networks = {}
+    private = [ipaddress.ip_network(value) for value in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")]
+    for device in devices:
+        for address in [{"host": device.get("host")}, *(device.get("networkAddresses") or [])]:
+            try:
+                ip = ipaddress.ip_address(address.get("host") or "")
+            except ValueError:
+                continue
+            if ip.version == 4 and any(ip in network for network in private):
+                network = ipaddress.ip_network(f"{ip}/24", strict=False)
+                networks.setdefault(network, set()).add(ip)
+    return [str(network) for network in sorted(networks, key=lambda item: (-len(networks[item]), item))]
+
+
+def scan_network_host(host):
+    reachable = ping_host(host, count=1).get("reachable", False)
+    identity = netbios_node_status(host)
+    reachable = reachable or identity.get("ok", False)
+    if not reachable:
+        for port in (443, 80, 445, 22):
+            result = tcp_host(host, port, timeout_seconds=0.2)
+            if result.get("reachable") or result.get("error") == "ConnectionRefusedError":
+                reachable = True
+                break
+    if not reachable:
+        return None
+    name = identity.get("name") or ""
+    if not name:
+        try:
+            result = subprocess.run(["getent", "hosts", host], capture_output=True, text=True, timeout=1)
+            fields = result.stdout.split()
+            if len(fields) >= 2 and fields[0] == host:
+                name = fields[1][:253]
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    return {"ip": host, "name": name, "mac": ""}
+
+
+def scan_unregistered_network(subnet, devices):
+    """Manual, bounded discovery; ARP enriches identity but never proves presence."""
+    if subnet not in network_scan_subnets(devices):
+        raise ValueError("Selecione uma rede privada dos equipamentos cadastrados.")
+    known_hosts = {str(address.get("host") or "") for device in devices
+                   for address in [{"host": device.get("host")}, *(device.get("networkAddresses") or [])]}
+    known_macs = set()
+    for device in devices:
+        metric = device.get("ultimaMetrica") or {}
+        known_macs.update(network_mac_addresses(metric.get("macAddresses") or []))
+        known_macs.update(network_mac_addresses((metric.get("telemetry") or {}).get("macAddresses") or []))
+    hosts = [str(host) for host in ipaddress.ip_network(subnet).hosts() if str(host) not in known_hosts]
+    with concurrent.futures.ThreadPoolExecutor(max_workers=64) as pool:
+        found = [result for result in pool.map(scan_network_host, hosts) if result]
+    observations = arp_mac_observations([{"host": host} for host in known_hosts | {row["ip"] for row in found}])
+    macs = {row["host"]: row["mac"] for row in observations}
+    known_macs.update(macs[host] for host in known_hosts if host in macs)
+    for row in found:
+        row["mac"] = macs.get(row["ip"], "")
+    return [row for row in found if not row["mac"] or row["mac"] not in known_macs]
+
+
+def network_mac_addresses(values):
+    addresses = set()
+    for value in values:
+        compact = re.sub(r"[:\s-]", "", str(value or "").strip().strip('"'))
+        if re.fullmatch(r"[0-9a-fA-F]{12}", compact) and compact.lower() not in {"000000000000", "ffffffffffff"}:
+            addresses.add(":".join(compact[i:i + 2] for i in range(0, 12, 2)).upper())
+    return sorted(addresses)
+
+
+def arp_mac_observations(addresses):
+    """Read exact IPv4 neighbors; never substitute the gateway's MAC."""
+    hosts = set()
+    for address in addresses:
+        try:
+            ip = ipaddress.ip_address(address.get("host", ""))
+        except ValueError:
+            continue
+        if ip.version == 4 and not ip.is_loopback and not ip.is_multicast and not ip.is_unspecified:
+            hosts.add(str(ip))
+    if not hosts:
+        return []
+    paths = dict.fromkeys([os.environ.get("TECH_ARP_TABLE_PATH") or "/proc/net/arp", "/proc/net/arp"])
+    for path in paths:
+        try:
+            lines = Path(path).read_text(encoding="ascii", errors="replace").splitlines()
+        except OSError:
+            continue
+        matches = {}
+        for line in lines:
+            fields = line.split()
+            if len(fields) != 6 or fields[0] not in hosts:
+                continue
+            try:
+                complete = int(fields[1], 16) == 1 and bool(int(fields[2], 16) & 2)
+            except ValueError:
+                continue
+            macs = network_mac_addresses([fields[3]])
+            if not complete or not macs or int(macs[0][:2], 16) & 1:
+                continue
+            matches.setdefault(fields[0], {})[macs[0]] = fields[5]
+        return [{"host": host, "mac": mac, "interface": interface}
+                for host, values in sorted(matches.items()) if len(values) == 1
+                for mac, interface in values.items()]
+    return []
+
+
+def device_mac_identity(addresses, telemetry):
+    macs = network_mac_addresses((telemetry or {}).get("macAddresses") or [])
+    if macs:
+        return {"macAddresses": macs, "macSource": (telemetry or {}).get("protocol") or "Coleta", "macObservations": []}
+    observations = arp_mac_observations(addresses)
+    return {"macAddresses": sorted({item["mac"] for item in observations}),
+            "macSource": "ARP" if observations else "", "macObservations": observations}
+
+
 def _counter_rates(current: dict[str, Any], previous: dict[str, Any], checked_at: float) -> dict[str, float | None]:
     previous_counters = previous.get("counters") if isinstance(previous.get("counters"), dict) else {}
     previous_at = float(previous.get("checkedEpoch") or 0)
@@ -469,6 +586,7 @@ def collect_snmp_metrics(device: dict[str, Any]) -> dict[str, Any]:
         return {oid.rsplit(".", 1)[-1]: value for oid, value in rows}
 
     names = indexed(name_rows)
+    mac_rows = _snmp_walk_optional(host, community, port, ".1.3.6.1.2.1.2.2.1.6")
     rx = indexed(rx_rows)
     tx = indexed(tx_rows)
     speeds = indexed(speed_rows)
@@ -476,7 +594,7 @@ def collect_snmp_metrics(device: dict[str, Any]) -> dict[str, Any]:
     rx_total = sum(_snmp_number(value) or 0 for index, value in rx.items() if names.get(index, "").lower() not in ignored)
     tx_total = sum(_snmp_number(value) or 0 for index, value in tx.items() if names.get(index, "").lower() not in ignored)
     checked_at = time.time()
-    counters = {"rxBytes": rx_total, "txBytes": tx_total, "source": counter_source}
+    counters = {"rxBytes": rx_total if rx else None, "txBytes": tx_total if tx else None, "source": counter_source}
     rates = _counter_rates(counters, _previous_telemetry(device), checked_at)
     capacity_mbps = sum(
         ((_snmp_number(value) or 0) / 1_000_000 if legacy_speed else (_snmp_number(value) or 0))
@@ -514,6 +632,7 @@ def collect_snmp_metrics(device: dict[str, Any]) -> dict[str, Any]:
         "networkPct": network_pct,
         "counters": counters,
         "interfaces": [name for _, name in sorted(names.items()) if name],
+        "macAddresses": network_mac_addresses(value for _, value in mac_rows),
         "interfaceCount": len(names),
     }
 
@@ -797,6 +916,7 @@ def collect_prometheus_metrics(device: dict[str, Any]) -> dict[str, Any]:
         "load1": (_metric_sum(metrics, ("node_load1",))),
         "uptimeSeconds": round(uptime_seconds) if uptime_seconds is not None else None,
         "interfaces": interfaces[:30],
+        "macAddresses": network_mac_addresses(labels.get("address") for labels, _ in metrics.get("node_network_info", [])),
         "endpointHost": host,
         "counters": counters,
         "series": sum(len(rows) for rows in metrics.values()),
@@ -1040,6 +1160,7 @@ def probe_device(device: dict[str, Any]) -> dict[str, Any]:
             "addresses": public_addresses,
             "activeAddress": active_address["host"],
             "telemetry": telemetry,
+            **device_mac_identity(address_results, telemetry),
         },
     }
 

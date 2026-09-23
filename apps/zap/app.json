@@ -24,6 +24,26 @@
         "url": "/apps/zap/calendar",
         "grupo": "Zap",
         "recurso": "agenda"
+      },
+      {
+        "nome": "Estados do fluxo",
+        "url": "/apps/zap/settings?secao=estados",
+        "recurso": "settings"
+      },
+      {
+        "nome": "Departamentos",
+        "url": "/apps/zap/settings?secao=departamentos",
+        "recurso": "settings"
+      },
+      {
+        "nome": "Etiquetas",
+        "url": "/apps/zap/settings?secao=etiquetas",
+        "recurso": "settings"
+      },
+      {
+        "nome": "Respostas rapidas",
+        "url": "/apps/zap/settings?secao=respostas",
+        "recurso": "settings"
       }
     ],
     "workflow": [
@@ -31,6 +51,13 @@
         "nome": "Kanban Zap",
         "url": "/apps/zap",
         "recurso": "workflow"
+      }
+    ],
+    "monitor": [
+      {
+        "nome": "Status das integracoes",
+        "url": "/apps/zap/settings?secao=status",
+        "recurso": "settings"
       }
     ]
   },
@@ -54,6 +81,48 @@
         "url": "/apps/zap/docs",
         "recurso": "docs"
       }
+    ],
+    "config": [
+      {
+        "nome": "Webhook WhatsApp",
+        "url": "/apps/zap/settings?secao=webhook",
+        "recurso": "settings"
+      },
+      {
+        "nome": "WhatsApp Business",
+        "url": "/apps/zap/settings?secao=whatsapp",
+        "recurso": "settings"
+      },
+      {
+        "nome": "Backup AlwaysData",
+        "url": "/apps/zap/settings?secao=backup",
+        "recurso": "settings"
+      },
+      {
+        "nome": "Configurar agenda",
+        "url": "/apps/zap/settings?secao=agenda",
+        "recurso": "settings"
+      },
+      {
+        "nome": "Lembretes",
+        "url": "/apps/zap/settings?secao=lembretes",
+        "recurso": "settings"
+      },
+      {
+        "nome": "Integracoes extras",
+        "url": "/apps/zap/settings?secao=integracoes",
+        "recurso": "settings"
+      },
+      {
+        "nome": "Usuarios do Zap",
+        "url": "/apps/zap/settings?secao=usuarios",
+        "recurso": "settings"
+      },
+      {
+        "nome": "Configuracao atual",
+        "url": "/apps/zap/settings?secao=valores",
+        "recurso": "settings"
+      }
     ]
   },
   "menu_profiles": {
@@ -68,9 +137,24 @@
         ],
         "cadastros": [
           {
-            "nome": "Google Agenda",
-            "url": "/apps/zap/calendar",
-            "recurso": "agenda"
+            "nome": "Estados do fluxo",
+            "url": "/apps/zap/settings?secao=estados",
+            "recurso": "settings"
+          },
+          {
+            "nome": "Departamentos",
+            "url": "/apps/zap/settings?secao=departamentos",
+            "recurso": "settings"
+          },
+          {
+            "nome": "Etiquetas",
+            "url": "/apps/zap/settings?secao=etiquetas",
+            "recurso": "settings"
+          },
+          {
+            "nome": "Respostas rapidas",
+            "url": "/apps/zap/settings?secao=respostas",
+            "recurso": "settings"
           }
         ],
         "docs": [
@@ -79,9 +163,73 @@
             "url": "/apps/zap/docs",
             "recurso": "docs"
           }
+        ],
+        "gestao": [
+          {
+            "nome": "Agenda compartilhada",
+            "url": "/apps/zap/calendar",
+            "recurso": "agenda"
+          }
+        ],
+        "monitor": [
+          {
+            "nome": "Status das integracoes",
+            "url": "/apps/zap/settings?secao=status",
+            "recurso": "settings"
+          }
         ]
       },
-      "config_groups": {}
+      "config_groups": {
+        "zap": [
+          {
+            "nome": "Zap - Configuracoes",
+            "url": "/apps/zap/settings",
+            "recurso": "settings"
+          }
+        ],
+        "config": [
+          {
+            "nome": "Webhook WhatsApp",
+            "url": "/apps/zap/settings?secao=webhook",
+            "recurso": "settings"
+          },
+          {
+            "nome": "WhatsApp Business",
+            "url": "/apps/zap/settings?secao=whatsapp",
+            "recurso": "settings"
+          },
+          {
+            "nome": "Backup AlwaysData",
+            "url": "/apps/zap/settings?secao=backup",
+            "recurso": "settings"
+          },
+          {
+            "nome": "Configurar agenda",
+            "url": "/apps/zap/settings?secao=agenda",
+            "recurso": "settings"
+          },
+          {
+            "nome": "Lembretes",
+            "url": "/apps/zap/settings?secao=lembretes",
+            "recurso": "settings"
+          },
+          {
+            "nome": "Integracoes extras",
+            "url": "/apps/zap/settings?secao=integracoes",
+            "recurso": "settings"
+          },
+          {
+            "nome": "Usuarios do Zap",
+            "url": "/apps/zap/settings?secao=usuarios",
+            "recurso": "settings"
+          },
+          {
+            "nome": "Configuracao atual",
+            "url": "/apps/zap/settings?secao=valores",
+            "recurso": "settings"
+          }
+        ]
+      }
     }
   }
 }

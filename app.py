@@ -6,6 +6,7 @@ from decimal import Decimal
 import hashlib
 import html as html_lib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -33,6 +34,8 @@ import mysql.connector
 from mysql.connector import errorcode
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
+from PIL import Image, UnidentifiedImageError
+import menu_access
 
 from apps.financeiro.pdf_import import (
     FinancePdfImportError,
@@ -48,8 +51,22 @@ from apps.tecnologia.monitor import (
     discover_computers,
     discover_printers,
     measure_internet_speed,
+    network_mac_addresses,
+    network_scan_subnets,
+    scan_unregistered_network,
     normalize_device_payload,
     probe_device,
+)
+from apps.chamados.conky_sync import (
+    CHAMADO_TO_CONKY,
+    CONKY_TO_CHAMADO,
+    load_task_file_unlocked,
+    new_sync_key,
+    next_task_id,
+    save_task_file_unlocked,
+    task_file_lock,
+    timestamp_epoch,
+    timestamp_text,
 )
 
 
@@ -325,11 +342,14 @@ _nanostore_lock = threading.Lock()
 _nanostore_proc = None
 _finance_state_lock = threading.Lock()
 _technology_probe_lock = threading.Lock()
+_technology_scan_lock = threading.Lock()
 _technology_speed_lock = threading.Lock()
 _technology_monitor_lock = threading.Lock()
 _technology_monitor_thread = None
 _chamados_agenda_lock = threading.Lock()
 _chamados_agenda_thread = None
+_chamados_conky_lock = threading.Lock()
+_chamados_conky_thread = None
 
 TECH_ALERT_DEFAULT_TO = "solucoestecnologicasrenan@gmail.com"
 TECH_ALERT_RESOURCES = {
@@ -519,6 +539,13 @@ def ensure_database():
 
     conn = get_conn()
     cur = conn.cursor()
+    # Cadastro inicial pertence apenas a instalacoes novas, nunca a reinicios.
+    cur.execute("""
+        SELECT 1 FROM information_schema.tables
+        WHERE table_schema=DATABASE() AND table_name='tecnologia_dispositivos'
+        LIMIT 1
+    """)
+    technology_inventory_exists = bool(cur.fetchone())
     schema = (BASE_DIR / "sql" / "schema.sql").read_text(encoding="utf-8")
     for statement in [s.strip() for s in schema.split(";") if s.strip()]:
         cur.execute(statement)
@@ -553,9 +580,8 @@ def ensure_database():
             cur.execute(f"ALTER TABLE tecnologia_backups ADD COLUMN {column_name} {column_ddl}")
 
     seed_rio_branco = configured_client_id() == "rio-branco"
-    cur.execute("SELECT COUNT(*) FROM tecnologia_dispositivos")
-    technology_device_count = int((cur.fetchone() or [0])[0])
-    if seed_rio_branco and technology_device_count == 0:
+    seed_technology_devices = seed_rio_branco and not technology_inventory_exists
+    if seed_technology_devices:
         cur.executemany(
             """
             INSERT INTO tecnologia_dispositivos
@@ -584,7 +610,7 @@ def ensure_database():
         ("Notebook Renan", "NOTEBOOK", "192.168.200.122", None, "ICMP", "Rede principal", "Notebook Windows 11 informado; nome NetBIOS NOTEBOOK-RENAN confirmado na varredura.", 0, 30, 5),
         ("Notebook WHITEVENDAS", "NOTEBOOK", "192.168.200.197", None, "ICMP", "Rede principal", "Notebook Windows 10 informado; nome NetBIOS WHITEVENDAS confirmado na varredura.", 0, 30, 5),
     ):
-        if not seed_rio_branco:
+        if not seed_technology_devices:
             continue
         cur.execute(
             """
@@ -615,6 +641,13 @@ def ensure_database():
                     """,
                     (int(cur.lastrowid),),
                 )
+
+    cur.execute("SHOW COLUMNS FROM portal_config LIKE 'logo_data'")
+    if not cur.fetchone():
+        cur.execute("ALTER TABLE portal_config ADD COLUMN logo_data MEDIUMTEXT NULL")
+    cur.execute("SHOW COLUMNS FROM portal_config LIKE 'logo_url'")
+    if not cur.fetchone():
+        cur.execute("ALTER TABLE portal_config ADD COLUMN logo_url VARCHAR(2048) NOT NULL DEFAULT ''")
 
     cur.execute("SHOW COLUMNS FROM usuarios LIKE 'nanostore_perfil'")
     if not cur.fetchone():
@@ -722,7 +755,7 @@ def bootstrap_request():
 
 @app.url_defaults
 def version_navigation_assets(endpoint, values):
-    if endpoint == "static" and values.get("filename") in {"app.js", "style.css"}:
+    if endpoint == "static" and values.get("filename") in {"app.js", "style.css", "menu-access.js"}:
         asset = BASE_DIR / "static" / values["filename"]
         values.setdefault("v", hashlib.sha256(asset.read_bytes()).hexdigest()[:16])
 
@@ -950,11 +983,12 @@ def get_config():
     try:
         conn = get_auth_conn()
         cur = conn.cursor(dictionary=True)
-        cur.execute("SELECT tema FROM portal_config WHERE id=1")
+        cur.execute("SELECT * FROM portal_config WHERE id=1")
         row = cur.fetchone() or {"tema": "rio_branco"}
         cur.close()
         conn.close()
-        return {"tema": row.get("tema") or "rio_branco"}
+        return {"tema": row.get("tema") or "rio_branco", "logo_data": row.get("logo_data") or "",
+                "logo_url": row.get("logo_url") or ""}
     except mysql.connector.Error:
         return {"tema": "rio_branco"}
 
@@ -969,9 +1003,9 @@ def get_user_permissions(usuario):
     cur = conn.cursor(dictionary=True)
     cur.execute(
         """
-        SELECT app_key, recurso
+        SELECT app_key, recurso, permitido
         FROM usuario_app_permissoes
-        WHERE usuario_id=%s AND permitido=1
+        WHERE usuario_id=%s AND (permitido=1 OR recurso LIKE 'menu:%%')
         """,
         (usuario["id"],),
     )
@@ -980,7 +1014,10 @@ def get_user_permissions(usuario):
     conn.close()
     allowed = {}
     for row in rows:
-        allowed.setdefault(row["app_key"], set()).add(row["recurso"])
+        resource = row["recurso"]
+        if not row.get("permitido", 1):
+            resource = "!" + resource
+        allowed.setdefault(row["app_key"], set()).add(resource)
     if has_request_context():
         if not hasattr(g, "user_permissions"):
             g.user_permissions = {}
@@ -992,6 +1029,8 @@ def can_access(usuario, app_key, recurso=None):
     if user_is_admin(usuario):
         return True
     allowed = get_user_permissions(usuario).get(app_key, set())
+    if app_key == 'sistema' and recurso == 'logo' and menu_access.has_overrides(allowed):
+        return menu_access.permitted({'url':'/config#logo','recurso':'logo'}, allowed)
     if "*" in allowed:
         return True
     return bool(recurso and recurso in allowed)
@@ -1000,7 +1039,13 @@ def can_access(usuario, app_key, recurso=None):
 def allowed_resources_for_app(usuario, app_key):
     if user_is_admin(usuario):
         return ["*"]
-    return sorted(get_user_permissions(usuario).get(app_key, set()))
+    grants = get_user_permissions(usuario).get(app_key, set())
+    resources = {key for key in grants if not key.startswith(('menu:', '!menu:'))}
+    if menu_access.has_overrides(grants):
+        for item in menu_access.entries(menu_manifest(app_key), configured_client_id()):
+            if item['key'] in grants and item.get('recurso'):
+                resources.add(item['recurso'])
+    return sorted(resources)
 
 
 def user_identity_headers_for_app(usuario, app_key):
@@ -1203,6 +1248,7 @@ def normalize_app(item, origem="filesystem"):
         "menu_groups": item.get("menu_groups") or {},
         "config_groups": item.get("config_groups") or {},
         "menu_profiles": item.get("menu_profiles") or {},
+        "access_resources": item.get("access_resources") or [],
         "workflow_cards": item.get("workflow_cards") or [],
         "source_dir": str(item.get("source_dir") or "").strip(),
     }
@@ -1688,7 +1734,69 @@ def app_visible_to_user(app_item, usuario):
     if user_is_admin(usuario):
         return True
     permissions = get_user_permissions(usuario).get(app_item["app_key"], set())
-    return bool(permissions)
+    if menu_access.has_overrides(permissions):
+        manifest = app_item if 'menu_groups' in app_item else menu_manifest(app_item['app_key'])
+        items = menu_access.entries(manifest, configured_client_id())
+        if items:
+            return any(menu_access.permitted(item, permissions) for item in items)
+    return any(not key.startswith('!menu:') for key in permissions)
+
+
+def menu_manifest(app_key):
+    """Versioned manifests also resolve access before rendering the app shell."""
+    if not re.fullmatch(r'[a-z0-9-]+', app_key):
+        return {}
+    return system_manifest() if app_key == 'sistema' else read_json_file(BASE_DIR / 'apps' / app_key / 'app.json', {})
+
+
+def menu_navigation_access(usuario, url):
+    path = urllib.parse.urlsplit(url).path
+    key = path.split('/')[2] if path.startswith(('/apps/', '/workflow/')) else 'sistema'
+    items = menu_access.entries(menu_manifest(key), configured_client_id())
+    candidates = menu_access.page_candidates(url, items)
+    if not candidates:
+        return None
+    grants = get_user_permissions(usuario).get(key, set())
+    return any(menu_access.permitted(item, grants, user_is_admin(usuario)) for item in candidates)
+
+
+def menu_access_state(usuario, apps):
+    if user_is_admin(usuario):
+        return []
+    permissions = get_user_permissions(usuario)
+    return [{'url': entry['url'], 'allowed': menu_access.permitted(entry, permissions.get(item['app_key'], set()))}
+            for item in [*apps, system_manifest()]
+            for entry in menu_access.entries(item, configured_client_id())]
+
+
+def enforce_individual_menu_access(usuario, app_key, path=None, full_path=None):
+    """Checks explicit item choices before legacy module permissions."""
+    if user_is_admin(usuario):
+        return None
+    grants = get_user_permissions(usuario).get(app_key, set())
+    if not menu_access.has_overrides(grants):
+        return None
+    items = menu_access.entries(menu_manifest(app_key), configured_client_id())
+    path = path or request.path
+    full_path = full_path or request.full_path
+    if app_key == 'zap' and path.replace('/original', '', 1) in {'/apps/zap/api/settings', '/apps/zap/api/settings/bulk'}:
+        payload = request.get_json(silent=True) or {}
+        keys = payload.get('settings', {}) if path.endswith('/bulk') else [str(payload.get('key') or '')]
+        if not isinstance(keys, (dict, list)):
+            return False
+        return all(menu_navigation_access(usuario, menu_access.zap_setting_destination(key)) is True for key in keys)
+    targets = menu_access.api_destinations(app_key, path, request.method)
+    candidates = [item for item in items if menu_access.destination(item['url']) in {menu_access.destination(url) for url in targets}]
+    if not targets and '/api/' not in path:
+        candidates = menu_access.page_candidates(full_path, items)
+        # Hash-based apps must serve a shell; the APIs and hash guard protect tasks.
+        if path.rstrip('/') in {'/apps/riob', '/apps/riob/embed', '/apps/tecnologia', '/config'}:
+            candidates = []
+    if not candidates:
+        return None
+    if any(menu_access.permitted(item, grants) for item in candidates):
+        return True
+    return False
 
 
 PUBLIC_APP_PATH_PREFIXES = (
@@ -1701,6 +1809,12 @@ PUBLIC_APP_PATH_PREFIXES = (
 @app.before_request
 def enforce_app_permission():
     path = request.path
+    system_targets = {'/api/config/theme':'/config#temas', '/api/config/logo':'/config#logo',
+                      '/api/backup/export':'/config#backup', '/api/backup/import':'/config#backup'}
+    if path in system_targets or path.startswith('/workflow/'):
+        usuario = current_user_or_logout()
+        if usuario and menu_navigation_access(usuario, system_targets.get(path, path)) is False:
+            return jsonify({'erro':'item do menu nao liberado para este usuario'}), 403
     if configured_client_id() == "rio-branco" and path.startswith("/api/finance/"):
         deployed = allowed_app_keys()
         if deployed is not None and "financeiro" not in deployed:
@@ -1735,6 +1849,29 @@ def enforce_app_permission():
     if not app_visible_to_user({"app_key": app_key}, usuario):
         return jsonify({"erro": "app nao liberado para este usuario"}), 403
 
+    if (path == "/apps/tecnologia/api/network/scan"
+            and not can_access(usuario, "tecnologia", "rede_scan")):
+        return jsonify({"erro": "varredura de rede nao liberada para este usuario"}), 403
+    menu_allowed = enforce_individual_menu_access(usuario, app_key)
+    for alias, target_app, target in (
+        ('/apps/riob/gestor-emails', 'riob-email', '/apps/riob-email/riob'),
+        ('/apps/riob/importar-xml', 'riob-xml', '/apps/riob-xml/riob'),
+        ('/apps/riob/monitor/automacao', 'automacao', '/apps/automacao'),
+    ):
+        if path == alias or path.startswith(alias + '/'):
+            canonical = target + path[len(alias):]
+            alias_allowed = enforce_individual_menu_access(usuario, target_app, canonical,
+                canonical + ('?' + request.query_string.decode() if request.query_string else ''))
+            if alias_allowed is False:
+                return jsonify({'erro':'item do menu nao liberado para este usuario'}), 403
+    if menu_allowed is False:
+        return jsonify({"erro": "item do menu nao liberado para este usuario"}), 403
+    if menu_allowed is True:
+        if (app_key == 'riob' and '/api/estoque/contagens/' in path and request.method == 'POST'
+                and not can_access(usuario, 'riob', 'estoque_contagem_finalizar')):
+            return jsonify({'erro':'recurso nao liberado para este usuario'}), 403
+        return None
+
     # O backup novo tem concessao propria, inclusive pelo caminho embarcado.
     if path.startswith("/apps/riob/gestor-emails/backup") and not can_access(usuario, "riob-email", "backup"):
         return jsonify({"erro": "recurso nao liberado para este usuario"}), 403
@@ -1755,6 +1892,38 @@ def enforce_app_permission():
                     automation_allowed = False
                 if not automation_allowed:
                     return jsonify({"erro": "recurso nao liberado para este usuario"}), 403
+            if app_key == "tecnologia" and path.startswith("/apps/tecnologia/api/"):
+                technology_api = path.removeprefix("/apps/tecnologia/api/")
+                if technology_api == "network" or technology_api.startswith("network/"):
+                    required_technology = {"rede"}
+                elif technology_api.startswith("backup/"):
+                    required_technology = {"backup"}
+                elif technology_api.startswith("alerts/"):
+                    required_technology = {"config"}
+                elif technology_api in {"history", "speed-history", "link-usage-history"}:
+                    required_technology = {"historico"}
+                elif technology_api == "overview":
+                    # Dependencia de leitura das telas de rede, sem liberar backup.
+                    required_technology = {"dashboard", "equipamentos", "historico", "config"}
+                elif technology_api.startswith("devices/") and technology_api.endswith("/print-usage"):
+                    required_technology = {"dashboard", "equipamentos", "historico"}
+                elif technology_api.startswith(("devices", "discover-")):
+                    required_technology = {"equipamentos"}
+                else:
+                    required_technology = {"dashboard"}
+                if not required_technology.intersection(recursos):
+                    return jsonify({"erro": "recurso nao liberado para este usuario"}), 403
+            if app_key == "zap":
+                relative_zap = path.removeprefix("/apps/zap").removeprefix("/original").strip("/")
+                required_zap = "workflow"
+                if relative_zap.startswith(("settings", "api/settings", "api/config", "api/users", "api/database", "api/integrations", "api/reminders")):
+                    required_zap = "settings"
+                elif relative_zap.startswith(("calendar", "agenda", "api/agenda")):
+                    required_zap = "agenda"
+                elif relative_zap.startswith("docs"):
+                    required_zap = "docs"
+                if not relative_zap.startswith("static/") and required_zap not in recursos:
+                    return jsonify({"erro": "recurso nao liberado para este usuario"}), 403
             if app_key == "riob-email":
                 relative_email = path.removeprefix("/apps/riob-email").removeprefix("/riob").strip("/")
                 required_email = "backup" if relative_email == "backup" or relative_email.startswith("backup/") else "operacao"
@@ -1765,12 +1934,16 @@ def enforce_app_permission():
                 return jsonify({"erro": "funcao nao liberada para este usuario"}), 403
             if app_key == "riob":
                 relative = path.removeprefix("/apps/riob/")
+                if (relative == "docs" or relative.startswith("docs/")) and "config" not in recursos:
+                    return jsonify({"erro": "recurso nao liberado para este usuario"}), 403
                 if relative.startswith("api/"):
                     api_path = relative.removeprefix("api/")
                     resource = api_path.split("/", 1)[0]
                     # Somente identificacao e Agent (filtrado internamente) sao comuns.
                     common = resource == "agent" or (resource == "me" and request.method == "GET")
-                    aliases = {"dashboard_estoque": "estoque", "dashboard_vendas": "vendas",
+                    aliases = {"custo-diario": "custo_diario", "custo-produto": "custo_produto", "dashboard_estoque": "estoque", "dashboard_vendas": "vendas",
+                               "dashboard_processos": "processos", "processos-internos": "processos",
+                               "dashboard_compras": "compras", "nfe": "config",
                                "dashboard_frota": "frota", "frota_resumo": "frota",
                                "frota_relatorio": "frota", "frota_historico": "frota",
                                "abastecimentos": "frota", "manutencoes": "frota",
@@ -1778,13 +1951,17 @@ def enforce_app_permission():
                                "status": "config", "backup": "config", "logs_exclusoes": "config",
                                "app": "config", "monitor_boot": "config", "sip": "config"}
                     required = aliases.get(resource, resource)
+                    if api_path in {"custo-produto/dashboard", "custo-diario/dashboard"}:
+                        required = "custo_produto_dashboard"
                     if api_path == "vendas/orcamentos/relatorio":
                         required = "vendas_orcamentos_relatorio"
+                    if api_path.startswith("estoque/contagens/"):
+                        required = "estoque_contagem_relatorio" if api_path.startswith("estoque/contagens/relatorio") else "estoque_contagem_finalizar"
                     if ("/config" in api_path or api_path.startswith("vendas/cache") or api_path.startswith("vendas/sellout")) and request.method not in {"GET", "HEAD"}:
                         required = "config"
                     read_dependencies = {
-                        "estoque/produtos": {"estoque_contagem"},
-                        "estoque/posicao": {"estoque_contagem"},
+                        "estoque/produtos": {"estoque_contagem", "estoque_contagem_finalizar"},
+                        "estoque/posicao": {"estoque_contagem", "estoque_contagem_finalizar"},
                         "veiculos": {"frota", "fretes", "escala", "cargas"},
                         "colaboradores": {"frota", "fretes", "escala", "cargas", "comissao"},
                     }
@@ -1805,11 +1982,10 @@ def visible_apps_for_user(usuario):
     apps = list_apps()
     if user_is_admin(usuario):
         return apps
-    permissions = get_user_permissions(usuario)
     return [
         app_item
         for app_item in apps
-        if permissions.get(app_item["app_key"])
+        if app_visible_to_user(app_item, usuario)
     ]
 
 
@@ -1820,8 +1996,10 @@ def deployment_uses_portal():
 def permission_catalog():
     """O mesmo manifest alimenta os menus e o cadastro de acessos."""
     catalog = []
-    for item in list_apps():
+    for item in [*list_apps(), system_manifest()]:
         resources = {"*": "Todas as funcoes"}
+        for resource in item.get("access_resources") or []:
+            resources[resource["recurso"]] = resource["nome"]
         # Preserva recursos ja concedidos mesmo quando o perfil move/omite atalhos.
         for definition in (item, app_menu_definition(item)):
             for groups_key in ("menu_groups", "config_groups"):
@@ -1831,8 +2009,14 @@ def permission_catalog():
                         if resource:
                             resources.setdefault(resource, entry.get("recurso_nome") or resource.replace("_", " ").replace("-", " ").capitalize())
         catalog.append({"app_key": item["app_key"], "nome": item["nome"],
+                        "menus": menu_access.entries(item, configured_client_id()),
                         "recursos": [{"key": k, "nome": v} for k, v in resources.items()]})
     return catalog
+
+
+def system_manifest():
+    """Recursos do shell, independentes dos aplicativos contratados."""
+    return read_json_file(BASE_DIR / "portal.app.json", {})
 
 
 def validate_user_permissions(raw):
@@ -1849,12 +2033,28 @@ def validate_user_permissions(raw):
     return result
 
 
+def validate_menu_permissions(raw):
+    if not isinstance(raw, dict):
+        raise ValueError('Informe os itens de menu por modulo.')
+    catalog = {item['app_key']: {entry['key'] for entry in item.get('menus', [])}
+               for item in permission_catalog()}
+    result = {}
+    for key, choices in raw.items():
+        if key not in catalog or not isinstance(choices, dict):
+            raise ValueError('Modulo de menu invalido.')
+        if any(resource not in catalog[key] or type(value) is not bool for resource, value in choices.items()):
+            raise ValueError('Item de menu invalido.')
+        result[key] = choices
+    return result
+
+
 def application_entry_url(usuario):
     apps = visible_apps_for_user(usuario)
     preferred = {"rio-branco": "riob", "senhor": "nanostore", "laboratorio": "pacs"}.get(configured_client_id())
     apps.sort(key=lambda item: item["app_key"] != preferred)
     for item in apps:
-        if user_is_admin(usuario) or "*" in allowed_resources_for_app(usuario, item["app_key"]):
+        if user_is_admin(usuario) or ("*" in allowed_resources_for_app(usuario, item["app_key"])
+                                    and not menu_access.has_overrides(get_user_permissions(usuario).get(item['app_key'], set()))):
             return item["url"]
         for definition in (app_menu_definition(item), item):
             for groups_key in ("menu_groups", "config_groups"):
@@ -1868,8 +2068,8 @@ def application_entry_url(usuario):
 def menu_item_visible(item, app_item, usuario):
     if user_is_admin(usuario):
         return True
-    recurso = item.get("recurso") or item.get("permission")
-    return can_access(usuario, app_item["app_key"], recurso)
+    grants = get_user_permissions(usuario).get(app_item['app_key'], set())
+    return menu_access.permitted({**item, 'recurso': item.get('recurso') or item.get('permission')}, grants)
 
 
 def app_menu_definition(app_item):
@@ -1917,7 +2117,8 @@ def menu_sections(apps, usuario=None):
     shared = {"dashboards", "config", "relatorios", "import_export"}
     labels = {"cadastros": "Cadastros", "workflow": "Operacoes", "vendas": "Vendas",
               "compras": "Compras", "estoque": "Estoque", "financeiro": "Financeiro",
-              "ponto": "Ponto", "automacao": "Automacao"}
+              "ponto": "Ponto", "automacao": "Automacao", "monitor": "Monitoramento",
+              "docs": "Documentos"}
     for app_item in apps:
         if not app_visible_to_user(app_item, usuario):
             continue
@@ -1931,14 +2132,16 @@ def menu_sections(apps, usuario=None):
                 seen.add(item.get("url"))
                 entries.append({**item, "nome": menu_display_name(item, app_item["nome"], section),
                                 "grupo": labels.get(section, section)})
-        if not entries and (user_is_admin(usuario) or "*" in allowed_resources_for_app(usuario, app_item["app_key"])):
+        if not entries and (user_is_admin(usuario) or ("*" in allowed_resources_for_app(usuario, app_item["app_key"])
+                and not menu_access.has_overrides(get_user_permissions(usuario).get(app_item['app_key'], set())))):
             entries.append({"nome": "Abrir " + app_item["nome"], "url": app_item["url"], "grupo": ""})
         if entries:
             sections["modules"].append({"key": app_item["app_key"], "nome": app_item["nome"], "entries": entries})
     if configured_client_id() == "rio-branco" and any("rio-branco" in (item.get("menu_profiles") or {}) for item in apps):
-        order = [("dashboards", "Dash"), ("cadastros", "Cadastro"), ("relatorios", "Relatorio"),
-                 ("import_export", "Dados"), ("config", "Config"), ("workflow", "Workflow"),
-                 ("monitor", "Monitor"), ("estoque", "Estoque"), ("gestao", "Gestao"), ("docs", "Docs")]
+        order = [("dashboards", "DASHBOARD"), ("workflow", "WORKFLOW"), ("gestao", "GESTAO"),
+                 ("cadastros", "CADASTRO"), ("relatorios", "RELATORIOS"), ("import_export", "DADOS"),
+                 ("estoque", "ESTOQUE"), ("monitor", "MONITOR"), ("config", "CONFIGURAR"),
+                 ("docs", "DOCUMENTOS")]
         modules = ["riob", "riob-email", "riob-xml", "automacao", "chamados", "tecnologia", "zap"]
         sections["primary"] = []
         for key, label in order:
@@ -2004,13 +2207,19 @@ def portal_context(usuario=None):
     client_config = client_contracts_payload()
     return {
         "usuario": usuario,
-        "show_portal": deployment_uses_portal(),
+        "show_portal": deployment_uses_portal() and menu_navigation_access(usuario, '/') is not False,
         "apps": visible_apps,
         "menu": menu_sections(apps, usuario),
+        "system_config": [entry for entry in system_manifest()["config_groups"]["sistema"]
+                          if menu_item_visible(entry, {'app_key':'sistema'}, usuario)],
+        "menu_access_state": menu_access_state(usuario, apps),
+        "can_manage_logo": can_access(usuario, "sistema", "logo"),
         "config": get_config(),
         "themes": THEMES,
         "client_config": client_config,
         "active_client": client_config["activeClient"],
+        "deploy_name": ((client_config["activeClient"] or {}).get("nome")
+                        if configured_client_id() else "NanotechSoft") or "NanotechSoft",
         "deployment": {
             "mode": DEPLOY_MODE,
             "readOnly": CLOUD_READ_ONLY,
@@ -2067,6 +2276,65 @@ def config_page():
         "config.html",
         **portal_context(usuario),
     )
+
+
+@app.route("/api/config/logo", methods=["POST", "DELETE"])
+@login_required
+def api_config_logo():
+    usuario = current_user_or_logout()
+    if not usuario:
+        return jsonify({"erro": "login necessario"}), 401
+    if not can_access(usuario, "sistema", "logo"):
+        return jsonify({"erro": "sem acesso para configurar a logo"}), 403
+    current = get_config()
+    logo_data = current.get("logo_data") or ""
+    logo_url = current.get("logo_url") or ""
+    if request.method == "DELETE":
+        logo_data = ""
+    elif "logo_url" in request.form:
+        logo_url = request.form["logo_url"].strip()
+        try:
+            parsed = urllib.parse.urlsplit(logo_url)
+            if logo_url and (len(logo_url) > 2048 or parsed.scheme not in {"http", "https"}
+                             or not parsed.hostname or parsed.username or parsed.password
+                             or re.search(r"[\s\\\x00-\x1f\x7f]", logo_url)):
+                raise ValueError("URL invalida")
+            parsed.port
+        except ValueError:
+            return jsonify({"erro": "Informe uma URL valida iniciada por https:// ou http://."}), 400
+    if request.method == "POST":
+        upload = request.files.get("logo")
+        if not upload and "logo_url" not in request.form:
+            return jsonify({"erro": "Selecione uma imagem ou informe o destino do clique."}), 400
+    else:
+        upload = None
+    if upload:
+        raw = upload.stream.read(2 * 1024 * 1024 + 1)
+        if len(raw) > 2 * 1024 * 1024:
+            return jsonify({"erro": "A imagem deve ter no maximo 2 MB."}), 400
+        try:
+            with Image.open(BytesIO(raw)) as source:
+                if source.format not in {"PNG", "JPEG", "WEBP"} or source.width * source.height > 16_000_000:
+                    raise ValueError("imagem invalida")
+                source.thumbnail((640, 240))
+                output = BytesIO()
+                source.convert("RGBA").save(output, format="PNG")
+            logo_data = "data:image/png;base64," + base64.b64encode(output.getvalue()).decode("ascii")
+        except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError):
+            return jsonify({"erro": "Use uma imagem PNG, JPEG ou WebP valida, de ate 16 megapixels."}), 400
+    conn = get_auth_conn()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "INSERT INTO portal_config (id, logo_data, logo_url) VALUES (1, %s, %s) "
+            "ON DUPLICATE KEY UPDATE logo_data=VALUES(logo_data), logo_url=VALUES(logo_url)",
+            (logo_data, logo_url),
+        )
+        conn.commit()
+    finally:
+        cur.close()
+        conn.close()
+    return jsonify({"ok": True, "logo_data": logo_data, "logo_url": logo_url})
 
 
 def quoted_identifier(name):
@@ -2240,13 +2508,17 @@ def portal_users_payload():
         item = public_user(row)
         item["ativo"] = bool(row.get("ativo"))
         users.append(item)
-    cur.execute("SELECT usuario_id, app_key, recurso FROM usuario_app_permissoes WHERE permitido=1")
+    cur.execute("SELECT usuario_id, app_key, recurso, permitido FROM usuario_app_permissoes WHERE permitido=1 OR recurso LIKE 'menu:%'")
     by_id = {u["id"]: u for u in users}
     for u in users:
         u["permissoes"] = {}
+        u['permissoes_menu'] = {}
     for row in cur.fetchall():
         if row["usuario_id"] in by_id:
-            by_id[row["usuario_id"]]["permissoes"].setdefault(row["app_key"], []).append(row["recurso"])
+            if row['recurso'].startswith('menu:'):
+                by_id[row['usuario_id']]['permissoes_menu'].setdefault(row['app_key'], {})[row['recurso']] = bool(row.get('permitido', 1))
+            else:
+                by_id[row["usuario_id"]]["permissoes"].setdefault(row["app_key"], []).append(row["recurso"])
     cur.close()
     conn.close()
     return {
@@ -2300,6 +2572,7 @@ def api_update_user(user_id):
 
     try:
         permissions = validate_user_permissions(payload["permissoes"]) if "permissoes" in payload else None
+        menu_permissions = validate_menu_permissions(payload['permissoes_menu']) if 'permissoes_menu' in payload else None
     except ValueError as exc:
         return jsonify({"erro": str(exc)}), 400
     if user_id is None and not senha:
@@ -2332,10 +2605,16 @@ def api_update_user(user_id):
             # Somente os modulos deste deploy; nunca apagar acessos fora do catalogo.
             for module in permission_catalog():
                 key = module["app_key"]
-                cur.execute("DELETE FROM usuario_app_permissoes WHERE usuario_id=%s AND app_key=%s", (user_id, key))
+                cur.execute("DELETE FROM usuario_app_permissoes WHERE usuario_id=%s AND app_key=%s AND recurso NOT LIKE 'menu:%%'", (user_id, key))
                 for resource in permissions.get(key, []):
                     cur.execute("INSERT INTO usuario_app_permissoes (usuario_id,app_key,recurso,permitido) VALUES (%s,%s,%s,1)",
                                 (user_id, key, resource))
+        if menu_permissions is not None:
+            for key, choices in menu_permissions.items():
+                for resource, permitted in choices.items():
+                    cur.execute('DELETE FROM usuario_app_permissoes WHERE usuario_id=%s AND app_key=%s AND recurso=%s', (user_id, key, resource))
+                    cur.execute('INSERT INTO usuario_app_permissoes (usuario_id,app_key,recurso,permitido) VALUES (%s,%s,%s,%s)',
+                                (user_id, key, resource, int(permitted)))
         conn.commit()
     except Exception:
         conn.rollback()
@@ -2431,6 +2710,9 @@ def workflow_kanban_page(app_key):
 
 def riob_app_path(app_key, subpath=""):
     default = RIOB_ROUTE_DEFAULTS.get(app_key, "/")
+    if app_key in {"riob-xml", "riob-email"}:
+        # Os servicos integrados conservam o prefixo do respectivo blueprint.
+        return default + subpath.lstrip("/")
     if subpath:
         return "/" + subpath.lstrip("/")
     return default
@@ -2524,8 +2806,8 @@ def riob_hash_bridge_script():
         window.openComprasView(null, view || "previsao");
         return;
       }
-      if (section === "comissao" && ["relatorios", "exportar"].includes(view) && typeof window.openComissaoView === "function") {
-        window.openComissaoView(null, view);
+      if (section === "comissao" && typeof window.openComissaoView === "function") {
+        window.openComissaoView(null, view || "lancamento");
         return;
       }
       if (section === "comissao" && typeof window.openWorkflowView === "function") {
@@ -2885,6 +3167,39 @@ def local_riob_proxy_response(app_key, subpath=""):
     return response
 
 
+def integrate_riob_module_page(body, usuario, documentation=False):
+    """Mantem a tarefa XML/Email no shell, isolando os estilos do legado."""
+    text = body.decode("utf-8", errors="replace")
+    # Apenas as paginas dos blueprints: previews de mensagens, downloads e
+    # respostas de API nao recebem shell. Aceita tambem backends anteriores.
+    text, xml_page = re.subn(
+        r'(<body[^>]*>\s*<div class="box">)\s*<nav>.*?</nav>\s*<hr>',
+        r'\1', text, count=1, flags=re.I | re.S,
+    )
+    text, email_page = re.subn(
+        r'(<body[^>]*>)\s*<header><h2>Gestao de e-mails e anexos</h2><nav>.*?</nav></header>',
+        r'\1', text, count=1, flags=re.I | re.S,
+    )
+    if not (xml_page or email_page or documentation):
+        return body
+    # Formularios e links voltam pelo portal, sem empilhar shells no iframe.
+    page_url = request.full_path if request.query_string else request.path
+    base = '<base target="_top" href="' + html_lib.escape(page_url, quote=True) + '">'
+    text = re.sub(r'(<head[^>]*>)', lambda match: match[0] + base, text, count=1, flags=re.I)
+    # Um form sem action usa about:srcdoc, mesmo havendo <base>.
+    text = re.sub(r'<form\b(?![^>]*\baction\s*=)([^>]*)>',
+                  lambda match: '<form action="' + html_lib.escape(page_url, quote=True) + '"' + match[1] + '>',
+                  text, flags=re.I)
+    text = re.sub(r'(?<![\w.])location\.href\s*=', 'window.top.location.href=', text)
+    if request.headers.get("Sec-Fetch-Dest") == "iframe":
+        return text.encode("utf-8")
+    frame = {"frame_url": page_url} if documentation else {"frame_document": text}
+    return render_template(
+        "integrated_frame.html", app_nome="Documentacao RioB" if documentation else "XML" if xml_page else "Email",
+        **frame, **portal_context(usuario),
+    ).encode("utf-8")
+
+
 def riob_proxy_response(app_key="riob", subpath="", embedded=False):
     usuario = current_user_or_logout()
     if not usuario:
@@ -2956,6 +3271,9 @@ def riob_proxy_response(app_key="riob", subpath="", embedded=False):
     content_type = resp_headers.get("Content-Type", "application/octet-stream")
     if "text/html" in content_type:
         body = rewrite_riob_html(body)
+        if app_key in {"riob-xml", "riob-email"}:
+            for module in ("riob-xml", "riob-email"):
+                body = body.replace(("/apps/riob" + RIOB_ROUTE_DEFAULTS[module]).encode(), ("/apps/" + module + "/riob/").encode())
         if embedded:
             embedded_style = """
 <style id="nanotech-riob-embedded">
@@ -2992,7 +3310,15 @@ def riob_proxy_response(app_key="riob", subpath="", embedded=False):
 """
             text = body.decode("utf-8", errors="replace")
             text = text.replace("</head>", embedded_style + "</head>", 1)
+            if not user_is_admin(usuario):
+                state = json.dumps(menu_access_state(usuario, [menu_manifest('riob')])).replace('<', '\\u003c')
+                guard = ('<script type="application/json" id="menuAccessState">' + state + '</script>'
+                         '<script src="' + url_for('static', filename='menu-access.js') + '"></script>'
+                         '<style>.menu-access-blocked body > :not(#menuAccessDenied){display:none!important}</style>')
+                text = re.sub(r'(<body\b[^>]*>)', lambda match: match.group(1) + guard, text, count=1)
             body = text.encode("utf-8")
+        else:
+            body = integrate_riob_module_page(body, usuario, documentation=upstream_path.startswith("/docs/"))
     elif "javascript" in content_type or upstream_path.endswith(".js"):
         body = rewrite_riob_javascript(body)
 
@@ -3015,6 +3341,11 @@ def riob_proxy_response(app_key="riob", subpath="", embedded=False):
             continue
         if lk == "location":
             value = rewrite_riob_location(value)
+            if app_key in {"riob-xml", "riob-email"}:
+                for module in ("riob-xml", "riob-email"):
+                    prefix = "/apps/riob" + RIOB_ROUTE_DEFAULTS[module]
+                    if value.startswith(prefix):
+                        value = value.replace(prefix, "/apps/" + module + "/riob/", 1)
         response.headers[key] = value
     return response
 
@@ -3049,7 +3380,9 @@ def riob_proxy(subpath=""):
     if subpath == "embed":
         return riob_proxy_response("riob", "", embedded=True)
     if subpath == "original":
-        return riob_proxy_response("riob", "")
+        return redirect(url_for("riob_proxy"))
+    if subpath == "docs":
+        return redirect(url_for("riob_proxy", subpath="docs/"))
     return riob_proxy_response("riob", subpath)
 
 
@@ -3546,14 +3879,14 @@ def automacao_proxy_root():
 @app.route("/apps/automacao/original", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
 @login_required
 def automacao_original_root():
-    return automacao_proxy_response("", integrated=False)
+    return integrated_app_redirect("automacao")
 
 
 @app.route("/apps/automacao/original/", defaults={"subpath": ""}, methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
 @app.route("/apps/automacao/original/<path:subpath>", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
 @login_required
 def automacao_original_proxy(subpath):
-    return automacao_proxy_response(subpath, integrated=False)
+    return integrated_app_redirect("automacao", subpath)
 
 
 @app.route("/apps/automacao/", defaults={"subpath": ""}, methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
@@ -4845,7 +5178,7 @@ def static_app_active_page(app_key, subpath):
         view = str(request.args.get("view") or "chamados").strip().lower()
         return {
             "dashboard": "dashboards",
-            "documentos": "cadastros",
+            "documentos": "docs" if configured_client_id() == "rio-branco" else "cadastros",
             "historico": "relatorios",
         }.get(view, "workflow")
     return "dashboards"
@@ -4930,7 +5263,11 @@ def rewrite_static_app_html(text, app_key, integrated=True):
 
 
 def extract_static_app_integrated(html_text, app_key, subpath=""):
-    text = rewrite_static_app_html(html_text, app_key, integrated=True)
+    # Estes modulos usam as variaveis do tema do shell. Injetar o tema
+    # standalone aqui reaplicava CSS global aos botoes e ao cabecalho.
+    text = (rewrite_static_app_paths(html_text, app_key, integrated=True)
+            if app_key in {"tecnologia", "chamados"}
+            else rewrite_static_app_html(html_text, app_key, integrated=True))
     link_tags = "\n".join(re.findall(r'<link[^>]+rel=["\']stylesheet["\'][^>]*>', text, flags=re.I))
     style_tags = "\n".join(re.findall(r"<style[^>]*>.*?</style>", text, flags=re.I | re.S))
     body_match = re.search(r"<body([^>]*)>(.*?)</body>", text, flags=re.I | re.S)
@@ -4946,6 +5283,19 @@ def extract_static_app_integrated(html_text, app_key, subpath=""):
     return static_app_active_page(app_key, subpath), content
 
 
+def integrated_app_redirect(app_key, subpath=""):
+    """Aliases antigos conservam destino, filtros e metodo dentro do portal."""
+    if subpath:
+        endpoint = "automacao_proxy" if app_key == "automacao" else app_key + "_static"
+        target = url_for(endpoint, subpath=subpath)
+    else:
+        endpoint = "automacao_proxy_root" if app_key == "automacao" else app_key + "_static_root"
+        target = url_for(endpoint)
+    if request.query_string:
+        target += "?" + request.query_string.decode("utf-8", errors="replace")
+    return redirect(target, code=307)
+
+
 def static_app_response(app_key, subpath="", integrated=True):
     path = static_app_file(app_key, subpath)
     if not path or not path.exists() or path.is_dir():
@@ -4953,6 +5303,10 @@ def static_app_response(app_key, subpath="", integrated=True):
 
     if path.suffix.lower() in {".html", ".htm"}:
         text = path.read_text(encoding="utf-8", errors="replace")
+        if app_key == "tecnologia":
+            resources = allowed_resources_for_app(current_user_or_logout(), app_key)
+            text = text.replace('class="techApp"', 'class="techApp" data-resources="'
+                                + html_lib.escape(json.dumps(resources), quote=True) + '"', 1)
         if integrated:
             active_page, app_content = extract_static_app_integrated(text, app_key, subpath)
             return render_template(
@@ -5059,6 +5413,13 @@ CHAMADO_STATUS = (
 CHAMADO_INTERVENCAO_TIPOS = ("COMENTARIO", "TRABALHO", "DIAGNOSTICO", "SOLUCAO", "STATUS")
 CHAMADO_AGENDA_TIPOS = ("TAREFA", "ORCAMENTO", "REUNIAO", "RETORNO", "OUTRO")
 CHAMADO_AGENDA_STATUS = ("PENDENTE", "CONCLUIDA", "CANCELADA")
+CHAMADO_CONKY_ACTIVE_STATUS = tuple(CHAMADO_TO_CONKY)
+CHAMADO_CONKY_FILE = Path(os.environ.get(
+    "CHAMADOS_KANBAN_FILE",
+    "/srv/conky/kanban-tasks.json",
+))
+if not CHAMADO_CONKY_FILE.is_absolute():
+    CHAMADO_CONKY_FILE = BASE_DIR / CHAMADO_CONKY_FILE
 RIO_BRANCO_SEED_USER_LOGINS = ("riob", "junior", "rebeca")
 RIO_BRANCO_SEED_DEVICE_HOSTS = (
     "1.1.1.1", "192.168.200.1", "192.168.200.254", "192.168.200.121",
@@ -5162,6 +5523,259 @@ def get_chamado(chamado_id):
     cur.close()
     conn.close()
     return row
+
+
+def chamado_conky_enabled():
+    return not CLOUD_READ_ONLY and as_bool(os.environ.get("CHAMADOS_KANBAN_ENABLED"), False)
+
+
+def _create_chamado_from_conky(cur, task):
+    title = chamado_text(task.get("text"))[:180]
+    if not title:
+        raise ValueError("a tarefa do Conky precisa de um titulo")
+    status = CONKY_TO_CHAMADO[task["status"]]
+    temporary = "TMP-" + hashlib.sha256(os.urandom(24)).hexdigest()[:20]
+    cur.execute(
+        """
+        INSERT INTO chamados
+            (protocolo, titulo, descricao, categoria, prioridade, status)
+        VALUES (%s,%s,%s,'TI','MEDIA',%s)
+        """,
+        (temporary, title, "Tarefa criada no Kanban do Conky.", status),
+    )
+    chamado_id = int(cur.lastrowid)
+    protocol = f"CH-{dt.datetime.now(dt.UTC).year}-{chamado_id:06d}"
+    cur.execute("UPDATE chamados SET protocolo=%s WHERE id=%s", (protocol, chamado_id))
+    cur.execute(
+        """
+        INSERT INTO chamados_intervencoes
+            (chamado_id, tipo, descricao, status_novo)
+        VALUES (%s,'STATUS','Chamado criado pelo Kanban do Conky.',%s)
+        """,
+        (chamado_id, status),
+    )
+    cur.execute(
+        """
+        INSERT INTO chamados_conky_sync (chamado_id, sync_key, tarefa_id)
+        VALUES (%s,%s,%s)
+        """,
+        (chamado_id, task["syncKey"], task["id"]),
+    )
+    return chamado_id
+
+
+def _update_chamado_from_conky(cur, task, ticket):
+    current_status = str(ticket.get("status") or "ABERTO")
+    current_title = str(ticket.get("titulo") or "")
+    synced_status = str(task.get("syncedStatus") or "")
+    synced_text = str(task.get("syncedText") or "")
+    status_changed = (
+        (bool(synced_status) and task["status"] != synced_status)
+        or (not synced_status and CHAMADO_TO_CONKY.get(current_status) != task["status"])
+    )
+    text_changed = (
+        (bool(synced_text) and task["text"] != synced_text)
+        or (not synced_text and task["text"] != current_title)
+    )
+    if not status_changed and not text_changed:
+        return False
+
+    new_status = CONKY_TO_CHAMADO[task["status"]] if status_changed else current_status
+    new_title = chamado_text(task["text"])[:180] if text_changed else current_title
+    cur.execute(
+        "UPDATE chamados SET titulo=%s, status=%s, encerrado_em=NULL WHERE id=%s",
+        (new_title, new_status, int(ticket["id"])),
+    )
+    descriptions = []
+    if status_changed:
+        descriptions.append(f"Status alterado pelo Conky de {current_status} para {new_status}.")
+    if text_changed:
+        descriptions.append("Titulo atualizado pelo Kanban do Conky.")
+    cur.execute(
+        """
+        INSERT INTO chamados_intervencoes
+            (chamado_id, tipo, descricao, status_anterior, status_novo)
+        VALUES (%s,%s,%s,%s,%s)
+        """,
+        (
+            int(ticket["id"]),
+            "STATUS" if status_changed else "COMENTARIO",
+            " ".join(descriptions),
+            current_status,
+            new_status,
+        ),
+    )
+    return True
+
+
+def _recover_chamado_conky_links(tasks, linked_rows):
+    linked_by_key = {row["sync_key"]: row for row in linked_rows}
+    linked_by_ticket = {int(row["id"]): row for row in linked_rows}
+    linked_by_task_id = {}
+    linked_by_title = {}
+    for row in linked_rows:
+        task_id = str(row.get("tarefa_id") or "")
+        if task_id:
+            linked_by_task_id.setdefault(task_id, []).append(row)
+        title = str(row.get("titulo") or "").strip().casefold()
+        if title and row.get("status") in CHAMADO_CONKY_ACTIVE_STATUS:
+            linked_by_title.setdefault(title, []).append(row)
+
+    claimed_keys = {task["syncKey"] for task in tasks if task["syncKey"] in linked_by_key}
+    recovered = 0
+    for task in tasks:
+        if task["syncKey"] in linked_by_key:
+            continue
+        title = str(task.get("text") or "").strip().casefold()
+        candidate = None
+        ticket_id = chamado_optional_int(task.get("ticketId"))
+        if ticket_id and ticket_id in linked_by_ticket:
+            candidate = linked_by_ticket[ticket_id]
+        if not candidate:
+            same_id = [
+                row for row in linked_by_task_id.get(str(task.get("id") or ""), [])
+                if str(row.get("titulo") or "").strip().casefold() == title
+            ]
+            if len(same_id) == 1:
+                candidate = same_id[0]
+        if not candidate:
+            same_title = linked_by_title.get(title, [])
+            if len(same_title) == 1:
+                candidate = same_title[0]
+        if not candidate or candidate["sync_key"] in claimed_keys:
+            continue
+        task["syncKey"] = candidate["sync_key"]
+        task["ticketId"] = int(candidate["id"])
+        claimed_keys.add(candidate["sync_key"])
+        recovered += 1
+    return linked_by_key, recovered
+
+
+def sync_chamados_conky(task_file=None):
+    path = Path(task_file or CHAMADO_CONKY_FILE)
+    result = {"created": 0, "updated": 0, "exported": 0, "recovered": 0, "tasks": 0}
+    with _chamados_conky_lock, task_file_lock(path):
+        tasks = load_task_file_unlocked(path)
+        conn = get_conn()
+        cur = conn.cursor(dictionary=True)
+        try:
+            cur.execute(
+                """
+                SELECT sync.sync_key, sync.tarefa_id, c.id, c.protocolo, c.titulo,
+                       c.status, c.created_at, c.updated_at
+                FROM chamados_conky_sync sync
+                INNER JOIN chamados c ON c.id=sync.chamado_id
+                """
+            )
+            linked_rows = cur.fetchall()
+            linked_by_key, result["recovered"] = _recover_chamado_conky_links(tasks, linked_rows)
+
+            # A chave precisa chegar ao disco antes do INSERT. Se o processo cair
+            # depois do commit, a proxima rodada encontra o mesmo vinculo.
+            if result["recovered"] or any(task["syncKey"] not in linked_by_key for task in tasks):
+                save_task_file_unlocked(path, tasks)
+
+            for task in tasks:
+                ticket = linked_by_key.get(task["syncKey"])
+                if ticket:
+                    if ticket["status"] in CHAMADO_CONKY_ACTIVE_STATUS:
+                        result["updated"] += int(_update_chamado_from_conky(cur, task, ticket))
+                    continue
+                chamado_id = _create_chamado_from_conky(cur, task)
+                linked_by_key[task["syncKey"]] = {
+                    "id": chamado_id,
+                    "sync_key": task["syncKey"],
+                    "tarefa_id": task["id"],
+                    "status": CONKY_TO_CHAMADO[task["status"]],
+                    "titulo": task["text"][:180],
+                }
+                result["created"] += 1
+            conn.commit()
+
+            cur.execute(
+                """
+                SELECT c.id, c.protocolo, c.titulo, c.status, c.created_at, c.updated_at,
+                       sync.sync_key, sync.tarefa_id
+                FROM chamados c
+                LEFT JOIN chamados_conky_sync sync ON sync.chamado_id=c.id
+                WHERE c.status IN ('ABERTO','TRIAGEM','EM_ATENDIMENTO','AGUARDANDO')
+                ORDER BY FIELD(c.prioridade,'CRITICA','ALTA','MEDIA','BAIXA'),
+                         c.updated_at DESC, c.id DESC
+                """
+            )
+            active_tickets = cur.fetchall()
+            for ticket in active_tickets:
+                if ticket.get("sync_key"):
+                    continue
+                sync_key = new_sync_key()
+                cur.execute(
+                    """
+                    INSERT INTO chamados_conky_sync (chamado_id, sync_key, tarefa_id)
+                    VALUES (%s,%s,'')
+                    """,
+                    (int(ticket["id"]), sync_key),
+                )
+                ticket["sync_key"] = sync_key
+                ticket["tarefa_id"] = ""
+                result["exported"] += 1
+            conn.commit()
+
+            tasks_by_key = {task["syncKey"]: task for task in tasks}
+            final_tasks = []
+            for ticket in active_tickets:
+                existing = tasks_by_key.get(ticket["sync_key"], {})
+                # O numero mostrado pelo Conky e o ID real do chamado. Isso evita
+                # que "tarefa 12" aponte para outro chamado depois de reordenar,
+                # remover duplicatas ou reabrir registros.
+                task_id = str(ticket["id"])
+                used_ids = {item["id"] for item in final_tasks}
+                if not task_id.isdigit() or task_id in used_ids:
+                    task_id = next_task_id(final_tasks + tasks)
+                    while task_id in used_ids:
+                        task_id = str(int(task_id) + 1)
+                conky_status = CHAMADO_TO_CONKY[ticket["status"]]
+                title = str(ticket.get("titulo") or "")
+                ticket_updated = timestamp_text(ticket.get("updated_at"))
+                snapshots_unchanged = all((
+                    existing.get("syncedStatus") == conky_status,
+                    existing.get("syncedText") == title,
+                    existing.get("ticketUpdatedAt") == ticket_updated,
+                ))
+                synced_at = int(existing.get("syncedAt") or 0) if snapshots_unchanged else int(time.time())
+                final_tasks.append({
+                    "id": task_id,
+                    "status": conky_status,
+                    "text": title,
+                    "created": int(existing.get("created") or timestamp_epoch(ticket.get("created_at"))),
+                    "updated": int(existing.get("updated") or timestamp_epoch(ticket.get("updated_at"))),
+                    "syncKey": ticket["sync_key"],
+                    "ticketId": int(ticket["id"]),
+                    "protocol": str(ticket.get("protocolo") or ""),
+                    "syncedStatus": conky_status,
+                    "syncedText": title,
+                    "ticketUpdatedAt": ticket_updated,
+                    "syncedAt": synced_at,
+                })
+                cur.execute(
+                    """
+                    UPDATE chamados_conky_sync
+                    SET tarefa_id=%s,
+                        sincronizado_em=IF(tarefa_id<>%s, UTC_TIMESTAMP(), sincronizado_em)
+                    WHERE chamado_id=%s
+                    """,
+                    (task_id, task_id, int(ticket["id"])),
+                )
+            conn.commit()
+            if final_tasks != tasks:
+                save_task_file_unlocked(path, final_tasks)
+            result["tasks"] = len(final_tasks)
+            return result
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            cur.close()
+            conn.close()
 
 
 def chamado_public_intervention(row):
@@ -5412,6 +6026,32 @@ def start_chamados_agenda_scheduler(force=False):
             daemon=True,
         )
         _chamados_agenda_thread.start()
+
+
+def _chamados_conky_loop():
+    interval = max(5, int(os.environ.get("CHAMADOS_KANBAN_INTERVAL_SECONDS", "10")))
+    while True:
+        try:
+            ensure_database()
+            sync_chamados_conky()
+        except Exception as exc:
+            print(f"[chamados] falha ao sincronizar Conky: {type(exc).__name__}: {exc}", file=sys.stderr)
+        time.sleep(interval)
+
+
+def start_chamados_conky_scheduler():
+    global _chamados_conky_thread
+    if not chamado_conky_enabled():
+        return
+    with _chamados_conky_lock:
+        if _chamados_conky_thread and _chamados_conky_thread.is_alive():
+            return
+        _chamados_conky_thread = threading.Thread(
+            target=_chamados_conky_loop,
+            name="chamados-conky",
+            daemon=True,
+        )
+        _chamados_conky_thread.start()
 
 
 def chamado_tokenize(*values):
@@ -6335,13 +6975,13 @@ def chamados_static_root():
 @app.route("/apps/chamados/original")
 @login_required
 def chamados_original_root():
-    return static_app_response("chamados", integrated=False)
+    return integrated_app_redirect("chamados")
 
 
 @app.route("/apps/chamados/original/<path:subpath>")
 @login_required
 def chamados_original_static(subpath):
-    return static_app_response("chamados", subpath, integrated=False)
+    return integrated_app_redirect("chamados", subpath)
 
 
 @app.route("/apps/chamados/<path:subpath>")
@@ -6381,6 +7021,54 @@ def technology_utc_cutoff(hours):
 
 
 TECHNOLOGY_LOCAL_TIMEZONE = ZoneInfo("America/Sao_Paulo")
+
+
+def technology_network_day_usage(rows, now=None):
+    current = now or dt.datetime.now(dt.UTC)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=dt.UTC)
+    start = current.astimezone(TECHNOLOGY_LOCAL_TIMEZONE).replace(hour=0, minute=0, second=0, microsecond=0)
+    totals = {"rxBytes": None, "txBytes": None}
+    previous = None
+    first = last = None
+    omitted = 0
+    for row in rows:
+        checked = row.get("verificado_em")
+        if not isinstance(checked, dt.datetime):
+            continue
+        checked = checked.replace(tzinfo=dt.UTC) if checked.tzinfo is None else checked
+        if not start <= checked <= current:
+            continue
+        telemetry = technology_json_value(row.get("detalhes")).get("telemetry") or {}
+        counters = telemetry.get("counters") or {}
+        identity = (telemetry.get("protocol"), counters.get("source"), tuple(sorted(telemetry.get("interfaces") or [])))
+        valid = {key: value for key in totals if isinstance(value := counters.get(key), (int, float)) and math.isfinite(value) and value >= 0}
+        if previous:
+            if not valid:
+                omitted += 1
+            old_time, old_identity, old_values, old_uptime = previous
+            uptime = telemetry.get("uptimeSeconds")
+            restarted = isinstance(uptime, (int, float)) and isinstance(old_uptime, (int, float)) and uptime < old_uptime
+            elapsed = (checked - old_time).total_seconds()
+            compared = False
+            for key, value in valid.items():
+                old = old_values.get(key)
+                if identity == old_identity and not restarted and 0 < elapsed <= 86400 and old is not None and value >= old:
+                    totals[key] = (totals[key] or 0) + value - old
+                    compared = True
+                else:
+                    omitted += 1
+            if compared:
+                first = first or old_time
+                last = checked
+        previous = (checked, identity, valid, telemetry.get("uptimeSeconds"))
+    return {
+        "date": start.date().isoformat(), "timezone": "America/Sao_Paulo",
+        "downloadBytes": totals["rxBytes"], "uploadBytes": totals["txBytes"],
+        "totalBytes": sum(totals.values()) if all(v is not None for v in totals.values()) else None,
+        "measuredFrom": technology_db_timestamp_iso(first), "measuredUntil": technology_db_timestamp_iso(last),
+        "omittedIntervals": omitted,
+    }
 
 
 def technology_printer_week_start(now=None):
@@ -6604,6 +7292,7 @@ def technology_public_metric(row, prefix=""):
     checked_at = row.get(f"{prefix}verificado_em")
     details = technology_json_value(row.get(f"{prefix}detalhes"))
     telemetry = details.get("telemetry") if isinstance(details.get("telemetry"), dict) else None
+    collected_macs = network_mac_addresses((telemetry or {}).get("macAddresses") or [])
     return {
         "status": row.get(f"{prefix}status"),
         "latencyMs": float(row[f"{prefix}latencia_ms"]) if row.get(f"{prefix}latencia_ms") is not None else None,
@@ -6613,6 +7302,9 @@ def technology_public_metric(row, prefix=""):
         "message": row.get(f"{prefix}mensagem") or "",
         "checkedAt": technology_db_timestamp_iso(checked_at),
         "telemetry": telemetry,
+        "macAddresses": collected_macs or network_mac_addresses(details.get("macAddresses") or []),
+        "macSource": ((telemetry or {}).get("protocol") or "Coleta") if collected_macs else details.get("macSource") or "",
+        "macObservations": details.get("macObservations") if isinstance(details.get("macObservations"), list) else [],
         "addresses": details.get("addresses") if isinstance(details.get("addresses"), list) else [],
         "activeAddress": details.get("activeAddress") or "",
     }
@@ -8172,6 +8864,62 @@ def tecnologia_backup_agent_report_api(agent_id):
     return jsonify({"ok": True})
 
 
+@app.route("/apps/tecnologia/api/network")
+@login_required
+def tecnologia_network_api():
+    start_technology_monitor()
+    devices = [technology_public_device(row) for row in get_technology_devices() if row.get("tipo") != "INTERNET"]
+    return jsonify({"devices": devices, "scanSubnets": network_scan_subnets(devices),
+                    "scanAvailable": not CLOUD_READ_ONLY and can_access(current_user_or_logout(), "tecnologia", "rede_scan")})
+
+
+@app.route("/apps/tecnologia/api/network/scan", methods=["POST"])
+@login_required
+def tecnologia_network_scan_api():
+    if CLOUD_READ_ONLY:
+        return jsonify({"erro": "Varredura indisponivel no ambiente somente leitura."}), 403
+    if not can_access(current_user_or_logout(), "tecnologia", "rede_scan"):
+        return jsonify({"erro": "varredura de rede nao liberada para este usuario"}), 403
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict) or not isinstance(payload.get("subnet"), str):
+        return jsonify({"erro": "Informe a rede para verificar."}), 400
+    if not _technology_scan_lock.acquire(blocking=False):
+        return jsonify({"erro": "Uma varredura esta em andamento. Aguarde e tente novamente."}), 409
+    try:
+        rows = get_technology_devices()
+        devices = [technology_public_device(row) for row in rows if row.get("tipo") != "INTERNET"]
+        found = scan_unregistered_network(payload["subnet"], devices)
+        return jsonify({"devices": found, "subnet": payload["subnet"],
+                        "checkedAt": dt.datetime.now(dt.UTC).isoformat()})
+    except ValueError as exc:
+        return jsonify({"erro": str(exc)}), 400
+    finally:
+        _technology_scan_lock.release()
+
+
+@app.route("/apps/tecnologia/api/network/<int:device_id>")
+@login_required
+def tecnologia_network_device_api(device_id):
+    now = dt.datetime.now(dt.UTC)
+    start = now.astimezone(TECHNOLOGY_LOCAL_TIMEZONE).replace(hour=0, minute=0, second=0, microsecond=0)
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute("SELECT id FROM tecnologia_dispositivos WHERE id=%s AND tipo <> 'INTERNET'", (device_id,))
+        if not cur.fetchone():
+            return jsonify({"erro": "equipamento nao encontrado"}), 404
+        cur.execute("""
+            SELECT verificado_em, detalhes FROM tecnologia_metricas
+            WHERE dispositivo_id=%s AND verificado_em >= %s AND verificado_em <= %s
+            ORDER BY verificado_em, id
+        """, (device_id, start.astimezone(dt.UTC).replace(tzinfo=None), now.replace(tzinfo=None)))
+        usage = technology_network_day_usage(cur.fetchall(), now)
+    finally:
+        cur.close()
+        conn.close()
+    return jsonify(usage)
+
+
 @app.route("/apps/tecnologia/api/overview")
 @login_required
 def tecnologia_overview_api():
@@ -8503,7 +9251,15 @@ def tecnologia_create_device_api():
         return jsonify({"erro": "este host e porta já estão cadastrados"}), 409
     cur.close()
     conn.close()
-    return jsonify({"id": device_id}), 201
+    warning = ""
+    if data.get("ativo"):
+        try:
+            collect_technology_metrics([device_id])
+        except Exception as exc:
+            app.logger.warning("Primeira coleta do equipamento %s falhou: %s", device_id, type(exc).__name__)
+            warning = "Equipamento salvo; a primeira coleta ficou pendente para o monitor automatico."
+        start_technology_monitor()
+    return jsonify({"id": device_id, "warning": warning}), 201
 
 
 @app.route("/apps/tecnologia/api/devices/<int:device_id>", methods=["PUT", "DELETE"])
@@ -8643,14 +9399,13 @@ def tecnologia_static_root():
 @app.route("/apps/tecnologia/original")
 @login_required
 def tecnologia_original_root():
-    start_technology_monitor()
-    return static_app_response("tecnologia", integrated=False)
+    return integrated_app_redirect("tecnologia")
 
 
 @app.route("/apps/tecnologia/original/<path:subpath>")
 @login_required
 def tecnologia_original_static(subpath):
-    return static_app_response("tecnologia", subpath, integrated=False)
+    return integrated_app_redirect("tecnologia", subpath)
 
 
 @app.route("/apps/tecnologia/<path:subpath>")
@@ -9441,11 +10196,13 @@ def db_error(exc):
 
 
 start_chamados_agenda_scheduler()
+start_chamados_conky_scheduler()
 warmup_render_riob()
 
 
 if __name__ == "__main__":
     start_chamados_agenda_scheduler(force=True)
+    start_chamados_conky_scheduler()
     app.run(
         host=os.environ.get("NS_HOST", "0.0.0.0"),
         port=int(os.environ.get("NS_PORT") or os.environ.get("PORT", "5600")),

@@ -9,7 +9,7 @@
 
 
   <main class="content">
-    <section id="minha-conta" class="config-panel user-account-panel" aria-labelledby="userAccountTitle">
+    <section id="minha-conta" data-config-view="minha-conta" class="config-panel user-account-panel" aria-labelledby="userAccountTitle">
       <h2 id="userAccountTitle">Configuracoes do usuario</h2>
       <dl class="user-account-details">
         <div><dt>Nome</dt><dd>{{ usuario.nome }}</dd></div>
@@ -23,7 +23,25 @@
       {% endif %}
     </section>
 
-    <section id="temas" class="portal-head">
+    {% if can_manage_logo %}
+    <section id="logo" data-config-view="logo" hidden class="config-panel logo-panel">
+      <h2>Logo do cabecalho</h2>
+      <p>A imagem aparece na ponta direita da barra superior para todos os usuarios deste ambiente.</p>
+      <img class="logo-preview" data-logo-preview src="{{ config.logo_data or '' }}" alt="Previa da logo"{% if not config.logo_data %} hidden{% endif %}>
+      <form data-logo-form>
+        <label for="logoFile">Selecionar imagem (PNG, JPEG ou WebP, ate 2 MB)</label>
+        <input id="logoFile" name="logo" type="file" accept="image/png,image/jpeg,image/webp"{% if deployment.readOnly %} disabled{% endif %}>
+        <label for="logoUrl">URL de destino ao clicar na logo</label>
+        <input id="logoUrl" name="logo_url" type="url" maxlength="2048" value="{{ config.logo_url or '' }}" placeholder="https://renansc.github.io/"{% if deployment.readOnly %} disabled{% endif %}>
+        <p>Deixe a URL vazia para usar https://renansc.github.io/. Sem imagem, aparece Nanotechsoft com link para esse site. O clique abre uma nova aba.</p>
+        <button type="submit"{% if deployment.readOnly %} disabled{% endif %}>Salvar logo</button>
+        <button type="button" data-logo-remove{% if deployment.readOnly or not config.logo_data %} disabled{% endif %}>Remover logo</button>
+      </form>
+      <div id="logoMsg" class="form-msg" role="status"></div>
+    </section>
+    {% endif %}
+
+    <section id="temas" data-config-view="temas" hidden class="portal-head">
       <div>
         <h2>Temas</h2>
         <p>O tema ativo sera usado pelo portal e ficara disponivel para apps importados.</p>
@@ -31,7 +49,7 @@
       <a class="action-link" href="{{ url_for('portal') }}">Voltar ao inicio</a>
     </section>
 
-    <section class="config-panel">
+    <section data-config-view="temas" hidden class="config-panel">
       <label for="temaSelect">Tema ativo</label>
       <select id="temaSelect" data-current-theme="{{ config.tema }}">
         {% for theme in themes %}
@@ -45,14 +63,14 @@
     </section>
 
     {% if usuario and usuario.perfil == 'admin' %}
-      <section id="usuarios" class="config-panel user-admin-panel" data-user-admin data-current-user="{{ usuario.id }}">
+      <section id="usuarios" data-config-view="usuarios" hidden class="config-panel user-admin-panel" data-user-admin data-current-user="{{ usuario.id }}">
         <div class="client-admin-head">
           <div>
             <h3>Usuarios e acessos</h3>
             <p>Cadastre usuarios e escolha os modulos e funcoes que cada pessoa pode acessar.</p>
           </div>
+          <button type="button" data-user-new>Novo usuario</button>
         </div>
-        <button type="button" data-user-new>Novo usuario</button>
         <form class="client-admin-form" data-user-form>
           <label class="user-picker">
             Usuario
@@ -92,11 +110,12 @@
             </label>
           </div>
           <fieldset data-user-permissions>
-            <legend>Funcoes permitidas</legend>
-            <p>Marque as funcoes autorizadas. Administradores acessam todas as funcoes do deploy.</p>
+            <legend>Itens do menu permitidos</legend>
+            <p>Marque cada item que a pessoa pode abrir. Desmarcar bloqueia somente esse destino, mesmo quando existe uma permissao geral. Atalhos para a mesma tela compartilham a escolha. Administradores mantem acesso integral.</p>
+            <input type="search" data-user-menu-search placeholder="Buscar item do menu ou modulo" aria-label="Buscar item do menu">
             <div data-user-permissions-list></div>
           </fieldset>
-          <div class="client-admin-actions">
+          <div class="client-admin-actions user-admin-actions">
             <button type="submit">Salvar usuario</button>
             <button type="button" class="danger-button" data-user-delete>Excluir usuario</button>
             <span id="userAdminMsg" class="form-msg"></span>
@@ -104,7 +123,7 @@
         </form>
       </section>
 
-      <section class="config-panel client-admin-panel" data-client-admin>
+      <section id="clientes" data-config-view="clientes" hidden class="config-panel client-admin-panel" data-client-admin>
         <div class="client-admin-head">
           <div>
             <h3>Clientes e modulos</h3>
@@ -165,7 +184,7 @@
         <script id="clientContractsSeed" type="application/json">{{ client_config|tojson }}</script>
       </section>
 
-      <section class="config-panel backup-panel">
+      <section id="backup" data-config-view="backup" hidden class="config-panel backup-panel">
         <div>
           <h3>Backup do portal</h3>
           <p>Exporta e restaura as tabelas principais do NanotechSoft em JSON.</p>
@@ -182,7 +201,7 @@
       </section>
     {% endif %}
 
-    <section class="theme-list">
+    <section data-config-view="temas" hidden class="theme-list">
       {% if menu.config %}
         <article class="theme-row">
           <div>

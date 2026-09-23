@@ -93,3 +93,12 @@ O menu de documentacao traz os fluxos e links oficiais. O resumo tambem esta em:
 ## Menu integrado Rio Branco
 
 O perfil Rio Branco mostra Status de entradas em Dash, Google Agenda em Cadastro e Guia do Gestor em Docs. Reutiliza os destinos e recursos `workflow`, `agenda` e `docs`, sem alterar a integracao atual da agenda. O nome do atalho vem do PDF; nao representa uma nova integracao Google Calendar. Consulte `docs/MENU_RIO_BRANCO_PDF.md` na raiz.
+
+A auditoria de 14/09/2026 restaurou CONFIGURAR > Zap > Configuracoes, apontando
+para `/apps/zap/settings` com o recurso existente `settings`. O perfil do menu
+nao concede acessos novos nem altera as integracoes.
+
+
+## Auditoria de navegacao e tarefas (14/09/2026)
+
+No portal integrado, `/settings?secao=...` apresenta somente a tarefa escolhida; o parametro e validado no servidor. Os 13 submenus de configuracao usam o recurso existente `settings`. Paginas e APIs validam `settings`, `workflow`, `agenda` ou `docs`, sem novas concessoes. A agenda compartilhada fica em Gestao. A separacao das telas nao executa envios, sincronizacoes ou backups. Consulte `docs/AUDITORIA_NAVEGACAO_RIO_BRANCO.md` na raiz.

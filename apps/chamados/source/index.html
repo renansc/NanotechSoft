@@ -8,23 +8,6 @@
 </head>
 <body>
   <div class="ticketApp">
-    <header class="ticketHero">
-      <div>
-        <span class="eyebrow">Operação e manutenção</span>
-        <h1>Chamados e Manutenções</h1>
-        <p>TI, predial, elétrica e demais áreas em um único histórico resolutivo.</p>
-      </div>
-      <button class="btn primary heroButton" id="newTicketButton" type="button">+ Novo chamado</button>
-    </header>
-
-    <nav class="ticketTabs" aria-label="Áreas do módulo">
-      <button class="tab" data-view="dashboard" type="button">Indicadores</button>
-      <button class="tab" data-view="chamados" type="button">Chamados</button>
-      <button class="tab" data-view="agenda" type="button">Agenda de tarefas</button>
-      <button class="tab" data-view="historico" type="button">Histórico de soluções</button>
-      <button class="tab" data-view="documentos" type="button">Manuais e documentos</button>
-    </nav>
-
     <main>
       <section class="ticketView" data-page="dashboard" hidden>
         <div class="kpiGrid">
@@ -55,7 +38,8 @@
       <section class="ticketView" data-page="chamados" hidden>
         <section class="panel">
           <div class="panelHead filterHead">
-            <div><span class="eyebrow">Fila operacional</span><h2>Requisições e manutenções</h2></div>
+            <div><span class="eyebrow">Fila operacional</span><h2>Chamados e Manutenções</h2></div>
+            <button class="btn primary" id="newTicketButton" type="button">+ Novo chamado</button>
             <div class="filters">
               <input id="ticketSearch" type="search" placeholder="Protocolo, problema ou solução">
               <select id="ticketStatusFilter"><option value="">Todos os status</option></select>
@@ -103,7 +87,7 @@
       <section class="ticketView" data-page="historico" hidden>
         <section class="panel">
           <div class="panelHead filterHead">
-            <div><span class="eyebrow">Consulta resolutiva</span><h2>Problemas semelhantes</h2></div>
+            <div><span class="eyebrow">Consulta resolutiva</span><h2>Histórico de soluções</h2></div>
             <div class="filters solutionFilters">
               <input id="solutionSearch" type="search" placeholder="Ex.: impressora não imprime, disjuntor desarma">
               <select id="solutionCategory"><option value="">Todas as categorias</option></select>
@@ -118,7 +102,7 @@
       <section class="ticketView" data-page="documentos" hidden>
         <div class="documentsGrid">
           <section class="panel">
-            <div class="panelHead"><div><span class="eyebrow">Base técnica</span><h2>Manuais e documentações</h2></div></div>
+            <div class="panelHead"><div><span class="eyebrow">Base técnica</span><h2>Manuais e documentos</h2></div></div>
             <div class="filters documentFilters">
               <input id="documentSearch" type="search" placeholder="Buscar manual ou procedimento">
               <select id="documentCategoryFilter"><option value="">Todas as categorias</option></select>

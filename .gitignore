@@ -48,6 +48,8 @@ apps/riob/source/config
 apps/riob/source/cameras/cams/
 apps/riob/source/sync-backups/
 apps/riob/source/sync-import/
+apps/riob/source/kanban-tasks.json
+apps/riob/source/kanban-tasks.json.lock
 apps/riob-email/source/anexos/
 apps/riob-xml/source/uploads_xml_homologacao/
 apps/pacs/source/runtime/

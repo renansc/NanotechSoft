@@ -194,3 +194,38 @@ servidor se aplicam aos aliases `/original`. O Render continua somente leitura.
 O proxy devolve o redirecionamento 303 ao navegador depois do envio para evitar
 reenviar o PDF ao atualizar a pagina. Testes com banco temporario cobrem envio,
 validacao, consulta, preservacao no startup, permissoes, menus e multipart.
+
+
+## Auditoria de navegacao e tarefas (14/09/2026)
+
+Na auditoria de tarefas de 14/09/2026, Maquinas permanece como consulta de monitoramento em Dashboard, sem o atalho duplicado em Cadastro. Motores, Drivers e Setores mantem seus cadastros. Detalhes/edicoes e PDFs sao acoes das telas, preservando `automacao:*`.
+
+## Telas por tarefa no portal (15/09/2026)
+
+Os atalhos abrem somente a tarefa selecionada, com o cabecalho e o menu
+principal do deploy. As entradas antigas `/original` redirecionam para a URL
+integrada, preservando caminho, filtros e metodo HTTP. O manifest usa a entrada
+integrada tambem em `standalone_url`. Nao existe segundo menu de aplicativo.
+
+Tecnologia concentra Verificar agora/Testar velocidade na Visao geral, alertas
+de e-mail em Configuracao e explicacoes de escopo em Agentes e protocolos.
+Chamados exibe Novo chamado somente na fila; Agenda, Historico e Documentos
+mostram suas proprias tarefas, inclusive antes do carregamento dos dados.
+Automacao extrai o conteudo entre marcadores do template e aplica seus estilos
+somente dentro da tarefa, preservando os botoes e a identidade do portal.
+
+Os mesmos recursos continuam em Usuarios e acessos: Tecnologia usa dashboard,
+equipamentos, historico, config e backup; Chamados usa dashboard, chamados,
+agenda, historico e documentos; Automacao explicita o recurso existente `*`.
+Nenhuma concessao e criada. Sessao, contrato e bloqueios do servidor continuam
+valendo tambem nos aliases. Testes: `tests/test_module_tasks.py` e
+`tests/check_module_tasks.py`, com dados sinteticos e sem escritas de negocio.
+
+## Cobertura do menu (16/09/2026)
+
+Alarmes possui atalho direto tambem no manifest base, no grupo de operacoes de
+Automacao, preservando `automacao:*`. No Rio Branco permanece em GESTAO.
+O teste `tests/test_module_tasks.py` compara todos os links da sidebar original
+(Dashboard, Maquinas, Motores, Drivers, Historico, Alarmes, Tempo Real,
+Documentacao e Setores) com o menu efetivamente renderizado nos dois perfis.
+Detalhes de registros e edicoes permanecem acoes contextuais dessas telas.

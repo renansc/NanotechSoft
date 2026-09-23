@@ -775,6 +775,17 @@ editados e salvos ali sem alterar prazo, pedido minimo ou condicao de pagamento.
 O Kanban operacional de compras fica em `Workflow -> Compras`; previsao e
 importacao de documentos continuam no dominio `Compras`.
 
+Cada produto de estoque possui `estoque_minimo`. O valor zero desativa o
+gatilho; ao salvar o limite ou registrar uma movimentacao que deixe o saldo
+igual ou abaixo de um limite positivo, o backend abre uma unica solicitacao
+ativa em `compras_solicitacoes`, com `origem=estoque_minimo`, e registra a
+criacao em `compras_historico`. A quantidade, em unidades canonicas, recompõe o deficit e respeita
+`lote_minimo` e `multiplo_compra`; se o saldo estiver exatamente no limite,
+solicita ao menos um multiplo. Enquanto existir compra ativa do produto, o
+gatilho nao cria duplicata. Produtos acabados classificados em
+`PRODUCAO/PRODUTOS` permanecem no planejamento de producao e nao geram compra
+automatica.
+
 Endpoints:
 
 - `GET|POST /api/processos-internos`
@@ -1537,6 +1548,57 @@ Do ponto de vista de API e dados, o sistema e um monolito com:
 ## Menu: contagem, orcamentos e e-mails (10/09/2026)
 
 - `GET /api/vendas/orcamentos/relatorio`: filtros opcionais `inicio`/`fim` (ISO), `q` (cliente, cidade ou vendedor) e `pagina`. Retorna `orcamentos`, `total`, `valor_real` agregado do filtro, `pagina` e `limite=50`. Le somente `vendas_orcamentos`; preserva valores emitidos. Recurso `vendas_orcamentos_relatorio`; tambem permite GET do PDF individual.
-- Contagem consulta `GET /api/estoque/produtos` e `/api/estoque/posicao` com recurso `estoque_contagem`. Rascunho na pagina e CSV; nenhuma nova tabela nem alteracao de saldo. Acerto mantem sua autorizacao administrativa.
+- Contagem consulta `GET /api/estoque/produtos` e `/api/estoque/posicao` com recurso `estoque_contagem`. Rascunho na pagina e CSV permanecem; em 11/09/2026 foi adicionada finalizacao com ajuste e historico sob o recurso separado `estoque_contagem_finalizar`. Relatorio usa `estoque_contagem_relatorio`; detalhes em `CONTAGEM_ESTOQUE.md`. Acerto mantem sua autorizacao administrativa.
 - Gestor de e-mails: `GET /gestor-emails/historico`, `/recuperar`, `/backup` apresentam as acoes separadamente. Os POST existentes `/importar-historico-xml` e `/recuperar-conteudo` continuam sob `riob-email:operacao` (ou `*`).
 - `POST /gestor-emails/backup/download`: recurso `riob-email:backup` (ou `*`), ZIP dos registros importados e anexos disponiveis; metadados JSONL por lote de 100, sem credenciais/configuracoes, sem acesso aos servidores de e-mail. Exige acesso ao modulo e retorna `Cache-Control: no-store`. Anexos fora da raiz permitida ou ausentes sao marcados indisponiveis.
+
+### Leitura conjunta de pastas (11/09/2026)
+
+`POST /api/vendas/diario/importar` sem upload le TXT, PDF e SELLOUT mensal,
+sem restricao de horario, com recurso `vendas` no proxy. Retorna `sellout.status`
+(`importado`, `ja_importado`, `processando`, `desabilitado`, `erro`) e preserva
+o processamento dos TXT/PDF se o CSV falhar. Upload individual le somente TXT.
+SELLOUT automatico e diario as 08:00, no fuso America/Sao_Paulo; detalhes em
+[SELLOUT_AUTOMATICO.md](SELLOUT_AUTOMATICO.md).
+
+## Custo do produto
+
+`GET /api/custo-produto` lista produtos PET/GFA ativos e suas estimativas;
+`PUT /api/custo-produto/<produto_id>` salva formula por 1000 litros com volume
+da garrafa, itens e revisao. Recurso `custo_produto`; tabela
+`custo_produto_formulas`. Contrato e calculo em [CUSTO_PRODUTO.md](CUSTO_PRODUTO.md).
+
+A base compartilhada usa `PUT /api/custo-produto/xarope` (rendimento e
+ingredientes). Itens referenciam produtos ativos por `produto_id`; cada formula
+informa `xarope_litros` por 1000 L e `xarope_revisao`. O GET inclui `insumos` e
+`xarope`. O recurso permanece `custo_produto` em todas essas operacoes.
+
+Precos sao calculados pela ultima NF-e de fornecedor importada, ate hoje,
+com origem exposta na resposta. Itens aceitam `fator_compra` e `unidade_compra`
+para embalagens sem conversao automatica; `preco_unitario` enviado e ignorado.
+`GET /api/custo-produto/dashboard?ano=YYYY` usa `custo_produto_dashboard`,
+independente da edicao. Retorna custo atual e serie mensal da formula atual com
+as compras disponiveis ate cada mes, sem snapshots historicos de receitas.
+Sem compra ou conversao valida, custos ficam pendentes. Ver regras de vinculo,
+conversoes, datas e permissoes em [CUSTO_PRODUTO.md](CUSTO_PRODUTO.md).
+
+Custo do produto reaproveita os vinculos confirmados entre XML e estoque para
+resolver ingredientes renomeados e consultar o ultimo valor sem exigir pedido
+em Compras. Codigo/fornecedor ou codigo/descricao historica devem identificar
+um unico produto. Acucar em venda a ordem entra na referencia; TO/tonelada
+converte para kg e capacidade de saco ja cadastrada e reutilizada quando a
+apresentacao confirmada corresponde. O catalogo identifica o recurso existente
+`custo_produto` como Custo do produto, xarope e precos do XML; dashboard conserva
+`custo_produto_dashboard`. APIs e bloqueios individuais mantem a autorizacao,
+sem novas concessoes. Detalhes e limites no documento CUSTO_PRODUTO.md do RioB.
+
+Em 23/09/2026, GESTAO > Custos diarios por grupo (`#custoDiario`, recurso
+`custo_diario`) passa a informar producao real, pessoal e despesas por grupo.
+Dashboard de custo do produto mantem o recurso `custo_produto_dashboard` e
+oferece custo diario por litro, garrafa e pacote, alem da comparacao mensal.
+Gastos compartilhados sao rateados pelos litros. Desperdicio vem exclusivamente
+das faltas em contagens finalizadas, agrupadas por setor/grupo de estoque;
+perdas especificas de producao ficam para uma etapa futura. As APIs
+`/api/custo-diario` (GET/PUT) e `/api/custo-diario/dashboard` (GET) validam sessao,
+recursos e bloqueios individuais; nao concedem acesso nem movimentam estoque.
+Regras, snapshots e limites em `apps/riob/source/docs/CUSTO_DIARIO.md` na raiz.

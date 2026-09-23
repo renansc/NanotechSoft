@@ -16,6 +16,11 @@
         "url": "/apps/riob-email/riob",
         "recurso": "operacao",
         "recurso_nome": "E-mails, anexos e importacoes"
+      },
+      {
+        "nome": "Importar e-mails",
+        "url": "/apps/riob-email/riob/importacao",
+        "recurso": "operacao"
       }
     ]
   },
@@ -31,18 +36,6 @@
           }
         ],
         "cadastros": [
-          {
-            "nome": "Painel de e-mails",
-            "url": "/apps/riob-email/riob/?painel=resumo",
-            "recurso": "operacao",
-            "recurso_nome": "E-mails, anexos e importacoes"
-          },
-          {
-            "nome": "Contas de e-mail",
-            "url": "/apps/riob-email/riob/config",
-            "recurso": "operacao",
-            "recurso_nome": "E-mails, anexos e importacoes"
-          },
           {
             "nome": "Fornecedores",
             "url": "/apps/riob-email/riob/fornecedores",
@@ -102,10 +95,24 @@
             "url": "/apps/riob-email/riob/backup",
             "recurso": "backup",
             "recurso_nome": "Backup de e-mails e anexos"
+          },
+          {
+            "nome": "Importar e-mails",
+            "url": "/apps/riob-email/riob/importacao",
+            "recurso": "operacao"
           }
         ]
       },
-      "config_groups": {}
+      "config_groups": {
+        "config": [
+          {
+            "nome": "Contas de e-mail",
+            "url": "/apps/riob-email/riob/config",
+            "recurso": "operacao",
+            "recurso_nome": "E-mails, anexos e importacoes"
+          }
+        ]
+      }
     }
   }
 }

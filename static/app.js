@@ -56,6 +56,76 @@ function bindLogout() {
   });
 }
 
+function bindConfigViews() {
+  const panels = [...document.querySelectorAll('[data-config-view]')];
+  if (!panels.length) return;
+  function select() {
+    const requested = location.hash.slice(1) || 'minha-conta';
+    const view = panels.some(panel => panel.dataset.configView === requested) ? requested : 'minha-conta';
+    panels.forEach(panel => { panel.hidden = panel.dataset.configView !== view; });
+  }
+  window.addEventListener('hashchange', select);
+  select();
+}
+
+function bindLogo() {
+  const form = qs("[data-logo-form]");
+  if (!form) return;
+  const input = form.elements.logo;
+  const preview = qs("[data-logo-preview]");
+  const remove = qs("[data-logo-remove]");
+  let previewUrl = "";
+  input.addEventListener("change", () => {
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    previewUrl = "";
+    const file = input.files[0];
+    if (file && file.size > 2 * 1024 * 1024) {
+      input.value = "";
+      setMessage("#logoMsg", "A imagem deve ter no maximo 2 MB.", "error");
+    } else {
+      setMessage("#logoMsg", "", "");
+      if (file) previewUrl = URL.createObjectURL(file);
+    }
+    preview.src = previewUrl || qs("[data-logo-image]").getAttribute("src") || "";
+    preview.hidden = !preview.getAttribute("src");
+  });
+  async function save(method) {
+    const controls = [...form.querySelectorAll("input, button")];
+    controls.forEach(control => { control.disabled = true; });
+    setMessage("#logoMsg", "Salvando...", "");
+    try {
+      const body = new FormData();
+      if (method === "POST") {
+        if (input.files[0]) body.append("logo", input.files[0]);
+        body.append("logo_url", form.elements.logo_url.value.trim());
+      }
+      const response = await fetch("/api/config/logo", { method, ...(method === "POST" ? { body } : {}) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.erro || "Nao foi possivel salvar a logo.");
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      previewUrl = "";
+      preview.src = data.logo_data;
+      preview.hidden = !data.logo_data;
+      qs("[data-logo-image]").src = data.logo_data;
+      qs("[data-logo-image]").hidden = !data.logo_data;
+      qs("[data-logo-fallback]").hidden = !!data.logo_data;
+      const link = qs("[data-topbar-logo]");
+      link.href = data.logo_data && data.logo_url ? data.logo_url : link.dataset.defaultUrl;
+      form.elements.logo_url.value = data.logo_url || "";
+      input.value = "";
+      window.dispatchEvent(new Event("resize"));
+      setMessage("#logoMsg", method === "DELETE" ? "Logo removida." : "Logo salva.", "success");
+    } catch (err) {
+      setMessage("#logoMsg", err.message, "error");
+    } finally {
+      controls.forEach(control => { control.disabled = false; });
+      remove.disabled = !qs("[data-logo-image]").getAttribute("src");
+    }
+  }
+  form.addEventListener("submit", event => { event.preventDefault(); save("POST"); });
+  remove.addEventListener("click", () => save("DELETE"));
+}
+
 function bindMenu() {
   const menu = qs("[data-menu]");
   const overlay = qs("[data-menu-overlay]");
@@ -88,6 +158,7 @@ function bindMenu() {
     if (!compact) open(false);
   }
   new ResizeObserver(fitMenu).observe(topbar);
+  window.addEventListener("resize", fitMenu);
   document.fonts?.ready.then(fitMenu);
   fitMenu();
 }
@@ -116,7 +187,9 @@ function syncMenuSection() {
     section = financeSections[view] || "dashboards";
   }
   if (location.pathname.startsWith("/apps/automacao")) {
-    if (location.pathname.includes("/motores") || location.pathname.includes("/motor") || location.pathname.includes("/sensores/drivers")) {
+    if (location.pathname.includes("/documentacao")) {
+      section = document.querySelector('[data-menu-section="docs"] a[href="/apps/automacao/documentacao"]') ? "docs" : "module-automacao";
+    } else if (location.pathname.includes("/motores") || location.pathname.includes("/motor") || location.pathname.includes("/sensores/drivers")) {
       section = "cadastros";
     } else if (location.pathname.includes("/alarmes")) {
       section = "workflow";
@@ -331,12 +404,38 @@ function bindUserAdmin() {
   let creating = false;
   const permissionsList = root.querySelector("[data-user-permissions-list]");
   function renderPermissions(user) {
+    root.querySelector('[data-user-menu-search]').value = '';
     permissionsList.replaceChildren();
     for (const module of state.catalogo_acessos || []) {
       const section = document.createElement("fieldset");
       const legend = document.createElement("legend");
       legend.textContent = module.nome;
       section.append(legend);
+      const grants = user.permissoes?.[module.app_key] || [];
+      const choices = user.permissoes_menu?.[module.app_key] || {};
+      for (const item of module.menus || []) {
+        const label = document.createElement('label');
+        label.className = 'user-menu-choice';
+        label.dataset.menuSearch = `${module.nome} ${item.nome} ${item.grupos.join(' ')}`.toLocaleLowerCase();
+        const input = document.createElement('input');
+        input.type = 'checkbox';
+        input.dataset.accessApp = module.app_key;
+        input.dataset.accessMenu = item.key;
+        const inherited = item.authenticated || grants.includes('*') || grants.includes(item.recurso);
+        input.checked = user.perfil === 'admin' || (!item.admin_only && (choices[item.key] ?? inherited));
+        input.disabled = user.perfil === 'admin' || item.admin_only;
+        const text = document.createElement('span');
+        text.textContent = item.nome;
+        const path = document.createElement('small');
+        path.textContent = `${item.grupos.join(' / ')} > ${module.nome}${item.admin_only ? ' — exclusivo de administrador' : ''}`;
+        text.append(path);
+        label.append(input, text);
+        section.append(label);
+      }
+      const legacy = document.createElement('details');
+      const summary = document.createElement('summary');
+      summary.textContent = 'Permissoes gerais e acoes internas existentes';
+      legacy.append(summary);
       for (const resource of module.recursos) {
         const label = document.createElement("label");
         label.className = "inline-check";
@@ -346,11 +445,19 @@ function bindUserAdmin() {
         input.dataset.accessResource = resource.key;
         input.checked = (user.permissoes?.[module.app_key] || []).includes(resource.key);
         label.append(input, document.createTextNode(resource.nome));
-        section.append(label);
+        legacy.append(label);
       }
+      section.append(legacy);
       permissionsList.append(section);
     }
   }
+  root.querySelector('[data-user-menu-search]')?.addEventListener('input', event => {
+    const query = event.target.value.toLocaleLowerCase().trim();
+    for (const label of permissionsList.querySelectorAll('[data-menu-search]')) label.hidden = !label.dataset.menuSearch.includes(query);
+    for (const section of permissionsList.children) {
+      section.hidden = Boolean(query) && !section.querySelector('[data-menu-search]:not([hidden])');
+    }
+  });
 
   function selectedUser() {
     return creating ? { ativo: true, perfil: "usuario", permissoes: {} } : state.usuarios.find((item) => String(item.id) === userSelect.value) || state.usuarios[0] || null;
@@ -401,6 +508,14 @@ function bindUserAdmin() {
     setMessage("#userAdminMsg", "", "");
     fillForm();
   });
+  form.elements.perfil.addEventListener('change', () => {
+    const user = selectedUser();
+    const choices = structuredClone(user.permissoes_menu || {});
+    for (const input of permissionsList.querySelectorAll('input[data-access-menu]:not(:disabled)')) {
+      (choices[input.dataset.accessApp] ||= {})[input.dataset.accessMenu] = input.checked;
+    }
+    renderPermissions({ ...user, perfil: form.elements.perfil.value, permissoes_menu: choices });
+  });
 
   form?.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -415,8 +530,12 @@ function bindUserAdmin() {
       ativo: form.elements.ativo.checked,
     };
     payload.permissoes = {};
-    for (const input of permissionsList.querySelectorAll("input:checked")) {
+    for (const input of permissionsList.querySelectorAll("input[data-access-resource]:checked")) {
       (payload.permissoes[input.dataset.accessApp] ||= []).push(input.dataset.accessResource);
+    }
+    payload.permissoes_menu = {};
+    for (const input of permissionsList.querySelectorAll('input[data-access-menu]:not(:disabled)')) {
+      (payload.permissoes_menu[input.dataset.accessApp] ||= {})[input.dataset.accessMenu] = input.checked;
     }
     setMessage("#userAdminMsg", "Salvando...", "");
     try {
@@ -832,6 +951,8 @@ function bindKanban() {
 
 bindLogin();
 bindLogout();
+bindConfigViews();
+bindLogo();
 bindMenu();
 bindTheme();
 bindPortalBackup();
@@ -840,3 +961,4 @@ bindClientAdmin();
 bindKanban();
 syncMenuSection();
 window.addEventListener("hashchange", syncMenuSection);
+window.addEventListener("nanotech:navigation", syncMenuSection);

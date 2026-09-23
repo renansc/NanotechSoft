@@ -67,9 +67,9 @@ Esta revisao da documentacao passa a registrar explicitamente:
 - o modo de foto manual dos itens no estoque, que abre a imagem como referencia visual ao lado da grade de digitacao para preservar desempenho mesmo em celulares e containers sem aceleracao
 - o app Android complementar em `mobile-companion-android/`, que usa OCR local no proprio aparelho e envia os itens para a API de importacao do estoque
 - a configuracao NF-e em `Config -> NF-e`, incluindo portal assistido, DF-e, ambiente SEFAZ, UF autora, certificado, senha e ultimo NSU
-- o modulo `Vendas -> Relatorio`, com leitura do CSV externo, importacao persistida no banco e configuracao em `Config -> Vendas`, incluindo importacao manual do CSV, lista de relatorios importados, selecao do relatorio ativo e agrupadores por vendedor, cidade e produto
+- o modulo `Vendas -> Relatorio`, com leitura do CSV externo, importacao persistida no banco e configuracao em `Config -> Vendas`, incluindo importacao manual do CSV, lista de relatorios importados, selecao do relatorio ativo, filtro por cliente no resumo mensal e comparativo anual de volume em hectolitros com filtros por vendedor e cliente
 - o modulo `Vendas -> Orcamento`, que reutiliza os produtos canonicos do estoque, calcula o pedido com bonificacao, terco e precos secos configuraveis em `Config -> Vendas`, identifica o vendedor pelo portal, preserva os valores usados em cada emissao e gera um PDF com itens e memoria de calculo
-- o modulo `Workflow -> Vendas Diario`, com importacao idempotente dos TXT de Conferencia de Pedidos e PDFs de carga, consulta por data e leitura automatica das pastas montadas `RB_VENDAS_DIARIO_TXT_DIR` e `RB_VENDAS_DIARIO_PDF_DIR`; no `.254`, a varredura inicia ao subir o app dentro da janela `RB_VENDAS_DIARIO_JANELA_INICIO`/`RB_VENDAS_DIARIO_JANELA_FIM` (07:10–17:00 por padrao) e se repete conforme `RB_VENDAS_DIARIO_INTERVALO_MINUTOS` (15 minutos), recuperando arquivos atrasados sem duplica-los
+- o modulo `Workflow -> Vendas Diario`, com importacao idempotente dos TXT de Conferencia de Pedidos e PDFs de carga, consulta por data e cliente e leitura automatica das pastas montadas `RB_VENDAS_DIARIO_TXT_DIR` e `RB_VENDAS_DIARIO_PDF_DIR`; no `.254`, a varredura inicia ao subir o app dentro da janela `RB_VENDAS_DIARIO_JANELA_INICIO`/`RB_VENDAS_DIARIO_JANELA_FIM` (07:10–17:00 por padrao) e se repete conforme `RB_VENDAS_DIARIO_INTERVALO_MINUTOS` (15 minutos), recuperando arquivos atrasados sem duplica-los
 - a conciliacao de Vendas Diario em tres estados: TXT recebido, carga PDF formada e SELLOUT final confirmado; o SELLOUT CSV/XLSX amarra mapa, rota, vendedor, cliente, endereco, cidade, motorista e ajudantes, mantendo alteracoes de valor ou clientes visiveis para auditoria
 - a rotina dos tres arquivos fica em `Import -> Importar SELLOUT`: SELLOUT em CSV/XLSX, cadastro de clientes em CSV/XLSX e tabela de rotas em PDF
 - o kanban de Vendas diario funciona como fila acumulada de execucao, sem filtro de data; a data continua sendo aplicada somente ao resumo e a lista de pedidos, enquanto cards pendentes permanecem visiveis ate serem enviados ou excluidos
@@ -106,3 +106,24 @@ Esta revisao da documentacao passa a registrar explicitamente:
   canonicos e considera historico de consumo, prazo, seguranca e pedidos abertos;
   o Kanban de compras fica em `Workflow -> Compras`, e o popup da compra permite
   consultar e atualizar representante, telefone, e-mail e endereco sem sair do card
+- o estoque minimo configuravel por produto, que abre uma unica solicitacao
+  auditavel no Kanban de compras ao atingir o limite, respeitando lote minimo e
+  multiplo de compra e sem duplicar pedidos ainda abertos
+
+- `SELLOUT_AUTOMATICO.md`: leitura periodica do SELLOUT_M no compartilhamento
+  SMB, substituicao transacional por competencia e base continua no banco,
+  sem novas versoes de cache; limites do consolidado mensal sem datas diarias.
+
+SELLOUT mensal: a leitura automatica ocorre diariamente as 08:00 (America/Sao_Paulo),
+sem importacao no startup. O botao Ler pastas automaticamente inclui TXT, PDF e
+SELLOUT mensal em qualquer horario; a rotina periodica TXT/PDF permanece separada.
+Veja [SELLOUT_AUTOMATICO.md](SELLOUT_AUTOMATICO.md).
+
+- [Finalizacao de contagem, desperdicio e sobras](CONTAGEM_ESTOQUE.md): conferencia,
+  ajuste transacional e relatorio com recursos separados de leitura e escrita.
+
+- [Custo do produto](CUSTO_PRODUTO.md): formulas PET/retornavel por 1000 litros,
+  ultima compra dos itens, xarope por produto e estimativa por garrafa; dashboard
+  atual/mensal com recurso proprio de consulta.
+
+- [Custo diario por grupo](CUSTO_DIARIO.md): producao real, pessoal, despesas e faltas de inventario; custo por litro, garrafa e pacote.

@@ -648,6 +648,7 @@
             {% if mode_key != 'distributor' %}<button type="button" class="subnav-link" data-subview-target="lancamentos-cards">Cards</button>
             <button type="button" class="subnav-link" data-subview-target="lancamentos-financeiro">Financeiro</button>
             <button type="button" class="subnav-link" data-subview-target="lancamentos-caixa">Caixa</button>{% endif %}
+            <button type="button" class="subnav-link" data-subview-target="lancamentos-rastreio">Rastreio</button>
           </div>
 
           <section class="subview{% if store_mode.show_lots and mode_key != 'distributor' %} is-active{% endif %}" id="lancamentos-lotes" data-subview {% if not store_mode.show_lots or mode_key == 'distributor' %}hidden{% endif %}>
@@ -889,11 +890,8 @@
                     <span>Canal</span>
                     <select name="source_channel">
                       <option value="balcao">Balcao</option>
-                      <option value="whatsapp">WhatsApp</option>
-                      <option value="woocommerce">WooCommerce</option>
-                      <option value="wordpress">WordPress</option>
-                      <option value="mercado_livre">Mercado Livre</option>
                       <option value="delivery">Delivery</option>
+                      {% for channel in marketplace_catalog %}<option value="{{ channel.provider }}">{{ channel.label }}</option>{% endfor %}
                     </select>
                   </label>
                   <label class="field-inline"><span>Pedido externo</span><input name="external_order_id" placeholder="Codigo do pedido"></label>
@@ -1012,6 +1010,56 @@
             </section>
           </section>
 
+          <section class="subview" id="lancamentos-rastreio" data-subview hidden>
+            <section class="grid single-grid">
+              <article class="card shipment-create-card">
+                <div class="section-head compact-head">
+                  <div><p class="eyebrow">Logistica</p><h3>Nova remessa rastreavel</h3></div>
+                  <span class="mini-badge">Correios {{ 'configurado' if correios_status.configured else 'pendente' }}</span>
+                </div>
+                <p class="helper">Ao criar uma remessa sem selecionar itens pela API, todos os produtos ainda nao rastreados do pedido sao vinculados ao volume.</p>
+                <form data-api="/api/shipments" class="config-form-grid">
+                  <label class="field-block config-field-wide"><span>Pedido de entrega</span><select name="sale_id" required><option value="">Selecione</option>{% for sale in shipment_sales %}<option value="{{ sale.id }}">{{ sale.code }} · {{ sale.customer_name }} · {{ sale.delivery_address }}</option>{% endfor %}</select></label>
+                  <label class="field-block"><span>Transportador</span><select name="carrier"><option value="correios">Correios</option><option value="marketplace">Logistica do marketplace</option><option value="transportadora">Transportadora</option><option value="retirada">Retirada</option></select></label>
+                  <label class="field-block"><span>Codigo de rastreio</span><input name="tracking_code" placeholder="AA123456789BR" maxlength="30"></label>
+                  <label class="field-block"><span>Servico dos Correios</span><input name="service_code" value="{{ correios_status.default_service_code }}" placeholder="Codigo contratado"></label>
+                  <label class="field-block"><span>CEP de origem</span><input name="origin_postal_code" value="{{ correios_status.origin_postal_code }}" inputmode="numeric" maxlength="9"></label>
+                  <label class="field-block"><span>CEP de destino</span><input name="destination_postal_code" inputmode="numeric" maxlength="9" placeholder="Preenchido pelo cliente quando cadastrado"></label>
+                  <label class="field-block"><span>Previsao manual</span><input name="estimated_delivery_date" type="date"></label>
+                  <label><input type="checkbox" name="calculate_estimate" {% if correios_status.configured %}checked{% endif %}> Consultar prazo oficial ao criar</label>
+                  <div class="config-form-actions"><button type="submit">Criar remessa</button></div>
+                </form>
+                {% if not correios_status.configured %}<p class="helper">Para previsao e atualizacao automatica, configure no ambiente: <code>NANOSTORE_CORREIOS_USERNAME</code>, <code>NANOSTORE_CORREIOS_ACCESS_CODE</code>, <code>NANOSTORE_CORREIOS_POSTING_CARD</code>, <code>NANOSTORE_CORREIOS_ORIGIN_POSTAL_CODE</code> e o codigo de servico contratado.</p>{% endif %}
+              </article>
+
+              <article class="card">
+                <div class="section-head compact-head"><div><p class="eyebrow">Produtos e volumes</p><h3>Rastreio de remessas</h3></div><span id="shipment-visible-count" class="report-result-count"></span></div>
+                <label class="field-block"><span>Localizar</span><input type="search" id="shipment-search" placeholder="Pedido, cliente, produto, SKU ou codigo de rastreio"></label>
+                <div class="stage-admin-list shipment-list">
+                  {% for shipment in shipments %}
+                  <article class="stage-admin-card shipment-card" data-shipment-search="{{ shipment.sale_code }} {{ shipment.customer_name }} {{ shipment.tracking_code }} {% for item in shipment['items'] %}{{ item.sku }} {{ item.product_name }} {% endfor %}">
+                    <div class="ticket-card-head"><strong>{{ shipment.sale_code }} · {{ shipment.carrier|capitalize }}</strong><span class="mini-badge">{{ shipment.status }}</span></div>
+                    <div class="status-stack">
+                      <div class="status-line"><strong>Rastreio:</strong> {{ shipment.tracking_code or 'aguardando codigo' }}{% if shipment.tracking_url %} · <a href="{{ shipment.tracking_url }}" target="_blank" rel="noopener noreferrer">Abrir nos Correios</a>{% endif %}</div>
+                      <div class="status-line"><strong>Previsao:</strong> {{ shipment.estimated_delivery_date or 'nao calculada' }}</div>
+                      <div class="status-line"><strong>Destino:</strong> {{ shipment.destination_postal_code or 'CEP nao informado' }}</div>
+                    </div>
+                    <div class="shipment-product-list">
+                      {% for item in shipment['items'] %}<span>{{ item.sku }} · {{ item.product_name }} · {{ '%.3f'|format(item.quantity) }}</span>{% endfor %}
+                    </div>
+                    {% if shipment.events %}<div class="shipment-timeline">{% for event in shipment.events[:5] %}<div><time>{{ event.occurred_at[:16].replace('T', ' ') }}</time><strong>{{ event.description }}</strong><span>{{ event.location }}</span></div>{% endfor %}</div>{% endif %}
+                    {% if shipment.last_error %}<p class="helper is-error">{{ shipment.last_error }}</p>{% endif %}
+                    <div class="order-card-actions">
+                      {% if shipment.carrier == 'correios' and shipment.tracking_code %}<button type="button" class="shipment-refresh" data-shipment-id="{{ shipment.id }}">Atualizar Correios</button>{% endif %}
+                      <button type="button" class="secondary-btn shipment-edit" data-shipment-id="{{ shipment.id }}" data-tracking-code="{{ shipment.tracking_code }}" data-estimated-date="{{ shipment.estimated_delivery_date }}">Editar rastreio</button>
+                    </div>
+                  </article>
+                  {% else %}<p class="helper">Nenhuma remessa criada.</p>{% endfor %}
+                </div>
+              </article>
+            </section>
+          </section>
+
           <section class="subview" id="lancamentos-cards" data-subview hidden>
             <section class="grid single-grid">
               <article class="card">
@@ -1024,9 +1072,8 @@
                     <span>Canal</span>
                     <select name="source_channel">
                       <option value="manual">Manual</option>
-                      <option value="whatsapp">WhatsApp</option>
                       <option value="delivery">Delivery</option>
-                      <option value="mercado_livre">Mercado Livre</option>
+                      {% for channel in marketplace_catalog %}<option value="{{ channel.provider }}">{{ channel.label }}</option>{% endfor %}
                     </select>
                   </label>
                   <label class="field-inline"><span>Responsavel</span><input name="assigned_to" placeholder="Responsavel / setor"></label>
@@ -1898,17 +1945,106 @@
 
           <section class="subview" id="config-integracoes" data-subview hidden>
             <article class="card config-card">
-              <h3>Integracoes</h3>
+              <div class="section-head compact-head"><div><p class="eyebrow">Pagamentos e contato</p><h3>Integracoes gerais</h3></div></div>
               <form class="settings-form config-form-grid">
                 <label class="field-block"><span>Cartao</span><input name="PHARMACY_CARD_PROVIDER" value="{{ settings_map.get('PHARMACY_CARD_PROVIDER', '') }}" placeholder="Provedor maquina/cartao"></label>
                 <label class="field-block"><span>Pix</span><input name="PHARMACY_PIX_PROVIDER" value="{{ settings_map.get('PHARMACY_PIX_PROVIDER', '') }}" placeholder="Provedor Pix"></label>
                 <label class="field-block"><span>WhatsApp</span><input name="PHARMACY_WHATSAPP_NUMBER" value="{{ settings_map.get('PHARMACY_WHATSAPP_NUMBER', '') }}" placeholder="Numero WhatsApp"></label>
-                <label class="field-block"><span>WooCommerce URL</span><input name="PHARMACY_WOOCOMMERCE_URL" value="{{ settings_map.get('PHARMACY_WOOCOMMERCE_URL', '') }}" placeholder="URL WooCommerce"></label>
-                <label class="field-block"><span>WooCommerce chave</span><input name="PHARMACY_WOOCOMMERCE_KEY" value="{{ settings_map.get('PHARMACY_WOOCOMMERCE_KEY', '') }}" placeholder="Chave WooCommerce"></label>
-                <label class="field-block"><span>Mercado Livre App ID</span><input name="PHARMACY_MERCADO_LIVRE_APP_ID" value="{{ settings_map.get('PHARMACY_MERCADO_LIVRE_APP_ID', '') }}" placeholder="App ID Mercado Livre"></label>
-                <label class="field-block"><span>Mercado Livre Seller ID</span><input name="PHARMACY_MERCADO_LIVRE_SELLER_ID" value="{{ settings_map.get('PHARMACY_MERCADO_LIVRE_SELLER_ID', '') }}" placeholder="Seller ID Mercado Livre"></label>
                 <div class="config-form-actions"><button type="submit">Salvar integracoes</button></div>
               </form>
+            </article>
+
+            <article class="card config-card marketplace-hub-card">
+              <div class="section-head compact-head">
+                <div><p class="eyebrow">Omnichannel</p><h3>Central de marketplaces</h3></div>
+                <button type="button" class="secondary-btn" id="queue-marketplace-stock">Preparar sincronizacao de estoque</button>
+              </div>
+              <p class="helper">Pedidos entram uma unica vez, baixam o estoque local e seguem para o mesmo kanban logistico. Credenciais e segredos ficam somente em variaveis de ambiente.</p>
+              <div class="marketplace-channel-grid">
+                {% for channel in marketplace_catalog %}
+                <article class="stage-admin-card marketplace-channel-card">
+                  <div class="ticket-card-head"><strong>{{ channel.label }}</strong><span class="mini-badge">{{ channel.connection_mode }}</span></div>
+                  <p class="helper">{{ channel.access_label }}</p>
+                  <p class="ticket-copy">{{ channel.capabilities|join(' · ') }}</p>
+                  <p class="helper">{{ channel.notes }}</p>
+                  <a href="{{ channel.official_docs }}" target="_blank" rel="noopener noreferrer">Documentacao oficial</a>
+                </article>
+                {% endfor %}
+              </div>
+            </article>
+
+            <article class="card config-card">
+              <div class="section-head compact-head"><div><p class="eyebrow">Contas</p><h3>Adicionar loja ou seller</h3></div></div>
+              <form data-api="/api/marketplaces/accounts" class="config-form-grid">
+                <label class="field-block"><span>Canal</span><select name="provider" required><option value="">Selecione</option>{% for channel in marketplace_catalog %}<option value="{{ channel.provider }}">{{ channel.label }}</option>{% endfor %}</select></label>
+                <label class="field-block"><span>Nome da conta</span><input name="name" placeholder="Loja principal" required></label>
+                <label class="field-block"><span>Seller / Merchant ID</span><input name="seller_id" placeholder="Identificador fornecido pelo canal"></label>
+                <label class="field-block config-field-wide"><span>URL da loja</span><input name="shop_url" type="url" placeholder="https://..."></label>
+                <label class="field-block"><span>Prefixo das variaveis</span><input name="credential_env_prefix" placeholder="NANOSTORE_ML_LOJA1" pattern="[A-Za-z][A-Za-z0-9_]{2,79}" required></label>
+                <label><input type="checkbox" name="enabled"> Habilitar conta</label>
+                <label><input type="checkbox" name="sync_orders" checked> Receber pedidos</label>
+                <label><input type="checkbox" name="sync_inventory"> Sincronizar estoque</label>
+                <label><input type="checkbox" name="sync_logistics"> Sincronizar logistica</label>
+                <div class="config-form-actions"><button type="submit">Cadastrar conta</button></div>
+              </form>
+              <p class="helper">Para o prefixo <code>NANOSTORE_ML_LOJA1</code>, o segredo de entrada deve ser configurado fora do banco como <code>NANOSTORE_ML_LOJA1_WEBHOOK_SECRET</code>.</p>
+            </article>
+
+            <article class="card config-card">
+              <div class="section-head compact-head"><div><p class="eyebrow">Operacao</p><h3>Contas conectadas</h3></div></div>
+              <div class="stage-admin-list">
+                {% for account in marketplace_accounts %}
+                <form class="stage-admin-card" data-api="/api/marketplaces/accounts/{{ account.id }}" data-method="PATCH">
+                  <input type="hidden" name="provider" value="{{ account.provider }}">
+                  <div class="ticket-card-head"><strong>{{ account.provider_label }} · {{ account.name }}</strong><span class="mini-badge">{{ account.status }}</span></div>
+                  <div class="row">
+                    <label class="field-inline"><span>Nome</span><input name="name" value="{{ account.name }}" required></label>
+                    <label class="field-inline"><span>Seller ID</span><input name="seller_id" value="{{ account.seller_id }}"></label>
+                    <label class="field-inline"><span>Prefixo</span><input name="credential_env_prefix" value="{{ account.credential_env_prefix }}" required></label>
+                  </div>
+                  <label class="field-block"><span>URL da loja</span><input name="shop_url" type="url" value="{{ account.shop_url }}"></label>
+                  <div class="row">
+                    <label><input type="checkbox" name="enabled" {% if account.enabled %}checked{% endif %}> Habilitada</label>
+                    <label><input type="checkbox" name="sync_orders" {% if account.sync_orders %}checked{% endif %}> Pedidos</label>
+                    <label><input type="checkbox" name="sync_inventory" {% if account.sync_inventory %}checked{% endif %}> Estoque</label>
+                    <label><input type="checkbox" name="sync_logistics" {% if account.sync_logistics %}checked{% endif %}> Logistica</label>
+                  </div>
+                  <div class="status-line"><strong>Credencial de webhook:</strong> {{ 'configurada' if account.credentials_configured else 'pendente no ambiente' }}</div>
+                  <div class="status-line"><strong>Webhook:</strong> <code>{{ account.webhook_path }}</code></div>
+                  <div class="status-line"><strong>Operacao:</strong> {{ account.mapping_count }} produto(s) mapeado(s) · {{ account.order_count }} pedido(s)</div>
+                  {% if account.last_error %}<p class="helper is-error">{{ account.last_error }}</p>{% endif %}
+                  <button type="submit">Salvar conta</button>
+                </form>
+                {% else %}<p class="helper">Nenhuma conta cadastrada.</p>{% endfor %}
+              </div>
+            </article>
+
+            <article class="card config-card">
+              <div class="section-head compact-head"><div><p class="eyebrow">Catalogo</p><h3>Mapeamento de produtos</h3></div></div>
+              <form data-api="/api/marketplaces/mappings" class="config-form-grid">
+                <label class="field-block"><span>Conta</span><select name="account_id" required><option value="">Selecione</option>{% for account in marketplace_accounts %}<option value="{{ account.id }}">{{ account.provider_label }} · {{ account.name }}</option>{% endfor %}</select></label>
+                <label class="field-block"><span>Produto local</span><select name="product_id" required><option value="">Selecione</option>{% for product in summary.products %}<option value="{{ product.id }}">{{ product.sku }} · {{ product.name }}</option>{% endfor %}</select></label>
+                <label class="field-block"><span>ID do produto no canal</span><input name="external_product_id" required></label>
+                <label class="field-block"><span>SKU no canal</span><input name="external_sku"></label>
+                <label><input type="checkbox" name="sync_inventory" checked> Enviar estoque</label>
+                <label><input type="checkbox" name="sync_price"> Enviar preco</label>
+                <div class="config-form-actions"><button type="submit">Salvar mapeamento</button></div>
+              </form>
+              <div class="table-wrap">
+                <table><thead><tr><th>Conta</th><th>Produto local</th><th>ID externo</th><th>SKU externo</th><th>Estoque</th><th>Acoes</th></tr></thead><tbody>
+                  {% for mapping in marketplace_mappings %}
+                  <tr><td>{{ mapping.account_label }}</td><td>{{ mapping.product_sku }} · {{ mapping.product_name }}</td><td>{{ mapping.external_product_id }}</td><td>{{ mapping.external_sku }}</td><td>{{ '%.3f'|format(mapping.current_stock) }}</td><td><button type="button" class="danger-btn marketplace-mapping-delete" data-mapping-id="{{ mapping.id }}">Remover</button></td></tr>
+                  {% else %}<tr><td colspan="6">Nenhum produto mapeado.</td></tr>{% endfor %}
+                </tbody></table>
+              </div>
+            </article>
+
+            <article class="card config-card">
+              <div class="section-head compact-head"><div><p class="eyebrow">Auditoria</p><h3>Eventos recentes</h3></div></div>
+              <div class="table-wrap"><table><thead><tr><th>Data</th><th>Conta</th><th>Direcao</th><th>Evento</th><th>Entidade</th><th>Status</th><th>Erro</th></tr></thead><tbody>
+                {% for event in marketplace_events %}<tr><td>{{ event.created_at[:19].replace('T', ' ') }}</td><td>{{ event.account_id }}</td><td>{{ event.direction }}</td><td>{{ event.event_type }}</td><td>{{ event.entity_id }}</td><td>{{ event.status }}</td><td>{{ event.error }}</td></tr>
+                {% else %}<tr><td colspan="7">Nenhum evento registrado.</td></tr>{% endfor %}
+              </tbody></table></div>
             </article>
           </section>
 
@@ -4121,6 +4257,83 @@
             window.location.reload();
           } catch (error) {
             alert(error.message);
+          }
+        });
+      });
+
+      document.getElementById("queue-marketplace-stock")?.addEventListener("click", async (event) => {
+        const button = event.currentTarget;
+        button.disabled = true;
+        try {
+          const result = await postJson("/api/marketplaces/inventory/queue", {});
+          alert(`${result.queued} atualizacao(oes) de estoque preparada(s).`);
+          window.location.reload();
+        } catch (error) {
+          alert(error.message);
+          button.disabled = false;
+        }
+      });
+
+      document.querySelectorAll(".marketplace-mapping-delete").forEach((button) => {
+        button.addEventListener("click", async () => {
+          if (!window.confirm("Remover este mapeamento de produto?")) return;
+          button.disabled = true;
+          try {
+            await postJson(`/api/marketplaces/mappings/${button.dataset.mappingId}`, {}, "DELETE");
+            window.location.reload();
+          } catch (error) {
+            alert(error.message);
+            button.disabled = false;
+          }
+        });
+      });
+
+      const shipmentSearch = document.getElementById("shipment-search");
+      const shipmentVisibleCount = document.getElementById("shipment-visible-count");
+      function filterShipments() {
+        const query = (shipmentSearch?.value || "").trim().toLocaleLowerCase("pt-BR");
+        let visible = 0;
+        document.querySelectorAll(".shipment-card").forEach((card) => {
+          card.hidden = query && !(card.dataset.shipmentSearch || "").toLocaleLowerCase("pt-BR").includes(query);
+          if (!card.hidden) visible += 1;
+        });
+        if (shipmentVisibleCount) shipmentVisibleCount.textContent = `${visible} remessa(s)`;
+      }
+      shipmentSearch?.addEventListener("input", filterShipments);
+      filterShipments();
+
+      document.querySelectorAll(".shipment-refresh").forEach((button) => {
+        button.addEventListener("click", async () => {
+          button.disabled = true;
+          button.textContent = "Consultando...";
+          try {
+            const result = await postJson(`/api/shipments/${button.dataset.shipmentId}/refresh`, {});
+            alert(`${result.new_events} novo(s) evento(s) encontrado(s).`);
+            window.location.reload();
+          } catch (error) {
+            alert(error.message);
+            button.disabled = false;
+            button.textContent = "Atualizar Correios";
+          }
+        });
+      });
+
+      document.querySelectorAll(".shipment-edit").forEach((button) => {
+        button.addEventListener("click", async () => {
+          const trackingCode = window.prompt("Codigo de rastreio", button.dataset.trackingCode || "");
+          if (trackingCode === null) return;
+          const estimatedDate = window.prompt("Previsao de entrega (AAAA-MM-DD)", button.dataset.estimatedDate || "");
+          if (estimatedDate === null) return;
+          button.disabled = true;
+          try {
+            await postJson(`/api/shipments/${button.dataset.shipmentId}`, {
+              tracking_code: trackingCode,
+              estimated_delivery_date: estimatedDate,
+            }, "PATCH");
+            window.location.reload();
+          } catch (error) {
+            alert(error.message);
+            button.disabled = false;
           }
         });
       });

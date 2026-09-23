@@ -88,6 +88,7 @@ class TecnologiaMonitorTests(unittest.TestCase):
 
     def test_snmp_collects_printer_mib_inventory_and_supplies(self):
         rows_by_oid = {
+            ".1.3.6.1.2.1.2.2.1.6": [(".1.3.6.1.2.1.2.2.1.6.1", "AA BB CC DD EE FF")],
             ".1.3.6.1.2.1.1": [
                 (".1.3.6.1.2.1.1.1.0", "HP Laser 408dn"),
                 (".1.3.6.1.2.1.1.3.0", "(864000) 2:24:00.00"),
@@ -126,6 +127,7 @@ class TecnologiaMonitorTests(unittest.TestCase):
             })
 
         self.assertEqual("SNMPv2c", telemetry["protocol"])
+        self.assertEqual(["AA:BB:CC:DD:EE:FF"], telemetry["macAddresses"])
         self.assertEqual("Ociosa", telemetry["printerStatus"])
         self.assertEqual("SERIAL-123", telemetry["serialNumber"])
         self.assertEqual(125571, telemetry["pageCount"])
@@ -157,6 +159,7 @@ class TecnologiaMonitorTests(unittest.TestCase):
 
     def test_snmp_nvr_falls_back_to_if_table_and_reads_enterprise_inventory(self):
         rows_by_oid = {
+            ".1.3.6.1.2.1.2.2.1.6": [],
             ".1.3.6.1.2.1.1": [
                 (".1.3.6.1.2.1.1.1.0", "none"),
                 (".1.3.6.1.2.1.1.2.0", ".1.3.6.1.4.1.1004849.3.2.10"),
@@ -1355,7 +1358,7 @@ class TecnologiaIntegrationTests(unittest.TestCase):
         javascript = (PROJECT_DIR / "apps/tecnologia/source/app.js").read_text(encoding="utf-8")
         css = (PROJECT_DIR / "apps/tecnologia/source/styles.css").read_text(encoding="utf-8")
 
-        self.assertIn("Monitoramento de Tecnologia", html)
+        self.assertIn("Visao geral da rede", html)
         self.assertIn("Descobrir impressoras", html)
         self.assertIn("Agentes e protocolos", html)
         self.assertIn("RELOGIO_PONTO", html)

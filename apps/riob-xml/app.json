@@ -13,7 +13,8 @@
     "import_export": [
       {
         "nome": "Importar XML",
-        "url": "/apps/riob-xml/riob"
+        "url": "/apps/riob-xml/riob",
+        "recurso": "*"
       },
       {
         "nome": "NF-e RioB",
@@ -24,13 +25,7 @@
   "menu_profiles": {
     "rio-branco": {
       "menu_groups": {
-        "cadastros": [
-          {
-            "nome": "Configuracao da empresa",
-            "url": "/apps/riob-xml/riob/config",
-            "recurso": "*"
-          }
-        ],
+        "cadastros": [],
         "estoque": [
           {
             "nome": "Estoque de XMLs recebidos",
@@ -54,9 +49,24 @@
             "url": "/apps/riob-xml/riob/abastecimentos?visao=revisao",
             "recurso": "*"
           }
+        ],
+        "import_export": [
+          {
+            "nome": "Importar XML",
+            "url": "/apps/riob-xml/riob",
+            "recurso": "*"
+          }
         ]
       },
-      "config_groups": {}
+      "config_groups": {
+        "config": [
+          {
+            "nome": "Configuracao da empresa",
+            "url": "/apps/riob-xml/riob/config",
+            "recurso": "*"
+          }
+        ]
+      }
     }
   }
 }

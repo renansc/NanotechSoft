@@ -481,9 +481,15 @@ def logout():
     return redirect(url_for("main.login"))
 
 
+SETTINGS_SECTIONS = [('estados', 'Estados do fluxo'), ('departamentos', 'Departamentos'), ('etiquetas', 'Etiquetas'), ('respostas', 'Respostas rapidas'), ('webhook', 'Webhook WhatsApp'), ('whatsapp', 'WhatsApp Business'), ('backup', 'Backup AlwaysData'), ('agenda', 'Configurar agenda'), ('lembretes', 'Lembretes'), ('integracoes', 'Integracoes extras'), ('status', 'Status das integracoes'), ('usuarios', 'Usuarios do Zap'), ('valores', 'Configuracao atual')]
+
+
 @bp.route("/settings")
 @login_required
 def settings():
+    selected_section = request.args.get("secao", "estados")
+    if selected_section not in dict(SETTINGS_SECTIONS):
+        abort(404)
     settings_map = _settings_map()
     states = WorkflowState.query.order_by(WorkflowState.order_index.asc(), WorkflowState.id.asc()).all()
     labels = Label.query.order_by(Label.name.asc()).all()
@@ -504,6 +510,8 @@ def settings():
     ]
     return render_template(
         "settings.html",
+        settings_sections=SETTINGS_SECTIONS,
+        selected_section=selected_section,
         states=states,
         labels=labels,
         quick_replies=quick_replies,

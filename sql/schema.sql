@@ -14,6 +14,8 @@ CREATE TABLE IF NOT EXISTS usuarios (
 CREATE TABLE IF NOT EXISTS portal_config (
     id INT PRIMARY KEY DEFAULT 1,
     tema VARCHAR(80) NOT NULL DEFAULT 'rio_branco',
+    logo_data MEDIUMTEXT NULL,
+    logo_url VARCHAR(2048) NOT NULL DEFAULT '',
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
 
@@ -257,6 +259,16 @@ CREATE TABLE IF NOT EXISTS chamados_intervencoes (
     INDEX idx_chamados_intervencoes_autor (autor_id),
     FOREIGN KEY (chamado_id) REFERENCES chamados(id) ON DELETE CASCADE,
     FOREIGN KEY (autor_id) REFERENCES usuarios(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS chamados_conky_sync (
+    chamado_id BIGINT PRIMARY KEY,
+    sync_key VARCHAR(64) NOT NULL UNIQUE,
+    tarefa_id VARCHAR(16) NOT NULL DEFAULT '',
+    sincronizado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_chamados_conky_tarefa (tarefa_id),
+    FOREIGN KEY (chamado_id) REFERENCES chamados(id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS chamados_documentos (
