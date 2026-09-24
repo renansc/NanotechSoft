@@ -2547,10 +2547,25 @@ function renderDashboardMixEmbalagens(payload = {}) {
   _dashboardVendasRenderMixEmbalagens(payload);
 }
 
-async function _vendasCarregarMeses(selectId) {
-  const resp = await apiFetch("/api/vendas/meses");
-  const data = await resp.json();
-  if (!resp.ok) throw new Error(data.erro || "Falha ao consultar meses de vendas.");
+let vendasMesesConsulta = null;
+
+async function _vendasCarregarMeses(selectId, force = false) {
+  if (force || !vendasMesesConsulta || Date.now() - vendasMesesConsulta.inicio > 60000) {
+    const consulta = { inicio: Date.now() };
+    consulta.promise = (async () => {
+      try {
+        const resp = await apiFetch("/api/vendas/meses");
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.erro || "Falha ao consultar meses de vendas.");
+        return data;
+      } catch (erro) {
+        if (vendasMesesConsulta === consulta) vendasMesesConsulta = null;
+        throw erro;
+      }
+    })();
+    vendasMesesConsulta = consulta;
+  }
+  const data = await vendasMesesConsulta.promise;
   const atual = document.getElementById(selectId)?.value || "";
   _vendasPreencherSelectMeses(data.meses_disponiveis || [], atual || data.mes_atual || "", selectId);
   return document.getElementById(selectId)?.value || "";
@@ -4897,10 +4912,13 @@ function renderRelatorioVendas(payload = {}){
 }
 
 async function carregarRelatorioVendas(){
+  const requestId = (vendasState.relatorioRequestId || 0) + 1;
+  vendasState.relatorioRequestId = requestId;
   const infoEl = document.getElementById("vendasRelArquivoInfo");
   if (infoEl) infoEl.textContent = "Carregando relatorios vendas...";
 
   await _vendasCarregarMeses("vendasRelMes");
+  if (requestId !== vendasState.relatorioRequestId) return;
   const params = new URLSearchParams();
   const tipoRelatorio = "bonificacoes";
   const mes = document.getElementById("vendasRelMes")?.value || vendasState.mes || "";
@@ -4918,6 +4936,7 @@ async function carregarRelatorioVendas(){
 
   const resp = await apiFetch(`/api/vendas/relatorio?${params.toString()}`);
   const data = await resp.json().catch(() => ({}));
+  if (requestId !== vendasState.relatorioRequestId) return;
   if (!resp.ok) {
     if (infoEl) infoEl.textContent = data?.erro || "Falha ao carregar relatorio de vendas.";
     if (resp.status !== 409) {
@@ -5344,6 +5363,8 @@ async function recarregarRelatorioVendasAtual() {
 }
 
 async function carregarRelatorioVendasAnual() {
+  const requestId = (vendasState.relatorioRequestId || 0) + 1;
+  vendasState.relatorioRequestId = requestId;
   const infoEl = document.getElementById("vendasRelArquivoInfo");
   if (infoEl) infoEl.textContent = "Carregando comparativo anual de vendas...";
   const params = new URLSearchParams({tipo_relatorio: "percentual_vendas_anual"});
@@ -5353,6 +5374,7 @@ async function carregarRelatorioVendasAnual() {
   if (cliente) params.set("cliente", cliente);
   const resp = await apiFetch(`/api/vendas/relatorio?${params.toString()}`);
   const data = await resp.json().catch(() => ({}));
+  if (requestId !== vendasState.relatorioRequestId) return;
   if (!resp.ok) {
     const erro = data?.erro || "Falha ao carregar o relatório anual de vendas.";
     if (infoEl) infoEl.textContent = erro;
@@ -6273,6 +6295,7 @@ function _vendasConfigAtualizarRegras(regras = null) {
 }
 
 function preencherConfigVendas(cfg = {}, fonte = {}, imports = [], meta = {}){
+  vendasMesesConsulta = null;
   vendasConfigState = cfg || {};
   const continua = cfg.active_cache_id === "sellout-mensal-continuo";
   document.querySelectorAll("[data-vendas-legado]").forEach(el => el.classList.toggle("hidden", continua));

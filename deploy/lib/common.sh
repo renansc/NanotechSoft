@@ -579,6 +579,9 @@ except Exception as exc:
 manifest_keys = set()
 menu_sections = set(getattr(portal, "MENU_SECTIONS", (
     "dashboards",
+    "gestao",
+    "monitor",
+    "docs",
     "cadastros",
     "ponto",
     "automacao",
@@ -591,6 +594,9 @@ menu_sections = set(getattr(portal, "MENU_SECTIONS", (
     "import_export",
 ))) if portal else {
     "dashboards",
+    "gestao",
+    "monitor",
+    "docs",
     "cadastros",
     "ponto",
     "automacao",

@@ -46,6 +46,19 @@ Dentro da rede Docker, o portal acessa:
 
 - MySQL do portal: `mysql:3306`.
 
+`NS_DB_BUFFER_POOL_SIZE` dimensiona o cache de paginas do MariaDB local ao
+criar o container (padrao conservador: `128M`). O Rio Branco, com 32 GB de RAM,
+usa `2G` no ambiente local. Nao copiar esse dimensionamento automaticamente
+para outros clientes. `up.sh`/`update.sh` preservam o banco existente e nao
+aplicam ajustes globais de memoria. No MariaDB 10.11.16, aumentar alem de
+`innodb_buffer_pool_size_max` exige configurar a inicializacao e reiniciar o
+banco numa operacao separada; nao restaura nem movimenta dados.
+
+Os relatorios de vendas anual/mensal foram otimizados para reduzir leitura de
+itens e consultas repetidas, preservando os calculos e o recurso `riob:vendas`
+em Config > Usuarios e acessos. Veja o
+[diagnostico e validacao](docs/DIAGNOSTICO_DESEMPENHO_RELATORIOS_2026-09-24.md).
+
 De fora do Docker, use:
 
 - MySQL do portal: `127.0.0.1:3307`.

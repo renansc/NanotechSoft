@@ -434,6 +434,15 @@ popup de Comunicacao sao explicitas. Ver `docs/MENU_RIO_BRANCO_PDF.md` na raiz.
 
 ## SELLOUT mensal: agenda e leitura manual
 
+O comparativo anual usa `_vendas_anual_consultar_sql`: referencia independente
+do vendedor/cliente, opcoes agrupadas e histograma por mes/litros. Preservar o
+arredondamento Python por item, filtros combinados e ano parcial; nao voltar
+a carregar todas as linhas em `_vendas_relatorio_base_rows` para esse relatorio.
+Resumos compactos da base mensal possuem TTL de uma hora, sempre vinculados a
+revisao da importacao, limite de 24 entradas e descarte por uso. Linhas brutas
+continuam com cinco minutos. Ver `docs/API_E_DADOS.md`, testes de desempenho e
+diagnostico de 24/09/2026 na raiz. Recurso de acesso permanece `vendas`.
+
 Em 11/09/2026 o usuario definiu leitura mensal automatica somente as 08:00
 (America/Sao_Paulo). Startup agenda a proxima ocorrencia, sem importar; o antigo
 intervalo de 15 minutos nao se aplica ao mensal. O botao Ler pastas automaticamente

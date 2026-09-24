@@ -10,6 +10,7 @@ import tarfile
 import tempfile
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from collections import Counter, defaultdict
+from functools import lru_cache
 from difflib import SequenceMatcher
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image, Table, TableStyle, PageBreak
 from reportlab.lib.styles import getSampleStyleSheet
@@ -27285,8 +27286,6 @@ def _vendas_db_list_imports():
         cur.execute("""
             SELECT id, source_type, source_path, source_name, source_size, source_mtime,
                    source_signature, rows_importadas, status, ativo,
-                   bonificacoes_cache_json, variacao_preco_cache_json,
-                   dashboard_vendas_json, dashboard_vendas_painel_json,
                    importado_em, updated_at
             FROM vendas_relatorios_importados
             ORDER BY ativo DESC, importado_em DESC, id DESC
@@ -27316,8 +27315,6 @@ def _vendas_db_fetch_import(cache_id):
         cur.execute("""
             SELECT id, source_type, source_path, source_name, source_size, source_mtime,
                    source_signature, rows_importadas, status, ativo,
-                   bonificacoes_cache_json, variacao_preco_cache_json,
-                   dashboard_vendas_json, dashboard_vendas_painel_json,
                    importado_em, updated_at
             FROM vendas_relatorios_importados
             WHERE id=%s
@@ -27352,8 +27349,6 @@ def _vendas_db_find_import(source_signature="", source_path=""):
             cur.execute("""
                 SELECT id, source_type, source_path, source_name, source_size, source_mtime,
                        source_signature, rows_importadas, status, ativo,
-                       bonificacoes_cache_json, variacao_preco_cache_json,
-                       dashboard_vendas_json, dashboard_vendas_painel_json,
                        importado_em, updated_at
                 FROM vendas_relatorios_importados
                 WHERE source_signature=%s
@@ -27368,8 +27363,6 @@ def _vendas_db_find_import(source_signature="", source_path=""):
             cur.execute("""
                 SELECT id, source_type, source_path, source_name, source_size, source_mtime,
                        source_signature, rows_importadas, status, ativo,
-                       bonificacoes_cache_json, variacao_preco_cache_json,
-                       dashboard_vendas_json, dashboard_vendas_painel_json,
                        importado_em, updated_at
                 FROM vendas_relatorios_importados
                 WHERE source_path=%s
@@ -28372,6 +28365,12 @@ _VENDAS_RELATORIO_CACHE_LOCK = threading.Lock()
 _VENDAS_RELATORIO_CACHE = {}
 _VENDAS_RELATORIO_CACHE_TTL = 300
 _VENDAS_RELATORIO_CACHE_MAX = 24
+# Somente projecoes compactas da base mensal com revisao na chave.
+_VENDAS_RELATORIO_CACHE_COMPACTO_TTL = 3600
+_VENDAS_RELATORIO_CACHE_COMPACTOS = {
+    "meses_db", "resumo_mes_db", "opcoes_anual_sql",
+    "bonificacoes", "percentual_vendas_anual", "vendas_anual", "percentual_anual",
+}
 
 _VENDAS_BONIFICACOES_CACHE_LOCK = threading.Lock()
 _VENDAS_BONIFICACOES_CACHE = {}
@@ -29365,9 +29364,15 @@ def _vendas_relatorio_cache_obter(chave):
         item = _VENDAS_RELATORIO_CACHE.get(chave)
         if not item:
             return None
-        if agora - _as_float(item.get("ts"), 0.0) > _VENDAS_RELATORIO_CACHE_TTL:
+        ttl = _VENDAS_RELATORIO_CACHE_TTL
+        if chave[2] == "sellout-mensal-continuo" and chave[1] in _VENDAS_RELATORIO_CACHE_COMPACTOS:
+            ttl = _VENDAS_RELATORIO_CACHE_COMPACTO_TTL
+        if agora - _as_float(item.get("ts"), 0.0) > ttl:
             _VENDAS_RELATORIO_CACHE.pop(chave, None)
             return None
+        # Evictar a menos recentemente usada, preservando o limite de memoria.
+        _VENDAS_RELATORIO_CACHE.pop(chave)
+        _VENDAS_RELATORIO_CACHE[chave] = item
         return item.get("payload")
 
 def _vendas_relatorio_cache_guardar(chave, payload):
@@ -29971,7 +29976,7 @@ def _vendas_bonificacoes_cache_processar(cache_id, rows, cache_entry=None, sourc
     _vendas_bonificacoes_cache_save(cache_id, payload)
     return payload
 
-def _vendas_bonificacoes_cache_carregar_rows_mes_db(cache_id, mes_key=None, filtro_vendedor="", filtro_cliente=""):
+def _vendas_bonificacoes_cache_carregar_rows_mes_db(cache_id, mes_key=None, filtro_vendedor="", filtro_cliente="", somente_resumo=False):
     cache_id = _as_str(cache_id)
     mes_key = _as_str(mes_key)
     if not cache_id or not re.fullmatch(r"\d{4}-\d{2}", mes_key):
@@ -30006,16 +30011,24 @@ def _vendas_bonificacoes_cache_carregar_rows_mes_db(cache_id, mes_key=None, filt
     conn = None
     cur = None
     rows = []
+    campos = """
+        data_ref, data_texto, vendedor_key, vendedor_key_upper, vendedor_codigo, vendedor_nome,
+        numero_nf, cliente, cliente_norm, cidade, grupo_raw, grupo_norm, categoria_norm,
+        produto, tipo_operacao, condicao, tab_venda, quantidade, litros, caixas, caixa_fisica,
+        valor_venda, valor_devolvido, bonificacao, valor_liquido, quantidade_devolvida,
+        litro_devolvido, caixa_devolvida
+    """
+    if somente_resumo:
+        campos = """
+            data_ref, vendedor_key, vendedor_key_upper, vendedor_codigo, vendedor_nome,
+            numero_nf, cliente, cliente_norm, cidade, tipo_operacao, condicao, tab_venda,
+            valor_venda, valor_devolvido, bonificacao
+        """
     try:
         conn = get_conn()
         cur = conn.cursor(dictionary=True)
         cur.execute(f"""
-            SELECT
-                data_ref, data_texto, vendedor_key, vendedor_key_upper, vendedor_codigo, vendedor_nome,
-                numero_nf, cliente, cliente_norm, cidade, grupo_raw, grupo_norm, categoria_norm,
-                produto, tipo_operacao, condicao, tab_venda, quantidade, litros, caixas, caixa_fisica,
-                valor_venda, valor_devolvido, bonificacao, valor_liquido, quantidade_devolvida,
-                litro_devolvido, caixa_devolvida
+            SELECT {campos}
             FROM vendas_relatorio_itens
             WHERE {where_sql}
             ORDER BY data_ref ASC, vendedor_nome ASC, cliente ASC, produto ASC, numero_nf ASC
@@ -30539,7 +30552,7 @@ def _vendas_cache_bonificacoes_carregar(cache_entry, source, cfg, allow_rebuild=
         cached = _vendas_relatorio_cache_obter(chave)
         if cached is not None:
             return cached
-        rows = _vendas_bonificacoes_cache_carregar_rows_mes_db(cache_id, mes_key)
+        rows = _vendas_bonificacoes_cache_carregar_rows_mes_db(cache_id, mes_key, somente_resumo=True)
         payload = _vendas_bonificacoes_cache_processar(cache_id, rows, cache_entry, source, cfg)
         payload["months_order"] = meses
         _vendas_relatorio_cache_guardar(chave, payload)
@@ -30670,74 +30683,76 @@ def _vendas_bonificacoes_payload(cache_entry, source, cfg, mes=None, data_inicio
         conn = get_conn()
         cur = conn.cursor(dictionary=True)
 
-        cur.execute(f"""
-            SELECT
-                COUNT(*) AS itens,
-                COUNT(DISTINCT NULLIF(cliente_norm, '')) AS clientes,
-                COUNT(DISTINCT NULLIF(numero_nf, '')) AS notas,
-                COUNT(DISTINCT NULLIF(vendedor_key_upper, '')) AS vendedores,
-                COALESCE(SUM(valor_venda_aj), 0) AS valor_venda,
-                COALESCE(SUM(valor_devolvido_aj), 0) AS valor_devolvido,
-                COALESCE(SUM(bonificacao_aj), 0) AS bonificacao,
-                COALESCE(SUM(valor_liquido_aj), 0) AS valor_liquido
-            FROM ({base_sql}) base
-        """, tuple(params))
-        row_totais = cur.fetchone() or {}
-        totais.update({
-            "vendedores": _as_int(row_totais.get("vendedores"), 0),
-            "clientes": _as_int(row_totais.get("clientes"), 0),
-            "notas": _as_int(row_totais.get("notas"), 0),
-            "itens": _as_int(row_totais.get("itens"), 0),
-            "valor_venda": round(_as_float(row_totais.get("valor_venda"), 0.0), 2),
-            "valor_devolvido": round(_as_float(row_totais.get("valor_devolvido"), 0.0), 2),
-            "bonificacao": round(_as_float(row_totais.get("bonificacao"), 0.0), 2),
-            "valor_liquido": round(_as_float(row_totais.get("valor_liquido"), 0.0), 2),
-        })
-        totais["percentual_bonificacao"] = round((totais["bonificacao"] / totais["valor_venda"]) * 100.0, 2) if totais["valor_venda"] > 0 else 0.0
-
-        cur.execute(f"""
-            SELECT
-                base.vendedor_key AS chave,
-                MAX(base.vendedor_codigo) AS codigo,
-                MAX(base.vendedor_nome) AS nome,
-                COUNT(*) AS itens,
-                COUNT(DISTINCT NULLIF(base.cliente_norm, '')) AS clientes,
-                COUNT(DISTINCT NULLIF(base.numero_nf, '')) AS notas,
-                COALESCE(SUM(base.valor_venda_aj), 0) AS valor_venda,
-                COALESCE(SUM(base.valor_devolvido_aj), 0) AS valor_devolvido,
-                COALESCE(SUM(base.bonificacao_aj), 0) AS bonificacao,
-                COALESCE(SUM(base.valor_liquido_aj), 0) AS valor_liquido,
-                AVG(CASE WHEN base.valor_venda_aj > 0 THEN (base.bonificacao_aj / base.valor_venda_aj) * 100.0 ELSE NULL END) AS media_percentual_bonificacao
-            FROM ({base_sql}) base
-            GROUP BY base.vendedor_key
-            ORDER BY AVG(CASE WHEN base.valor_venda_aj > 0 THEN (base.bonificacao_aj / base.valor_venda_aj) * 100.0 ELSE NULL END) DESC, MAX(base.vendedor_nome) ASC, MAX(base.vendedor_codigo) ASC
-        """, tuple(params))
-        vendedores = []
-        vendedor_medias = []
-        for row in cur.fetchall() or []:
-            valor_venda = round(_as_float(row.get("valor_venda"), 0.0), 2)
-            bonificacao = round(_as_float(row.get("bonificacao"), 0.0), 2)
-            percentual = round((bonificacao / valor_venda) * 100.0, 2) if valor_venda > 0 else 0.0
-            media_percentual = round(_as_float(row.get("media_percentual_bonificacao"), 0.0), 2)
-            if media_percentual <= 0:
-                media_percentual = percentual
-            vendedor_medias.append(media_percentual)
-            vendedores.append({
-                "chave": _as_str(row.get("chave")),
-                "codigo": _as_str(row.get("codigo")),
-                "nome": _as_str(row.get("nome")),
-                "itens": _as_int(row.get("itens"), 0),
-                "clientes": _as_int(row.get("clientes"), 0),
-                "notas": _as_int(row.get("notas"), 0),
-                "valor_venda": valor_venda,
-                "valor_devolvido": round(_as_float(row.get("valor_devolvido"), 0.0), 2),
-                "bonificacao": bonificacao,
-                "valor_liquido": round(_as_float(row.get("valor_liquido"), 0.0), 2),
-                "percentual": percentual,
-                "media_percentual_bonificacao": media_percentual,
+        if not filtro_vendedor and not filtro_cliente:
+            cur.execute(f"""
+                SELECT
+                    COUNT(*) AS itens,
+                    COUNT(DISTINCT NULLIF(cliente_norm, '')) AS clientes,
+                    COUNT(DISTINCT NULLIF(numero_nf, '')) AS notas,
+                    COUNT(DISTINCT NULLIF(vendedor_key_upper, '')) AS vendedores
+                FROM vendas_relatorio_itens WHERE {where_sql}
+            """, tuple(params))
+            row_totais = cur.fetchone() or {}
+            totais.update({
+                "vendedores": _as_int(row_totais.get("vendedores"), 0),
+                "clientes": _as_int(row_totais.get("clientes"), 0),
+                "notas": _as_int(row_totais.get("notas"), 0),
+                "itens": _as_int(row_totais.get("itens"), 0),
+                "valor_venda": round(_as_float(row_totais.get("valor_venda"), 0.0), 2),
+                "valor_devolvido": round(_as_float(row_totais.get("valor_devolvido"), 0.0), 2),
+                "bonificacao": round(_as_float(row_totais.get("bonificacao"), 0.0), 2),
+                "valor_liquido": round(_as_float(row_totais.get("valor_liquido"), 0.0), 2),
             })
 
-        totais["media_percentual_bonificacao"] = round(sum(vendedor_medias) / len(vendedor_medias), 2) if vendedor_medias else totais["percentual_bonificacao"]
+            cur.execute(f"""
+                SELECT
+                    base.vendedor_key AS chave,
+                    MAX(base.vendedor_codigo) AS codigo,
+                    MAX(base.vendedor_nome) AS nome,
+                    COUNT(*) AS itens,
+                    COUNT(DISTINCT NULLIF(base.cliente_norm, '')) AS clientes,
+                    COUNT(DISTINCT NULLIF(base.numero_nf, '')) AS notas,
+                    COALESCE(SUM(base.valor_venda_aj), 0) AS valor_venda,
+                    COALESCE(SUM(base.valor_devolvido_aj), 0) AS valor_devolvido,
+                    COALESCE(SUM(base.bonificacao_aj), 0) AS bonificacao,
+                    COALESCE(SUM(base.valor_liquido_aj), 0) AS valor_liquido,
+                    AVG(CASE WHEN base.valor_venda_aj > 0 THEN (base.bonificacao_aj / base.valor_venda_aj) * 100.0 ELSE NULL END) AS media_percentual_bonificacao
+                FROM ({base_sql}) base
+                GROUP BY base.vendedor_key
+                ORDER BY AVG(CASE WHEN base.valor_venda_aj > 0 THEN (base.bonificacao_aj / base.valor_venda_aj) * 100.0 ELSE NULL END) DESC, MAX(base.vendedor_nome) ASC, MAX(base.vendedor_codigo) ASC
+            """, tuple(params))
+            vendedores = []
+            vendedor_medias = []
+            for row in cur.fetchall() or []:
+                # As somas por vendedor particionam todas as linhas do filtro.
+                for campo in ("valor_venda", "valor_devolvido", "bonificacao", "valor_liquido"):
+                    totais[campo] += _as_float(row.get(campo), 0.0)
+                valor_venda = round(_as_float(row.get("valor_venda"), 0.0), 2)
+                bonificacao = round(_as_float(row.get("bonificacao"), 0.0), 2)
+                percentual = round((bonificacao / valor_venda) * 100.0, 2) if valor_venda > 0 else 0.0
+                media_percentual = round(_as_float(row.get("media_percentual_bonificacao"), 0.0), 2)
+                if media_percentual <= 0:
+                    media_percentual = percentual
+                vendedor_medias.append(media_percentual)
+                vendedores.append({
+                    "chave": _as_str(row.get("chave")),
+                    "codigo": _as_str(row.get("codigo")),
+                    "nome": _as_str(row.get("nome")),
+                    "itens": _as_int(row.get("itens"), 0),
+                    "clientes": _as_int(row.get("clientes"), 0),
+                    "notas": _as_int(row.get("notas"), 0),
+                    "valor_venda": valor_venda,
+                    "valor_devolvido": round(_as_float(row.get("valor_devolvido"), 0.0), 2),
+                    "bonificacao": bonificacao,
+                    "valor_liquido": round(_as_float(row.get("valor_liquido"), 0.0), 2),
+                    "percentual": percentual,
+                    "media_percentual_bonificacao": media_percentual,
+                })
+
+            for campo in ("valor_venda", "valor_devolvido", "bonificacao", "valor_liquido"):
+                totais[campo] = round(totais[campo], 2)
+            totais["percentual_bonificacao"] = round((totais["bonificacao"] / totais["valor_venda"]) * 100.0, 2) if totais["valor_venda"] > 0 else 0.0
+            totais["media_percentual_bonificacao"] = round(sum(vendedor_medias) / len(vendedor_medias), 2) if vendedor_medias else totais["percentual_bonificacao"]
 
         if filtro_vendedor or filtro_cliente:
             cur.execute(f"""
@@ -30822,6 +30837,7 @@ _VENDAS_AUTONOMOS_NORMALIZADOS = {
     _normalizar_chave_texto("Luiz Humberto Vignoto"),
 }
 
+@lru_cache(maxsize=512)
 def _vendas_tipo_vendedor(vendedor_nome="", vendedor_key=""):
     texto_nome = _normalizar_chave_texto(vendedor_nome)
     texto_key = _normalizar_chave_texto(vendedor_key)
@@ -33846,16 +33862,84 @@ def _coletar_relatorio_vendas_volume_diario_vendedor(filtro_vendedor="", filtro_
         "vendedores": resumo["linhas"],
     }
 
+def _vendas_anual_consultar_sql(cache_id, filtro_vendedor="", filtro_cliente="", data_inicio=None, data_fim=None):
+    """Le opcoes agrupadas e volumes compactos, sem materializar cada venda."""
+    if isinstance(data_inicio, str):
+        data_inicio = _parse_data_br(data_inicio)
+    if isinstance(data_fim, str):
+        data_fim = _parse_data_br(data_fim)
+    where = ["import_id=%s"]
+    params = [cache_id]
+    if data_inicio:
+        where.append("data_ref >= %s")
+        params.append(data_inicio)
+    if data_fim:
+        where.append("data_ref <= %s")
+        params.append(data_fim)
+    where_sql = " AND ".join(where)
+    opcoes_key = _vendas_relatorio_cache_chave(
+        "opcoes_anual_sql", cache_id, data_inicio=_fmt_date(data_inicio) or "",
+        data_fim=_fmt_date(data_fim) or "",
+    )
+    opcoes = _vendas_relatorio_cache_obter(opcoes_key)
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    try:
+        if opcoes is None:
+            cur.execute(f"SELECT MAX(data_ref) AS referencia FROM vendas_relatorio_itens WHERE {where_sql}", tuple(params))
+            referencia = (cur.fetchone() or {}).get("referencia") or datetime.date.today()
+            cur.execute(f"""
+                SELECT MIN(vendedor_key) AS vendedor_key,
+                       MIN(vendedor_key_upper) AS vendedor_key_upper,
+                       MIN(vendedor_codigo) AS vendedor_codigo, MIN(vendedor_nome) AS vendedor_nome,
+                       MIN(COALESCE(NULLIF(TRIM(cliente_norm), ''), 'SEM CLIENTE')) AS cliente_norm,
+                       MIN(cliente) AS cliente,
+                       SUM(CASE WHEN caixa_fisica > 0 THEN caixa_fisica
+                                WHEN caixas > 0 THEN caixas ELSE COALESCE(quantidade, 0) END) AS quantidade
+                FROM vendas_relatorio_itens WHERE {where_sql}
+                GROUP BY BINARY COALESCE(NULLIF(TRIM(vendedor_key), ''),
+                    NULLIF(TRIM(vendedor_key_upper), ''), 'SEM VENDEDOR'),
+                    BINARY COALESCE(NULLIF(TRIM(cliente_norm), ''), 'SEM CLIENTE')
+                ORDER BY MIN(vendedor_nome), MIN(cliente)
+            """, tuple(params))
+            vendedores, clientes = _vendas_publicar_opcoes_relatorio(cur.fetchall() or [])
+            opcoes = {"referencia": referencia, "vendedores": vendedores, "clientes": clientes}
+            _vendas_relatorio_cache_guardar(opcoes_key, opcoes)
+
+        referencia = opcoes["referencia"]
+        where.extend(["data_ref >= %s", "data_ref < %s", "COALESCE(tab_venda, 0) <> 91"])
+        params.extend([datetime.date(referencia.year - 1, 1, 1), datetime.date(referencia.year + 1, 1, 1)])
+        if filtro_vendedor:
+            where.append("BINARY UPPER(COALESCE(NULLIF(TRIM(vendedor_key_upper), ''), TRIM(vendedor_key), '')) = %s")
+            params.append(_as_str(filtro_vendedor).upper())
+        if filtro_cliente:
+            where.append("BINARY COALESCE(NULLIF(TRIM(cliente_norm), ''), '') = %s")
+            params.append(_as_str(filtro_cliente).upper())
+        # Agrupar volumes iguais mantem o round Python por item (inclusive meios
+        # centesimos); SUM(litros)/100 ou ROUND decimal no SQL mudaria os totais.
+        cur.execute(f"""
+            SELECT EXTRACT(YEAR_MONTH FROM data_ref) AS mes, litros, COUNT(*) AS itens
+            FROM vendas_relatorio_itens WHERE {' AND '.join(where)}
+            GROUP BY EXTRACT(YEAR_MONTH FROM data_ref), litros
+        """, tuple(params))
+        volumes = {}
+        for row in cur.fetchall() or []:
+            mes = int(row["mes"])
+            volumes[mes] = volumes.get(mes, 0.0) + _vendas_row_hectolitros(row) * int(row["itens"])
+        filas = [{"data_ref": datetime.date(mes // 100, mes % 100, 1),
+                  "litros": round(volume, 3) * 100, "tab_venda": 1}
+                 for mes, volume in sorted(volumes.items())]
+        return filas, referencia, opcoes["vendedores"], opcoes["clientes"]
+    finally:
+        cur.close()
+        conn.close()
+
+
 def _coletar_relatorio_vendas_percentual_vendas_anual(filtro_vendedor="", filtro_cliente="", data_inicio=None, data_fim=None):
     cache_entry, source, cfg = _vendas_obter_cache_ativo(force_refresh=False)
-    rows_base, _ = _vendas_relatorio_base_rows(data_inicio, data_fim)
-    vendedores, clientes_disponiveis = _vendas_publicar_opcoes_relatorio(rows_base)
-    filas = _vendas_rows_filtradas_base(rows_base, filtro_vendedor, filtro_cliente)
-    datas_referencia = [
-        row.get("data_ref") for row in rows_base
-        if isinstance(row.get("data_ref"), datetime.date)
-    ]
-    referencia = max(datas_referencia) if datas_referencia else None
+    filas, referencia, vendedores, clientes_disponiveis = _vendas_anual_consultar_sql(
+        cache_entry["id"], filtro_vendedor, filtro_cliente, data_inicio, data_fim,
+    )
     anual = _vendas_comparativo_anual(filas, "PERCENTUAL DE VENDAS ANUAL", referencia=referencia)
     return {
         "arquivo": {

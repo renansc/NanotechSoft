@@ -47,7 +47,7 @@
         "nome": "Vendas Diaria RioB",
         "url": "/apps/riob#dashboard:vendas_diario",
         "recurso": "vendas",
-        "recurso_nome": "Vendas e importacoes (TXT, PDF e SELLOUT)"
+        "recurso_nome": "Vendas, relatorios mensais/anuais e importacoes (TXT, PDF e SELLOUT)"
       },
       {
         "nome": "Vendas Anual RioB",
@@ -479,7 +479,7 @@
             "nome": "Vendas anual",
             "url": "/apps/riob#dashboard:vendas_anual",
             "recurso": "vendas",
-            "recurso_nome": "Vendas e importacoes (TXT, PDF e SELLOUT)"
+            "recurso_nome": "Vendas, relatorios mensais/anuais e importacoes (TXT, PDF e SELLOUT)"
           },
           {
             "nome": "Vendas do dia",

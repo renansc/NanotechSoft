@@ -3,7 +3,9 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-import server
+from vendas_report_test_support import load_sales_server
+
+server = load_sales_server()
 
 
 class VendasRelatorioAnualTest(unittest.TestCase):
@@ -83,7 +85,11 @@ class VendasRelatorioAnualTest(unittest.TestCase):
         cfg = {"source_type": "csv_relatorios_dir"}
 
         with mock.patch.object(server, "_vendas_obter_cache_ativo", return_value=(cache, source, cfg)), \
-                mock.patch.object(server, "_vendas_relatorio_base_rows", return_value=(rows, cache)):
+                mock.patch.object(server, "_vendas_anual_consultar_sql", return_value=(
+                    rows[:2], dt.date(2026, 9, 8),
+                    [{"chave": "VENDEDOR 1"}, {"chave": "VENDEDOR 2"}],
+                    [{"chave": "CLIENTE A"}, {"chave": "CLIENTE B"}],
+                )):
             payload = server._coletar_relatorio_vendas_percentual_vendas_anual(
                 filtro_vendedor="VENDEDOR 1",
                 filtro_cliente="CLIENTE A",

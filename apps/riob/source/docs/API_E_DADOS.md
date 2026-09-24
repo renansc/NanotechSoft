@@ -212,6 +212,44 @@ Observacoes:
 - o endpoint `PUT /api/vendas/cache/<id>/ativar` define qual import passa a ser usado pelo relatorio de vendas
 - `GET /api/vendas/config` tambem devolve `regras_importacao`, usado pela tela `Config -> Vendas` para documentar no proprio sistema quais grupos e descartes estao ativos
 
+### Desempenho dos relatorios (24/09/2026)
+
+O comparativo anual consulta a referencia e as opcoes agrupadas no banco e le
+um histograma de volume por mes, aplicando vendedor/cliente no SQL. A conversao
+para hectolitros conserva o arredondamento Python de cada item, inclusive
+valores negativos e empates; nao equivale a dividir a soma bruta por 100.
+O ano parcial continua limitado ao ultimo mes da base, independente do filtro.
+As datas inicial/final continuam inclusivas. Opcoes incluem clientes reais pela
+chave normalizada, corrigindo a lista anteriormente reduzida a "SEM CLIENTE".
+
+O mensal filtrado deixa de calcular agregacoes SQL que eram sobrescritas pelo
+agrupamento dos detalhes. Formulas, totais e limite dos detalhes sao preservados.
+O mensal sem filtro reutiliza as somas por vendedor para o total financeiro;
+uma consulta estreita conserva as contagens distintas de clientes e notas.
+O resumo busca apenas os 15 campos utilizados e reutiliza a classificacao de
+vendedores em um cache limitado a 512 pares de nome/chave.
+Consultas de metadados de importacao deixam de transferir os quatro JSONs de
+relatorios; esses documentos continuam sendo lidos somente quando necessarios.
+
+Resumos compactos, lista de meses e opcoes anuais da base mensal continua podem
+ser reutilizados por ate uma hora. A assinatura, quantidade e data de atualizacao
+da importacao continuam na chave: uma nova importacao invalida o resultado em
+todos os processos. O cache mantem no maximo 24 entradas, com descarte por uso
+menos recente. Linhas brutas e importacoes legadas conservam TTL de cinco minutos.
+
+Na tela, a lista de meses e compartilhada por consultas simultaneas durante
+60 segundos e invalidada ao atualizar a configuracao/importacao. Falhas permitem
+nova tentativa. Respostas antigas nao substituem o filtro mensal/anual mais
+recente. Rotas e recurso `riob:vendas` permanecem os mesmos, agora identificados
+no catalogo como vendas, relatorios mensais/anuais e importacoes. Nao ha concessao
+automatica nem alteracao dos bloqueios individuais do portal.
+
+Testes: `tests/test_vendas_relatorio_anual.py`,
+`tests/test_vendas_relatorios_performance.py` no RioB, e
+`tests/test_vendas_reports_access.py`/`tests/test_vendas_reports_frontend.js` na
+raiz. A integracao SQL opcional (`RB_REPORT_TEST_MYSQL=1`) usa somente tabelas
+temporarias da conexao, sem modificar as tabelas operacionais.
+
 ### 5.1.1 Pedido / orcamento de vendas
 
 Endpoints:

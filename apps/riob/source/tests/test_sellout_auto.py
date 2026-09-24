@@ -246,9 +246,9 @@ class ConsultaMensalTest(unittest.TestCase):
                 self.assertEqual({}, result['months'])
                 if name == '_vendas_cache_bonificacoes_carregar':
                     self.assertEqual(['2025-06', '2026-09'], result['months_order'])
-                    env['_vendas_bonificacoes_cache_carregar_rows_mes_db'].assert_called_once_with('sellout-mensal-continuo', '2026-09')
+                    env['_vendas_bonificacoes_cache_carregar_rows_mes_db'].assert_called_once_with('sellout-mensal-continuo', '2026-09', somente_resumo=True)
                     env[name]({'id': 'sellout-mensal-continuo'}, {}, {}, allow_rebuild=False, mes='2025-06')
-                    env['_vendas_bonificacoes_cache_carregar_rows_mes_db'].assert_called_with('sellout-mensal-continuo', '2025-06')
+                    env['_vendas_bonificacoes_cache_carregar_rows_mes_db'].assert_called_with('sellout-mensal-continuo', '2025-06', somente_resumo=True)
                 self.assertIsNone(env[name]({'id': 'legado'}, {}, {}, allow_rebuild=False))
 
 
