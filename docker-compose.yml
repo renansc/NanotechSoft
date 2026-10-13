@@ -246,6 +246,27 @@ services:
       retries: 30
       start_period: 30s
 
+  cups-guard:
+    image: nanotechsoft-app:latest
+    container_name: nanotechsoft-cups-guard
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_started
+    environment:
+      CUPS_SERVER: ${CUPS_SERVER:-/run/cups/cups.sock}
+      CUPS_PORT: ${CUPS_PORT:-}
+      CUPS_USER: ${CUPS_USER:-root}
+      CUPS_PASSWORD: ${CUPS_PASSWORD:-}
+      CUPS_GUARD_INTERVAL_SECONDS: ${CUPS_GUARD_INTERVAL_SECONDS:-10}
+    command: ["python", "-m", "apps.impressoras.source.cups_service", "--watch"]
+    volumes:
+      - type: bind
+        source: ${CUPS_SOCKET:-/run/cups/cups.sock}
+        target: /run/cups/cups.sock
+        bind:
+          create_host_path: false
+
   portal-proxy:
     image: nginx:1.27-alpine
     container_name: nanotechsoft-portal-proxy

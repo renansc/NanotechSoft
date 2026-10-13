@@ -1,13 +1,17 @@
 """Small, testable adapter around pycups.
 
-The portal owns authentication and audit data. CUPS remains the spooler and is
-never reconfigured automatically by this adapter.
+The portal owns authentication and audit data. CUPS remains the spooler; the
+guard only maintains the native secure-release defaults on existing queues.
 """
 from __future__ import annotations
 
+import argparse
 import datetime as dt
+import json
 import os
+import subprocess
 import threading
+import time
 
 try:
     import cups
@@ -80,10 +84,23 @@ class CupsService:
             conn = self._connection()
             try:
                 rows = conn.getPrinters()
+                details = {}
+                for name in rows:
+                    try:
+                        details[name] = conn.getPrinterAttributes(
+                            name,
+                            requested_attributes=[
+                                "job-hold-until-default",
+                                "printer-state-reasons",
+                            ],
+                        )
+                    except Exception:
+                        details[name] = {}
             except Exception as exc:
                 raise CupsUnavailable(f"Falha ao consultar impressoras no CUPS: {exc}") from exc
         result = []
         for name, attrs in sorted(rows.items(), key=lambda item: item[0].casefold()):
+            attrs = {**attrs, **details.get(name, {})}
             state = int(attrs.get("printer-state") or 0)
             reasons = attrs.get("printer-state-reasons") or []
             if isinstance(reasons, str):
@@ -99,8 +116,62 @@ class CupsService:
                 "reasons": reasons,
                 "accepting": bool(attrs.get("printer-is-accepting-jobs", True)),
                 "secureDefault": str(attrs.get("job-hold-until-default") or "").lower() in {"hold", "indefinite"},
+                "holdingNewJobs": "hold-new-jobs" in reasons,
             })
         return result
+
+    def enforce_secure_queues(self):
+        """Set and verify native secure-release defaults on every server queue.
+
+        CUPS applies this policy to portal uploads and clients that inherit the
+        queue default. Like every native CUPS default, a client administrator
+        can explicitly override it with ``job-hold-until=no-hold``.
+        """
+        with self._lock:
+            conn = self._connection()
+            try:
+                names = sorted(conn.getPrinters(), key=str.casefold)
+            except Exception as exc:
+                raise CupsUnavailable(f"Falha ao consultar filas para retencao segura: {exc}") from exc
+            results = []
+            for name in names:
+                try:
+                    attrs = conn.getPrinterAttributes(
+                        name,
+                        requested_attributes=["job-hold-until-default", "printer-state-reasons"],
+                    )
+                    if str(attrs.get("job-hold-until-default") or "").lower() not in {"hold", "indefinite"}:
+                        conn.addPrinterOptionDefault(name, "job-hold-until", "indefinite")
+                    reasons = attrs.get("printer-state-reasons") or []
+                    if isinstance(reasons, str):
+                        reasons = [reasons]
+                    if "hold-new-jobs" not in reasons:
+                        user = str(os.environ.get("CUPS_USER") or "root").strip() or "root"
+                        completed = subprocess.run(
+                            ["cupsdisable", "--hold", "-U", user, name],
+                            check=False,
+                            capture_output=True,
+                            text=True,
+                            timeout=20,
+                            env=os.environ.copy(),
+                        )
+                        if completed.returncode:
+                            message = (completed.stderr or completed.stdout or "falha desconhecida").strip()
+                            raise RuntimeError(message)
+                    verified = conn.getPrinterAttributes(
+                        name,
+                        requested_attributes=["job-hold-until-default", "printer-state-reasons"],
+                    )
+                    verified_reasons = verified.get("printer-state-reasons") or []
+                    if isinstance(verified_reasons, str):
+                        verified_reasons = [verified_reasons]
+                    verified_default = str(verified.get("job-hold-until-default") or "").lower()
+                    if verified_default not in {"hold", "indefinite"} or "hold-new-jobs" not in verified_reasons:
+                        raise RuntimeError("CUPS nao confirmou a retencao padrao da fila")
+                    results.append({"name": name, "secure": True})
+                except Exception as exc:
+                    results.append({"name": name, "secure": False, "error": str(exc)})
+            return results
 
     def jobs(self):
         attrs = [
@@ -178,3 +249,29 @@ class CupsService:
                 getattr(self._connection(), method)(printer)
             except Exception as exc:
                 raise CupsUnavailable(f"Nao foi possivel executar {action} em {printer}: {exc}") from exc
+
+
+def _guard_once(service):
+    results = service.enforce_secure_queues()
+    print(json.dumps({"event": "cups-secure-queues", "queues": results}, ensure_ascii=False), flush=True)
+    return not any(not item["secure"] for item in results)
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Mantem todas as filas CUPS em liberacao segura.")
+    parser.add_argument("--watch", action="store_true", help="reaplica a politica continuamente")
+    args = parser.parse_args()
+    service = CupsService()
+    if not args.watch:
+        raise SystemExit(0 if _guard_once(service) else 1)
+    interval = max(2, int(os.environ.get("CUPS_GUARD_INTERVAL_SECONDS") or 10))
+    while True:
+        try:
+            _guard_once(service)
+        except Exception as exc:
+            print(json.dumps({"event": "cups-secure-queues", "error": str(exc)}, ensure_ascii=False), flush=True)
+        time.sleep(interval)
+
+
+if __name__ == "__main__":
+    main()

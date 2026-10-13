@@ -7,11 +7,11 @@ no portal.
 
 ## Funcoes
 
-- **Workflow > Impressoras > Fila segura** envia PDF, PNG, JPG, TXT ou CSV ao
-  CUPS com `job-hold-until=indefinite`. O trabalho so e retomado depois que o
-  proprio usuario informa novamente a senha do portal. Tambem libera trabalhos
-  retidos enviados por outro cliente CUPS quando o usuario CUPS corresponde ao
-  login do portal.
+- **Workflow > Impressoras > Fila segura** recebe tanto arquivos enviados pela
+  tela quanto trabalhos enviados por computadores clientes para as filas do
+  servidor. O trabalho so e retomado depois que o proprio usuario informa
+  novamente a senha do portal. Para trabalhos externos, o usuario CUPS precisa
+  corresponder ao login do portal.
 - **Monitor > Impressoras > Estado das impressoras** consulta dinamicamente as
   filas existentes, modelo, local, estado e aceitacao de trabalhos.
 - **Relatorios > Impressoras > Historico de impressoes** registra quem enviou,
@@ -36,6 +36,7 @@ CUPS_SERVER=/run/cups/cups.sock
 CUPS_PORT=
 CUPS_USER=root
 CUPS_PASSWORD=
+CUPS_GUARD_INTERVAL_SECONDS=10
 ```
 
 O socket e montado com `create_host_path: false`, portanto o deploy falha de
@@ -46,6 +47,11 @@ local; ela nao aparece na interface nem no banco. O modulo nao cadastra, exclui
 ou altera impressoras automaticamente.
 
 As filas sao descobertas pelo CUPS em tempo real e nao ficam fixadas no codigo.
+
+O servico `cups-guard` executa a operacao IPP `Hold-New-Jobs` e configura
+`job-hold-until-default=indefinite` em todas as filas encontradas. Ele reaplica
+a politica periodicamente para cobrir filas recriadas pelo `cups-browsed`. A
+liberacao de um trabalho nao desativa a retencao dos trabalhos seguintes.
 
 ## Retencao e auditoria
 
@@ -60,10 +66,14 @@ publica, a tela mostra o valor solicitado ou indisponivel, sem inventar contagem
 Para nao perder trabalhos externos, mantenha o historico de jobs habilitado no
 CUPS. A sincronizacao ocorre ao consultar o modulo.
 
-Clientes Windows/Linux que devam reter **toda** impressao precisam apontar para
-essas filas CUPS via IPP e enviar `job-hold-until=indefinite`. O portal nao muda
-esse padrao global automaticamente, pois isso poderia parar impressoes de outros
-usuarios. A fila do portal ja envia sempre retida.
+Clientes Windows/Linux precisam apontar para as filas compartilhadas deste
+servidor CUPS. Trabalhos enviados diretamente ao IP da impressora fisica nao
+passam pelo servidor e, portanto, nao podem ser retidos pelo portal. O nome de
+usuario informado pelo cliente CUPS deve ser igual ao login no portal para que
+o trabalho apareca na fila pessoal correta. O cliente deve herdar o padrao da
+fila e nao pode ser configurado por um administrador para forcar `-H immediate`
+ou `job-hold-until=no-hold`: o CUPS define `Hold-New-Jobs` como retencao por
+padrao e permite que uma solicitacao IPP explicita substitua esse padrao.
 
 O futuro totem RFID deve identificar um usuario do portal e chamar o mesmo
 servico de liberacao; nao deve criar outro login ou armazenar a senha do usuario.

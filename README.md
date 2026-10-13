@@ -290,8 +290,10 @@ README do módulo.
 
 O modulo **Impressoras** integra as filas do CUPS da maquina fisica, mostra
 estado, usuario, documento, paginas, copias, data e hora e oferece uma fila
-segura. Arquivos enviados pelo portal ficam retidos e somente sao liberados
-quando o proprio usuario confirma a senha da sessao; a senha nao e armazenada.
+segura. O `cups-guard` configura a retencao padrao no servidor para arquivos
+enviados pelo portal e trabalhos dos computadores clientes que usam o padrao da
+fila; eles somente sao liberados quando o proprio usuario confirma a senha da
+sessao. A senha nao e armazenada.
 No Nanotech o modulo aparece como aplicativo e, no Rio Branco, como tarefas em
 Workflow, Monitor, Relatorios e Configurar. Os recursos `fila`, `monitor`,
 `historico` e `gerenciar` ficam em Config > Usuarios e acessos, sem concessao

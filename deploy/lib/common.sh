@@ -9,6 +9,7 @@ DB_SERVICE="mysql"
 RIOB_APP_SERVICE="riob-app"
 RIOB_PROXY_SERVICE="riob-proxy"
 PORTAL_PROXY_SERVICE="portal-proxy"
+CUPS_GUARD_SERVICE="cups-guard"
 BUILD_SERVICES=()
 PROXY_SERVICES=()
 RUNTIME_SERVICES=()
@@ -175,13 +176,16 @@ PY
   BUILD_SERVICES=("$APP_SERVICE")
   PROXY_SERVICES=("$PORTAL_PROXY_SERVICE")
   RUNTIME_SERVICES=("$APP_SERVICE" "$PORTAL_PROXY_SERVICE")
+  if [[ "$DEPLOY_PROFILE_ID" == "rio-branco" || "$DEPLOY_PROFILE_ID" == "nanotech" ]]; then
+    RUNTIME_SERVICES=("$APP_SERVICE" "$CUPS_GUARD_SERVICE" "$PORTAL_PROXY_SERVICE")
+  fi
   if [[ "$DEPLOY_HAS_LOCAL_DATABASE" == "1" ]]; then
     DATABASE_SERVICES=("$DB_SERVICE")
   fi
   if [[ "$DEPLOY_HAS_RIOB" == "1" ]]; then
     BUILD_SERVICES+=("$RIOB_APP_SERVICE")
     PROXY_SERVICES+=("$RIOB_PROXY_SERVICE")
-    RUNTIME_SERVICES=("$RIOB_APP_SERVICE" "$RIOB_PROXY_SERVICE" "$APP_SERVICE" "$PORTAL_PROXY_SERVICE")
+    RUNTIME_SERVICES=("$RIOB_APP_SERVICE" "$RIOB_PROXY_SERVICE" "$APP_SERVICE" "$CUPS_GUARD_SERVICE" "$PORTAL_PROXY_SERVICE")
   fi
 }
 
@@ -227,6 +231,9 @@ stop_services_outside_profile() {
   if ! riob_stack_enabled; then
     log "parando servicos RioB fora do perfil ${DEPLOY_PROFILE_ID}..."
     compose stop "$RIOB_APP_SERVICE" "$RIOB_PROXY_SERVICE" >/dev/null 2>&1 || true
+  fi
+  if [[ "$DEPLOY_PROFILE_ID" != "rio-branco" && "$DEPLOY_PROFILE_ID" != "nanotech" ]]; then
+    compose stop "$CUPS_GUARD_SERVICE" >/dev/null 2>&1 || true
   fi
 }
 

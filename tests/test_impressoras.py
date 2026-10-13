@@ -11,6 +11,9 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class FakeConnection:
+    def __init__(self):
+        self.defaults = []
+
     def getPrinters(self):
         return {
             "Fila_A": {
@@ -21,6 +24,16 @@ class FakeConnection:
                 "job-hold-until-default": "indefinite",
             }
         }
+
+    def getPrinterAttributes(self, name, requested_attributes=None):
+        del name, requested_attributes
+        return {
+            "job-hold-until-default": "indefinite",
+            "printer-state-reasons": ["hold-new-jobs"],
+        }
+
+    def addPrinterOptionDefault(self, name, option, value):
+        self.defaults.append((name, option, value))
 
     def getJobs(self, **_kwargs):
         return {
@@ -64,10 +77,40 @@ class PrinterModuleTests(unittest.TestCase):
             jobs = service.jobs()
         self.assertEqual("Recepcao", printers[0]["info"])
         self.assertTrue(printers[0]["secureDefault"])
+        self.assertTrue(printers[0]["holdingNewJobs"])
         self.assertEqual("RETIDO", jobs[0]["state"])
         self.assertEqual(3, jobs[0]["requestedPages"])
         self.assertEqual(0, jobs[0]["printedPages"])
         self.assertEqual("pessoa", jobs[0]["cupsUser"])
+
+    def test_guard_sets_and_verifies_secure_queue_default(self):
+        service = cups_service.CupsService()
+        connection = FakeConnection()
+        connection.getPrinterAttributes = mock.Mock(side_effect=[
+            {
+                "job-hold-until-default": "no-hold",
+                "printer-state-reasons": ["none"],
+            },
+            {
+                "job-hold-until-default": "indefinite",
+                "printer-state-reasons": ["hold-new-jobs"],
+            },
+        ])
+        completed = mock.Mock(returncode=0, stdout="", stderr="")
+        with mock.patch.object(service, "_connection", return_value=connection), \
+             mock.patch.object(cups_service.subprocess, "run", return_value=completed) as run:
+            result = service.enforce_secure_queues()
+        self.assertEqual([("Fila_A", "job-hold-until", "indefinite")], connection.defaults)
+        run.assert_called_once()
+        self.assertIn("--hold", run.call_args.args[0])
+        self.assertEqual(2, connection.getPrinterAttributes.call_count)
+        self.assertEqual([{"name": "Fila_A", "secure": True}], result)
+
+    def test_compose_runs_continuous_cups_guard(self):
+        compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+        self.assertIn("cups-guard:", compose)
+        self.assertIn('apps.impressoras.source.cups_service", "--watch"', compose)
+        self.assertIn('CUPS_GUARD_SERVICE="cups-guard"', (ROOT / "deploy/lib/common.sh").read_text(encoding="utf-8"))
 
     def test_api_permissions_are_server_side(self):
         user = {"id": 42, "login": "pessoa", "perfil": "usuario"}
