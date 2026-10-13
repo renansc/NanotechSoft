@@ -11,7 +11,7 @@ no portal.
   tela quanto trabalhos enviados por computadores clientes para as filas do
   servidor. O trabalho so e retomado depois que o proprio usuario informa
   novamente a senha do portal. Para trabalhos externos, o usuario CUPS precisa
-  corresponder ao login do portal.
+  corresponder ao login do portal ou possuir um vinculo administrativo.
 - **Monitor > Impressoras > Estado das impressoras** consulta dinamicamente as
   filas existentes, modelo, local, estado e aceitacao de trabalhos.
 - **Relatorios > Impressoras > Historico de impressoes** registra quem enviou,
@@ -19,7 +19,9 @@ no portal.
   copias, tamanho, estado, data e hora.
 - **Configurar > Impressoras > Gerenciar filas CUPS** pausa/retoma a impressora
   e aceita/rejeita novos trabalhos. Essas acoes exigem autorizacao administrativa
-  no CUPS e o recurso `impressoras:gerenciar`.
+  no CUPS e o recurso `impressoras:gerenciar`. A mesma tela vincula o nome de
+  usuario enviado pelo computador/CUPS a uma conta ativa do portal e reaplica o
+  vinculo aos trabalhos anteriores.
 
 Recursos em Config > Usuarios e acessos: `fila`, `monitor`, `historico` e
 `gerenciar`. Nenhum acesso e concedido automaticamente. APIs e itens individuais
@@ -70,7 +72,10 @@ Clientes Windows/Linux precisam apontar para as filas compartilhadas deste
 servidor CUPS. Trabalhos enviados diretamente ao IP da impressora fisica nao
 passam pelo servidor e, portanto, nao podem ser retidos pelo portal. O nome de
 usuario informado pelo cliente CUPS deve ser igual ao login no portal para que
-o trabalho apareca na fila pessoal correta. O cliente deve herdar o padrao da
+o trabalho apareca na fila pessoal correta, ou deve existir um vinculo em
+**Configurar > Impressoras > Gerenciar filas CUPS**. Quando a consulta IPP omite
+o proprietario por privacidade, o portal recupera somente o nome do usuario pelo
+`lpstat` local; o conteudo do documento nao e lido. O cliente deve herdar o padrao da
 fila e nao pode ser configurado por um administrador para forcar `-H immediate`
 ou `job-hold-until=no-hold`: o CUPS define `Hold-New-Jobs` como retencao por
 padrao e permite que uma solicitacao IPP explicita substitua esse padrao.
@@ -85,6 +90,8 @@ servico de liberacao; nao deve criar outro login ou armazenar a senha do usuario
 - `POST /apps/impressoras/api/jobs` — envia arquivo retido;
 - `POST /apps/impressoras/api/jobs/release-all` — libera todos com senha;
 - `POST /apps/impressoras/api/jobs/<id>/release|cancel` — libera/cancela;
+- `GET|POST /apps/impressoras/api/user-links` — consulta ou salva vinculos;
+- `DELETE /apps/impressoras/api/user-links/<id>` — remove um vinculo;
 - `POST /apps/impressoras/api/printers/<fila>/<pause|resume|accept|reject>` —
   administra a fila.
 

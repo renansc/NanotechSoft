@@ -82,6 +82,19 @@ CREATE TABLE IF NOT EXISTS impressoras_trabalhos (
     FOREIGN KEY (liberado_por_id) REFERENCES usuarios(id) ON DELETE SET NULL
 );
 
+CREATE TABLE IF NOT EXISTS impressoras_vinculos_usuario (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    cups_usuario VARCHAR(120) NOT NULL,
+    usuario_id INT NOT NULL,
+    atualizado_por_id INT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_impressoras_vinculo_cups_usuario (cups_usuario),
+    INDEX idx_impressoras_vinculo_usuario (usuario_id),
+    FOREIGN KEY (usuario_id) REFERENCES usuarios(id) ON DELETE CASCADE,
+    FOREIGN KEY (atualizado_por_id) REFERENCES usuarios(id) ON DELETE SET NULL
+);
+
 CREATE TABLE IF NOT EXISTS financeiro_registros (
     id INT AUTO_INCREMENT PRIMARY KEY,
     colecao VARCHAR(80) NOT NULL,

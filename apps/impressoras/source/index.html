@@ -42,6 +42,17 @@
     <div class="heading"><div><span>Administracao</span><h1>Gerenciar filas CUPS</h1></div><button class="btn secondary" data-refresh>Atualizar</button></div>
     <p class="lead">Pausar ou rejeitar afeta todos os usuarios da fila. O portal nao altera esses estados automaticamente.</p>
     <div id="manageCards" class="cardGrid"></div>
+    <div class="panel">
+      <div class="panelTitle"><div><span>Identificacao</span><h2>Vincular usuario CUPS ao portal</h2></div></div>
+      <p class="lead">Use quando o nome enviado pelo computador for diferente do login no portal. O vinculo tambem corrige os trabalhos anteriores.</p>
+      <form id="userLinkForm" class="linkForm">
+        <label>Usuario informado pelo computador<input id="cupsUserLink" name="cupsUser" list="detectedCupsUsers" maxlength="120" required placeholder="Ex.: recepcao-pc"></label>
+        <datalist id="detectedCupsUsers"></datalist>
+        <label>Usuario do portal<select id="portalUserLink" name="userId" required><option value="">Selecione</option></select></label>
+        <button class="btn" type="submit">Salvar vinculo</button>
+      </form>
+      <div class="tableWrap"><table><thead><tr><th>Usuario CUPS/S.O.</th><th>Usuario do portal</th><th>Acao</th></tr></thead><tbody id="userLinks"></tbody></table></div>
+    </div>
   </section>
   <div id="toast" role="status" aria-live="polite"></div>
 </main>

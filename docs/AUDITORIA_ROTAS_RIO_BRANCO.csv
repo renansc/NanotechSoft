@@ -2,136 +2,136 @@ arquivo,linha,funcao,metodos,rota,tipo,acesso
 app.py,784,healthz,GET,/healthz,infraestrutura,"Sessao unica, contrato, catalogo ou verificacao de saude"
 app.py,806,healthz_database,GET,/healthz/database,infraestrutura,"Sessao unica, contrato, catalogo ou verificacao de saude"
 app.py,921,healthz_cache,GET,/healthz/cache,infraestrutura,"Sessao unica, contrato, catalogo ou verificacao de saude"
-app.py,2281,login_page,GET,/login,infraestrutura,"Sessao unica, contrato, catalogo ou verificacao de saude"
-app.py,2289,portal,GET,/,infraestrutura,Entrada do cliente / Configurar
-app.py,2306,select_cloud_client,GET,/cloud/client/<client_id>,infraestrutura,Entrada do cliente / Configurar
-app.py,2318,config_page,GET,/config,infraestrutura,Entrada do cliente / Configurar
-app.py,2330,api_config_logo,"POST,DELETE",/api/config/logo,acao_da_tela,/config
-app.py,2584,api_users,GET,/api/usuarios,acao_da_tela,/config
-app.py,2594,api_update_user,POST,/api/usuarios,acao_da_tela,/config
-app.py,2594,api_update_user,PUT,/api/usuarios/<int:user_id>,acao_da_tela,/config
-app.py,2677,api_delete_user,DELETE,/api/usuarios/<int:user_id>,acao_da_tela,/config
-app.py,2703,api_backup_export,GET,/api/backup/export,acao_da_tela,/config
-app.py,2720,api_backup_import,POST,/api/backup/import,acao_da_tela,/config
-app.py,2745,workflow_kanban_page,GET,/workflow/<app_key>,infraestrutura,Proxy/menu do modulo; destino depende do parametro
-app.py,2959,healthz_riob,GET,/healthz/riob,infraestrutura,"Sessao unica, contrato, catalogo ou verificacao de saude"
-app.py,3404,riob_proxy,"GET,POST,PUT,PATCH,DELETE,OPTIONS",/apps/riob,infraestrutura,Proxy/menu do modulo; destino depende do parametro
-app.py,3404,riob_proxy,"GET,POST,PUT,PATCH,DELETE,OPTIONS",/apps/riob/,infraestrutura,Proxy/menu do modulo; destino depende do parametro
-app.py,3404,riob_proxy,"GET,POST,PUT,PATCH,DELETE,OPTIONS",/apps/riob/<path:subpath>,infraestrutura,Proxy/menu do modulo; destino depende do parametro
-app.py,3440,riob_module_proxy,"GET,POST,PUT,PATCH,DELETE,OPTIONS",/apps/<app_key>/riob,infraestrutura,Proxy/menu do modulo; destino depende do parametro
-app.py,3440,riob_module_proxy,"GET,POST,PUT,PATCH,DELETE,OPTIONS",/apps/<app_key>/riob/,infraestrutura,Proxy/menu do modulo; destino depende do parametro
-app.py,3440,riob_module_proxy,"GET,POST,PUT,PATCH,DELETE,OPTIONS",/apps/<app_key>/riob/<path:subpath>,infraestrutura,Proxy/menu do modulo; destino depende do parametro
-app.py,3457,app_placeholder,GET,/apps/<app_key>,infraestrutura,Proxy/menu do modulo; destino depende do parametro
-app.py,3922,automacao_proxy_root,"GET,POST,PUT,PATCH,DELETE",/apps/automacao,infraestrutura,Proxy/menu do modulo; destino depende do parametro
-app.py,3928,automacao_original_root,"GET,POST,PUT,PATCH,DELETE",/apps/automacao/original,infraestrutura,Proxy/menu do modulo; destino depende do parametro
-app.py,3935,automacao_original_proxy,"GET,POST,PUT,PATCH,DELETE",/apps/automacao/original/,infraestrutura,Proxy/menu do modulo; destino depende do parametro
-app.py,3935,automacao_original_proxy,"GET,POST,PUT,PATCH,DELETE",/apps/automacao/original/<path:subpath>,infraestrutura,Proxy/menu do modulo; destino depende do parametro
-app.py,3942,automacao_proxy,"GET,POST,PUT,PATCH,DELETE",/apps/automacao/,infraestrutura,Proxy/menu do modulo; destino depende do parametro
-app.py,3942,automacao_proxy,"GET,POST,PUT,PATCH,DELETE",/apps/automacao/<path:subpath>,infraestrutura,Proxy/menu do modulo; destino depende do parametro
-app.py,4385,nanoponto_proxy_root,"GET,POST,PUT,PATCH,DELETE",/apps/nanoponto,fora_do_contrato,Modulo desativado no Rio Branco
-app.py,4391,nanoponto_original_root,"GET,POST,PUT,PATCH,DELETE",/apps/nanoponto/original,fora_do_contrato,Modulo desativado no Rio Branco
-app.py,4398,nanoponto_original_proxy,"GET,POST,PUT,PATCH,DELETE",/apps/nanoponto/original/,fora_do_contrato,Modulo desativado no Rio Branco
-app.py,4398,nanoponto_original_proxy,"GET,POST,PUT,PATCH,DELETE",/apps/nanoponto/original/<path:subpath>,fora_do_contrato,Modulo desativado no Rio Branco
-app.py,4405,nanoponto_proxy,"GET,POST,PUT,PATCH,DELETE",/apps/nanoponto/,fora_do_contrato,Modulo desativado no Rio Branco
-app.py,4405,nanoponto_proxy,"GET,POST,PUT,PATCH,DELETE",/apps/nanoponto/<path:subpath>,fora_do_contrato,Modulo desativado no Rio Branco
-app.py,4850,zap_public_webhook_proxy,"GET,POST",/apps/zap/webhooks/whatsapp,infraestrutura,Proxy/menu do modulo; destino depende do parametro
-app.py,4855,zap_public_uploads_proxy,GET,/apps/zap/public/uploads/<path:subpath>,infraestrutura,Proxy/menu do modulo; destino depende do parametro
-app.py,4861,zap_proxy_root,"GET,POST,PUT,PATCH,DELETE",/apps/zap,infraestrutura,Proxy/menu do modulo; destino depende do parametro
-app.py,4867,zap_original_root,"GET,POST,PUT,PATCH,DELETE",/apps/zap/original,infraestrutura,Proxy/menu do modulo; destino depende do parametro
-app.py,4874,zap_original_proxy,"GET,POST,PUT,PATCH,DELETE",/apps/zap/original/,infraestrutura,Proxy/menu do modulo; destino depende do parametro
-app.py,4874,zap_original_proxy,"GET,POST,PUT,PATCH,DELETE",/apps/zap/original/<path:subpath>,infraestrutura,Proxy/menu do modulo; destino depende do parametro
-app.py,4881,zap_proxy,"GET,POST,PUT,PATCH,DELETE",/apps/zap/,infraestrutura,Proxy/menu do modulo; destino depende do parametro
-app.py,4881,zap_proxy,"GET,POST,PUT,PATCH,DELETE",/apps/zap/<path:subpath>,infraestrutura,Proxy/menu do modulo; destino depende do parametro
-app.py,5166,nanostore_proxy_root,"GET,POST,PUT,PATCH,DELETE",/apps/nanostore,fora_do_contrato,Modulo desativado no Rio Branco
-app.py,5172,nanostore_original_root,"GET,POST,PUT,PATCH,DELETE",/apps/nanostore/original,fora_do_contrato,Modulo desativado no Rio Branco
-app.py,5179,nanostore_original_proxy,"GET,POST,PUT,PATCH,DELETE",/apps/nanostore/original/,fora_do_contrato,Modulo desativado no Rio Branco
-app.py,5179,nanostore_original_proxy,"GET,POST,PUT,PATCH,DELETE",/apps/nanostore/original/<path:subpath>,fora_do_contrato,Modulo desativado no Rio Branco
-app.py,5186,nanostore_proxy,"GET,POST,PUT,PATCH,DELETE",/apps/nanostore/,fora_do_contrato,Modulo desativado no Rio Branco
-app.py,5186,nanostore_proxy,"GET,POST,PUT,PATCH,DELETE",/apps/nanostore/<path:subpath>,fora_do_contrato,Modulo desativado no Rio Branco
-app.py,5385,gpsmusical_static_root,GET,/apps/gpsmusical,fora_do_contrato,Modulo desativado no Rio Branco
-app.py,5391,gpsmusical_original_root,GET,/apps/gpsmusical/original,fora_do_contrato,Modulo desativado no Rio Branco
-app.py,5397,gpsmusical_original_static,GET,/apps/gpsmusical/original/<path:subpath>,fora_do_contrato,Modulo desativado no Rio Branco
-app.py,5403,gpsmusical_static,GET,/apps/gpsmusical/<path:subpath>,fora_do_contrato,Modulo desativado no Rio Branco
-app.py,5409,bpa_static_root,GET,/apps/bpa,fora_do_contrato,Modulo desativado no Rio Branco
-app.py,5415,bpa_original_root,GET,/apps/bpa/original,fora_do_contrato,Modulo desativado no Rio Branco
-app.py,5421,bpa_original_static,GET,/apps/bpa/original/<path:subpath>,fora_do_contrato,Modulo desativado no Rio Branco
-app.py,5427,bpa_static,GET,/apps/bpa/<path:subpath>,fora_do_contrato,Modulo desativado no Rio Branco
-app.py,5433,tatoo_static_root,GET,/apps/tatoo,fora_do_contrato,Modulo desativado no Rio Branco
-app.py,5439,tatoo_original_root,GET,/apps/tatoo/original,fora_do_contrato,Modulo desativado no Rio Branco
-app.py,5445,tatoo_original_static,GET,/apps/tatoo/original/<path:subpath>,fora_do_contrato,Modulo desativado no Rio Branco
-app.py,5451,tatoo_static,GET,/apps/tatoo/<path:subpath>,fora_do_contrato,Modulo desativado no Rio Branco
-app.py,6213,chamados_bootstrap_api,GET,/apps/chamados/api/bootstrap,acao_da_tela,/apps/chamados?view=chamados
-app.py,6315,chamados_agenda_api,"GET,POST",/apps/chamados/api/agenda,acao_da_tela,/apps/chamados?view=agenda
-app.py,6370,chamados_agenda_update_api,PUT,/apps/chamados/api/agenda/<int:agenda_id>,acao_da_tela,/apps/chamados?view=agenda
-app.py,6420,chamados_tickets_api,"GET,POST",/apps/chamados/api/tickets,acao_da_tela,/apps/chamados?view=chamados
-app.py,6508,chamados_ticket_api,"GET,PUT",/apps/chamados/api/tickets/<int:chamado_id>,acao_da_tela,/apps/chamados?view=chamados
-app.py,6630,chamados_intervention_api,POST,/apps/chamados/api/tickets/<int:chamado_id>/interventions,acao_da_tela,/apps/chamados?view=chamados
-app.py,6698,chamados_intervention_update_api,PUT,/apps/chamados/api/tickets/<int:chamado_id>/interventions/<int:intervencao_id>,acao_da_tela,/apps/chamados?view=chamados
-app.py,6770,chamados_similar_api,GET,/apps/chamados/api/similar,acao_da_tela,/apps/chamados?view=historico
-app.py,6787,chamados_documents_api,"GET,POST",/apps/chamados/api/documents,acao_da_tela,/apps/chamados?view=documentos
-app.py,6901,chamados_document_update_api,PUT,/apps/chamados/api/documents/<int:document_id>,acao_da_tela,/apps/chamados?view=documentos
-app.py,7000,chamados_document_download_api,GET,/apps/chamados/api/documents/<int:document_id>/download,acao_da_tela,/apps/chamados?view=documentos
-app.py,7024,chamados_static_root,GET,/apps/chamados,acao_da_tela,/apps/chamados?view=chamados
-app.py,7030,chamados_original_root,GET,/apps/chamados/original,acao_da_tela,/apps/chamados?view=chamados
-app.py,7036,chamados_original_static,GET,/apps/chamados/original/<path:subpath>,acao_da_tela,/apps/chamados?view=chamados
-app.py,7042,chamados_static,GET,/apps/chamados/<path:subpath>,acao_da_tela,/apps/chamados?view=chamados
-app.py,8632,tecnologia_backup_jobs_api,GET,/apps/tecnologia/api/backup/jobs,acao_da_tela,/apps/tecnologia#backup-planos
-app.py,8664,tecnologia_backup_create_api,POST,/apps/tecnologia/api/backup/jobs,acao_da_tela,/apps/tecnologia#backup-planos
-app.py,8705,tecnologia_backup_job_api,"PUT,DELETE",/apps/tecnologia/api/backup/jobs/<int:backup_id>,acao_da_tela,/apps/tecnologia#backup-planos
-app.py,8752,tecnologia_backup_rotate_token_api,POST,/apps/tecnologia/api/backup/jobs/<int:backup_id>/rotate-token,acao_da_tela,/apps/tecnologia#backup-planos
-app.py,8774,tecnologia_backup_run_now_api,POST,/apps/tecnologia/api/backup/jobs/<int:backup_id>/run-now,acao_da_tela,/apps/tecnologia#backup-planos
-app.py,8810,tecnologia_backup_agent_script_api,GET,/apps/tecnologia/api/backup/agent-script,acao_da_tela,/apps/tecnologia#backup-planos
-app.py,8824,tecnologia_backup_windows_installer_api,GET,/apps/tecnologia/api/backup/windows-installer,acao_da_tela,/apps/tecnologia#backup-planos
-app.py,8837,tecnologia_backup_agent_config_api,GET,/apps/tecnologia/api/backup/agent/<agent_id>/config,acao_da_tela,/apps/tecnologia#backup-planos
-app.py,8858,tecnologia_backup_agent_report_api,POST,/apps/tecnologia/api/backup/agent/<agent_id>/report,acao_da_tela,/apps/tecnologia#backup-planos
-app.py,8961,arduino_live_api,GET,/apps/automacao/api/arduino,infraestrutura,Proxy/menu do modulo; destino depende do parametro
-app.py,8961,arduino_live_api,GET,/apps/tecnologia/api/sensors/<int:device_id>,acao_da_tela,/apps/tecnologia#dashboard
-app.py,8961,arduino_live_api,GET,/apps/tecnologia/api/network/<int:device_id>/sensors,acao_da_tela,/apps/tecnologia#dashboard
-app.py,8969,tecnologia_network_api,GET,/apps/tecnologia/api/network,acao_da_tela,/apps/tecnologia#dashboard
-app.py,8978,tecnologia_network_scan_api,POST,/apps/tecnologia/api/network/scan,acao_da_tela,/apps/tecnologia#dashboard
-app.py,9002,tecnologia_network_device_api,GET,/apps/tecnologia/api/network/<int:device_id>,acao_da_tela,/apps/tecnologia#dashboard
-app.py,9025,tecnologia_overview_api,GET,/apps/tecnologia/api/overview,acao_da_tela,/apps/tecnologia#dashboard
-app.py,9045,tecnologia_alert_config_api,"GET,PUT",/apps/tecnologia/api/alerts/config,acao_da_tela,/apps/tecnologia#config
-app.py,9065,tecnologia_alert_test_email_api,POST,/apps/tecnologia/api/alerts/test-email,acao_da_tela,/apps/tecnologia#config
-app.py,9092,tecnologia_probe_api,POST,/apps/tecnologia/api/probe,acao_da_tela,/apps/tecnologia#dashboard
-app.py,9108,tecnologia_speed_test_api,POST,/apps/tecnologia/api/speed-test,acao_da_tela,/apps/tecnologia#dashboard
-app.py,9119,tecnologia_speed_history_api,GET,/apps/tecnologia/api/speed-history,acao_da_tela,/apps/tecnologia#dashboard
-app.py,9145,tecnologia_history_api,GET,/apps/tecnologia/api/history,acao_da_tela,/apps/tecnologia#historico
-app.py,9187,tecnologia_link_usage_history_api,GET,/apps/tecnologia/api/link-usage-history,acao_da_tela,/apps/tecnologia#ocupacao-link
-app.py,9244,tecnologia_printer_usage_api,GET,/apps/tecnologia/api/devices/<int:device_id>/print-usage,acao_da_tela,/apps/tecnologia#equipamentos
-app.py,9298,tecnologia_create_device_api,POST,/apps/tecnologia/api/devices,acao_da_tela,/apps/tecnologia#equipamentos
-app.py,9367,tecnologia_device_api,"PUT,DELETE",/apps/tecnologia/api/devices/<int:device_id>,acao_da_tela,/apps/tecnologia#equipamentos
-app.py,9445,tecnologia_discover_printers_api,POST,/apps/tecnologia/api/discover-printers,acao_da_tela,/apps/tecnologia#dashboard
-app.py,9472,tecnologia_discover_computers_api,POST,/apps/tecnologia/api/discover-computers,acao_da_tela,/apps/tecnologia#dashboard
-app.py,9494,tecnologia_static_root,GET,/apps/tecnologia,acao_da_tela,/apps/tecnologia#dashboard
-app.py,9501,tecnologia_original_root,GET,/apps/tecnologia/original,acao_da_tela,/apps/tecnologia#dashboard
-app.py,9507,tecnologia_original_static,GET,/apps/tecnologia/original/<path:subpath>,acao_da_tela,/apps/tecnologia#dashboard
-app.py,9513,tecnologia_static,GET,/apps/tecnologia/<path:subpath>,acao_da_tela,/apps/tecnologia#dashboard
-app.py,9675,financeiro_page,GET,/apps/financeiro,fora_do_contrato,Modulo desativado no Rio Branco
-app.py,9699,financeiro_original_page,GET,/apps/financeiro/original,fora_do_contrato,Modulo desativado no Rio Branco
-app.py,9722,financeiro_static,GET,/apps/financeiro/static/<path:filename>,fora_do_contrato,Modulo desativado no Rio Branco
-app.py,9735,financeiro_state_api,"GET,PUT",/apps/financeiro/api/state,fora_do_contrato,Modulo desativado no Rio Branco
-app.py,9772,financeiro_titles_report_pdf_api,POST,/apps/financeiro/api/titles-report-pdf,fora_do_contrato,Modulo desativado no Rio Branco
-app.py,9855,financeiro_import_pdf_api,POST,/apps/financeiro/api/import-pdf,fora_do_contrato,Modulo desativado no Rio Branco
-app.py,9885,financeiro_import_installments_pdf_api,POST,/apps/financeiro/api/import-installments-pdf,fora_do_contrato,Modulo desativado no Rio Branco
-app.py,9915,finance_reminders_run,POST,/api/finance/reminders/run,fora_do_contrato,Modulo desativado no Rio Branco
-app.py,9921,finance_ai_status,GET,/api/finance/ai-status,fora_do_contrato,Modulo desativado no Rio Branco
-app.py,9933,finance_purchase_research,POST,/api/finance/purchase-research,fora_do_contrato,Modulo desativado no Rio Branco
-app.py,9939,finance_attachments,"GET,POST,DELETE",/api/finance/attachments,fora_do_contrato,Modulo desativado no Rio Branco
-app.py,10023,finance_attachment_payment_code_info,GET,/api/finance/attachments/payment-code-info,fora_do_contrato,Modulo desativado no Rio Branco
-app.py,10044,finance_attachment_payment_code_image,GET,/api/finance/attachments/payment-code-image,fora_do_contrato,Modulo desativado no Rio Branco
-app.py,10096,finance_pix_code,POST,/api/finance/pix-code,fora_do_contrato,Modulo desativado no Rio Branco
-app.py,10138,finance_attachment_decode,POST,/api/finance/attachments/decode,fora_do_contrato,Modulo desativado no Rio Branco
-app.py,10143,api_login,POST,/api/login,infraestrutura,"Sessao unica, contrato, catalogo ou verificacao de saude"
-app.py,10184,api_logout,POST,/api/logout,infraestrutura,"Sessao unica, contrato, catalogo ou verificacao de saude"
-app.py,10191,api_me,GET,/api/me,infraestrutura,"Sessao unica, contrato, catalogo ou verificacao de saude"
-app.py,10200,api_apps,GET,/api/apps,infraestrutura,"Sessao unica, contrato, catalogo ou verificacao de saude"
-app.py,10209,api_client_contracts,GET,/api/clientes-modulos,infraestrutura,"Sessao unica, contrato, catalogo ou verificacao de saude"
-app.py,10215,api_active_client_contract,GET,/api/clientes-modulos/ativo,infraestrutura,"Sessao unica, contrato, catalogo ou verificacao de saude"
-app.py,10235,api_create_client_contract,POST,/api/clientes-modulos/clientes,infraestrutura,"Sessao unica, contrato, catalogo ou verificacao de saude"
-app.py,10248,api_update_client_contract,PUT,/api/clientes-modulos/clientes/<client_id>,infraestrutura,"Sessao unica, contrato, catalogo ou verificacao de saude"
-app.py,10263,api_delete_client_contract,DELETE,/api/clientes-modulos/clientes/<client_id>,infraestrutura,"Sessao unica, contrato, catalogo ou verificacao de saude"
-app.py,10276,api_config_theme,POST,/api/config/theme,acao_da_tela,/config
+app.py,2283,login_page,GET,/login,infraestrutura,"Sessao unica, contrato, catalogo ou verificacao de saude"
+app.py,2291,portal,GET,/,infraestrutura,Entrada do cliente / Configurar
+app.py,2308,select_cloud_client,GET,/cloud/client/<client_id>,infraestrutura,Entrada do cliente / Configurar
+app.py,2320,config_page,GET,/config,infraestrutura,Entrada do cliente / Configurar
+app.py,2332,api_config_logo,"POST,DELETE",/api/config/logo,acao_da_tela,/config
+app.py,2586,api_users,GET,/api/usuarios,acao_da_tela,/config
+app.py,2596,api_update_user,POST,/api/usuarios,acao_da_tela,/config
+app.py,2596,api_update_user,PUT,/api/usuarios/<int:user_id>,acao_da_tela,/config
+app.py,2679,api_delete_user,DELETE,/api/usuarios/<int:user_id>,acao_da_tela,/config
+app.py,2705,api_backup_export,GET,/api/backup/export,acao_da_tela,/config
+app.py,2722,api_backup_import,POST,/api/backup/import,acao_da_tela,/config
+app.py,2747,workflow_kanban_page,GET,/workflow/<app_key>,infraestrutura,Proxy/menu do modulo; destino depende do parametro
+app.py,2961,healthz_riob,GET,/healthz/riob,infraestrutura,"Sessao unica, contrato, catalogo ou verificacao de saude"
+app.py,3406,riob_proxy,"GET,POST,PUT,PATCH,DELETE,OPTIONS",/apps/riob,infraestrutura,Proxy/menu do modulo; destino depende do parametro
+app.py,3406,riob_proxy,"GET,POST,PUT,PATCH,DELETE,OPTIONS",/apps/riob/,infraestrutura,Proxy/menu do modulo; destino depende do parametro
+app.py,3406,riob_proxy,"GET,POST,PUT,PATCH,DELETE,OPTIONS",/apps/riob/<path:subpath>,infraestrutura,Proxy/menu do modulo; destino depende do parametro
+app.py,3442,riob_module_proxy,"GET,POST,PUT,PATCH,DELETE,OPTIONS",/apps/<app_key>/riob,infraestrutura,Proxy/menu do modulo; destino depende do parametro
+app.py,3442,riob_module_proxy,"GET,POST,PUT,PATCH,DELETE,OPTIONS",/apps/<app_key>/riob/,infraestrutura,Proxy/menu do modulo; destino depende do parametro
+app.py,3442,riob_module_proxy,"GET,POST,PUT,PATCH,DELETE,OPTIONS",/apps/<app_key>/riob/<path:subpath>,infraestrutura,Proxy/menu do modulo; destino depende do parametro
+app.py,3459,app_placeholder,GET,/apps/<app_key>,infraestrutura,Proxy/menu do modulo; destino depende do parametro
+app.py,3924,automacao_proxy_root,"GET,POST,PUT,PATCH,DELETE",/apps/automacao,infraestrutura,Proxy/menu do modulo; destino depende do parametro
+app.py,3930,automacao_original_root,"GET,POST,PUT,PATCH,DELETE",/apps/automacao/original,infraestrutura,Proxy/menu do modulo; destino depende do parametro
+app.py,3937,automacao_original_proxy,"GET,POST,PUT,PATCH,DELETE",/apps/automacao/original/,infraestrutura,Proxy/menu do modulo; destino depende do parametro
+app.py,3937,automacao_original_proxy,"GET,POST,PUT,PATCH,DELETE",/apps/automacao/original/<path:subpath>,infraestrutura,Proxy/menu do modulo; destino depende do parametro
+app.py,3944,automacao_proxy,"GET,POST,PUT,PATCH,DELETE",/apps/automacao/,infraestrutura,Proxy/menu do modulo; destino depende do parametro
+app.py,3944,automacao_proxy,"GET,POST,PUT,PATCH,DELETE",/apps/automacao/<path:subpath>,infraestrutura,Proxy/menu do modulo; destino depende do parametro
+app.py,4387,nanoponto_proxy_root,"GET,POST,PUT,PATCH,DELETE",/apps/nanoponto,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,4393,nanoponto_original_root,"GET,POST,PUT,PATCH,DELETE",/apps/nanoponto/original,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,4400,nanoponto_original_proxy,"GET,POST,PUT,PATCH,DELETE",/apps/nanoponto/original/,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,4400,nanoponto_original_proxy,"GET,POST,PUT,PATCH,DELETE",/apps/nanoponto/original/<path:subpath>,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,4407,nanoponto_proxy,"GET,POST,PUT,PATCH,DELETE",/apps/nanoponto/,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,4407,nanoponto_proxy,"GET,POST,PUT,PATCH,DELETE",/apps/nanoponto/<path:subpath>,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,4852,zap_public_webhook_proxy,"GET,POST",/apps/zap/webhooks/whatsapp,infraestrutura,Proxy/menu do modulo; destino depende do parametro
+app.py,4857,zap_public_uploads_proxy,GET,/apps/zap/public/uploads/<path:subpath>,infraestrutura,Proxy/menu do modulo; destino depende do parametro
+app.py,4863,zap_proxy_root,"GET,POST,PUT,PATCH,DELETE",/apps/zap,infraestrutura,Proxy/menu do modulo; destino depende do parametro
+app.py,4869,zap_original_root,"GET,POST,PUT,PATCH,DELETE",/apps/zap/original,infraestrutura,Proxy/menu do modulo; destino depende do parametro
+app.py,4876,zap_original_proxy,"GET,POST,PUT,PATCH,DELETE",/apps/zap/original/,infraestrutura,Proxy/menu do modulo; destino depende do parametro
+app.py,4876,zap_original_proxy,"GET,POST,PUT,PATCH,DELETE",/apps/zap/original/<path:subpath>,infraestrutura,Proxy/menu do modulo; destino depende do parametro
+app.py,4883,zap_proxy,"GET,POST,PUT,PATCH,DELETE",/apps/zap/,infraestrutura,Proxy/menu do modulo; destino depende do parametro
+app.py,4883,zap_proxy,"GET,POST,PUT,PATCH,DELETE",/apps/zap/<path:subpath>,infraestrutura,Proxy/menu do modulo; destino depende do parametro
+app.py,5168,nanostore_proxy_root,"GET,POST,PUT,PATCH,DELETE",/apps/nanostore,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,5174,nanostore_original_root,"GET,POST,PUT,PATCH,DELETE",/apps/nanostore/original,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,5181,nanostore_original_proxy,"GET,POST,PUT,PATCH,DELETE",/apps/nanostore/original/,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,5181,nanostore_original_proxy,"GET,POST,PUT,PATCH,DELETE",/apps/nanostore/original/<path:subpath>,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,5188,nanostore_proxy,"GET,POST,PUT,PATCH,DELETE",/apps/nanostore/,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,5188,nanostore_proxy,"GET,POST,PUT,PATCH,DELETE",/apps/nanostore/<path:subpath>,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,5387,gpsmusical_static_root,GET,/apps/gpsmusical,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,5393,gpsmusical_original_root,GET,/apps/gpsmusical/original,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,5399,gpsmusical_original_static,GET,/apps/gpsmusical/original/<path:subpath>,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,5405,gpsmusical_static,GET,/apps/gpsmusical/<path:subpath>,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,5411,bpa_static_root,GET,/apps/bpa,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,5417,bpa_original_root,GET,/apps/bpa/original,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,5423,bpa_original_static,GET,/apps/bpa/original/<path:subpath>,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,5429,bpa_static,GET,/apps/bpa/<path:subpath>,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,5435,tatoo_static_root,GET,/apps/tatoo,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,5441,tatoo_original_root,GET,/apps/tatoo/original,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,5447,tatoo_original_static,GET,/apps/tatoo/original/<path:subpath>,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,5453,tatoo_static,GET,/apps/tatoo/<path:subpath>,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,6215,chamados_bootstrap_api,GET,/apps/chamados/api/bootstrap,acao_da_tela,/apps/chamados?view=chamados
+app.py,6317,chamados_agenda_api,"GET,POST",/apps/chamados/api/agenda,acao_da_tela,/apps/chamados?view=agenda
+app.py,6372,chamados_agenda_update_api,PUT,/apps/chamados/api/agenda/<int:agenda_id>,acao_da_tela,/apps/chamados?view=agenda
+app.py,6422,chamados_tickets_api,"GET,POST",/apps/chamados/api/tickets,acao_da_tela,/apps/chamados?view=chamados
+app.py,6510,chamados_ticket_api,"GET,PUT",/apps/chamados/api/tickets/<int:chamado_id>,acao_da_tela,/apps/chamados?view=chamados
+app.py,6632,chamados_intervention_api,POST,/apps/chamados/api/tickets/<int:chamado_id>/interventions,acao_da_tela,/apps/chamados?view=chamados
+app.py,6700,chamados_intervention_update_api,PUT,/apps/chamados/api/tickets/<int:chamado_id>/interventions/<int:intervencao_id>,acao_da_tela,/apps/chamados?view=chamados
+app.py,6772,chamados_similar_api,GET,/apps/chamados/api/similar,acao_da_tela,/apps/chamados?view=historico
+app.py,6789,chamados_documents_api,"GET,POST",/apps/chamados/api/documents,acao_da_tela,/apps/chamados?view=documentos
+app.py,6903,chamados_document_update_api,PUT,/apps/chamados/api/documents/<int:document_id>,acao_da_tela,/apps/chamados?view=documentos
+app.py,7002,chamados_document_download_api,GET,/apps/chamados/api/documents/<int:document_id>/download,acao_da_tela,/apps/chamados?view=documentos
+app.py,7026,chamados_static_root,GET,/apps/chamados,acao_da_tela,/apps/chamados?view=chamados
+app.py,7032,chamados_original_root,GET,/apps/chamados/original,acao_da_tela,/apps/chamados?view=chamados
+app.py,7038,chamados_original_static,GET,/apps/chamados/original/<path:subpath>,acao_da_tela,/apps/chamados?view=chamados
+app.py,7044,chamados_static,GET,/apps/chamados/<path:subpath>,acao_da_tela,/apps/chamados?view=chamados
+app.py,8634,tecnologia_backup_jobs_api,GET,/apps/tecnologia/api/backup/jobs,acao_da_tela,/apps/tecnologia#backup-planos
+app.py,8666,tecnologia_backup_create_api,POST,/apps/tecnologia/api/backup/jobs,acao_da_tela,/apps/tecnologia#backup-planos
+app.py,8707,tecnologia_backup_job_api,"PUT,DELETE",/apps/tecnologia/api/backup/jobs/<int:backup_id>,acao_da_tela,/apps/tecnologia#backup-planos
+app.py,8754,tecnologia_backup_rotate_token_api,POST,/apps/tecnologia/api/backup/jobs/<int:backup_id>/rotate-token,acao_da_tela,/apps/tecnologia#backup-planos
+app.py,8776,tecnologia_backup_run_now_api,POST,/apps/tecnologia/api/backup/jobs/<int:backup_id>/run-now,acao_da_tela,/apps/tecnologia#backup-planos
+app.py,8812,tecnologia_backup_agent_script_api,GET,/apps/tecnologia/api/backup/agent-script,acao_da_tela,/apps/tecnologia#backup-planos
+app.py,8826,tecnologia_backup_windows_installer_api,GET,/apps/tecnologia/api/backup/windows-installer,acao_da_tela,/apps/tecnologia#backup-planos
+app.py,8839,tecnologia_backup_agent_config_api,GET,/apps/tecnologia/api/backup/agent/<agent_id>/config,acao_da_tela,/apps/tecnologia#backup-planos
+app.py,8860,tecnologia_backup_agent_report_api,POST,/apps/tecnologia/api/backup/agent/<agent_id>/report,acao_da_tela,/apps/tecnologia#backup-planos
+app.py,8963,arduino_live_api,GET,/apps/automacao/api/arduino,infraestrutura,Proxy/menu do modulo; destino depende do parametro
+app.py,8963,arduino_live_api,GET,/apps/tecnologia/api/sensors/<int:device_id>,acao_da_tela,/apps/tecnologia#dashboard
+app.py,8963,arduino_live_api,GET,/apps/tecnologia/api/network/<int:device_id>/sensors,acao_da_tela,/apps/tecnologia#dashboard
+app.py,8971,tecnologia_network_api,GET,/apps/tecnologia/api/network,acao_da_tela,/apps/tecnologia#dashboard
+app.py,8980,tecnologia_network_scan_api,POST,/apps/tecnologia/api/network/scan,acao_da_tela,/apps/tecnologia#dashboard
+app.py,9004,tecnologia_network_device_api,GET,/apps/tecnologia/api/network/<int:device_id>,acao_da_tela,/apps/tecnologia#dashboard
+app.py,9027,tecnologia_overview_api,GET,/apps/tecnologia/api/overview,acao_da_tela,/apps/tecnologia#dashboard
+app.py,9047,tecnologia_alert_config_api,"GET,PUT",/apps/tecnologia/api/alerts/config,acao_da_tela,/apps/tecnologia#config
+app.py,9067,tecnologia_alert_test_email_api,POST,/apps/tecnologia/api/alerts/test-email,acao_da_tela,/apps/tecnologia#config
+app.py,9094,tecnologia_probe_api,POST,/apps/tecnologia/api/probe,acao_da_tela,/apps/tecnologia#dashboard
+app.py,9110,tecnologia_speed_test_api,POST,/apps/tecnologia/api/speed-test,acao_da_tela,/apps/tecnologia#dashboard
+app.py,9121,tecnologia_speed_history_api,GET,/apps/tecnologia/api/speed-history,acao_da_tela,/apps/tecnologia#dashboard
+app.py,9147,tecnologia_history_api,GET,/apps/tecnologia/api/history,acao_da_tela,/apps/tecnologia#historico
+app.py,9189,tecnologia_link_usage_history_api,GET,/apps/tecnologia/api/link-usage-history,acao_da_tela,/apps/tecnologia#ocupacao-link
+app.py,9246,tecnologia_printer_usage_api,GET,/apps/tecnologia/api/devices/<int:device_id>/print-usage,acao_da_tela,/apps/tecnologia#equipamentos
+app.py,9300,tecnologia_create_device_api,POST,/apps/tecnologia/api/devices,acao_da_tela,/apps/tecnologia#equipamentos
+app.py,9369,tecnologia_device_api,"PUT,DELETE",/apps/tecnologia/api/devices/<int:device_id>,acao_da_tela,/apps/tecnologia#equipamentos
+app.py,9447,tecnologia_discover_printers_api,POST,/apps/tecnologia/api/discover-printers,acao_da_tela,/apps/tecnologia#dashboard
+app.py,9474,tecnologia_discover_computers_api,POST,/apps/tecnologia/api/discover-computers,acao_da_tela,/apps/tecnologia#dashboard
+app.py,9496,tecnologia_static_root,GET,/apps/tecnologia,acao_da_tela,/apps/tecnologia#dashboard
+app.py,9503,tecnologia_original_root,GET,/apps/tecnologia/original,acao_da_tela,/apps/tecnologia#dashboard
+app.py,9509,tecnologia_original_static,GET,/apps/tecnologia/original/<path:subpath>,acao_da_tela,/apps/tecnologia#dashboard
+app.py,9515,tecnologia_static,GET,/apps/tecnologia/<path:subpath>,acao_da_tela,/apps/tecnologia#dashboard
+app.py,9677,financeiro_page,GET,/apps/financeiro,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,9701,financeiro_original_page,GET,/apps/financeiro/original,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,9724,financeiro_static,GET,/apps/financeiro/static/<path:filename>,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,9737,financeiro_state_api,"GET,PUT",/apps/financeiro/api/state,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,9774,financeiro_titles_report_pdf_api,POST,/apps/financeiro/api/titles-report-pdf,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,9857,financeiro_import_pdf_api,POST,/apps/financeiro/api/import-pdf,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,9887,financeiro_import_installments_pdf_api,POST,/apps/financeiro/api/import-installments-pdf,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,9917,finance_reminders_run,POST,/api/finance/reminders/run,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,9923,finance_ai_status,GET,/api/finance/ai-status,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,9935,finance_purchase_research,POST,/api/finance/purchase-research,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,9941,finance_attachments,"GET,POST,DELETE",/api/finance/attachments,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,10025,finance_attachment_payment_code_info,GET,/api/finance/attachments/payment-code-info,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,10046,finance_attachment_payment_code_image,GET,/api/finance/attachments/payment-code-image,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,10098,finance_pix_code,POST,/api/finance/pix-code,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,10140,finance_attachment_decode,POST,/api/finance/attachments/decode,fora_do_contrato,Modulo desativado no Rio Branco
+app.py,10145,api_login,POST,/api/login,infraestrutura,"Sessao unica, contrato, catalogo ou verificacao de saude"
+app.py,10186,api_logout,POST,/api/logout,infraestrutura,"Sessao unica, contrato, catalogo ou verificacao de saude"
+app.py,10193,api_me,GET,/api/me,infraestrutura,"Sessao unica, contrato, catalogo ou verificacao de saude"
+app.py,10202,api_apps,GET,/api/apps,infraestrutura,"Sessao unica, contrato, catalogo ou verificacao de saude"
+app.py,10211,api_client_contracts,GET,/api/clientes-modulos,infraestrutura,"Sessao unica, contrato, catalogo ou verificacao de saude"
+app.py,10217,api_active_client_contract,GET,/api/clientes-modulos/ativo,infraestrutura,"Sessao unica, contrato, catalogo ou verificacao de saude"
+app.py,10237,api_create_client_contract,POST,/api/clientes-modulos/clientes,infraestrutura,"Sessao unica, contrato, catalogo ou verificacao de saude"
+app.py,10250,api_update_client_contract,PUT,/api/clientes-modulos/clientes/<client_id>,infraestrutura,"Sessao unica, contrato, catalogo ou verificacao de saude"
+app.py,10265,api_delete_client_contract,DELETE,/api/clientes-modulos/clientes/<client_id>,infraestrutura,"Sessao unica, contrato, catalogo ou verificacao de saude"
+app.py,10278,api_config_theme,POST,/api/config/theme,acao_da_tela,/config
 apps/riob/source/server.py,13579,relatorio,GET,/api/relatorio,acao_da_tela,/apps/riob#gestaofrota:escala
 apps/riob/source/server.py,13594,status,GET,/api/status,acao_da_tela,/apps/riob#config:status
 apps/riob/source/server.py,13690,monitor_boot,GET,/api/monitor_boot,acao_da_tela,/apps/riob#monitor:automacao
@@ -418,16 +418,19 @@ apps/automacao/source/app.py,915,excluir_tag_driver,GET,/sensores/drivers/tags/<
 apps/automacao/source/app.py,944,api_ultima_leitura_driver,GET,/api/sensores/drivers/<int:id>/ultima,acao_da_tela,/apps/automacao/sensores/drivers
 apps/automacao/source/app.py,968,api_ler_driver,POST,/api/sensores/drivers/<int:id>/ler,acao_da_tela,/apps/automacao/sensores/drivers
 apps/automacao/source/app.py,975,receber_leitura,POST,/api/leitura,acao_da_tela,/apps/automacao/motores
-apps/impressoras/source/backend.py,213,impressoras_root,GET,/apps/impressoras,acao_da_tela,/apps/impressoras#fila
-apps/impressoras/source/backend.py,217,impressoras_original,GET,/apps/impressoras/original,acao_da_tela,/apps/impressoras#fila
-apps/impressoras/source/backend.py,221,impressoras_overview,GET,/apps/impressoras/api/overview,acao_da_tela,/apps/impressoras#monitor
-apps/impressoras/source/backend.py,246,impressoras_jobs,GET,/apps/impressoras/api/jobs,acao_da_tela,/apps/impressoras#historico
-apps/impressoras/source/backend.py,256,impressoras_submit,POST,/apps/impressoras/api/jobs,acao_da_tela,/apps/impressoras#fila
-apps/impressoras/source/backend.py,308,impressoras_release,POST,/apps/impressoras/api/jobs/<int:job_id>/release,acao_da_tela,/apps/impressoras#fila
-apps/impressoras/source/backend.py,325,impressoras_release_all,POST,/apps/impressoras/api/jobs/release-all,acao_da_tela,/apps/impressoras#fila
-apps/impressoras/source/backend.py,349,impressoras_cancel,POST,/apps/impressoras/api/jobs/<int:job_id>/cancel,acao_da_tela,/apps/impressoras#fila
-apps/impressoras/source/backend.py,363,impressoras_printer_action,POST,/apps/impressoras/api/printers/<path:printer>/<action>,acao_da_tela,/apps/impressoras#gerenciar
-apps/impressoras/source/backend.py,373,impressoras_static,GET,/apps/impressoras/<path:subpath>,acao_da_tela,/apps/impressoras#fila
+apps/impressoras/source/backend.py,222,impressoras_root,GET,/apps/impressoras,acao_da_tela,/apps/impressoras#fila
+apps/impressoras/source/backend.py,226,impressoras_original,GET,/apps/impressoras/original,acao_da_tela,/apps/impressoras#fila
+apps/impressoras/source/backend.py,230,impressoras_overview,GET,/apps/impressoras/api/overview,acao_da_tela,/apps/impressoras#monitor
+apps/impressoras/source/backend.py,255,impressoras_jobs,GET,/apps/impressoras/api/jobs,acao_da_tela,/apps/impressoras#historico
+apps/impressoras/source/backend.py,265,impressoras_submit,POST,/apps/impressoras/api/jobs,acao_da_tela,/apps/impressoras#fila
+apps/impressoras/source/backend.py,317,impressoras_user_links,GET,/apps/impressoras/api/user-links,acao_da_tela,/apps/impressoras#fila
+apps/impressoras/source/backend.py,353,impressoras_save_user_link,POST,/apps/impressoras/api/user-links,acao_da_tela,/apps/impressoras#fila
+apps/impressoras/source/backend.py,397,impressoras_delete_user_link,DELETE,/apps/impressoras/api/user-links/<int:link_id>,acao_da_tela,/apps/impressoras#fila
+apps/impressoras/source/backend.py,427,impressoras_release,POST,/apps/impressoras/api/jobs/<int:job_id>/release,acao_da_tela,/apps/impressoras#fila
+apps/impressoras/source/backend.py,444,impressoras_release_all,POST,/apps/impressoras/api/jobs/release-all,acao_da_tela,/apps/impressoras#fila
+apps/impressoras/source/backend.py,468,impressoras_cancel,POST,/apps/impressoras/api/jobs/<int:job_id>/cancel,acao_da_tela,/apps/impressoras#fila
+apps/impressoras/source/backend.py,482,impressoras_printer_action,POST,/apps/impressoras/api/printers/<path:printer>/<action>,acao_da_tela,/apps/impressoras#gerenciar
+apps/impressoras/source/backend.py,492,impressoras_static,GET,/apps/impressoras/<path:subpath>,acao_da_tela,/apps/impressoras#fila
 apps/zap/source/app/routes.py,446,index,GET,/,acao_da_tela,/apps/zap
 apps/zap/source/app/routes.py,463,login,"GET,POST",/login,integracao,Sessao/WhatsApp/Google; nao e pagina de menu
 apps/zap/source/app/routes.py,479,logout,GET,/logout,integracao,Sessao/WhatsApp/Google; nao e pagina de menu

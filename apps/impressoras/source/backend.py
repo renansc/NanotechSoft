@@ -99,8 +99,17 @@ def register_printer_module(app, *, get_conn, current_user,
             try:
                 cur.execute("SELECT id, login FROM usuarios WHERE ativo=1")
                 users = {str(row["login"]).casefold(): int(row["id"]) for row in cur.fetchall()}
+                cur.execute(
+                    """
+                    SELECT v.cups_usuario, v.usuario_id
+                    FROM impressoras_vinculos_usuario v
+                    INNER JOIN usuarios u ON u.id=v.usuario_id AND u.ativo=1
+                    """
+                )
+                links = {str(row["cups_usuario"]).casefold(): int(row["usuario_id"]) for row in cur.fetchall()}
                 for job in jobs:
-                    user_id = users.get(job["cupsUser"].casefold())
+                    cups_key = job["cupsUser"].casefold()
+                    user_id = links.get(cups_key) or users.get(cups_key)
                     cur.execute(
                         """
                         INSERT INTO impressoras_trabalhos
@@ -303,6 +312,116 @@ def register_printer_module(app, *, get_conn, current_user,
         conn.close()
         return jsonify({"ok": True, "id": row_id, "cupsJobId": cups_job_id,
                         "message": "Arquivo enviado e retido. Digite sua senha para liberar."}), 201
+
+    @app.route("/apps/impressoras/api/user-links")
+    def impressoras_user_links():
+        _actor, error = require("gerenciar")
+        if error:
+            return error
+        sync_jobs()
+        conn = get_conn()
+        cur = conn.cursor(dictionary=True)
+        try:
+            cur.execute(
+                """
+                SELECT v.id, v.cups_usuario, v.usuario_id, u.login, u.nome
+                FROM impressoras_vinculos_usuario v
+                INNER JOIN usuarios u ON u.id=v.usuario_id
+                ORDER BY LOWER(v.cups_usuario)
+                """
+            )
+            links = cur.fetchall()
+            cur.execute("SELECT id, login, nome FROM usuarios WHERE ativo=1 ORDER BY nome, login")
+            users = cur.fetchall()
+            cur.execute(
+                """
+                SELECT DISTINCT t.cups_usuario
+                FROM impressoras_trabalhos t
+                LEFT JOIN impressoras_vinculos_usuario v
+                  ON LOWER(v.cups_usuario)=LOWER(t.cups_usuario)
+                WHERE t.origem='CUPS' AND t.cups_usuario<>'' AND v.id IS NULL
+                ORDER BY t.cups_usuario
+                """
+            )
+            detected = [row["cups_usuario"] for row in cur.fetchall()]
+        finally:
+            cur.close()
+            conn.close()
+        return jsonify({"ok": True, "links": links, "users": users, "detectedCupsUsers": detected})
+
+    @app.route("/apps/impressoras/api/user-links", methods=["POST"])
+    def impressoras_save_user_link():
+        actor, error = require("gerenciar")
+        if error:
+            return error
+        payload = request.get_json(silent=True) or {}
+        cups_user = str(payload.get("cupsUser") or "").strip()
+        try:
+            user_id = int(payload.get("userId"))
+        except (TypeError, ValueError):
+            user_id = 0
+        if not cups_user or len(cups_user) > 120 or not user_id:
+            return jsonify({"erro": "informe o usuario CUPS e o usuario ativo do portal"}), 400
+        conn = get_conn()
+        cur = conn.cursor(dictionary=True)
+        try:
+            cur.execute("SELECT id FROM usuarios WHERE id=%s AND ativo=1", (user_id,))
+            if not cur.fetchone():
+                return jsonify({"erro": "usuario do portal nao encontrado ou inativo"}), 404
+            cur.execute(
+                """
+                INSERT INTO impressoras_vinculos_usuario
+                    (cups_usuario, usuario_id, atualizado_por_id)
+                VALUES (%s,%s,%s)
+                ON DUPLICATE KEY UPDATE
+                    usuario_id=VALUES(usuario_id),
+                    atualizado_por_id=VALUES(atualizado_por_id)
+                """,
+                (cups_user, user_id, actor["id"]),
+            )
+            cur.execute(
+                """
+                UPDATE impressoras_trabalhos
+                SET usuario_id=%s
+                WHERE origem='CUPS' AND LOWER(cups_usuario)=LOWER(%s)
+                """,
+                (user_id, cups_user),
+            )
+            conn.commit()
+        finally:
+            cur.close()
+            conn.close()
+        return jsonify({"ok": True, "message": "Vinculo salvo e aplicado ao historico."})
+
+    @app.route("/apps/impressoras/api/user-links/<int:link_id>", methods=["DELETE"])
+    def impressoras_delete_user_link(link_id):
+        _actor, error = require("gerenciar")
+        if error:
+            return error
+        conn = get_conn()
+        cur = conn.cursor(dictionary=True)
+        try:
+            cur.execute("SELECT cups_usuario FROM impressoras_vinculos_usuario WHERE id=%s", (link_id,))
+            link = cur.fetchone()
+            if not link:
+                return jsonify({"erro": "vinculo nao encontrado"}), 404
+            cups_user = link["cups_usuario"]
+            cur.execute("DELETE FROM impressoras_vinculos_usuario WHERE id=%s", (link_id,))
+            cur.execute("SELECT id FROM usuarios WHERE ativo=1 AND LOWER(login)=LOWER(%s)", (cups_user,))
+            matching_user = cur.fetchone()
+            cur.execute(
+                """
+                UPDATE impressoras_trabalhos
+                SET usuario_id=%s
+                WHERE origem='CUPS' AND LOWER(cups_usuario)=LOWER(%s)
+                """,
+                ((matching_user or {}).get("id"), cups_user),
+            )
+            conn.commit()
+        finally:
+            cur.close()
+            conn.close()
+        return jsonify({"ok": True})
 
     @app.route("/apps/impressoras/api/jobs/<int:job_id>/release", methods=["POST"])
     def impressoras_release(job_id):

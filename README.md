@@ -294,6 +294,8 @@ segura. O `cups-guard` configura a retencao padrao no servidor para arquivos
 enviados pelo portal e trabalhos dos computadores clientes que usam o padrao da
 fila; eles somente sao liberados quando o proprio usuario confirma a senha da
 sessao. A senha nao e armazenada.
+Em Configurar, administradores podem vincular usuarios informados pelo CUPS a
+contas do portal quando o login do computador for diferente.
 No Nanotech o modulo aparece como aplicativo e, no Rio Branco, como tarefas em
 Workflow, Monitor, Relatorios e Configurar. Os recursos `fila`, `monitor`,
 `historico` e `gerenciar` ficam em Config > Usuarios e acessos, sem concessao

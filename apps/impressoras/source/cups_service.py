@@ -9,6 +9,7 @@ import argparse
 import datetime as dt
 import json
 import os
+import re
 import subprocess
 import threading
 import time
@@ -186,6 +187,10 @@ class CupsService:
                 rows = conn.getJobs(which_jobs="all", my_jobs=False, requested_attributes=attrs)
             except Exception as exc:
                 raise CupsUnavailable(f"Falha ao consultar trabalhos no CUPS: {exc}") from exc
+        job_users = self._lpstat_job_users() if any(
+            not str(item.get("job-originating-user-name") or "").strip()
+            for item in rows.values()
+        ) else {}
         result = []
         for job_id, item in rows.items():
             state_code = int(item.get("job-state") or 0)
@@ -196,7 +201,7 @@ class CupsService:
             result.append({
                 "cupsJobId": int(job_id),
                 "printer": printer_uri.rstrip("/").rsplit("/", 1)[-1],
-                "cupsUser": str(item.get("job-originating-user-name") or ""),
+                "cupsUser": str(item.get("job-originating-user-name") or job_users.get(int(job_id)) or ""),
                 "document": str(item.get("job-name") or f"Trabalho {job_id}"),
                 "state": STATE_NAMES.get(state_code, "DESCONHECIDO"),
                 "held": state_code == 4,
@@ -210,6 +215,32 @@ class CupsService:
                 "details": {"stateReasons": item.get("job-state-reasons") or []},
             })
         return result
+
+    @staticmethod
+    def _lpstat_job_users():
+        """Recover job owners hidden by CUPS IPP privacy defaults."""
+        environment = os.environ.copy()
+        environment["LC_ALL"] = "C"
+        try:
+            completed = subprocess.run(
+                ["lpstat", "-W", "all", "-o"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=20,
+                env=environment,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return {}
+        if completed.returncode:
+            return {}
+        users = {}
+        pattern = re.compile(r"^\S+-(\d+)\s+(\S+)\s+\d+\s+")
+        for line in completed.stdout.splitlines():
+            match = pattern.match(line)
+            if match:
+                users[int(match.group(1))] = match.group(2)
+        return users
 
     def submit_held(self, printer, path, title, copies=1):
         options = {"job-hold-until": "indefinite", "copies": str(max(1, int(copies)))}

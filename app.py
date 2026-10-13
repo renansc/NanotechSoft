@@ -1926,6 +1926,8 @@ def enforce_app_permission():
                     required_printers = {"fila", "monitor", "gerenciar"}
                 elif printer_api == "jobs" and request.method in {"GET", "HEAD"} and request.args.get("scope") == "all":
                     required_printers = {"historico"}
+                elif printer_api == "user-links" or printer_api.startswith("user-links/"):
+                    required_printers = {"gerenciar"}
                 elif printer_api.startswith("printers/"):
                     required_printers = {"gerenciar"}
                 elif printer_api.startswith("jobs"):

@@ -65,8 +65,11 @@ class PrinterModuleTests(unittest.TestCase):
         self.assertIn("/apps/impressoras", routes)
         self.assertIn("/apps/impressoras/api/jobs", routes)
         self.assertIn("/apps/impressoras/api/jobs/release-all", routes)
+        self.assertIn("/apps/impressoras/api/user-links", routes)
+        self.assertIn("/apps/impressoras/api/user-links/<int:link_id>", routes)
         schema = (ROOT / "sql/schema.sql").read_text(encoding="utf-8")
         self.assertIn("CREATE TABLE IF NOT EXISTS impressoras_trabalhos", schema)
+        self.assertIn("CREATE TABLE IF NOT EXISTS impressoras_vinculos_usuario", schema)
         table_sql = schema[schema.index("CREATE TABLE IF NOT EXISTS impressoras_trabalhos"):].split(";", 1)[0]
         self.assertNotIn("senha", table_sql)
 
@@ -82,6 +85,23 @@ class PrinterModuleTests(unittest.TestCase):
         self.assertEqual(3, jobs[0]["requestedPages"])
         self.assertEqual(0, jobs[0]["printedPages"])
         self.assertEqual("pessoa", jobs[0]["cupsUser"])
+
+    def test_lpstat_recovers_owner_hidden_by_ipp_privacy(self):
+        service = cups_service.CupsService()
+        connection = FakeConnection()
+        jobs = connection.getJobs()
+        jobs[17].pop("job-originating-user-name")
+        connection.getJobs = mock.Mock(return_value=jobs)
+        completed = mock.Mock(
+            returncode=0,
+            stdout="Fila_A-17   usuario-do-pc   131072   Tue Oct 13 14:50:57 2026\n",
+            stderr="",
+        )
+        with mock.patch.object(service, "_connection", return_value=connection), \
+             mock.patch.object(cups_service.subprocess, "run", return_value=completed) as run:
+            normalized = service.jobs()
+        self.assertEqual("usuario-do-pc", normalized[0]["cupsUser"])
+        self.assertEqual(["lpstat", "-W", "all", "-o"], run.call_args.args[0])
 
     def test_guard_sets_and_verifies_secure_queue_default(self):
         service = cups_service.CupsService()
@@ -112,12 +132,21 @@ class PrinterModuleTests(unittest.TestCase):
         self.assertIn('apps.impressoras.source.cups_service", "--watch"', compose)
         self.assertIn('CUPS_GUARD_SERVICE="cups-guard"', (ROOT / "deploy/lib/common.sh").read_text(encoding="utf-8"))
 
+    def test_user_mapping_ui_reuses_manage_permission(self):
+        page = (ROOT / "apps/impressoras/source/index.html").read_text(encoding="utf-8")
+        script = (ROOT / "apps/impressoras/source/app.js").read_text(encoding="utf-8")
+        backend = (ROOT / "apps/impressoras/source/backend.py").read_text(encoding="utf-8")
+        self.assertIn('id="userLinkForm"', page)
+        self.assertIn('/user-links', script)
+        self.assertIn('require("gerenciar")', backend)
+
     def test_api_permissions_are_server_side(self):
         user = {"id": 42, "login": "pessoa", "perfil": "usuario"}
         cases = [
             ("/apps/impressoras/api/overview", "GET", "monitor"),
             ("/apps/impressoras/api/jobs", "POST", "fila"),
             ("/apps/impressoras/api/jobs?scope=all", "GET", "historico"),
+            ("/apps/impressoras/api/user-links", "GET", "gerenciar"),
             ("/apps/impressoras/api/printers/Fila_A/pause", "POST", "gerenciar"),
         ]
         for path, method, resource in cases:

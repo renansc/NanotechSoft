@@ -50,6 +50,6 @@
     {"recurso": "fila", "nome": "Fila pessoal: enviar, liberar com senha e cancelar trabalhos proprios"},
     {"recurso": "monitor", "nome": "Consultar estado das impressoras e filas CUPS"},
     {"recurso": "historico", "nome": "Historico: quem, documento, paginas, data e hora"},
-    {"recurso": "gerenciar", "nome": "Gerenciar CUPS: pausar, retomar, aceitar, rejeitar e cancelar trabalhos"}
+    {"recurso": "gerenciar", "nome": "Gerenciar CUPS, filas e vinculos entre usuarios do computador e do portal"}
   ]
 }
