@@ -49,6 +49,11 @@
           "status": "contratado"
         },
         {
+          "slug": "impressoras",
+          "nome": "Impressoras",
+          "status": "contratado"
+        },
+        {
           "slug": "riob-email",
           "nome": "Email",
           "status": "contratado"

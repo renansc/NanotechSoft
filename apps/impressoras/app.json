@@ -1,0 +1,55 @@
+{
+  "app_key": "impressoras",
+  "nome": "Impressoras",
+  "descricao": "Filas CUPS, liberacao segura e auditoria de impressoes.",
+  "url": "/apps/impressoras#fila",
+  "standalone_url": "/apps/impressoras#fila",
+  "icone": "printer",
+  "ordem": 125,
+  "ativo": true,
+  "origem": "nanotech",
+  "source_dir": "apps/impressoras/source",
+  "temas": ["rio_branco", "autoblue", "fin-blue", "pontobege", "zapgreen", "pacsred"],
+  "menu_groups": {
+    "workflow": [
+      {"nome": "Fila segura", "url": "/apps/impressoras#fila", "recurso": "fila"}
+    ],
+    "monitor": [
+      {"nome": "Estado das impressoras", "url": "/apps/impressoras#monitor", "recurso": "monitor"}
+    ],
+    "relatorios": [
+      {"nome": "Historico de impressoes", "url": "/apps/impressoras#historico", "recurso": "historico"}
+    ]
+  },
+  "config_groups": {
+    "impressoras": [
+      {"nome": "Gerenciar filas CUPS", "url": "/apps/impressoras#gerenciar", "recurso": "gerenciar"}
+    ]
+  },
+  "menu_profiles": {
+    "rio-branco": {
+      "menu_groups": {
+        "workflow": [
+          {"nome": "Fila segura", "url": "/apps/impressoras#fila", "recurso": "fila"}
+        ],
+        "monitor": [
+          {"nome": "Estado das impressoras", "url": "/apps/impressoras#monitor", "recurso": "monitor"}
+        ],
+        "relatorios": [
+          {"nome": "Historico de impressoes", "url": "/apps/impressoras#historico", "recurso": "historico"}
+        ]
+      },
+      "config_groups": {
+        "config": [
+          {"nome": "Gerenciar filas CUPS", "url": "/apps/impressoras#gerenciar", "recurso": "gerenciar"}
+        ]
+      }
+    }
+  },
+  "access_resources": [
+    {"recurso": "fila", "nome": "Fila pessoal: enviar, liberar com senha e cancelar trabalhos proprios"},
+    {"recurso": "monitor", "nome": "Consultar estado das impressoras e filas CUPS"},
+    {"recurso": "historico", "nome": "Historico: quem, documento, paginas, data e hora"},
+    {"recurso": "gerenciar", "nome": "Gerenciar CUPS: pausar, retomar, aceitar, rejeitar e cancelar trabalhos"}
+  ]
+}

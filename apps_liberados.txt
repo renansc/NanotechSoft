@@ -7,5 +7,6 @@ riob-chat-ia
 riob-telefonia
 chamados
 tecnologia
+impressoras
 riob-email
 riob-xml

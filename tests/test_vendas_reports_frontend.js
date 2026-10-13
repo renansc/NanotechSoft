@@ -54,7 +54,8 @@ async function testLastFilterWins(name, nextName) {
     apiFetch: () => { const item = deferred(); pending.push(item); return item.promise; },
     renderRelatorioVendas: data => rendered.push(data.id),
     _vendasRenderComparativoAnual: data => rendered.push(data.id),
-    _vendasAtualizarInfoAnual: () => {}, alert: () => { throw Error('erro inesperado'); },
+    _vendasAnualPermitido: () => true, fecharVendasAnualPopup: () => {}, renderRankingVendasAnual: () => {},
+    _vendasAtualizarInfoAnual: () => {}, _vendasAplicarPeriodo: () => {}, _vendasRenderCabecalho: () => {}, alert: () => { throw Error('erro inesperado'); },
   });
   vm.runInContext(source.slice(source.indexOf(`async function ${name}(`),
     source.indexOf(`function ${nextName}(`)), context);
@@ -72,7 +73,7 @@ async function testLastFilterWins(name, nextName) {
 
 (async () => {
   await testMonths();
-  await testLastFilterWins('carregarRelatorioVendas', 'renderRelatorioPrecoMedioVendas');
+  await testLastFilterWins('carregarRelatorioVendas', 'ordenarResultados');
   await testLastFilterWins('carregarRelatorioVendasAnual', 'limparFiltrosRelatorioVendasAnual');
   console.log('OK: meses compartilhados, expiracao, falhas, invalidacao e ordem de respostas mensal/anual');
 })().catch(error => { console.error(error); process.exitCode = 1; });

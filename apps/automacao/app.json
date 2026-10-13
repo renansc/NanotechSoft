@@ -77,6 +77,14 @@
         "url": "/apps/automacao/alarmes",
         "recurso": "*"
       }
+    ],
+    "monitor": [
+      {
+        "nome": "Arduino — sensores em tempo real",
+        "url": "/apps/automacao/arduino",
+        "recurso": "arduino",
+        "recurso_nome": "Arduino: leituras e status dos sensores"
+      }
     ]
   },
   "workflow_cards": [
@@ -139,6 +147,12 @@
             "nome": "Tempo real",
             "url": "/apps/automacao/tempo-real",
             "recurso": "*"
+          },
+          {
+            "nome": "Arduino — sensores em tempo real",
+            "url": "/apps/automacao/arduino",
+            "recurso": "arduino",
+            "recurso_nome": "Arduino: leituras e status dos sensores"
           }
         ],
         "gestao": [

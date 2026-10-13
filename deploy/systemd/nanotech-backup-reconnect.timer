@@ -1,0 +1,11 @@
+[Unit]
+Description=Verificar reconexao do destino de backup a cada dois minutos
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=2min
+AccuracySec=10s
+Unit=nanotech-backup-reconnect.service
+
+[Install]
+WantedBy=timers.target

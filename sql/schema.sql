@@ -48,6 +48,40 @@ CREATE TABLE IF NOT EXISTS usuario_app_permissoes (
     FOREIGN KEY (usuario_id) REFERENCES usuarios(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS impressoras_trabalhos (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    cups_job_id INT NOT NULL,
+    impressora VARCHAR(255) NOT NULL,
+    usuario_id INT NULL,
+    cups_usuario VARCHAR(120) NOT NULL DEFAULT '',
+    documento VARCHAR(500) NOT NULL DEFAULT '',
+    arquivo_original VARCHAR(255) NOT NULL DEFAULT '',
+    mime_type VARCHAR(120) NOT NULL DEFAULT '',
+    origem VARCHAR(20) NOT NULL DEFAULT 'CUPS',
+    estado VARCHAR(24) NOT NULL DEFAULT 'PENDENTE',
+    retido TINYINT(1) NOT NULL DEFAULT 0,
+    paginas_solicitadas INT NULL,
+    paginas_impressas INT NULL,
+    copias INT NOT NULL DEFAULT 1,
+    tamanho_kb INT NULL,
+    enviado_em DATETIME(3) NULL,
+    processado_em DATETIME(3) NULL,
+    concluido_em DATETIME(3) NULL,
+    liberado_em DATETIME(3) NULL,
+    liberado_por_id INT NULL,
+    cancelado_em DATETIME(3) NULL,
+    detalhes JSON NULL,
+    sincronizado_em DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_impressoras_cups_job (cups_job_id),
+    INDEX idx_impressoras_usuario_data (usuario_id, enviado_em),
+    INDEX idx_impressoras_estado_data (estado, enviado_em),
+    INDEX idx_impressoras_impressora_data (impressora, enviado_em),
+    FOREIGN KEY (usuario_id) REFERENCES usuarios(id) ON DELETE SET NULL,
+    FOREIGN KEY (liberado_por_id) REFERENCES usuarios(id) ON DELETE SET NULL
+);
+
 CREATE TABLE IF NOT EXISTS financeiro_registros (
     id INT AUTO_INCREMENT PRIMARY KEY,
     colecao VARCHAR(80) NOT NULL,

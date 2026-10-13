@@ -96,11 +96,24 @@ def page_candidates(url, items):
     return []
 
 
-def api_destinations(app, path, method):
+def api_destinations(app, path, method, query=None):
     """Tasks using a route. Shared reads may serve several independently allowed tasks."""
     read = method in {'GET', 'HEAD'}
     if app == 'riob':
         p = path.removeprefix('/apps/riob/').removeprefix('api/')
+        if p == 'vendas/relatorio':
+            query = query or {}
+            report = str(query.get('tipo_relatorio') or query.get('tipo') or '').strip().lower().replace('-', '_')
+            if query.get('visao') == 'anual_clientes':
+                return ['/apps/riob#vendas:relatorio_anual']
+            if report in {'percentual_vendas_anual', 'vendas_anual', 'percentual_anual'}:
+                return ['/apps/riob#dashboard:vendas_anual' if query.get('origem') == 'dashboard'
+                        else '/apps/riob#vendas:relatorio_anual']
+            if report in {'preco_medio', 'preco_medio_vendedor_cidade', 'preco_medio_cidade'}:
+                return ['/apps/riob#vendas:preco_medio']
+            if report in {'variacao_preco', 'variacaopreco', 'variacao_venda', 'variacaovenda'}:
+                section = 'dashboard' if query.get('origem') == 'dashboard' and query.get('visao') != 'precos_cidade' else 'vendas'
+                return ['/apps/riob#' + section + ':variacao_preco']
         # Longest prefix wins; no inheritance from an unrelated sibling menu.
         routes = {
             'custo-diario/dashboard': ['custoProdutoDashboard'],
@@ -115,6 +128,7 @@ def api_destinations(app, path, method):
             'dashboard_vendas': ['dashboard:vendas_anual','dashboard:bonificacoes','dashboard:variacao_preco','dashboard:grupos_embalagem'],
             'estoque/relatorio-comprometido': ['relatorios:estoque_comprometido'],
             'estoque/contagens/relatorio': ['relatorios:contagens'], 'estoque/contagens': ['estoque:contagem'],
+            'estoque/perdas': ['estoque:perdas'],
             'estoque/produtos': ['cadastros:estoque_produtos'], 'estoque/grupos': ['cadastros:estoque_grupos'],
             'estoque/posicao': ['estoque:posicao'], 'estoque/movimentos': ['estoque:movimentar'],
             'estoque': ['estoque:movimentar'], 'estoque/lotes': ['estoque:rastreio'],
@@ -126,16 +140,19 @@ def api_destinations(app, path, method):
             'estoque/conferencias': ['estoque:importar_xml_bipe','estoque:importar_xml_auto'],
             'vendas/orcamentos/config': ['config:orcamentos'],
             'vendas/orcamentos/relatorio': ['relatorios:orcamentos'], 'vendas/orcamentos': ['vendas:orcamento'],
+            'vendas/pdvs-totais': ['vendas:pdvs_totais'],
             'vendas/config': ['config:vendas'], 'vendas/cache': ['config:base_vendas'],
             'vendas/sellout': ['workflow:vendas_diario_importar'],
+            'vendas/diario/status-leitura': ['workflow:vendas_diario_importar'],
             'vendas/diario/importar': ['workflow:vendas_diario_importar'],
             'vendas/diario/cargas-semana': ['relatorios:cargas_semana'],
+            'vendas/diario/relatorio': ['vendas:relatorio_diario'],
             'vendas/diario/dashboard': ['dashboard:vendas_diario'],
             'vendas/diario': ['workflow:vendas_diario'],
             'vendas/relatorio/preco-medio': ['vendas:preco_medio'],
             'vendas/relatorio': ['vendas:relatorio','vendas:relatorio_anual','vendas:variacao_preco','vendas:grupos_embalagem','vendas:preco_medio'],
             'vendas/dashboard': ['dashboard:vendas_anual','dashboard:bonificacoes','dashboard:variacao_preco','dashboard:grupos_embalagem'],
-            'vendas/meses': ['vendas:relatorio','vendas:relatorio_anual','dashboard:vendas_anual','dashboard:vendas_diario'],
+            'vendas/meses': ['vendas:relatorio','vendas:relatorio_anual','vendas:variacao_preco','vendas:preco_medio','dashboard:vendas_anual','dashboard:vendas_diario'],
             'pontos_venda/importar_csv': ['vendas:pontosvenda_importar'],
             'pontos_venda/relatorio': ['vendas:pontosvenda_relatorio'], 'pontos_venda': ['vendas:pontosvenda'],
             'fretes': ['fretes'], 'devolucoes': ['devolucoes'],
@@ -147,7 +164,9 @@ def api_destinations(app, path, method):
             'compras/relatorio': ['relatorios:compras'], 'compras/previsao': ['compras:previsao'],
             'compras/fornecedores': ['cadastros:compras_fornecedores'],
             'compras/produtos': ['cadastros:compras_fornecedores'], 'compras/solicitacoes': ['workflow:compras'],
-            'abastecimentos': ['gestaofrota:abastecimento'], 'manutencoes': ['gestaofrota:manutencao'],
+            'abastecimentos': ['gestaofrota:abastecimento'],
+            'manutencoes/importacoes-txt': ['gestaofrota:manutencao'],
+            'manutencoes': ['gestaofrota:manutencao'],
             'trocas_oleo': ['gestaofrota:oleo'], 'trocas_pneu': ['gestaofrota:pneu'], 'lavagens': ['gestaofrota:lavagem'],
             'frota_resumo': ['gestaofrota:lista'], 'frota_historico': ['gestaofrota:lista'],
             'frota_relatorio': ['gestaofrota:relatorios'], 'relatorio': ['gestaofrota:relatorios'],
@@ -183,6 +202,7 @@ def api_destinations(app, path, method):
             views = ['backup-visao', 'backup-planos', 'backup-agentes'] if read else ['backup-planos']
             if p in {'backup/agent-script', 'backup/windows-installer'}: views = ['backup-agentes']
         elif p == 'network' or p.startswith('network/'): views = ['rede']
+        elif p.startswith('sensors/'): views = ['dashboard', 'equipamentos']
         elif p.startswith('alerts/'): views = ['config']
         elif p == 'link-usage-history': views = ['ocupacao-link']
         elif p in {'history', 'speed-history'}: views = ['historico']
@@ -193,6 +213,24 @@ def api_destinations(app, path, method):
         elif p.startswith('devices'): views = ['equipamentos', 'descoberta-impressoras', 'descoberta-computadores']
         elif p in {'probe', 'speed-test'}: views = ['dashboard']
         else: return []
+        return [prefix + view for view in views]
+    if app == 'impressoras':
+        prefix = '/apps/impressoras#'
+        p = path.removeprefix('/apps/impressoras/api/')
+        if p == 'overview':
+            views = ['fila', 'monitor', 'gerenciar']
+        elif p == 'jobs' and read:
+            views = ['historico'] if str((query or {}).get('scope') or '') == 'all' else ['fila']
+        elif p == 'jobs':
+            views = ['fila']
+        elif p == 'jobs/release-all' or (p.startswith('jobs/') and p.endswith('/release')):
+            views = ['fila']
+        elif p.startswith('jobs/') and p.endswith('/cancel'):
+            views = ['fila', 'gerenciar']
+        elif p.startswith('printers/'):
+            views = ['gerenciar']
+        else:
+            return []
         return [prefix + view for view in views]
     if app == 'chamados':
         p = path.removeprefix('/apps/chamados/api/')
@@ -209,6 +247,7 @@ def api_destinations(app, path, method):
         elif p.startswith('/setor/'): suffixes = ['/setores']
         elif p.startswith(('/api/maquinas', '/maquinas/')): suffixes = ['/maquinas']
         elif p.startswith(('/api/sensores/', '/sensores/drivers/')): suffixes = ['/sensores/drivers']
+        elif p == '/api/arduino': suffixes = ['/arduino', '/tempo-real']
         elif p == '/api/tempo-real': suffixes = ['/tempo-real']
         elif p.startswith(('/static/documentos/', '/documentacao/arquivos/')): suffixes = ['/documentacao', '/documentacao/cadastrar']
         else: return []

@@ -44,13 +44,13 @@
         "recurso": "compras"
       },
       {
-        "nome": "Vendas Diaria RioB",
+        "nome": "Vendas diarias - mes atual",
         "url": "/apps/riob#dashboard:vendas_diario",
         "recurso": "vendas",
-        "recurso_nome": "Vendas, relatorios mensais/anuais e importacoes (TXT, PDF e SELLOUT)"
+        "recurso_nome": "Vendas, relatorios diarios e mensais/anuais por periodo, RioB/CLT/autonomos e filtros compactos no desktop, grupos de embalagem com filtro de grupos e PDVs em popup e importacoes (TXT, PDF e SELLOUT unificado IND3/INDB) com status persistente por pasta; carteira de PDVs completa ou parcial; preço med.varia por cidade e produto; PDVs e preco medio em popup com ordenacao por valor e nome; ranking anual de vendedores e clientes por perda em hl, vendas em popup"
       },
       {
-        "nome": "Vendas Anual RioB",
+        "nome": "Vendas Anual RioB - ranking e vendas em popup",
         "url": "/apps/riob#dashboard:vendas_anual",
         "recurso": "vendas"
       },
@@ -220,6 +220,12 @@
         "nome": "Acerto de estoque RioB",
         "url": "/apps/riob#estoque:acerto",
         "recurso": "estoque"
+      },
+      {
+        "nome": "Baixas por perda",
+        "url": "/apps/riob#estoque:perdas",
+        "recurso": "estoque_perdas",
+        "recurso_nome": "Baixas por perda, desperdicio e justificativas de estoque"
       }
     ],
     "relatorios": [
@@ -250,14 +256,21 @@
         "recurso": "frota"
       },
       {
-        "nome": "Relatório RioB",
+        "nome": "Vendas",
         "url": "/apps/riob#vendas:relatorio",
         "recurso": "vendas"
       },
       {
-        "nome": "Vendas Anual RioB",
+        "nome": "Vendas Diario",
+        "url": "/apps/riob#vendas:relatorio_diario",
+        "recurso": "vendas",
+        "navigation_parent": "/apps/riob#vendas:relatorio"
+      },
+      {
+        "nome": "Vendas Anual RioB - ranking e vendas em popup",
         "url": "/apps/riob#vendas:relatorio_anual",
-        "recurso": "vendas"
+        "recurso": "vendas",
+        "navigation_parent": "/apps/riob#vendas:relatorio"
       },
       {
         "nome": "Contagens, desperdicio e sobras",
@@ -276,19 +289,22 @@
         "recurso": "vendas"
       },
       {
-        "nome": "Variacao de preco",
+        "nome": "preço med.varia - Variação por cidade e produto",
         "url": "/apps/riob#vendas:variacao_preco",
-        "recurso": "vendas"
+        "recurso": "vendas",
+        "navigation_parent": "/apps/riob#vendas:relatorio"
       },
       {
         "nome": "Grupos de embalagem",
         "url": "/apps/riob#vendas:grupos_embalagem",
-        "recurso": "vendas"
+        "recurso": "vendas",
+        "navigation_parent": "/apps/riob#vendas:relatorio"
       },
       {
-        "nome": "Preco medio",
+        "nome": "preço med.varia - Preço médio nos PDVs e PDF",
         "url": "/apps/riob#vendas:preco_medio",
-        "recurso": "vendas"
+        "recurso": "vendas",
+        "navigation_parent": "/apps/riob#vendas:relatorio"
       }
     ],
     "import_export": [
@@ -327,6 +343,13 @@
         "nome": "Base mensal de vendas",
         "url": "/apps/riob#config:base_vendas",
         "recurso": "config"
+      },
+      {
+        "nome": "Totais de PDVs por vendedor",
+        "url": "/apps/riob#vendas:pdvs_totais",
+        "grupo": "RioB",
+        "recurso": "vendas_pdvs",
+        "recurso_nome": "Importar PDF e atualizar carteira total de PDVs por vendedor"
       }
     ],
     "gestao": [
@@ -345,7 +368,8 @@
       {
         "nome": "Manutencoes",
         "url": "/apps/riob#gestaofrota:manutencao",
-        "recurso": "frota"
+        "recurso": "frota",
+        "recurso_nome": "Manutencoes da frota, conferencia de notas e importacao TXT/CSV"
       },
       {
         "nome": "Trocas de oleo",
@@ -479,10 +503,10 @@
             "nome": "Vendas anual",
             "url": "/apps/riob#dashboard:vendas_anual",
             "recurso": "vendas",
-            "recurso_nome": "Vendas, relatorios mensais/anuais e importacoes (TXT, PDF e SELLOUT)"
+            "recurso_nome": "Vendas, relatorios diarios e mensais/anuais por periodo, RioB/CLT/autonomos e filtros compactos no desktop, grupos de embalagem com filtro de grupos e PDVs em popup e importacoes (TXT, PDF e SELLOUT unificado IND3/INDB) com status persistente por pasta; carteira de PDVs completa ou parcial; preço med.varia por cidade e produto; PDVs e preco medio em popup com ordenacao por valor e nome; ranking anual de vendedores e clientes por perda em hl, vendas em popup"
           },
           {
-            "nome": "Vendas do dia",
+            "nome": "Vendas diarias - mes atual",
             "url": "/apps/riob#dashboard:vendas_diario",
             "recurso": "vendas"
           },
@@ -566,6 +590,12 @@
             "recurso": "vendas"
           },
           {
+            "nome": "Vendas Diario",
+            "url": "/apps/riob#vendas:relatorio_diario",
+            "recurso": "vendas",
+            "navigation_parent": "/apps/riob#vendas:relatorio"
+          },
+          {
             "nome": "Orcamentos gerados",
             "url": "/apps/riob#relatorios:orcamentos",
             "recurso": "vendas_orcamentos_relatorio",
@@ -603,9 +633,10 @@
             "recurso": "compras"
           },
           {
-            "nome": "Vendas Anual RioB",
+            "nome": "Vendas Anual RioB - ranking e vendas em popup",
             "url": "/apps/riob#vendas:relatorio_anual",
-            "recurso": "vendas"
+            "recurso": "vendas",
+            "navigation_parent": "/apps/riob#vendas:relatorio"
           },
           {
             "nome": "Visitas dos pontos de venda",
@@ -618,24 +649,27 @@
             "recurso": "vendas"
           },
           {
-            "nome": "Variacao de preco",
+            "nome": "preço med.varia - Variação por cidade e produto",
             "url": "/apps/riob#vendas:variacao_preco",
-            "recurso": "vendas"
+            "recurso": "vendas",
+            "navigation_parent": "/apps/riob#vendas:relatorio"
           },
           {
             "nome": "Grupos de embalagem",
             "url": "/apps/riob#vendas:grupos_embalagem",
-            "recurso": "vendas"
+            "recurso": "vendas",
+            "navigation_parent": "/apps/riob#vendas:relatorio"
           },
           {
-            "nome": "Preco medio",
+            "nome": "preço med.varia - Preço médio nos PDVs e PDF",
             "url": "/apps/riob#vendas:preco_medio",
-            "recurso": "vendas"
+            "recurso": "vendas",
+            "navigation_parent": "/apps/riob#vendas:relatorio"
           }
         ],
         "import_export": [
           {
-            "nome": "Vendas do dia",
+            "nome": "Importar Vendas Diario",
             "url": "/apps/riob#workflow:vendas_diario_importar",
             "recurso": "vendas"
           },
@@ -668,6 +702,13 @@
             "nome": "Base mensal de vendas",
             "url": "/apps/riob#config:base_vendas",
             "recurso": "config"
+          },
+          {
+            "nome": "Totais de PDVs por vendedor",
+            "url": "/apps/riob#vendas:pdvs_totais",
+            "grupo": "RioB",
+            "recurso": "vendas_pdvs",
+            "recurso_nome": "Importar PDF e atualizar carteira total de PDVs por vendedor"
           }
         ],
         "estoque": [
@@ -696,6 +737,12 @@
             "url": "/apps/riob#estoque:contagem",
             "recurso": "estoque_contagem",
             "recurso_nome": "Contagem por tipo (pallets, CX/PCT e unidades)"
+          },
+          {
+            "nome": "Baixas por perda",
+            "url": "/apps/riob#estoque:perdas",
+            "recurso": "estoque_perdas",
+            "recurso_nome": "Baixas por perda, desperdicio e justificativas de estoque"
           }
         ],
         "workflow": [
@@ -764,7 +811,8 @@
           {
             "nome": "Manutencoes",
             "url": "/apps/riob#gestaofrota:manutencao",
-            "recurso": "frota"
+            "recurso": "frota",
+            "recurso_nome": "Manutencoes da frota, conferencia de notas e importacao TXT/CSV"
           },
           {
             "nome": "Trocas de oleo",

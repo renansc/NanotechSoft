@@ -9,7 +9,7 @@ import menu_access as access
 
 USER = {'id': 42, 'perfil': 'usuario'}
 ROOT = Path(__file__).resolve().parents[1]
-KEYS = ['riob','automacao','tecnologia','chamados','riob-email','riob-xml','zap']
+KEYS = ['riob','automacao','tecnologia','impressoras','chamados','riob-email','riob-xml','zap']
 
 
 class IndividualMenuTests(unittest.TestCase):
@@ -51,6 +51,9 @@ class IndividualMenuTests(unittest.TestCase):
                ('tecnologia','#rede','/api/network','GET'),
                ('tecnologia','#rede','/api/network/7','GET'),
                ('tecnologia','#backup-agentes','/api/backup/windows-installer','GET'),
+               ('impressoras','#fila','/api/jobs','POST'),
+               ('impressoras','#historico','/api/jobs?scope=all','GET'),
+               ('impressoras','#gerenciar','/api/printers/HP/resume','POST'),
                ('automacao','/motores','/motor/novo','POST'),
                ('automacao','/sensores/drivers','/sensores/drivers/1','GET'),
                ('chamados','?view=agenda','?view=agenda','GET'),

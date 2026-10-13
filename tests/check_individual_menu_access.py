@@ -11,7 +11,7 @@ from playwright.sync_api import sync_playwright
 import app as portal
 import menu_access
 
-keys=['riob','automacao','tecnologia','chamados','riob-email','riob-xml','zap']
+keys=['riob','automacao','tecnologia','impressoras','chamados','riob-email','riob-xml','zap']
 apps=[portal.normalize_app(json.loads((ROOT/'apps'/key/'app.json').read_text())) for key in keys]
 admin={'id':1,'nome':'Administrador teste','perfil':'admin'}
 user={'id':42,'nome':'Pessoa teste','login':'pessoa','perfil':'usuario','ativo':True,

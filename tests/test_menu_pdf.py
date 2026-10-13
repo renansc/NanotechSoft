@@ -72,7 +72,10 @@ class MenuPdfTests(unittest.TestCase):
             for entry in entries:
                 url = entry["url"]
                 with self.subTest(app=item["app_key"], url=url):
-                    if url in exceptions:
+                    if entry.get('navigation_parent'):
+                        self.assertNotIn(url, links)
+                        self.assertIn(entry['navigation_parent'], links)
+                    elif url in exceptions:
                         self.assertNotIn(url, links)
                     else:
                         for destination in equivalents.get(url, [url]):

@@ -285,11 +285,22 @@
       </section>
 
       <section class="techView hidden" data-page="backup" data-recurso="backup">
-        <div class="kpiGrid backupKpis" data-backup-sections="visao">
-          <article class="kpi"><span>Planos ativos</span><strong id="backupKpiActive">0</strong><small>configurações em execução</small></article>
-          <article class="kpi warning"><span>Exigem atenção</span><strong id="backupKpiWarning">0</strong><small>agente sem contato ou falha</small></article>
-          <article class="kpi speed"><span>Último sucesso</span><strong id="backupKpiLastSuccess">—</strong><small>execução confirmada pelo agente</small></article>
+        <div data-backup-sections="visao planos">
+          <div id="backupCurrentStatus" role="status" aria-live="polite" class="diag">Consultando estado atual dos backups...</div>
         </div>
+        <div class="kpiGrid backupKpis" data-backup-sections="visao">
+          <article class="kpi"><span>Planos habilitados</span><strong id="backupKpiActive">0</strong><small>não confirma execução nem disponibilidade do disco</small></article>
+          <article class="kpi warning"><span>Exigem atenção</span><strong id="backupKpiWarning">0</strong><small>agente sem contato ou falha</small></article>
+          <article class="kpi"><span>Último sucesso registrado</span><strong id="backupKpiLastSuccess">—</strong><small>histórico; consulte o estado atual abaixo</small></article>
+        </div>
+
+        <section class="panel" data-backup-sections="visao">
+          <div class="panelHead"><h2>Estado atual dos backups</h2></div>
+          <div class="tableWrap"><table>
+            <thead><tr><th>Plano</th><th>Estado atual</th><th>Último contato</th><th>Destino</th></tr></thead>
+            <tbody id="backupHealthTable"><tr><td colspan="4">Consultando agentes...</td></tr></tbody>
+          </table></div>
+        </section>
 
         <section class="panel" data-backup-sections="planos">
           <div class="panelHead">

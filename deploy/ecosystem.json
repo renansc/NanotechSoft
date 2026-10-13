@@ -27,6 +27,7 @@
         "riob-telefonia",
         "chamados",
         "tecnologia",
+        "impressoras",
         "riob-email",
         "riob-xml"
       ]
@@ -49,6 +50,7 @@
         "riob-cameras",
         "chamados",
         "tecnologia",
+        "impressoras",
         "riob-esxi",
         "riob-email",
         "riob-xml",

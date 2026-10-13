@@ -1,9 +1,14 @@
 # SELLOUT mensal automatico
 
-O RioB consulta `smb://192.168.200.121/d/INDB/AnalyticsCTA/Dados/SELLOUT_M.CSV`
-pelo compartilhamento CIFS ja montado no host em `/media/serverwin`.
-O Compose expoe somente a pasta Dados em `/imports/sellout`, somente leitura.
-Credenciais SMB permanecem na montagem do host, fora do codigo.
+O RioB consulta e unifica estas duas fontes em cada leitura:
+
+- `smb://192.168.200.121/d/IND3/AnalyticsCTA/Dados/SELLOUT_M.CSV`;
+- `smb://192.168.200.121/d/INDB/AnalyticsCTA/Dados/SELLOUT_M.CSV`.
+
+Os compartilhamentos CIFS ja estao montados no host em `/media/serverwin`. O
+Compose expoe somente as duas pastas Dados, separadamente e em modo somente
+leitura, sob `/imports/sellout/IND3` e `/imports/sellout/INDB`. Credenciais SMB
+permanecem na montagem do host, fora do codigo.
 
 O arquivo verificado em setembro de 2026 possui 7.735 linhas, `Mes&Ano=09/2026`
 e campos Data, Data Pedido, Data NFe e Numero nf vazios. Trata-se de consolidado
@@ -15,10 +20,13 @@ cards diarios nem permite relatorios de volume por dia.
 ## Operacao
 
 - `RB_SELLOUT_M_AUTO=1` habilita a rotina no Compose local do RioB.
-- `RB_SELLOUT_M_HOST_DIR` define a pasta montada no host.
+- `RB_SELLOUT_M_HOST_DIR_IND3` e `RB_SELLOUT_M_HOST_DIR_INDB` definem as duas
+  pastas montadas no host.
 - A leitura automatica acontece uma vez por dia, as 08:00 no fuso
   `America/Sao_Paulo`. `RB_SELLOUT_M_INTERVALO_MINUTOS` deixou de ser utilizado.
-- Fora do Compose, definir tambem `RB_SELLOUT_M_ARQUIVO` com o caminho local.
+- Fora do Compose, `RB_SELLOUT_M_ARQUIVOS` recebe os caminhos separados por
+  `:` no Linux. `RB_SELLOUT_M_ARQUIVO` continua aceito para uma instalacao
+  antiga com fonte unica.
 - O startup apenas agenda a proxima ocorrencia das 08:00; nao importa o
   arquivo ao subir o app. Se o app iniciar depois desse horario, aguarda o dia
   seguinte. A rotina independe de navegador aberto e nao inicia no Render.
@@ -26,28 +34,41 @@ cards diarios nem permite relatorios de volume por dia.
   imediatamente, em qualquer horario. Essa leitura nao muda o agendamento das
   08:00. Falhas de SELLOUT nao impedem a leitura dos TXT/PDF, e a resposta mostra
   atualizado, sem alteracoes, desabilitado, em processamento ou erro.
+- Se outra varredura TXT/PDF estiver ativa quando o operador usar o botao, a
+  leitura completa fica em uma fila unica. Ao liberar o lock, ela executa TXT,
+  PDF, IND3 e INDB automaticamente; o pedido manual nao e mais descartado.
 - A varredura periodica existente de TXT/PDF continua sem ler o SELLOUT mensal.
   O botao nao depende de `RB_SELLOUT_M_AUTO`, que controla somente o agendador;
   a habilitacao de Vendas e as permissoes do usuario continuam obrigatorias.
 - Em caso de falha as 08:00, a proxima tentativa automatica ocorre no dia seguinte;
   o operador pode tentar antes pelo botao. O arquivo continua exigindo 60 segundos
   de estabilidade, inclusive na leitura manual.
-- O arquivo precisa estar sem modificacao ha pelo menos 60 segundos; tamanho
-  e mtime sao conferidos novamente depois da copia temporaria. O temporario
-  e removido ao terminar, inclusive em caso de falha.
+- Os dois arquivos precisam existir e estar sem modificacao ha pelo menos 60
+  segundos. Tamanho e mtime de ambos sao conferidos novamente depois das copias
+  temporarias. Se qualquer fonte estiver ausente, invalida ou mudar durante a
+  leitura, nenhuma competencia e substituida e a base anterior e preservada.
+  Os temporarios sao removidos ao terminar, inclusive em caso de falha.
 
 Os dados usam as tabelas existentes `vendas_relatorios_importados` e
 `vendas_relatorio_itens`, com um unico identificador `sellout-mensal-continuo`.
-SHA-256 do conteudo e assinatura das regras evitam reimportar um arquivo igual,
-mesmo quando sua data de modificacao muda. Um lock MySQL impede duas gravacoes
-simultaneas por processos diferentes.
+Uma assinatura SHA-256 conjunta dos dois conteudos e das regras evita reimportar
+o mesmo conjunto, mesmo quando a data de modificacao muda. Um lock MySQL impede
+duas gravacoes simultaneas por processos diferentes.
 
-Quando o arquivo muda, os meses presentes sao substituidos integralmente em
+Cada CSV e validado antes da uniao e os cabecalhos devem ser iguais. As linhas
+das duas bases sao concatenadas, inclusive quando o mesmo vendedor aparece em
+ambas. Uma linha integralmente identica em fontes diferentes e mantida apenas
+uma vez; repeticoes dentro do mesmo CSV sao preservadas porque podem representar
+vendas legitimas. Em 09/10/2026, IND3 continha 201 linhas e INDB 929, sem
+duplicatas cruzadas: a uniao validada tinha 1.130 linhas. O vendedor
+`020-ALEX SANDER` aparecia nas duas fontes, com 251 linhas somadas.
+
+Quando qualquer arquivo muda, os meses presentes na uniao sao substituidos integralmente em
 uma transacao junto com seus metadados. Isso atualiza valores consolidados,
 novos clientes/produtos e correcoes sem somar duas vezes o acumulado mensal.
 Meses ausentes sao preservados. Falha de leitura, competencia invalida, arquivo
 vazio ou falha SQL mantem a base anterior, geram log e permitem nova tentativa manual ou no proximo dia.
-Pressuposto: cada mes presente no arquivo e um consolidado completo daquele mes.
+Pressuposto: as duas fontes juntas formam o consolidado completo de cada mes presente.
 O produtor deve preferir publicar o CSV por troca atomica, pois nenhuma checagem
 de mtime pode provar a completude de um exportador pausado por longo periodo.
 
@@ -109,13 +130,44 @@ do banco antes de carregar indicadores. Relatorio e dashboard possuem seletor
 de mes. O resumo de bonificacoes le somente o mes escolhido, evitando
 materializar todo o historico para abrir uma tela mensal.
 
+Na tela Importar SELLOUT, abaixo do botao **Ler pastas automaticamente**, o
+quadro **Ultima leitura das pastas** permanece visivel depois de recarregar a
+pagina. Ele mostra separadamente TXT, PDF, SELLOUT IND3 e SELLOUT INDB, com
+data/hora, estado, arquivos, linhas e erros. Os estados possiveis incluem
+sucesso, sem alteracoes, sem arquivos, parcial, erro, em andamento,
+interrompido, desabilitado e nunca executado. Uma execucao marca imediatamente
+as fontes como em andamento; se o processo terminar sem concluir, elas passam a
+interrompido. A tentativa manual atualiza as quatro fontes;
+o agendador de TXT/PDF e o SELLOUT das 08:00 atualizam apenas suas fontes.
+O ultimo resultado fica em `RB_DATA_DIR/vendas-diario-ultima-leitura.json`, no
+volume persistente do RioB. Esse arquivo contem somente metadados operacionais,
+sem conteudo dos relatorios.
+
+TXT e PDF funcionam como pastas de entrada. Com
+`RB_VENDAS_DIARIO_LIMPAR_PROCESSADOS=1`, o Compose monta essas duas pastas para
+escrita e remove o arquivo somente depois de todas as cargas nele terem sido
+importadas, reativadas ou reconhecidas como ja importadas/sem vendas. Arquivos
+com erro de leitura, erro em qualquer pagina ou falha de importacao permanecem
+na origem para correcao e nova tentativa. A remocao valida que o arquivo esta
+dentro da pasta configurada. As duas fontes SELLOUT continuam montadas em modo
+somente leitura e nunca entram nessa limpeza.
+
 ## Acessos da leitura manual
 
 `POST /api/vendas/diario/importar` sem arquivo multipart aciona a leitura conjunta
-com `incluir_sellout=True`. O envio de TXT individual continua importando somente
+com `incluir_sellout=True`. O retorno `sellout` inclui `fontes`, `linhas_mes` e
+`duplicadas_ignoradas`; `ultima_leitura` traz o quadro persistido por fonte.
+`GET /api/vendas/diario` tambem retorna `ultima_leitura`, incluindo
+`em_andamento`, para reconstruir o quadro ao abrir a tela. O envio de TXT
+individual continua importando somente
 esse TXT. O recurso existente `riob:vendas` e mantido nos manifests e no servidor;
 o catalogo em Configurar > Usuarios e acessos o identifica como
 `Vendas e importacoes (TXT, PDF e SELLOUT)`. Nenhuma permissao e concedida
 automaticamente. O proxy valida a sessao e o recurso; Render bloqueia escritas.
 A leitura mensal continua atualizando consolidacoes mensais, sem confirmar cards
 diarios ou importar o historico por efeito colateral.
+
+`GET /api/vendas/diario/status-leitura` permite acompanhar a fila sem recarregar
+os dados do relatorio. Ele usa o mesmo item individual
+`workflow:vendas_diario_importar`; `manual_pendente=true` indica que a leitura
+completa pedida pelo botao ainda aguarda o termino da varredura atual.

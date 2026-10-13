@@ -59,6 +59,34 @@ itens e consultas repetidas, preservando os calculos e o recurso `riob:vendas`
 em Config > Usuarios e acessos. Veja o
 [diagnostico e validacao](docs/DIAGNOSTICO_DESEMPENHO_RELATORIOS_2026-09-24.md).
 
+Os relatorios de vendas compartilham cabecalho RioB/CLT/Autonomos, submenu e
+arquivo na mesma linha, e intervalo de datas inclusivo em todas as abas.
+Bonificacoes e Vendas Diario mantem os totais ao lado do submenu; no PC, datas,
+acoes e filtros ocupam uma unica linha. Seus indicadores ficam em uma linha
+acima da tabela e nao repetem o periodo ja informado nas datas.
+Grupos de embalagem dispensa os totais RioB/CLT/Autonomos e o seletor de mes:
+usa datas, vendedor e PDV na mesma linha no PC, com Atualizar e Limpar filtros.
+Resumo por Faixa ocupa a largura, seguido do Resumo do periodo. Selecionar
+um vendedor libera Ver PDVs, com lista e detalhe somente em popup. O botao
+Grupos ao lado do PDV permite marcar quais embalagens entram nos calculos,
+inclusive excluir os retornaveis individualmente. Neste relatorio, Astuba
+integra PET 2L e Agua conta como um unico grupo.
+Balcao/Outros ficam fora dos calculos; Astuba 2L tem grupo de preco separado
+(nos precos e variacoes; no mix de embalagens, integra PET 2L).
+Os tres autonomos anteriores foram preservados. Relatorios > RioB > Vendas
+concentra as cinco abas, sem atalhos duplicados para Diario e Anual. A aba
+Vendas Diario inclui consulta por dia/vendedor com o mesmo cabecalho compacto e
+filtros de periodo; o dashboard
+diario fica restrito ao mes corrente (America/Sao_Paulo).
+O recurso continua `riob:vendas`, com bloqueios individuais para cada atalho.
+Detalhes em [API de vendas](apps/riob/source/docs/API_E_DADOS.md#51-vendas-e-cache-de-importacao).
+O SELLOUT mensal dos relatorios combina as bases IND3 e INDB em uma unica carga
+atomica; vendedores presentes nas duas origens conservam todas as suas vendas.
+Pedidos manuais aguardam em fila quando a leitura TXT/PDF esta ocupada. TXT e
+PDF confirmados sao removidos das pastas de entrada para evitar acumulo; fontes
+com erro e os CSV SELLOUT sao preservados.
+Veja [SELLOUT automatico](apps/riob/source/docs/SELLOUT_AUTOMATICO.md).
+
 De fora do Docker, use:
 
 - MySQL do portal: `127.0.0.1:3307`.
@@ -213,6 +241,9 @@ Ela mantém o Portal neste repositório e referencia o PACS principal no
 de atualização do Senhor após 18h. Consulte
 `docs/ECOSSISTEMA_DEPLOYS.md`.
 
+As instalacoes independentes `linux-router/` e `router/` ficam fora do contexto
+Docker do portal; suas configuracoes locais nao sao copiadas para a imagem.
+
 Não existem scripts operacionais próprios dentro dos apps. Consulte
 `docs/AI_RESEARCH_MANUAL.md` para os contratos completos e pressupostos
 permanentes do projeto.
@@ -256,6 +287,15 @@ gera dumps MySQL/MariaDB e troca configurações e resultados em JSON. Essa roti
 é independente de `up.sh` e `update.sh`; senhas permanecem somente na máquina
 executora. A instalação e o fluxo diário/semanal/mensal estão documentados no
 README do módulo.
+
+O modulo **Impressoras** integra as filas do CUPS da maquina fisica, mostra
+estado, usuario, documento, paginas, copias, data e hora e oferece uma fila
+segura. Arquivos enviados pelo portal ficam retidos e somente sao liberados
+quando o proprio usuario confirma a senha da sessao; a senha nao e armazenada.
+No Nanotech o modulo aparece como aplicativo e, no Rio Branco, como tarefas em
+Workflow, Monitor, Relatorios e Configurar. Os recursos `fila`, `monitor`,
+`historico` e `gerenciar` ficam em Config > Usuarios e acessos, sem concessao
+automatica. Configuracao e limites: [Impressoras](apps/impressoras/README.md).
 
 O módulo **Chamados** registra requisições e manutenções de TI, predial,
 elétrica e outras áreas. Ele reutiliza os usuários do portal e os equipamentos
@@ -437,6 +477,12 @@ manifests com o menu efetivo, alem das permissoes; veja a auditoria em
 
 ## Finalizacao da contagem de estoque
 
+ESTOQUE > Baixas por perda registra desperdicio, avaria, quebra, vencimento,
+extravio e outros motivos, com justificativa e conferencia antes de descontar
+do saldo. Historico conserva quantidade, responsavel e saldos anterior/posterior.
+Usa o recurso proprio `riob:estoque_perdas` em Usuarios e acessos. Ver
+[Baixas por perda](apps/riob/source/docs/BAIXAS_POR_PERDA.md).
+
 ESTOQUE > Contagem possui Finalizar contagem: abre conferencia com saldo atual e,
 apos confirmar, ajusta os produtos contados e grava o historico. Faltas entram
 como desperdicio; sobras indicam possivel erro de contagem. RELATORIOS > Contagens,
@@ -567,3 +613,47 @@ perdas especificas de producao ficam para uma etapa futura. As APIs
 `/api/custo-diario` (GET/PUT) e `/api/custo-diario/dashboard` (GET) validam sessao,
 recursos e bloqueios individuais; nao concedem acesso nem movimentam estoque.
 Regras, snapshots e limites em `apps/riob/source/docs/CUSTO_DIARIO.md` na raiz.
+
+**DADOS > RioB > Totais de PDVs por vendedor** importa o PDF de Cobertura
+Vendedor/Superv., com conferencia antes de substituir a carteira de cada vendedor.
+Grupos de embalagem passa a calcular o percentual sobre esse total: 8 de 400
+PDVs = 2%, independentemente de quantos compraram no periodo. Novas importacoes
+atualizam a base dos calculos; sem carteira, percentual pendente.
+Liberacao em Usuarios e acessos: `riob:vendas_pdvs`. Ver
+[Totais de PDVs](apps/riob/source/docs/PDVS_POR_VENDEDOR.md).
+
+## Preço médio e variação (07/10/2026)
+
+Relatorios > RioB > Vendas > **preço med.varia** mostra cidade, produto,
+minimo, maximo e PDVs. No PC, RioB/CLT/Autonomos ficam ao lado do submenu;
+datas, Atualizar, Limpar filtros, Vendedor e Grupo ficam na linha seguinte.
+Nao repete periodo, vendedor ou grupo na tabela nem exibe seletor de mes.
+O clique abre os PDVs da linha em popup, com preco medio ponderado e ordenacao
+por nome ou valor. Sem datas, preenche o ultimo mes disponivel; um limite
+informado preserva o intervalo aberto. Limpar filtros restaura o periodo inicial.
+
+Config > Usuarios e acessos conserva as escolhas individuais de variacao e
+preco medio sob `riob:vendas`, sem conceder acessos. Os links antigos abrem a
+mesma aba. APIs antigas, dashboard e PDF permanecem compativeis. Ver
+[Precos por cidade e ordenacao](apps/riob/source/docs/ORDENACAO_PRECOS.md).
+
+## Vendas anual: ranking (08/10/2026)
+
+Vendas Anual posiciona RioB/CLT/Autonomos junto ao submenu e datas, acoes,
+vendedor e cliente em uma linha no PC. Limpar filtros tambem limpa o periodo.
+O ranking ordena da maior perda em hectolitros para a menor ou vice-versa:
+lista vendedores quando Todos esta selecionado e clientes ao escolher um
+vendedor. O seletor Cliente acompanha essa relacao. Clicar abre as vendas em
+popup paginado, com os mesmos filtros. Preserva formulas e acessos individuais;
+veja [regras e validacao](apps/riob/source/docs/VENDAS_ANUAL_RANKING.md).
+
+## Importacao de notas de manutencao (09/10/2026)
+
+Gestao de Frota > Manutencoes importa TXT/CSV gerado a partir de notas manuais
+e ODS no padrao LOCAL/TIPO-AGRUPADO/VEICULO/DIA/MES/DESC/VALOR/ID,
+com previa obrigatoria de documento, fornecedor, veiculo, itens, valores e
+alertas. O leitor aceita `|`, ponto e virgula ou tabulacao, com ou sem cabecalho,
+preserva campos incertos e linhas repetidas e evita duplicidade na reimportacao.
+As notas entram na fila de conferencia antes do cadastro definitivo. O acesso
+continua no item Manutencoes (`frota`), sem novas concessoes. Consulte
+[formatos, API e validacao](apps/riob/source/docs/IMPORTACAO_TXT_MANUTENCAO.md).

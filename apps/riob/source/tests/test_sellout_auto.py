@@ -10,7 +10,15 @@ from zoneinfo import ZoneInfo
 from types import SimpleNamespace
 from unittest import mock
 
-from sellout_auto import preparar_mensal, snapshot_estavel, particionar_historico, proxima_leitura_diaria
+from sellout_auto import (
+    fontes_mensais_configuradas,
+    particionar_historico,
+    preparar_mensal,
+    proxima_leitura_diaria,
+    snapshot_estavel,
+    snapshots_estaveis,
+    unificar_mensais,
+)
 
 
 class SelloutMensalTest(unittest.TestCase):
@@ -93,6 +101,52 @@ class SelloutMensalTest(unittest.TestCase):
             with mock.patch('sellout_auto.shutil.copyfile', side_effect=copy), self.assertRaises(ValueError):
                 with snapshot_estavel(path):
                     pass
+
+    def test_configuracao_prefere_duas_fontes_e_preserva_variavel_antiga(self):
+        self.assertEqual(
+            ['/imports/sellout/IND3/SELLOUT_M.CSV', '/imports/sellout/INDB/SELLOUT_M.CSV'],
+            fontes_mensais_configuradas({}),
+        )
+        self.assertEqual(
+            ['/dados/IND3.csv', '/dados/INDB.csv'],
+            fontes_mensais_configuradas({'RB_SELLOUT_M_ARQUIVOS': '/dados/IND3.csv:/dados/INDB.csv'}),
+        )
+        self.assertEqual(
+            ['/legado/SELLOUT_M.CSV'],
+            fontes_mensais_configuradas({'RB_SELLOUT_M_ARQUIVO': '/legado/SELLOUT_M.CSV'}),
+        )
+
+    def test_uniao_preserva_vendedor_compartilhado_e_remove_so_duplicata_entre_bases(self):
+        alex_ind3 = {**self.row(), 'Cliente': '1-Cliente IND3', 'Vendedor Pedido': '020-ALEX SANDER'}
+        repetida_legitima = dict(alex_ind3)
+        alex_indb = {**self.row(), 'Cliente': '2-Cliente INDB', 'Vendedor Pedido': '020-ALEX SANDER'}
+        outro = {**self.row(), 'Cliente': '3-Cliente INDB', 'Vendedor Pedido': '006-VINICIUS'}
+        fields = list(alex_ind3)
+        result = unificar_mensais([
+            {'nome': 'IND3', 'fieldnames': fields, 'rows': [alex_ind3, repetida_legitima]},
+            {'nome': 'INDB', 'fieldnames': fields, 'rows': [dict(alex_ind3), alex_indb, outro]},
+        ])
+        self.assertEqual(4, len(result['rows']))
+        self.assertEqual(3, sum(row['Vendedor Pedido'] == '020-ALEX SANDER' for row in result['rows']))
+        self.assertEqual(1, result['duplicadas_ignoradas'])
+        self.assertEqual([
+            {'nome': 'IND3', 'linhas': 2, 'linhas_incluidas': 2},
+            {'nome': 'INDB', 'linhas': 3, 'linhas_incluidas': 2},
+        ], result['fontes'])
+
+    def test_snapshot_conjunto_gera_assinatura_e_remove_todos_temporarios(self):
+        with tempfile.TemporaryDirectory() as directory:
+            first = Path(directory) / 'IND3.csv'
+            second = Path(directory) / 'INDB.csv'
+            first.write_text('ind3')
+            second.write_text('indb')
+            os.utime(first, (1000, 1000))
+            os.utime(second, (1000, 1000))
+            with snapshots_estaveis([first, second]) as (snapshots, assinatura):
+                paths = [Path(item['snapshot']) for item in snapshots]
+                self.assertEqual(['ind3', 'indb'], [path.read_text() for path in paths])
+                self.assertEqual(64, len(assinatura))
+            self.assertFalse(any(path.exists() for path in paths))
 
 
 class PersistenciaMensalTest(unittest.TestCase):
@@ -209,7 +263,8 @@ class ConsultaMensalTest(unittest.TestCase):
         function = next(n for n in tree.body if isinstance(n, ast.FunctionDef)
                         and n.name == '_vendas_relatorio_cache_chave')
         fetch = mock.Mock(return_value={'source_signature': 'primeira'})
-        env = dict(_as_str=lambda x: str(x or ''), _vendas_db_fetch_import=fetch)
+        env = dict(_as_str=lambda x: str(x or ''), _vendas_db_fetch_import=fetch,
+                   vendas_pdvs=SimpleNamespace(MIX_TYPES=set()))
         exec(compile(ast.Module(body=[function], type_ignores=[]), str(source), 'exec'), env)
         key = env['_vendas_relatorio_cache_chave']
         first = key('resumo', 'sellout-mensal-continuo')
@@ -302,7 +357,11 @@ class AgendaELeituraManualTest(unittest.TestCase):
             _vendas_diario_importar_arquivo=mock.Mock(return_value={'status':'importado'}),
             parse_cargas_pdf=lambda _: [{'pagina':1}],
             _vendas_diario_importar_carga_pdf_arquivo=mock.Mock(return_value={'status':'importado'}),
+            _vendas_diario_aplicar_limpeza=lambda path, directory, results: results,
             _vendas_diario_unificar_cards_semelhantes=lambda: {},
+            _vendas_diario_status_publico=lambda: {},
+            _vendas_diario_status_iniciar=lambda *args: {},
+            _vendas_diario_status_registrar_resultado=lambda *args: {},
             _vendas_sellout_mensal_importar=mock.Mock(return_value={'status':'ja_importado'}),
             _as_str=lambda value: str(value or ''), app=mock.Mock()))
 
@@ -334,20 +393,31 @@ class AgendaELeituraManualTest(unittest.TestCase):
             request=SimpleNamespace(files={}), jsonify=lambda result: result,
             _vendas_diario_importar_pasta=importer))
         self.assertEqual(({'processando':False},200), env['vendas_diario_importar_api']())
-        importer.assert_called_once_with(incluir_sellout=True)
+        importer.assert_called_once_with(incluir_sellout=True, origem='manual')
 
     def test_retorno_mensal_distingue_atualizacao_repeticao_e_concorrencia(self):
         entry = {'id':'sellout-mensal-continuo', 'rows_importadas':10, 'status':'pronto', 'source_signature':'hash|regras'}
         for saved, previous, status in ((entry, entry, 'importado'), (None, entry, 'ja_importado'), (None, {}, 'processando')):
-            snapshot = mock.MagicMock()
-            snapshot.return_value.__enter__.return_value = ('temporario.csv', 'hash', SimpleNamespace(st_size=100, st_mtime=1000))
+            snapshots = mock.MagicMock()
+            snapshots.return_value.__enter__.return_value = ([{
+                'source': '/imports/sellout/IND3/SELLOUT_M.CSV',
+                'snapshot': 'temporario.csv',
+                'digest': 'arquivo',
+                'stat': SimpleNamespace(st_size=100, st_mtime=1000),
+            }], 'hash')
+            mensal = preparar_mensal(list(SelloutMensalTest().row()), [SelloutMensalTest().row()])
+            mensal.update(fontes=[{'nome':'IND3','linhas':1,'linhas_incluidas':1}], duplicadas_ignoradas=0)
             env = self.functions(['_vendas_sellout_mensal_importar'], dict(os=os, datetime=dt,
                 _carregar_vendas_config=lambda: {'habilitado':True, 'active_cache_id':'sellout-mensal-continuo'},
-                snapshot_estavel=snapshot, _vendas_relatorio_dict_rows=lambda _: ([], []),
-                preparar_mensal=lambda *args: {}, _vendas_import_regras_assinatura=lambda: 'regras',
+                fontes_mensais_configuradas=lambda _: ['/imports/sellout/IND3/SELLOUT_M.CSV'],
+                snapshots_estaveis=snapshots, _vendas_relatorio_dict_rows=lambda _: ([], []),
+                unificar_mensais=lambda _: dict(mensal), _vendas_import_regras_assinatura=lambda: 'regras',
                 _vendas_importar_csv_para_cache=mock.Mock(return_value=saved),
                 _vendas_db_fetch_import=lambda _: previous, _vendas_cache_set_active=mock.Mock(), app=mock.Mock()))
-            self.assertEqual(status, env['_vendas_sellout_mensal_importar']()['status'])
+            result = env['_vendas_sellout_mensal_importar']()
+            self.assertEqual(status, result['status'])
+            self.assertEqual(1, result['linhas_mes'])
+            self.assertEqual('IND3', result['fontes'][0]['nome'])
             if status != 'importado':
                 env['_vendas_cache_set_active'].assert_not_called()
 

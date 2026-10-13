@@ -1104,21 +1104,89 @@ button:hover{ background:#e68900; }
 
 .vendas-section-head{
   display:flex;
-  flex-wrap:wrap;
-  align-items:flex-start;
+  align-items:center;
   justify-content:space-between;
-  gap:12px;
+  gap:16px;
   margin-bottom:14px;
 }
 
-.vendas-section-head h2{
+.vendas-section-head .vendas-relatorio-tabs{
   margin:0;
+  min-width:0;
+  overflow-x:auto;
+  flex:1;
 }
+
+.vendas-section-head .vendas-relatorio-tabs button{ white-space:nowrap; }
 
 .vendas-arquivo-info{
   margin:0;
-  max-width:min(760px, 100%);
+  max-width:30%;
+  text-align:right;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
 }
+
+.vendas-periodo-padrao{
+  display:flex;
+  flex-wrap:wrap;
+  align-items:end;
+  gap:12px;
+  margin-top:12px;
+}
+.vendas-periodo-padrao label{ display:grid; gap:4px; }
+.vendas-periodo-padrao .hidden{ display:none; }
+.vendas-mix-ativo #vendasRelTotaisPadrao,
+.vendas-mix-ativo .vendas-periodo-extra{ display:none; }
+.vendas-mix-ativo .vendas-periodo-padrao{
+  display:grid;
+  grid-template-columns:repeat(2, minmax(125px, .7fr)) repeat(2, minmax(140px, 1fr)) auto;
+  margin-top:0;
+}
+.vendas-mix-ativo .vendas-periodo-padrao label{ min-width:0; margin:0; }
+.vendas-mix-ativo .vendas-periodo-padrao input,
+.vendas-mix-ativo .vendas-periodo-padrao select{ min-width:0; width:100%; box-sizing:border-box; margin-bottom:0; }
+.vendas-mix-ativo .vendas-toolbar{ flex-wrap:nowrap; margin-bottom:0; }
+.vendas-mix-ativo .vendas-toolbar button{ white-space:nowrap; }
+.vendas-mix-resumo{ margin-bottom:15px; }
+.vendas-mix-pdvs-dialog{
+  width:min(1180px, calc(100vw - 48px));
+  max-height:calc(100dvh - 48px);
+  box-sizing:border-box;
+  overflow:auto;
+  padding:20px;
+  border:0;
+  border-radius:14px;
+  background:var(--surface, #f4f6f9);
+  color:inherit;
+  box-shadow:0 24px 70px rgba(0,0,0,.38);
+}
+.vendas-mix-pdvs-dialog::backdrop{ background:rgba(0,0,0,.5); }
+.vendas-mix-pdvs-dialog .frotaGrid{ grid-template-columns:minmax(0, 1fr); }
+.vendas-mix-pdvs-dialog .boxFrota{ min-width:0; }
+.vendas-mix-grupos-dialog{ width:min(540px, calc(100vw - 32px)); }
+.manutencao-txt-dialog{ width:min(1480px, calc(100vw - 24px)); }
+.manutencao-txt-preview-wrap{ overflow:auto; max-height:62vh; margin:12px 0; }
+.manutencao-txt-preview-wrap table{ min-width:1180px; }
+.manutencao-txt-preview-wrap input[type="text"],
+.manutencao-txt-preview-wrap input:not([type]),
+.manutencao-txt-preview-wrap select{ min-width:180px; width:100%; }
+.manutencao-txt-preview-wrap td{ vertical-align:top; }
+.manutencao-txt-actions{ justify-content:flex-end; }
+.vendas-mix-grupos-opcoes{ display:grid; gap:12px; margin:16px 0; }
+.vendas-mix-grupos-opcoes label{ display:flex; align-items:center; gap:10px; }
+.vendas-mix-grupos-opcoes input{ width:auto; margin:0; }
+@media(max-width:1100px){
+  .vendas-mix-ativo .vendas-periodo-padrao{ grid-template-columns:repeat(2, minmax(0, 1fr)); }
+  .vendas-mix-ativo .vendas-toolbar{ grid-column:1 / -1; flex-wrap:wrap; }
+}
+@media(max-width:600px){
+  .vendas-mix-ativo .vendas-periodo-padrao{ grid-template-columns:minmax(0, 1fr); }
+  .vendas-mix-pdvs-dialog{ width:calc(100vw - 16px); max-height:calc(100dvh - 16px); padding:12px; }
+}
+#vendasViewRelatorio .vendas-bonificacoes-layout,
+#vendasViewRelatorioVariacao .vendas-variacao-layout{ grid-template-columns:1fr; }
 
 .vendas-box-head{
   display:flex;
@@ -1387,6 +1455,21 @@ button:hover{ background:#e68900; }
 .vendas-diario-import-box{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:14px 0;padding:12px;border:1px dashed #fdba74;border-radius:10px;background:#fff7ed}
 .vendas-diario-import-box .hint{flex:1;min-width:180px}
 .vendas-diario-import-box--referencias{border-color:#93c5fd;background:#eff6ff}
+.vendas-diario-leitura{margin:12px 0 14px;padding:12px;border:1px solid #dbe3ef;border-radius:10px;background:#f8fafc}
+.vendas-diario-leitura-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:9px}
+.vendas-diario-leitura-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.vendas-diario-leitura-item{display:grid;gap:5px;min-width:0;padding:10px;border:1px solid #cbd5e1;border-left:4px solid #94a3b8;border-radius:8px;background:#fff;color:#334155;font-size:.78rem}
+.vendas-diario-leitura-item header{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.vendas-diario-leitura-item header span{padding:3px 7px;border-radius:999px;background:#e2e8f0;font-size:.7rem;font-weight:800;white-space:nowrap}
+.vendas-diario-leitura-item small{display:block;line-height:1.35;overflow-wrap:anywhere}
+.vendas-diario-leitura-item--sucesso{border-left-color:#16a34a}.vendas-diario-leitura-item--sucesso header span{background:#dcfce7;color:#166534}
+.vendas-diario-leitura-item--sem_alteracoes{border-left-color:#2563eb}.vendas-diario-leitura-item--sem_alteracoes header span{background:#dbeafe;color:#1e40af}
+.vendas-diario-leitura-item--erro{border-left-color:#dc2626}.vendas-diario-leitura-item--erro header span{background:#fee2e2;color:#991b1b}
+.vendas-diario-leitura-item--interrompido{border-left-color:#dc2626}.vendas-diario-leitura-item--interrompido header span{background:#fee2e2;color:#991b1b}
+.vendas-diario-leitura-item--parcial{border-left-color:#d97706}.vendas-diario-leitura-item--parcial header span,.vendas-diario-leitura-item--em_andamento header span{background:#fef3c7;color:#92400e}
+.vendas-diario-leitura-item--sem_arquivos,.vendas-diario-leitura-item--nunca_executado,.vendas-diario-leitura-item--desabilitado{border-left-color:#64748b}
+@media(max-width:1000px){.vendas-diario-leitura-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:600px){.vendas-diario-leitura-grid{grid-template-columns:1fr}}
 .vendas-diario-cargas-semana{margin:14px 0 18px;padding:14px;border:1px solid #bfdbfe;border-radius:12px;background:#f8fbff}
 .vendas-diario-cargas-semana h3{margin:0 0 4px}
 .vendas-diario-cargas-semana-tabela{margin-top:12px;max-height:560px;overflow:auto;border:1px solid #dbeafe;border-radius:9px;background:#fff}
@@ -5387,3 +5470,76 @@ body.tv-mode #chatWidget{
   .chat-sidebar-top { padding:8px 12px; }
   .chat-sidebar-caption { display:none; }
 }
+/* Baixas por perda: formulario e historico permanecem dentro da tarefa. */
+.perda-campos, .perda-filtros { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr)); gap:12px; }
+.perda-campos { border:1px solid var(--border, #ccc); border-radius:8px; padding:12px; margin:12px 0; }
+.perda-campos label, .perda-filtros label { display:flex; flex-direction:column; gap:4px; min-width:0; }
+.perda-campos input, .perda-campos select, .perda-campos textarea, .perda-filtros input, .perda-filtros select { width:100%; box-sizing:border-box; min-width:0; }
+.perda-largura { grid-column:1 / -1; }
+.perda-justificativa { white-space:pre-wrap; overflow-wrap:anywhere; }
+
+/* Relatórios compactos: totais junto ao submenu e todos os filtros na linha seguinte. */
+:is(.vendas-bonificacoes-ativo, .vendas-diario-ativo, .vendas-precos-ativo, .vendas-anual-ativo) #vendasRelArquivoInfo,
+:is(.vendas-bonificacoes-ativo, .vendas-diario-ativo, .vendas-precos-ativo, .vendas-anual-ativo) .vendas-periodo-extra{ display:none; }
+:is(.vendas-bonificacoes-ativo, .vendas-diario-ativo, .vendas-precos-ativo, .vendas-anual-ativo) #vendasRelatorioHeader{ gap:12px; }
+:is(.vendas-bonificacoes-ativo, .vendas-diario-ativo, .vendas-precos-ativo, .vendas-anual-ativo) #vendasRelatorioTabs{ flex:1 1 auto; flex-wrap:nowrap; }
+:is(.vendas-bonificacoes-ativo, .vendas-diario-ativo, .vendas-precos-ativo, .vendas-anual-ativo) #vendasRelatorioTabs button{ padding:8px; font-size:13px; }
+:is(.vendas-bonificacoes-ativo, .vendas-diario-ativo, .vendas-precos-ativo, .vendas-anual-ativo) #vendasRelTotaisPadrao{ flex:0 0 auto; gap:6px; }
+:is(.vendas-bonificacoes-ativo, .vendas-diario-ativo, .vendas-precos-ativo, .vendas-anual-ativo) #vendasRelTotaisPadrao .vendas-resumo-card{ padding:7px 10px; }
+:is(.vendas-bonificacoes-ativo, .vendas-diario-ativo, .vendas-precos-ativo, .vendas-anual-ativo) #vendasRelTotaisPadrao strong{ font-size:10px; margin-bottom:3px; }
+:is(.vendas-bonificacoes-ativo, .vendas-diario-ativo, .vendas-precos-ativo, .vendas-anual-ativo) #vendasRelTotaisPadrao span{ font-size:15px; white-space:nowrap; }
+:is(.vendas-bonificacoes-ativo, .vendas-diario-ativo, .vendas-precos-ativo, .vendas-anual-ativo) .vendas-periodo-padrao{
+  display:grid;
+  grid-template-columns:repeat(2, minmax(130px, .65fr)) auto repeat(2, minmax(140px, 1fr));
+  margin-top:0;
+}
+.vendas-bonificacoes-ativo .vendas-periodo-padrao{
+  grid-template-columns:repeat(2, minmax(110px, .55fr)) auto minmax(125px, .7fr) repeat(2, minmax(140px, 1fr));
+}
+:is(.vendas-bonificacoes-ativo, .vendas-diario-ativo, .vendas-precos-ativo, .vendas-anual-ativo) .vendas-periodo-padrao label{ min-width:0; margin:0; }
+:is(.vendas-bonificacoes-ativo, .vendas-diario-ativo, .vendas-precos-ativo, .vendas-anual-ativo) .vendas-periodo-padrao input,
+:is(.vendas-bonificacoes-ativo, .vendas-diario-ativo, .vendas-precos-ativo, .vendas-anual-ativo) .vendas-periodo-padrao select{ width:100%; min-width:0; box-sizing:border-box; margin:0; }
+:is(.vendas-bonificacoes-ativo, .vendas-diario-ativo, .vendas-precos-ativo, .vendas-anual-ativo) .vendas-periodo-padrao .vendas-toolbar{ flex-wrap:nowrap; margin:0; }
+:is(.vendas-bonificacoes-ativo, .vendas-diario-ativo, .vendas-precos-ativo, .vendas-anual-ativo) .vendas-periodo-padrao button{ white-space:nowrap; }
+@media(min-width:1101px){
+  :is(#vendasViewRelatorio, #vendasViewRelatorioDiario) .vendas-resumo-cards--wide{
+    grid-template-columns:none;
+    grid-auto-flow:column;
+    grid-auto-columns:minmax(0, 1fr);
+    gap:6px;
+  }
+  :is(#vendasViewRelatorio, #vendasViewRelatorioDiario) .vendas-resumo-card{ padding:8px; min-width:0; }
+  :is(#vendasViewRelatorio, #vendasViewRelatorioDiario) .vendas-resumo-card strong{ font-size:10px; margin-bottom:4px; }
+  :is(#vendasViewRelatorio, #vendasViewRelatorioDiario) .vendas-resumo-card span{ font-size:clamp(12px, 1.15vw, 18px); white-space:nowrap; }
+}
+.vendas-precos-resumo{ display:flex; align-items:center; gap:24px; }
+.vendas-precos-resumo h3{ margin:0; white-space:nowrap; }
+#vendasPrecosResumo{ display:flex; align-items:center; gap:24px; flex-wrap:wrap; }
+#vendasPrecosResumo span{ white-space:nowrap; }
+#vendasPrecosResumo strong{ margin-left:5px; }
+.vendas-precos-tabela{ overflow:auto; max-height:65vh; }
+.vendas-precos-tabela table{ width:100%; }
+#vendasPrecosBody tr[data-preco-linha]{ cursor:pointer; }
+#vendasPrecosBody tr[data-preco-linha]:hover{ background:var(--hover-bg, #e8f0fc); }
+#vendasPrecosPdvsDialog .vendas-box-head{ align-items:start; }
+#vendasPrecosPdvsDialog h3{ overflow-wrap:anywhere; }
+#vendasPrecosPdvsDialog select{ max-width:100%; }
+@media(max-width:1100px){
+  :is(.vendas-bonificacoes-ativo, .vendas-diario-ativo, .vendas-precos-ativo, .vendas-anual-ativo) #vendasRelatorioHeader{ flex-wrap:wrap; }
+  :is(.vendas-bonificacoes-ativo, .vendas-diario-ativo, .vendas-precos-ativo, .vendas-anual-ativo) #vendasRelatorioTabs{ flex-basis:100%; }
+  :is(.vendas-bonificacoes-ativo, .vendas-diario-ativo, .vendas-precos-ativo, .vendas-anual-ativo) .vendas-periodo-padrao{ grid-template-columns:repeat(2, minmax(0, 1fr)); }
+  :is(.vendas-bonificacoes-ativo, .vendas-diario-ativo, .vendas-precos-ativo, .vendas-anual-ativo) .vendas-periodo-padrao .vendas-toolbar{ grid-column:1 / -1; flex-wrap:wrap; }
+  .vendas-precos-resumo{ flex-wrap:wrap; gap:12px; }
+  #vendasPrecosResumo{ gap:12px; }
+}
+@media(max-width:600px){
+  :is(.vendas-bonificacoes-ativo, .vendas-diario-ativo, .vendas-precos-ativo, .vendas-anual-ativo) #vendasRelTotaisPadrao{ width:100%; grid-template-columns:repeat(3, minmax(0, 1fr)); }
+  :is(.vendas-bonificacoes-ativo, .vendas-diario-ativo, .vendas-precos-ativo, .vendas-anual-ativo) #vendasRelTotaisPadrao .vendas-resumo-card{ padding:6px; }
+  :is(.vendas-bonificacoes-ativo, .vendas-diario-ativo, .vendas-precos-ativo, .vendas-anual-ativo) #vendasRelTotaisPadrao span{ font-size:12px; white-space:normal; overflow-wrap:anywhere; }
+  :is(.vendas-bonificacoes-ativo, .vendas-diario-ativo, .vendas-precos-ativo, .vendas-anual-ativo) #vendasRelTotaisPadrao strong{ font-size:9px; }
+  #vendasPrecosPdvsDialog .vendas-toolbar label{ min-width:0; max-width:100%; }
+}
+
+#vendasAnualRankBody tr[data-anual-cliente]{ cursor:pointer; }
+#vendasAnualRankBody tr[data-anual-cliente]:hover{ background:var(--hover-bg, #e8f0fc); }
+#vendasAnualDialog h3{ overflow-wrap:anywhere; }

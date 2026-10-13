@@ -100,6 +100,7 @@
         <div class="submenu-item" data-estoque-view="movimentar" onclick="openEstoqueView(event,'movimentar')">Movimentar estoque</div>
         <div class="submenu-item" data-estoque-view="rastreio" onclick="openEstoqueView(event,'rastreio')">Rastreio de lotes</div>
         <div class="submenu-item" data-estoque-view="contagem" onclick="openEstoqueView(event,'contagem')">Contagem</div>
+        <div class="submenu-item" data-estoque-view="perdas" onclick="openEstoqueView(event,'perdas')">Baixas por perda</div>
         <div class="submenu-item" id="estoqueMenuAcerto" data-estoque-view="acerto" onclick="openEstoqueView(event,'acerto')">Acerto de estoque</div>
       </div>
     </div>
@@ -220,13 +221,11 @@
         <div class="vendas-box-head">
           <h2>Dashboard - Vendas diária</h2>
           <div class="vendas-toolbar">
-            <label>Data inicial<input type="date" id="dashVendasDiarioDataInicio" onchange="carregarDashboardVendasDiario()"></label>
-            <label>Data final<input type="date" id="dashVendasDiarioDataFim" onchange="carregarDashboardVendasDiario()"></label>
             <label>Cliente<select id="dashVendasDiarioCliente" onchange="carregarDashboardVendasDiario()"><option value="">Todos os clientes</option></select></label>
             <button type="button" onclick="carregarDashboardVendasDiario()">Atualizar Dashboard</button>
           </div>
         </div>
-        <div id="dashVendasDiarioInfo" class="hint">Carregando desempenho dos vendedores.</div>
+        <div id="dashVendasDiarioInfo" class="hint">Carregando vendas do mês atual.</div>
         <div id="dashVendasDiarioCards" class="vendas-resumo-cards vendas-resumo-cards--wide"></div>
       </div>
       <div class="boxFrota">
@@ -294,6 +293,7 @@
         </div>
         <div class="boxFrota">
           <h3>Variações por Vendedor e Grupo</h3>
+
           <div style="overflow:auto; max-height:360px;">
             <table>
               <thead>
@@ -331,7 +331,7 @@
                 <tr>
                   <th>Faixa</th>
                   <th>PDVs</th>
-                  <th>% do total</th>
+                  <th>% da carteira total</th>
                 </tr>
               </thead>
               <tbody id="dashVendasMixFaixasBody"></tbody>
@@ -1114,6 +1114,46 @@
             <tbody id="estoqueMovimentosBody"></tbody>
           </table>
         </div>
+      </div>
+    </div>
+
+    <div id="estoqueViewPerdas" class="hidden">
+      <div class="boxFrota">
+        <div class="vendas-box-head"><h3>Baixas por perda</h3><button type="button" id="perdaNova" onclick="novaPerdaEstoque()">Nova baixa</button></div>
+        <p>Registre desperdício, avaria e outras perdas para justificar as saídas do estoque. A confirmação desconta a quantidade do saldo atual.</p>
+        <p class="hint">Se a diferença já foi ajustada em uma contagem finalizada, não lance a mesma baixa novamente.</p>
+        <p id="perdaStatus" role="status" aria-live="polite"></p>
+        <form id="perdaFormulario" class="hidden" onsubmit="conferirPerdaEstoque(event)">
+          <fieldset id="perdaCampos" class="perda-campos">
+            <legend>Dados da perda</legend>
+            <label>Buscar produto<input type="search" id="perdaBuscaProduto" placeholder="Nome ou código" oninput="filtrarProdutosPerda()"></label>
+            <label>Produto<select id="perdaProduto" required onchange="atualizarQuantidadePerda()"><option value="">Selecione</option></select></label>
+            <label>Data da ocorrência<input type="date" id="perdaData" required min="2000-01-01"></label>
+            <label>Motivo<select id="perdaMotivo" required><option value="">Selecione</option></select></label>
+            <label>Pallets<input type="number" id="perdaPallets" min="0" step="1" oninput="atualizarQuantidadePerda()"></label>
+            <label>Caixas / pacotes<input type="number" id="perdaVolumes" min="0" step="1" oninput="atualizarQuantidadePerda()"></label>
+            <label>Unidades de estoque<input type="number" id="perdaUnidades" min="0" step="0.001" oninput="atualizarQuantidadePerda()"></label>
+            <label class="perda-largura">Justificativa<textarea id="perdaJustificativa" required minlength="3" maxlength="1000" rows="3" placeholder="Descreva o que ocorreu e onde a perda foi identificada"></textarea></label>
+            <p id="perdaQuantidadeInfo" class="perda-largura hint" aria-live="polite"></p>
+          </fieldset>
+          <div id="perdaAcoesEdicao" class="estoque-inline-actions"><button type="submit" id="perdaConferir">Conferir baixa</button><button type="button" onclick="cancelarPerdaEstoque()">Cancelar</button></div>
+          <div id="perdaConferencia" class="hidden" role="region" aria-label="Conferência da baixa">
+            <h4>Conferir antes de descontar</h4><p id="perdaConferenciaTexto"></p>
+            <div class="estoque-inline-actions"><button type="button" id="perdaConfirmar" onclick="confirmarPerdaEstoque()">Confirmar baixa no estoque</button><button type="button" id="perdaVoltar" onclick="voltarPerdaEstoque()">Voltar e corrigir</button></div>
+          </div>
+        </form>
+      </div>
+      <div class="boxFrota">
+        <h3>Histórico de baixas confirmadas</h3>
+        <form class="perda-filtros" onsubmit="event.preventDefault(); carregarHistoricoPerdas(1)">
+          <label>De<input type="date" id="perdaInicio"></label><label>Até<input type="date" id="perdaFim"></label>
+          <label>Motivo<select id="perdaFiltroMotivo"><option value="">Todos</option></select></label>
+          <label>Buscar<input type="search" id="perdaBusca" placeholder="Produto, código, justificativa ou responsável"></label>
+          <button type="submit">Filtrar</button>
+        </form>
+        <p id="perdaHistoricoStatus" role="status" aria-live="polite"></p>
+        <div style="overflow:auto"><table><thead><tr><th>Baixa</th><th>Ocorrência</th><th>Produto / código</th><th>Motivo e justificativa</th><th>Quantidade</th><th>Saldo anterior → posterior</th><th>Responsável</th><th>Registrada em</th></tr></thead><tbody id="perdaHistoricoBody"></tbody></table></div>
+        <div class="estoque-inline-actions"><button type="button" id="perdaAnterior" onclick="carregarHistoricoPerdas(perdasEstoque.pagina-1)">Anterior</button><span id="perdaPagina"></span><button type="button" id="perdaProxima" onclick="carregarHistoricoPerdas(perdasEstoque.pagina+1)">Próxima</button></div>
       </div>
     </div>
 
@@ -1966,8 +2006,10 @@
           <h3>Registrar Manutencao</h3>
           <div id="manutXmlPendencias" class="gestao-ocr-preview">
             <div class="gestao-ocr-preview-summary">
-              <strong>Pre-lancamentos recebidos das NF-e</strong>
+              <strong>Notas aguardando conferencia</strong>
               <span id="manutXmlPendenciasResumo">Carregando pendencias...</span>
+              <button type="button" onclick="selecionarArquivosManutencaoTxt()">Importar TXT/CSV/ODS</button>
+              <input id="manutTxtArquivos" class="hidden" type="file" accept=".txt,.csv,.ods,text/plain,text/csv,application/vnd.oasis.opendocument.spreadsheet" multiple onchange="prepararImportacaoManutencaoTxt(this.files)">
               <select id="manutXmlOrdenacao" onchange="renderizarPreLancamentosManutencaoXml()">
                 <option value="recente">Ordenar por atualizacao</option>
                 <option value="itens_nome">Ordenar por nome dos itens</option>
@@ -1981,7 +2023,8 @@
                   <tr>
                     <th><input type="checkbox" id="manutXmlSelecionarTodas" aria-label="Selecionar todas as notas de manutencao" onchange="selecionarTodasPendenciasManutencaoXml(this.checked)"></th>
                     <th>Nota</th>
-                    <th>Placa XML</th>
+                    <th>Origem</th>
+                    <th>Placa / frota</th>
                     <th>Veiculo sugerido</th>
                     <th>Itens</th>
                     <th>Motivo</th>
@@ -1989,11 +2032,42 @@
                   </tr>
                 </thead>
                 <tbody id="manutXmlPendenciasBody">
-                  <tr><td colspan="7">Carregando...</td></tr>
+                  <tr><td colspan="8">Carregando...</td></tr>
                 </tbody>
               </table>
             </div>
           </div>
+          <dialog id="manutTxtImportDialog" class="vendas-mix-pdvs-dialog manutencao-txt-dialog" aria-labelledby="manutTxtImportTitulo">
+            <div class="vendas-mix-pdvs-head">
+              <div>
+                <h3 id="manutTxtImportTitulo">Conferir importacao de manutencao</h3>
+                <p id="manutTxtImportResumo" class="hint"></p>
+              </div>
+              <button type="button" class="btn-secondary" onclick="fecharImportacaoManutencaoTxt()">Fechar</button>
+            </div>
+            <div id="manutTxtImportAvisos" class="gestao-ocr-preview-warnings hidden"></div>
+            <div class="manutencao-txt-preview-wrap">
+              <table class="gestao-ocr-preview-table">
+                <thead>
+                  <tr>
+                    <th>Importar</th>
+                    <th>Arquivo / nota</th>
+                    <th>Data</th>
+                    <th>Fornecedor</th>
+                    <th>Referencia</th>
+                    <th>Veiculo</th>
+                    <th>Itens / total</th>
+                    <th>Alertas</th>
+                  </tr>
+                </thead>
+                <tbody id="manutTxtImportBody"></tbody>
+              </table>
+            </div>
+            <div class="estoque-inline-actions manutencao-txt-actions">
+              <button type="button" id="manutTxtConfirmarBtn" onclick="confirmarImportacaoManutencaoTxt()">Enviar para conferencia</button>
+              <button type="button" class="btn-secondary" onclick="fecharImportacaoManutencaoTxt()">Cancelar</button>
+            </div>
+          </dialog>
           <select id="manut_veiculo"></select>
           <input id="manut_tipo" placeholder="Ex: Freio, Motor, Suspensao">
           <input id="manut_km" type="number" placeholder="KM da Manutencao">
@@ -2575,18 +2649,90 @@
     </div>
   </section>
 
-  <section id="vendas" class="section">
+  <section id="vendas" class="section vendas-bonificacoes-ativo">
     <div class="vendas-section-head" id="vendasRelatorioHeader">
-      <h2>Vendas</h2>
-      <div id="vendasRelArquivoInfo" class="hint vendas-arquivo-info">Aguardando leitura e processamento do relatorio em Relatorios.</div>
-    </div>
-
-    <div class="vendas-relatorio-tabs" id="vendasRelatorioTabs">
+      <div class="vendas-relatorio-tabs" id="vendasRelatorioTabs">
       <button type="button" class="active" id="vendasRelTabBonificacoes" onclick="setVendasRelatorioModo('bonificacoes')">Bonificações</button>
-      <button type="button" id="vendasRelTabVariacao" onclick="setVendasRelatorioModo('variacao_preco')">Variação de Preço</button>
       <button type="button" id="vendasRelTabMix" onclick="setVendasRelatorioModo('grupos_embalagem')">Grupos Embalagem</button>
-      <button type="button" id="vendasRelTabPrecoMedio" onclick="setVendasRelatorioModo('preco_medio')">Preço Médio</button>
+      <button type="button" id="vendasRelTabPrecoMedio" onclick="setVendasRelatorioModo('preco_medio')">preço med.varia</button>
+      <button type="button" id="vendasRelTabDiario" onclick="setVendasRelatorioModo('diario')">Vendas Diário</button>
       <button type="button" id="vendasRelTabAnual" onclick="setVendasRelatorioModo('vendas_anual')">Vendas Anual</button>
+    </div>
+      <div id="vendasRelArquivoInfo" class="hint vendas-arquivo-info">Aguardando leitura do relatório.</div>
+    </div>
+    <div id="vendasRelCabecalho" class="boxFrota">
+      <div id="vendasRelTotaisPadrao" class="vendas-resumo-cards" aria-live="polite"></div>
+      <div class="vendas-periodo-padrao">
+        <label>Data inicial<input type="date" id="vendasPeriodoInicio" onchange="recarregarRelatorioVendasAtual()"></label>
+        <label>Data final<input type="date" id="vendasPeriodoFim" onchange="recarregarRelatorioVendasAtual()"></label>
+        <button type="button" class="btn-secondary vendas-periodo-extra" onclick="limparPeriodoRelatoriosVendas(); recarregarRelatorioVendasAtual()">Limpar período</button>
+        <small class="hint vendas-periodo-extra">O intervalo inclui as duas datas e tem prioridade sobre o mês.</small>
+        <div class="vendas-toolbar vendas-bonificacoes-controle">
+          <button type="button" onclick="carregarRelatorioVendas()">Atualizar relatório</button>
+          <button type="button" class="btn-secondary" onclick="limparFiltrosRelatorioVendas()">Limpar filtros</button>
+        </div>
+        <label class="vendas-bonificacoes-controle">Mês
+          <select id="vendasRelMes" onchange="agendarCarregarRelatorioVendas()">
+            <option value="">Último mês processado</option>
+          </select>
+        </label>
+        <label id="vendasRelVendedorWrap" class="vendas-bonificacoes-controle">Vendedor
+          <select id="vendasRelVendedor" onchange="atualizarVisibilidadeFiltrosRelatorioVendas(); agendarCarregarRelatorioVendas()">
+            <option value="">Todos os vendedores</option>
+          </select>
+        </label>
+        <label class="vendas-bonificacoes-controle">Cliente
+          <select id="vendasRelCliente" onchange="agendarCarregarRelatorioVendas()">
+            <option value="">Todos os clientes</option>
+          </select>
+        </label>
+        <div class="vendas-toolbar vendas-diario-controle hidden">
+          <button type="button" onclick="carregarRelatorioVendasDiario()">Atualizar relatório</button>
+          <button type="button" class="btn-secondary" onclick="limparFiltrosRelatorioVendasDiario()">Limpar filtros</button>
+        </div>
+        <label class="vendas-diario-controle hidden">Vendedor
+          <select id="vendasDiaVendedor" onchange="carregarRelatorioVendasDiario()"><option value="">Todos os vendedores</option></select>
+        </label>
+        <label class="vendas-diario-controle hidden">Cliente
+          <select id="vendasDiaCliente" onchange="carregarRelatorioVendasDiario()"><option value="">Todos os clientes</option></select>
+        </label>
+        <div class="vendas-toolbar vendas-anual-controle hidden">
+          <button type="button" onclick="carregarRelatorioVendasAnual()">Atualizar relatório</button>
+          <button type="button" class="btn-secondary" onclick="limparFiltrosRelatorioVendasAnual()">Limpar filtros</button>
+        </div>
+        <label class="vendas-anual-controle hidden">Vendedor
+          <select id="vendasAnualVendedor" onchange="alterarVendedorRelatorioAnual()"><option value="">Todos os vendedores</option></select>
+        </label>
+        <label class="vendas-anual-controle hidden">Cliente
+          <select id="vendasAnualCliente" onchange="carregarRelatorioVendasAnual()"><option value="">Todos os clientes</option></select>
+        </label>
+        <div class="vendas-toolbar vendas-precos-controle hidden">
+          <button type="button" onclick="carregarRelatorioPrecosVendas()">Atualizar relatório</button>
+          <button type="button" class="btn-secondary" onclick="limparFiltrosRelatorioPrecoMedioVendas()">Limpar filtros</button>
+        </div>
+        <label class="vendas-precos-controle hidden">Vendedor
+          <select id="vendasVarVendedor" onchange="carregarRelatorioPrecosVendas()"><option value="">Todos os vendedores</option></select>
+        </label>
+        <label class="vendas-precos-controle hidden">Grupo
+          <select id="vendasPrecosGrupo" onchange="carregarRelatorioPrecosVendas()"><option value="">Todos os grupos</option></select>
+        </label>
+        <label class="vendas-mix-controle hidden">Vendedor
+          <select id="vendasMixVendedor" onchange="document.getElementById('vendasMixCliente').value=''; carregarRelatorioMixEmbalagens()">
+            <option value="">Todos os vendedores</option>
+          </select>
+        </label>
+        <label class="vendas-mix-controle hidden">PDV
+          <select id="vendasMixCliente" onchange="carregarRelatorioMixEmbalagens()">
+            <option value="">Todos os PDVs</option>
+          </select>
+        </label>
+        <div class="vendas-toolbar vendas-mix-controle hidden">
+          <button type="button" id="vendasMixGruposBtn" class="btn-secondary" onclick="abrirGruposRelatorioMixEmbalagens()" aria-haspopup="dialog" aria-controls="vendasMixGruposDialog">Grupos</button>
+          <button type="button" onclick="carregarRelatorioMixEmbalagens()">Atualizar relatório</button>
+          <button type="button" class="btn-secondary" onclick="limparFiltrosRelatorioMixEmbalagens()">Limpar filtros</button>
+          <button type="button" id="vendasMixVerPdvs" class="hidden" onclick="abrirPdvsRelatorioMixEmbalagens()" aria-haspopup="dialog" aria-controls="vendasMixPdvsDialog">Ver PDVs</button>
+        </div>
+      </div>
     </div>
 
     <div id="vendasViewOrcamento" class="dash-view hidden">
@@ -2629,45 +2775,8 @@
     </div>
 
     <div id="vendasViewRelatorio" class="dash-view">
-      <div class="vendas-bonificacoes-layout">
-        <div class="boxFrota vendas-grupo-box">
-          <h3>Resumo Geral</h3>
-          <div id="vendasRelGrupoResumo" class="vendas-grupo-resumo"></div>
-        </div>
-
-        <div class="boxFrota vendas-filtros-box">
-          <div class="vendas-box-head">
-            <h3>Bonificações</h3>
-            <div class="vendas-toolbar">
-              <button type="button" onclick="carregarRelatorioVendas()">Atualizar Relatorio</button>
-              <button type="button" onclick="limparFiltrosRelatorioVendas()">Limpar Filtros</button>
-            </div>
-          </div>
-          <div class="vendas-filtros-grid">
-            <label>
-              Mês
-              <select id="vendasRelMes" onchange="agendarCarregarRelatorioVendas()">
-                <option value="">Último mês processado</option>
-              </select>
-            </label>
-            <label id="vendasRelVendedorWrap">
-              Vendedor
-              <select id="vendasRelVendedor" onchange="atualizarVisibilidadeFiltrosRelatorioVendas(); agendarCarregarRelatorioVendas()">
-                <option value="">Todos os vendedores</option>
-              </select>
-            </label>
-            <label>
-              Cliente
-              <select id="vendasRelCliente" onchange="agendarCarregarRelatorioVendas()">
-                <option value="">Todos os clientes</option>
-              </select>
-            </label>
-          </div>
-        </div>
-      </div>
-
       <div class="boxFrota vendas-resumo-mes-box">
-        <h3>Resumo do Mês</h3>
+        <h3>Resumo do período</h3>
         <div id="vendasRelResumoCards" class="vendas-resumo-cards vendas-resumo-cards--wide"></div>
       </div>
 
@@ -2723,142 +2832,118 @@
       </div>
     </div>
 
+    <div id="vendasViewRelatorioDiario" class="dash-view hidden">
+      <div class="boxFrota vendas-resumo-mes-box vendas-diario-resumo-box">
+        <h3>Resumo do período</h3>
+        <div id="vendasDiaResumo" class="vendas-resumo-cards vendas-resumo-cards--wide"></div>
+      </div>
+      <div class="boxFrota">
+        <h3>Vendas por dia e vendedor</h3>
+        <div style="overflow:auto; max-height:520px;">
+          <table><thead><tr><th>Data</th><th>Vendedor</th><th>N. de pedidos</th><th>Volume</th><th>Volume bonificado</th><th>Valor bruto</th><th>Bonificação</th><th>% Bonificação</th><th>Valor líquido</th></tr></thead>
+          <tbody id="vendasDiaBody"></tbody></table>
+        </div>
+      </div>
+    </div>
+
     <div id="vendasViewRelatorioAnual" class="dash-view hidden">
-      <div class="vendas-variacao-layout">
-        <div class="boxFrota vendas-grupo-box">
-          <h3>Resumo Ano a Ano</h3>
-          <div id="vendasAnualResumoCards" class="vendas-resumo-cards vendas-resumo-cards--wide"></div>
-        </div>
-        <div class="boxFrota vendas-filtros-box">
-          <div class="vendas-box-head">
-            <h3>Vendas Anual</h3>
-            <div class="vendas-toolbar">
-              <button type="button" onclick="carregarRelatorioVendasAnual()">Atualizar Relatório</button>
-              <button type="button" class="btn-secondary" onclick="limparFiltrosRelatorioVendasAnual()">Limpar Filtros</button>
-            </div>
-          </div>
-          <div class="vendas-filtros-grid">
-            <label>Vendedor<select id="vendasAnualVendedor" onchange="carregarRelatorioVendasAnual()"><option value="">Todos os vendedores</option></select></label>
-            <label>Cliente<select id="vendasAnualCliente" onchange="carregarRelatorioVendasAnual()"><option value="">Todos os clientes</option></select></label>
-          </div>
-          <div class="hint">Compara cada mês com o mesmo mês do ano anterior usando o volume vendido em hectolitros.</div>
-        </div>
+      <div class="boxFrota">
+        <h3>Resumo ano a ano</h3>
+        <div id="vendasAnualResumoCards" class="vendas-resumo-cards vendas-resumo-cards--wide"></div>
+        <p id="vendasAnualStatus" class="hint" role="status" aria-live="polite"></p>
       </div>
       <div class="boxFrota">
         <h3>Comparativo mensal</h3>
-        <div style="overflow:auto; max-height:520px;">
-          <table class="vendas-dashboard-table">
-            <thead id="vendasAnualHead"></thead>
-            <tbody id="vendasAnualBody"></tbody>
-          </table>
+        <p class="hint">Volume em hectolitros, comparado com o mesmo mês do ano anterior.</p>
+        <div class="vendas-precos-tabela">
+          <table class="vendas-dashboard-table"><thead id="vendasAnualHead"></thead><tbody id="vendasAnualBody"></tbody></table>
         </div>
       </div>
+      <div class="boxFrota">
+        <div class="vendas-box-head">
+          <h3 id="vendasAnualRankTitulo">Ranking de vendedores</h3>
+          <div class="vendas-toolbar">
+            <label>Ordenar por
+              <select id="vendasAnualRankOrdem" onchange="renderRankingVendasAnual()">
+                <option value="maior_perda">Maior perda → menor perda</option>
+                <option value="menor_perda">Menor perda → maior perda</option>
+              </select>
+            </label>
+          </div>
+        </div>
+        <p class="hint">Diferença de volume entre os anos comparados. Clique em uma linha para ver as vendas.</p>
+        <div class="vendas-precos-tabela">
+          <table><thead id="vendasAnualRankHead"></thead><tbody id="vendasAnualRankBody"></tbody></table>
+        </div>
+      </div>
+      <dialog id="vendasAnualDialog" class="vendas-mix-pdvs-dialog" aria-labelledby="vendasAnualDialogTitulo" onclose="invalidarVendasAnualPopup()">
+        <div class="vendas-box-head"><h3 id="vendasAnualDialogTitulo">Vendas do cliente</h3>
+          <button type="button" class="btn-secondary" onclick="fecharVendasAnualPopup()" autofocus>Fechar</button>
+        </div>
+        <p id="vendasAnualDialogResumo"></p>
+        <p id="vendasAnualDialogStatus" class="hint" role="status" aria-live="polite"></p>
+        <div class="vendas-precos-tabela">
+          <table><thead><tr><th>Data</th><th>NF</th><th>Vendedor</th><th>Produto</th><th>Volume (hl)</th><th>Venda (R$)</th></tr></thead><tbody id="vendasAnualDialogBody"></tbody></table>
+        </div>
+        <div class="vendas-toolbar">
+          <button type="button" id="vendasAnualPaginaAnterior" onclick="paginarVendasAnual(-1)" disabled>Anterior</button>
+          <span id="vendasAnualPaginaInfo" aria-live="polite"></span>
+          <button type="button" id="vendasAnualPaginaProxima" onclick="paginarVendasAnual(1)" disabled>Próxima</button>
+        </div>
+      </dialog>
     </div>
 
     <div id="vendasViewRelatorioVariacao" class="dash-view hidden">
-      <div class="vendas-variacao-layout">
-        <div class="boxFrota vendas-grupo-box">
-          <h3>Resumo Geral</h3>
-          <div id="vendasVarGrupoResumo" class="vendas-grupo-resumo"></div>
+      <div class="boxFrota">
+        <div class="vendas-precos-resumo">
+          <h3 id="vendasPrecosTitulo">Variação de preço</h3>
+          <div id="vendasPrecosResumo" aria-live="polite"></div>
         </div>
-
-        <div class="boxFrota vendas-filtros-box">
-          <div class="vendas-box-head">
-            <h3>Variação de Preço</h3>
-            <div class="vendas-toolbar">
-              <button type="button" onclick="carregarRelatorioVariacaoPreco()">Atualizar Relatorio</button>
-              <button type="button" onclick="setVendasRelatorioModo('bonificacoes')">Voltar para Bonificações</button>
-            </div>
-          </div>
-          <div class="vendas-filtros-grid">
-            <label>
-              Mês
-              <select id="vendasVarMes" onchange="carregarRelatorioVariacaoPreco()">
-                <option value="">Último mês processado</option>
-              </select>
-            </label>
-            <label class="vendas-filtros-grid--full">
-              Vendedor
-              <select id="vendasVarVendedor" onchange="carregarRelatorioVariacaoPreco()">
-                <option value="">Todos os vendedores</option>
-              </select>
-            </label>
-          </div>
-          <div class="hint">Esta visão usa o próprio mês selecionado acima e não depende da outra aba.</div>
+        <p id="vendasPrecosStatus" class="hint" role="status" aria-live="polite"></p>
+        <div class="vendas-precos-tabela">
+          <table>
+            <thead id="vendasPrecosHead"></thead>
+            <tbody id="vendasPrecosBody"></tbody>
+          </table>
         </div>
       </div>
-
-      <div class="boxFrota vendas-resumo-mes-box">
-        <h3>Resumo do Mês</h3>
-        <div id="vendasVarResumoCards" class="vendas-resumo-cards vendas-resumo-cards--wide"></div>
-      </div>
-
-      <div class="frotaGrid">
-        <div class="boxFrota">
-          <h3>Variações por Vendedor e Grupo</h3>
-          <div class="hint">Selecione um vendedor na aba de bonificações para ver as linhas do preço aplicado nesta visão.</div>
-          <div style="overflow:auto; max-height:360px;">
-            <table>
-              <thead>
-                <tr>
-                  <th>Cod</th>
-                  <th>Vendedor</th>
-                  <th>Grupo</th>
-                  <th>Produtos</th>
-                  <th>Preço un.</th>
-                  <th>Min un.</th>
-                  <th>Max un.</th>
-                  <th>Dif.</th>
-                  <th>Dif.%</th>
-                  <th>Cidades</th>
-                  <th>PDVs</th>
-                  <th>Itens</th>
-                </tr>
-              </thead>
-              <tbody id="vendasVarVendedoresBody"></tbody>
-            </table>
-          </div>
+      <dialog id="vendasPrecosPdvsDialog" class="vendas-mix-pdvs-dialog" aria-labelledby="vendasPrecosPdvsTitulo" onclose="invalidarPdvsPrecosVendas()">
+        <div class="vendas-box-head">
+          <h3 id="vendasPrecosPdvsTitulo">PDVs</h3>
+          <button type="button" class="btn-secondary" onclick="fecharPdvsPrecosVendas()" autofocus>Fechar</button>
         </div>
-      </div>
-
-      <div class="frotaGrid">
-        <div class="boxFrota">
-          <h3>Linhas do Vendedor</h3>
-          <div id="vendasVarDetalhesHint" class="hint">Selecione um vendedor na aba de bonificações para carregar os detalhes.</div>
-          <div style="overflow:auto; max-height:360px;">
-            <table>
-              <thead>
-                <tr>
-                  <th>Data</th>
-                  <th>NF</th>
-                  <th>Cliente</th>
-                  <th>Cidade</th>
-                  <th>Grupo</th>
-                  <th>Produto</th>
-                  <th>Preço un.</th>
-                  <th>Qtd</th>
-                  <th>Venda</th>
-                  <th>Tipo</th>
-                </tr>
-              </thead>
-              <tbody id="vendasVarDetalhesBody"></tbody>
-            </table>
-          </div>
+        <p id="vendasPrecosPdvsResumo"></p>
+        <div class="vendas-toolbar">
+          <label>Ordenar por
+            <select id="vendasPrecosPdvsOrdem" onchange="renderPdvsPrecosVendas()"><option value="nome">Nome</option></select>
+          </label>
+          <label>Direção
+            <select id="vendasPrecosPdvsDirecao" onchange="renderPdvsPrecosVendas()">
+              <option value="asc">Crescente</option><option value="desc">Decrescente</option>
+            </select>
+          </label>
         </div>
-      </div>
+        <p id="vendasPrecosPdvsStatus" class="hint" role="status" aria-live="polite"></p>
+        <div class="vendas-precos-tabela">
+          <table><thead id="vendasPrecosPdvsHead"></thead><tbody id="vendasPrecosPdvsBody"></tbody></table>
+        </div>
+      </dialog>
     </div>
 
     <div id="vendasViewRelatorioMix" class="dash-view hidden">
-      <div class="vendas-variacao-layout">
+      <div class="vendas-mix-resumo">
         <div class="boxFrota vendas-grupo-box">
           <h3>Resumo por Faixa</h3>
+          <div class="hint">Conta os grupos selecionados que cada PDV comprou no período. Água é um grupo; Astuba conta junto com PET 2L neste relatório.</div>
+          <p id="vendasMixCarteiraInfo" class="hint"></p>
+          <div id="vendasMixGruposResumo" class="hint">Grupos: todos.</div>
           <div style="overflow:auto; max-height:320px;">
             <table>
               <thead>
                 <tr>
                   <th>Faixa</th>
                   <th>PDVs</th>
-                  <th>% do total</th>
+                  <th>% da carteira total</th>
                 </tr>
               </thead>
               <tbody id="vendasMixFaixasBody"></tbody>
@@ -2866,136 +2951,78 @@
           </div>
         </div>
 
-        <div class="boxFrota vendas-filtros-box">
-          <div class="vendas-box-head">
-            <h3>Grupos Embalagem</h3>
-            <div class="vendas-toolbar">
-              <button type="button" onclick="carregarRelatorioMixEmbalagens()">Atualizar Relatorio</button>
-              <button type="button" onclick="limparFiltrosRelatorioMixEmbalagens()">Limpar Filtros</button>
-            </div>
-          </div>
-          <div class="vendas-filtros-grid">
-            <label>
-              Mês
-              <select id="vendasMixMes" onchange="carregarRelatorioMixEmbalagens()">
-                <option value="">Último mês processado</option>
-              </select>
-            </label>
-            <label>
-              Vendedor
-              <select id="vendasMixVendedor" onchange="carregarRelatorioMixEmbalagens()">
-                <option value="">Todos os vendedores</option>
-              </select>
-            </label>
-            <label class="vendas-filtros-grid--full">
-              PDV
-              <select id="vendasMixCliente" onchange="carregarRelatorioMixEmbalagens()">
-                <option value="">Todos os PDVs</option>
-              </select>
-            </label>
-          </div>
-          <div class="hint">O cálculo considera sempre o mês selecionado e conta quantos grupos diferentes cada PDV comprou no período.</div>
-        </div>
       </div>
 
       <div class="boxFrota vendas-resumo-mes-box">
-        <h3>Resumo do Mês</h3>
+        <h3>Resumo do período</h3>
         <div id="vendasMixResumoCards" class="vendas-resumo-cards vendas-resumo-cards--wide"></div>
       </div>
 
-      <div class="frotaGrid">
-        <div class="boxFrota">
-          <h3>PDVs do Filtro</h3>
-          <div class="hint">Clique em um PDV para destacar a combinação de grupos usada naquele mês.</div>
-          <div style="overflow:auto; max-height:360px;">
-            <table>
-              <thead>
-                <tr>
-                  <th>PDV</th>
-                  <th>Cidade</th>
-                  <th>Vendedor</th>
-                  <th>Grupos</th>
-                  <th>Faixa</th>
-                  <th>Itens</th>
-                  <th>Notas</th>
-                  <th>Tipos usados</th>
-                </tr>
-              </thead>
-              <tbody id="vendasMixClientesBody"></tbody>
-            </table>
-          </div>
+      <dialog id="vendasMixGruposDialog" class="vendas-mix-pdvs-dialog vendas-mix-grupos-dialog" aria-labelledby="vendasMixGruposTitulo">
+        <div class="vendas-box-head">
+          <h3 id="vendasMixGruposTitulo">Filtrar grupos</h3>
+          <button type="button" class="btn-secondary" onclick="document.getElementById('vendasMixGruposDialog').close()">Cancelar</button>
         </div>
-      </div>
-
-      <div class="frotaGrid">
-        <div class="boxFrota">
-          <h3>Detalhe do PDV</h3>
-          <div id="vendasMixDetalheHint" class="hint">Selecione um PDV para ver exatamente quais grupos ele usou no mês.</div>
-          <div style="overflow:auto; max-height:220px;">
-            <table>
-              <thead>
-                <tr>
-                  <th>PDV</th>
-                  <th>Cidade</th>
-                  <th>Vendedor</th>
-                  <th>Qtde grupos</th>
-                  <th>Faixa</th>
-                  <th>Grupos usados</th>
-                </tr>
-              </thead>
-              <tbody id="vendasMixDetalheBody"></tbody>
-            </table>
-          </div>
+        <p>Marque os grupos que deseja contar. Astuba está incluída em PET 2L.</p>
+        <div class="vendas-toolbar">
+          <button type="button" class="btn-secondary" onclick="document.querySelectorAll('#vendasMixGruposOpcoes input').forEach(el => el.checked = true)">Selecionar todos</button>
+          <button type="button" class="btn-secondary" onclick="document.querySelectorAll('#vendasMixGruposOpcoes input').forEach(el => el.checked = false)">Desmarcar todos</button>
         </div>
-      </div>
-    </div>
+        <div id="vendasMixGruposOpcoes" class="vendas-mix-grupos-opcoes"></div>
+        <button type="button" onclick="aplicarGruposRelatorioMixEmbalagens()">Aplicar grupos</button>
+      </dialog>
 
-    <div id="vendasViewRelatorioPrecoMedio" class="dash-view hidden">
-      <div class="vendas-variacao-layout">
-        <div class="boxFrota vendas-grupo-box">
-          <h3>Resumo Geral</h3>
-          <div id="vendasPrecoResumoCards" class="vendas-resumo-cards vendas-resumo-cards--wide"></div>
+      <dialog id="vendasMixPdvsDialog" class="vendas-mix-pdvs-dialog" aria-labelledby="vendasMixPdvsTitulo">
+        <div class="vendas-box-head">
+          <h3 id="vendasMixPdvsTitulo">PDVs do filtro</h3>
+          <button type="button" class="btn-secondary" onclick="document.getElementById('vendasMixPdvsDialog').close()" autofocus>Fechar</button>
         </div>
-
-        <div class="boxFrota vendas-filtros-box">
-          <div class="vendas-box-head">
-            <h3>Preço Médio</h3>
-            <div class="vendas-toolbar">
-              <button type="button" onclick="carregarRelatorioPrecoMedioVendas()">Atualizar Relatorio</button>
-              <button type="button" onclick="limparFiltrosRelatorioPrecoMedioVendas()">Limpar Filtros</button>
-              <button type="button" onclick="abrirPdfRelatorioPrecoMedioVendas()">PDF</button>
+        <div id="vendasMixPdvsContexto" class="hint"></div>
+        <div class="frotaGrid">
+          <div class="boxFrota">
+            <div class="hint">Clique em um PDV para ver abaixo os grupos comprados no período.</div>
+            <div style="overflow:auto; max-height:360px;">
+              <table>
+                <thead>
+                  <tr>
+                    <th>PDV</th>
+                    <th>Cidade</th>
+                    <th>Vendedor</th>
+                    <th>Grupos</th>
+                    <th>Faixa</th>
+                    <th>Itens</th>
+                    <th>Notas</th>
+                    <th>Tipos usados</th>
+                  </tr>
+                </thead>
+                <tbody id="vendasMixClientesBody"></tbody>
+              </table>
             </div>
           </div>
-          <div class="vendas-filtros-grid">
-            <label>
-              Data inicial
-              <input type="date" id="vendasPrecoDataInicio" onchange="carregarRelatorioPrecoMedioVendas()">
-            </label>
-            <label>
-              Data final
-              <input type="date" id="vendasPrecoDataFim" onchange="carregarRelatorioPrecoMedioVendas()">
-            </label>
-            <label class="vendas-filtros-grid--full">
-              Vendedor
-              <select id="vendasPrecoVendedor" onchange="carregarRelatorioPrecoMedioVendas()">
-                <option value="">Todos os vendedores</option>
-              </select>
-            </label>
-          </div>
         </div>
-      </div>
 
-      <div class="frotaGrid">
-        <div class="boxFrota">
-          <h3>Preço Médio por Cidade e Cliente</h3>
-          <div style="overflow:auto; max-height:520px;">
-            <table>
-              <thead id="vendasPrecoHead"></thead>
-              <tbody id="vendasPrecoBody"></tbody>
-            </table>
+        <div class="frotaGrid">
+          <div class="boxFrota">
+            <h3>Detalhe do PDV</h3>
+            <div id="vendasMixDetalheHint" class="hint">Selecione um PDV para ver exatamente quais grupos ele comprou no período.</div>
+            <div style="overflow:auto; max-height:220px;">
+              <table>
+                <thead>
+                  <tr>
+                    <th>PDV</th>
+                    <th>Cidade</th>
+                    <th>Vendedor</th>
+                    <th>Qtde grupos</th>
+                    <th>Faixa</th>
+                    <th>Grupos usados</th>
+                  </tr>
+                </thead>
+                <tbody id="vendasMixDetalheBody"></tbody>
+              </table>
+            </div>
           </div>
         </div>
-      </div>
+      </dialog>
     </div>
 
   </section>
@@ -3022,8 +3049,15 @@
           <button type="button" id="vendasDiarioImportarBtn" onclick="importarVendasDiario()" disabled>Importar arquivo</button>
           <input class="hidden" type="file" id="vendasDiarioCargaPdf" accept=".pdf,application/pdf" onchange="prepararImportacaoCargaPdfVendasDiario()">
           <button type="button" onclick="document.getElementById('vendasDiarioCargaPdf').click()">Importar carga PDF</button>
-          <button type="button" onclick="importarVendasDiarioPasta()" title="Ler TXT, PDF e SELLOUT mensal agora, a qualquer horario">Ler pastas automaticamente</button>
+          <button type="button" id="vendasDiarioLerPastasBtn" onclick="importarVendasDiarioPasta()" title="Ler TXT, PDF e SELLOUT mensal agora, a qualquer horario">Ler pastas automaticamente</button>
           <span class="hint">SELLOUT mensal: leitura diaria as 08:00 ou por este botao, a qualquer horario.</span>
+        </div>
+        <div class="vendas-diario-leitura" aria-live="polite">
+          <div class="vendas-diario-leitura-head">
+            <strong>Última leitura das pastas</strong>
+            <span id="vendasDiarioLeituraResumo" class="hint">Ainda não consultada.</span>
+          </div>
+          <div id="vendasDiarioLeituraStatus" class="vendas-diario-leitura-grid"></div>
         </div>
         <div class="vendas-diario-import-box vendas-diario-import-box--referencias">
           <strong>Rotina de importação:</strong>
@@ -3857,6 +3891,30 @@
   <input type="file" id="nfeOcrImagemInput" accept="image/*" capture="environment" hidden>
   <input type="file" id="estoqueItensFotoInput" accept="image/*" capture="environment" hidden>
 
+  <section id="pdvsTotais" class="section">
+    <h2>Totais de PDVs por vendedor</h2>
+    <p>Importe o PDF de Cobertura Vendedor/Superv. A coluna Total Clientes de cada vendedor será a base dos percentuais em Grupos de embalagem.</p>
+    <div class="boxFrota">
+      <label for="pdvsArquivo">PDF de cobertura (até 10 MB)</label>
+      <input id="pdvsArquivo" type="file" accept="application/pdf,.pdf" onchange="pdvsLimparConferencia()">
+      <button type="button" onclick="conferirPdfPdvs()">Ler PDF e conferir</button>
+      <p id="pdvsStatus" role="status" aria-live="polite"></p>
+    </div>
+    <form id="pdvsConferencia" class="boxFrota hidden" onsubmit="salvarPdfPdvs(event)">
+      <h3>Conferir atualização</h3>
+      <p>Confira vendedor e total. Clientes com compra no PDF são apenas referência. Os vendedores fora desta conferência mantêm seus totais atuais.</p>
+      <div style="overflow:auto"><table><thead><tr><th>Vendedor</th><th>Total atual</th><th>Novo total de PDVs</th><th>Com compra no PDF</th><th>Ação</th></tr></thead><tbody id="pdvsConferenciaBody"></tbody></table></div>
+      <button type="button" class="btn-secondary" onclick="pdvsLinha()">Adicionar vendedor</button>
+      <button type="submit">Confirmar e atualizar totais</button>
+      <button type="button" class="btn-secondary" onclick="pdvsLimparConferencia()">Cancelar</button>
+      <details><summary>Texto do PDF para conferência</summary><pre id="pdvsTexto" style="overflow:auto;max-height:320px"></pre></details>
+    </form>
+    <div class="boxFrota"><h3>Carteira atual</h3>
+      <p>Vale até a próxima atualização, inclusive nos relatórios de períodos anteriores.</p>
+      <div style="overflow:auto"><table><thead><tr><th>Vendedor</th><th>Total de PDVs</th><th>Atualizado em</th></tr></thead><tbody id="pdvsAtuais"></tbody></table></div>
+    </div>
+  </section>
+
   <!-- =====================================================
        SCRIPTS
   ====================================================== -->
@@ -3864,7 +3922,9 @@
   <script src="/script.js?v=__RB_ASSET_VERSION__"></script>
   <script src="/gestao_processos_compras.js?v=__RB_ASSET_VERSION__"></script>
   <script src="/estoque_contagem.js?v=__RB_ASSET_VERSION__"></script>
+  <script src="/estoque_perdas.js?v=__RB_ASSET_VERSION__"></script>
   <script src="/custo_produto.js?v=__RB_ASSET_VERSION__"></script>
+<script src="/vendas_pdvs.js?v=__RB_ASSET_VERSION__"></script>
 <script src="/custo_diario.js?v=__RB_ASSET_VERSION__"></script>
 </body>
 </html>

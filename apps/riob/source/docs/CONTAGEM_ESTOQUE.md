@@ -32,6 +32,11 @@ navegador. Cadastros que representam o mesmo produto canonico nao podem ser
 contados duas vezes na mesma finalizacao. Rascunhos continuam na pagina e podem
 ser exportados em CSV; somente contagens confirmadas alimentam os contadores.
 
+ESTOQUE > Baixas por perda registra perdas justificadas antes da contagem.
+A contagem usa o saldo ja descontado; nao repete essa baixa. Uma conferencia
+aberta antes da perda retorna conflito e deve ser refeita. Nao registrar nova
+baixa para diferenca ja ajustada na contagem. Ver [Baixas por perda](BAIXAS_POR_PERDA.md).
+
 ## Persistencia e concorrencia
 
 `estoque_contagens` guarda responsavel, observacao, criacao e finalizacao.

@@ -109,6 +109,7 @@ let manutencaoItensDraft = [];
 let manutencaoXmlPreLancamentoId = 0;
 let manutencaoXmlPendencias = [];
 let manutencaoXmlPendenciasSelecionadas = new Set();
+let manutencaoTxtImportState = { files: [], preview: null };
 let estoqueState = {
   view: "lancar",
   conferencias: [],
@@ -2265,7 +2266,7 @@ function openEstoqueView(ev, view = "posicao"){
   document.querySelectorAll("#submenuEstoque .submenu-item").forEach((item) => {
     item.classList.toggle("active", item.dataset.estoqueView === view);
   });
-  if (view !== "contagem") {
+  if (!["contagem", "perdas"].includes(view)) {
     setEstoqueView(view);
     carregarEstoque().catch(() => {});
   }
@@ -2380,13 +2381,9 @@ function setDashboardView(view){
 }
 
 async function carregarDashboardVendasDiario(){
-  const inputInicio = document.getElementById("dashVendasDiarioDataInicio");
-  const inputFim = document.getElementById("dashVendasDiarioDataFim");
   const clienteSelect = document.getElementById("dashVendasDiarioCliente");
   const clienteFiltro = clienteSelect?.value || "";
   const params = new URLSearchParams();
-  if (inputInicio?.value) params.set("data_inicio", inputInicio.value);
-  if (inputFim?.value) params.set("data_fim", inputFim.value);
   if (clienteFiltro) params.set("cliente", clienteFiltro);
   const resp = await apiFetch(`/api/vendas/diario/dashboard${params.toString() ? `?${params}` : ""}`);
   const data = await resp.json().catch(() => ({}));
@@ -2397,13 +2394,11 @@ async function carregarDashboardVendasDiario(){
   }
   const dataInicio = data?.periodo?.data_inicio || data.data_ref || "";
   const dataFim = data?.periodo?.data_fim || data.data_ref || "";
-  if (inputInicio && dataInicio) inputInicio.value = dataInicio;
-  if (inputFim && dataFim) inputFim.value = dataFim;
   _vendasPreencherSelectClientes(data?.clientes_disponiveis || [], data?.filtros?.cliente || clienteFiltro, "dashVendasDiarioCliente", "Todos os clientes");
   if (info) info.textContent = dataInicio
     ? (dataInicio === dataFim
       ? `Posição de ${dataInicio.split("-").reverse().join("/")}${clienteFiltro ? " para o cliente selecionado" : ""}.`
-      : `Período de ${dataInicio.split("-").reverse().join("/")} a ${dataFim.split("-").reverse().join("/")}${clienteFiltro ? " para o cliente selecionado" : ""}.`)
+      : `Mês atual: ${dataInicio.split("-").reverse().join("/")} a ${dataFim.split("-").reverse().join("/")}${clienteFiltro ? " para o cliente selecionado" : ""}.`)
     : "Nenhuma venda diária importada.";
   const resumo = data?.resumo || {};
   const cards = document.getElementById("dashVendasDiarioCards");
@@ -2590,7 +2585,7 @@ async function carregarDashboardVariacao(force = false) {
   const infoEl = document.getElementById("dashVendasArquivoInfo");
   if (infoEl) infoEl.textContent = "Carregando dashboard de variação de preço...";
   const mes = await _vendasCarregarMeses("dashVendasMes");
-  const resp = await apiFetch(`/api/vendas/relatorio?tipo_relatorio=variacao_preco&mes=${encodeURIComponent(mes)}`);
+  const resp = await apiFetch(`/api/vendas/relatorio?tipo_relatorio=variacao_preco&origem=dashboard&mes=${encodeURIComponent(mes)}`);
   const data = await resp.json().catch(() => ({}));
   if (!resp.ok) {
     const erro = data?.erro || "Falha ao carregar dashboard de variação de preço.";
@@ -2619,7 +2614,7 @@ async function carregarDashboardMixEmbalagens(force = false) {
 async function carregarDashboardVendasAnual() {
   const infoEl = document.getElementById("dashVendasArquivoInfo");
   if (infoEl) infoEl.textContent = "Carregando comparativo anual de vendas...";
-  const params = new URLSearchParams({tipo_relatorio: "percentual_vendas_anual"});
+  const params = new URLSearchParams({tipo_relatorio: "percentual_vendas_anual", origem: "dashboard"});
   const vendedor = document.getElementById("dashVendasAnualVendedor")?.value || "";
   const cliente = document.getElementById("dashVendasAnualCliente")?.value || "";
   if (vendedor) params.set("vendedor", vendedor);
@@ -2749,7 +2744,7 @@ function _dashboardVendasRenderMixEmbalagens(payload = {}) {
       <tr>
         <td>${_escHtml(item.faixa || "-")}</td>
         <td>${_escHtml(_fmtNumVendas(item.pdvs))}</td>
-        <td>${_escHtml(`${_fmtNumVendas(item.percentual || 0, 2)}%`)}</td>
+        <td>${item.percentual == null ? "Pendente" : _escHtml(`${_fmtNumVendas(item.percentual, 2)}%`)}</td>
       </tr>
     `).join("") : '<tr><td colspan="3">Nenhum PDV encontrado no período.</td></tr>';
   }
@@ -3123,6 +3118,7 @@ function toggleVendasSubmenu(ev){
 function openVendasView(ev, view){
   if (ev){ ev.preventDefault(); ev.stopPropagation(); }
   const rawView = String(view || "relatorio").toLowerCase();
+  if (rawView === "pdvs_totais") { abrirPdvsTotais(); return; }
   if (["importar", "vendas_diario_importar", "importar_vendas_diario"].includes(rawView)) {
     openWorkflowView(null, "vendas_diario_importar");
     return;
@@ -3134,7 +3130,7 @@ function openVendasView(ev, view){
   const menu = document.querySelector('.menu-item.has-submenu[data-tab="vendas"]');
   document.querySelectorAll("#submenuVendas .submenu-item").forEach((x) => x.classList.remove("active"));
   const relatorioModo = ["relatorio_anual", "vendas_anual", "percentual_vendas_anual"].includes(rawView)
-    ? "vendas_anual" : (["variacao_preco", "grupos_embalagem", "preco_medio"].includes(rawView) ? rawView : "bonificacoes");
+    ? "vendas_anual" : (rawView === "relatorio_diario" ? "diario" : (["variacao_preco", "grupos_embalagem", "preco_medio"].includes(rawView) ? rawView : "bonificacoes"));
   const targetView = ["pontosvenda", "pontosvenda_relatorio", "pontosvenda_importar"].includes(rawView) ? "pontosvenda" : (rawView === "orcamento" ? "orcamento" : "relatorio");
   const itemAtivo = document.querySelector(`#submenuVendas .submenu-item[data-vendas-view="${targetView}"]`);
 
@@ -3166,6 +3162,11 @@ function setVendasView(view){
     return;
   }
   const target = raw === "pontosvenda" ? "pontosvenda" : (raw === "orcamento" ? "orcamento" : "relatorio");
+  if (target !== 'relatorio') {
+    fecharVendasAnualPopup();
+    fecharPdvsPrecosVendas();
+    vendasState.relatorioRequestId = (vendasState.relatorioRequestId || 0) + 1;
+  }
   window.__vendasView = target;
   vendasState.view = target;
   const rel = document.getElementById("vendasViewRelatorio");
@@ -3173,10 +3174,12 @@ function setVendasView(view){
   const orcamento = document.getElementById("vendasViewOrcamento");
   if (orcamento) orcamento.classList.toggle("hidden", target !== "orcamento");
   const relHeader = document.getElementById("vendasRelatorioHeader");
+  const relCabecalho = document.getElementById("vendasRelCabecalho");
   const relTabs = document.getElementById("vendasRelatorioTabs");
   if (relHeader) relHeader.classList.toggle("hidden", target !== "relatorio");
+  if (relCabecalho) relCabecalho.classList.toggle("hidden", target !== "relatorio");
   if (relTabs) relTabs.classList.toggle("hidden", target !== "relatorio");
-  ["vendasViewRelatorioVariacao", "vendasViewRelatorioMix", "vendasViewRelatorioPrecoMedio", "vendasViewRelatorioAnual"].forEach((id) => {
+  ["vendasViewRelatorioVariacao", "vendasViewRelatorioMix", "vendasViewRelatorioAnual", "vendasViewRelatorioDiario"].forEach((id) => {
     const element = document.getElementById(id);
     if (element && target !== "relatorio") element.classList.add("hidden");
   });
@@ -3460,6 +3463,7 @@ async function carregarVendasDiario(){
   if (dataInput && data.data_ref) dataInput.value = data.data_ref;
   _vendasPreencherSelectClientes(data?.clientes_disponiveis || [], data?.filtros?.cliente || clienteFiltro, "vendasDiarioCliente", "Todos os clientes");
   if (info) info.textContent = `TXT: ${data?.importacao?.diretorio_txt || data?.importacao?.diretorio || "-"} | PDF: ${data?.importacao?.diretorio_pdf || "-"} | Importacao automatica: ${data?.importacao?.horario || "08:00"}`;
+  _renderStatusLeituraVendasDiario(data?.ultima_leitura);
   const resumo = data?.resumo || {};
   const cards = document.getElementById("vendasDiarioResumo");
   if (cards) cards.innerHTML = _renderCardsVendasResumo([
@@ -3477,6 +3481,65 @@ async function carregarVendasDiario(){
     <td><strong>${_escHtml(_fmtMoneyVendas(item.valor_liquido))}</strong></td><td>${_escHtml(`${_fmtNumVendas(item.peso_bruto, 3)} kg`)}</td>
   </tr>`).join("") : '<tr><td colspan="11">Nenhum pedido importado para a data.</td></tr>';
   carregarReferenciasVendasDiario().catch(() => {});
+}
+
+let vendasDiarioStatusLeituraTimer = null;
+
+function _renderStatusLeituraVendasDiario(payload){
+  const root = document.getElementById("vendasDiarioLeituraStatus");
+  const resumo = document.getElementById("vendasDiarioLeituraResumo");
+  if (!root) return;
+  const fontes = payload?.fontes || {};
+  const ordem = ["txt", "pdf", "sellout_ind3", "sellout_indb"];
+  const extras = Object.keys(fontes).filter((chave) => !ordem.includes(chave));
+  const chaves = [...ordem, ...extras].filter((chave) => fontes[chave]);
+  const rotulos = {
+    sucesso: "Sucesso", sem_alteracoes: "Sem alterações", sem_arquivos: "Sem arquivos",
+    parcial: "Parcial", erro: "Erro", em_andamento: "Em andamento",
+    interrompido: "Interrompido", desabilitado: "Desabilitado",
+    nunca_executado: "Nunca executado", desconhecido: "Desconhecido",
+  };
+  const formatarData = (valor) => {
+    if (!valor) return "sem leitura registrada";
+    const data = new Date(valor);
+    return Number.isNaN(data.getTime()) ? String(valor) : data.toLocaleString("pt-BR");
+  };
+  root.innerHTML = chaves.map((chave) => {
+    const item = fontes[chave] || {};
+    const status = String(item.status || "nunca_executado");
+    const detalhes = [];
+    if (Number(item.arquivos || 0) || status === "sem_arquivos") detalhes.push(`${Number(item.arquivos || 0)} arquivo(s)`);
+    if (Number(item.linhas || 0)) detalhes.push(`${_fmtNumVendas(item.linhas)} linha(s)`);
+    if (Number(item.importados || 0)) detalhes.push(`${_fmtNumVendas(item.importados)} novo(s)`);
+    if (Number(item.erros || 0)) detalhes.push(`${_fmtNumVendas(item.erros)} erro(s)`);
+    if (Number(item.removidos || 0)) detalhes.push(`${_fmtNumVendas(item.removidos)} removido(s)`);
+    if (Number(item.falhas_limpeza || 0)) detalhes.push(`${_fmtNumVendas(item.falhas_limpeza)} falha(s) na limpeza`);
+    return `<article class="vendas-diario-leitura-item vendas-diario-leitura-item--${_escAttr(status)}">
+      <header><strong>${_escHtml(item.nome || chave)}</strong><span>${_escHtml(rotulos[status] || status)}</span></header>
+      <div>${_escHtml(formatarData(item.tentativa_em))}</div>
+      <small>${_escHtml(item.mensagem || "Nenhuma leitura registrada para esta fonte.")}</small>
+      ${detalhes.length ? `<small>${_escHtml(detalhes.join(" · "))}</small>` : ""}
+    </article>`;
+  }).join("") || '<div class="hint">Nenhuma leitura registrada.</div>';
+  if (resumo) {
+    const origem = {manual:"botão Ler pastas", manual_fila:"botão Ler pastas (fila)", automatico_pastas:"agendador TXT/PDF", automatico_sellout_08h:"agendador SELLOUT das 08:00"}[payload?.origem] || payload?.origem || "sem execução";
+    const andamento = payload?.manual_pendente ? "Leitura completa aguardando na fila · " : (payload?.em_andamento ? "Leitura em andamento · " : "");
+    resumo.textContent = `${andamento}${formatarData(payload?.atualizado_em)} · ${origem}`;
+  }
+}
+
+async function acompanharStatusLeituraVendasDiario(){
+  if (vendasDiarioStatusLeituraTimer) clearTimeout(vendasDiarioStatusLeituraTimer);
+  const resp = await apiFetch("/api/vendas/diario/status-leitura");
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) return;
+  _renderStatusLeituraVendasDiario(data);
+  if (data?.em_andamento || data?.manual_pendente) {
+    vendasDiarioStatusLeituraTimer = setTimeout(acompanharStatusLeituraVendasDiario, 2000);
+    return;
+  }
+  vendasDiarioStatusLeituraTimer = null;
+  await carregarVendasDiario();
 }
 
 function _normalizarVendasDiarioTexto(valor){
@@ -3823,7 +3886,11 @@ async function importarVendasDiario(){
     return;
   }
   if (data?.processando) {
-    if (info) info.textContent = "Ja existe uma leitura de pastas em andamento. Aguarde e tente novamente.";
+    _renderStatusLeituraVendasDiario(data?.ultima_leitura);
+    if (info) info.textContent = data?.manual_agendada
+      ? "Ja existe uma leitura em andamento. A leitura completa de TXT, PDF, SELLOUT IND3 e INDB ficou na fila e iniciara automaticamente."
+      : "Ja existe uma leitura de pastas em andamento.";
+    acompanharStatusLeituraVendasDiario().catch(() => {});
     return;
   }
   const imported = (data?.resultados || []).filter((item) => item.status === "importado").length;
@@ -3844,6 +3911,7 @@ async function importarVendasDiario(){
     ? `${imported} arquivo(s) novo(s) importado(s).`
     : `${imported} novo(s) importado(s). Lidos ${txtCount} TXT e ${pdfCount} PDF. ${selloutStatus[sellout?.status] || ""}`;
   if (info) info.textContent = importMessage;
+  _renderStatusLeituraVendasDiario(data?.ultima_leitura);
   const input = document.getElementById("vendasDiarioArquivo");
   if (input) input.value = "";
   selecionarArquivoVendasDiario();
@@ -4911,9 +4979,38 @@ function renderRelatorioVendas(payload = {}){
   }
 }
 
+function _vendasAplicarPeriodo(params) {
+  const inicio = document.getElementById("vendasPeriodoInicio")?.value || "";
+  const fim = document.getElementById("vendasPeriodoFim")?.value || "";
+  if (inicio) params.set("data_inicio", inicio);
+  if (fim) params.set("data_fim", fim);
+  if (inicio || fim) params.delete("mes");
+}
+
+function limparPeriodoRelatoriosVendas() {
+  for (const id of ["vendasPeriodoInicio", "vendasPeriodoFim"]) {
+    const input = document.getElementById(id);
+    if (input) input.value = "";
+  }
+}
+
+function _vendasRenderCabecalho(payload) {
+  const cards = document.getElementById("vendasRelTotaisPadrao");
+  if (cards) cards.innerHTML = _renderCardsVendasResumo(
+    (payload.cabecalho_resumo || []).map(item => [item.nome, _fmtMoneyVendas(item.valor_venda)])
+  );
+  const info = document.getElementById("vendasRelArquivoInfo");
+  if (info) {
+    info.textContent = payload.arquivo?.nome || "Base atual";
+    info.title = payload.arquivo?.nomes?.length ? payload.arquivo.nomes.join("\n") : `Atualizado em: ${payload.arquivo?.atualizado_em || "-"}`;
+  }
+}
+
 async function carregarRelatorioVendas(){
   const requestId = (vendasState.relatorioRequestId || 0) + 1;
   vendasState.relatorioRequestId = requestId;
+  const totaisPadrao = document.getElementById("vendasRelTotaisPadrao");
+  if (totaisPadrao) totaisPadrao.textContent = "Carregando totais...";
   const infoEl = document.getElementById("vendasRelArquivoInfo");
   if (infoEl) infoEl.textContent = "Carregando relatorios vendas...";
 
@@ -4924,8 +5021,8 @@ async function carregarRelatorioVendas(){
   const mes = document.getElementById("vendasRelMes")?.value || vendasState.mes || "";
   const vendedor = document.getElementById("vendasRelVendedor")?.value || "";
   const cliente = document.getElementById("vendasRelCliente")?.value || "";
-  const dataInicio = document.getElementById("vendasRelDataInicio")?.value || "";
-  const dataFim = document.getElementById("vendasRelDataFim")?.value || "";
+  const dataInicio = document.getElementById("vendasPeriodoInicio")?.value || "";
+  const dataFim = document.getElementById("vendasPeriodoFim")?.value || "";
   params.set("tipo_relatorio", tipoRelatorio);
   if (mes) params.set("mes", mes);
   if (vendedor) params.set("vendedor", vendedor);
@@ -4934,6 +5031,7 @@ async function carregarRelatorioVendas(){
   if (dataFim) params.set("data_fim", dataFim);
   if (vendedor) params.set("limite", "300");
 
+  _vendasAplicarPeriodo(params);
   const resp = await apiFetch(`/api/vendas/relatorio?${params.toString()}`);
   const data = await resp.json().catch(() => ({}));
   if (requestId !== vendasState.relatorioRequestId) return;
@@ -4945,154 +5043,208 @@ async function carregarRelatorioVendas(){
     return;
   }
   renderRelatorioVendas(data || {});
+  _vendasRenderCabecalho(data || {});
 }
 
-function renderRelatorioPrecoMedioVendas(payload = {}){
-  vendasState.lastPayload = payload;
-  vendasState.tipoRelatorio = "preco_medio";
-  const resumo = payload?.resumo_geral || {};
-  const linhas = Array.isArray(payload?.precos_medios_vendedor_cidade) ? payload.precos_medios_vendedor_cidade : [];
-  const categoriasPayload = Array.isArray(payload?.categorias) ? payload.categorias : [];
-  const categorias = categoriasPayload.length ? categoriasPayload : Array.from(new Set(
-    linhas.flatMap((item) => Object.keys(item?.categorias || {}))
-  ));
-  const vendedores = Array.isArray(payload?.vendedores) ? payload.vendedores : [];
-  const arquivo = payload?.arquivo || {};
-  const vendedorFiltro = payload?.filtros?.vendedor || document.getElementById("vendasPrecoVendedor")?.value || "";
-  const normalizarPrecoOpcional = (valor) => {
-    if (typeof valor === "number") return Number.isFinite(valor) ? valor : 0;
-    const texto = String(valor ?? "").trim();
-    if (!texto) return 0;
-    const normalizado = texto
-      .replace(/R\$\s*/g, "")
-      .replace(/\./g, "")
-      .replace(/,/g, ".");
-    const numero = Number(normalizado);
-    return Number.isFinite(numero) ? numero : 0;
+function ordenarResultados(linhas, campo, direcao = "asc") {
+  if (!Array.isArray(linhas) || !["valor", "grupo", "cidade"].includes(campo) || !["asc", "desc"].includes(direcao)) {
+    throw new TypeError("Informe linhas, campo e direção válidos.");
+  }
+  const collator = new Intl.Collator("pt-BR", {numeric: true, sensitivity: "base"});
+  const valor = linha => {
+    const item = linha?.[campo];
+    return campo === "valor"
+      ? (typeof item === "number" && Number.isFinite(item) ? item : null)
+      : (typeof item === "string" && item.trim() ? item.trim() : null);
   };
-  const fmtPrecoOpcional = (valor) => {
-    const numero = normalizarPrecoOpcional(valor);
-    return numero > 0 ? _fmtMoneyVendas(numero) : "-";
-  };
+  return linhas.map((linha, indice) => ({linha, indice, valor: valor(linha)})).sort((a, b) => {
+    if (a.valor === null || b.valor === null) {
+      return a.valor === b.valor ? a.indice - b.indice : (a.valor === null ? 1 : -1);
+    }
+    const comparacao = campo === "valor" ? a.valor - b.valor : collator.compare(a.valor, b.valor);
+    return (direcao === "desc" ? -comparacao : comparacao) || a.indice - b.indice;
+  }).map(item => item.linha);
+}
 
-  _vendasPreencherSelectVendedores(vendedores, vendedorFiltro, "vendasPrecoVendedor");
+function _vendasPrecoPermitido(tipo) {
+  return window.nanotechMenuAllowed?.(`/apps/riob#vendas:${tipo}`) !== false;
+}
 
-  const infoEl = document.getElementById("vendasRelArquivoInfo");
-  if (infoEl) {
-    const parts = [
-      `Arquivo: ${arquivo.nome || "Base atual"}`,
-      `Atualizado em: ${arquivo.atualizado_em || "-"}`,
-      "Relatorio: Preco Medio por Cidade, Cliente e Categoria",
-    ];
-    if (vendedorFiltro) parts.push(`Vendedor: ${vendedorFiltro}`);
-    infoEl.textContent = parts.join(" | ");
+function _vendasPrecosParametros() {
+  const params = new URLSearchParams({visao: 'precos_cidade'});
+  for (const [campo, id] of [['vendedor', 'vendasVarVendedor'], ['grupo', 'vendasPrecosGrupo']]) {
+    const valor = document.getElementById(id)?.value;
+    if (valor) params.set(campo, valor);
   }
+  _vendasAplicarPeriodo(params);
+  return params;
+}
 
-  const cardsEl = document.getElementById("vendasPrecoResumoCards");
-  if (cardsEl) {
-    cardsEl.innerHTML = _renderCardsVendasResumo([
-      ["Linhas", _fmtNumVendas(resumo.linhas || resumo.grupos)],
-      ["Vendedores", _fmtNumVendas(resumo.vendedores)],
-      ["Cidades", _fmtNumVendas(resumo.cidades)],
-      ["Clientes", _fmtNumVendas(resumo.clientes)],
-      ["Categorias", _fmtNumVendas(resumo.categorias)],
-    ]);
-  }
+function _vendasPrecoTexto(valor) {
+  return typeof valor === 'number' && Number.isFinite(valor) ? _fmtMoneyVendas(valor) : '—';
+}
 
-  const head = document.getElementById("vendasPrecoHead");
-  const totalCols = Math.max(1, categorias.length) + 1;
-  if (head) {
-    head.innerHTML = `
-      <tr>
-        <th>Cliente</th>
-        ${categorias.map((categoria) => `<th>${_escHtml(categoria)}</th>`).join("")}
-      </tr>
-    `;
-  }
-
-  const renderCategoriaCell = (dados) => {
-    if (!dados) return "<td>-</td>";
-    const precos = dados.precos_praticados || "-";
-    const mediaCidade = fmtPrecoOpcional(dados.media_cidade || dados.preco_medio);
-    return `
-      <td>
-        <div><strong>Praticado:</strong> ${_escHtml(precos)}</div>
-        <div>Média cidade: ${_escHtml(mediaCidade)}</div>
-      </td>
-    `;
-  };
-
-  const body = document.getElementById("vendasPrecoBody");
-  if (body) {
-    const rows = [];
-    let cidadeAtual = "";
-    let vendedorAtual = "";
-    linhas.forEach((item) => {
-      const cidade = item.cidade || "SEM CIDADE";
-      const vendedorChave = item.vendedor_chave || "";
-      if (cidade !== cidadeAtual || vendedorChave !== vendedorAtual) {
-        const rotuloCidade = vendedorFiltro
-          ? `Cidade: ${cidade}`
-          : `Cidade: ${cidade}${item.vendedor ? ` | Vendedor: ${item.vendedor}` : ""}`;
-        rows.push(`<tr style="font-weight:700;background:#e0f2fe;"><td colspan="${totalCols}">${_escHtml(rotuloCidade)}</td></tr>`);
-        cidadeAtual = cidade;
-        vendedorAtual = vendedorChave;
-      }
-      const isResumoCidade = item.tipo_linha === "resumo_cidade";
-      const rowStyle = isResumoCidade ? ' style="font-weight:700;background:#fde68a;"' : "";
-      rows.push(`
-      <tr${rowStyle}>
-        <td>${_escHtml(item.cliente || "-")}</td>
-        ${categorias.map((categoria) => renderCategoriaCell((item.categorias || {})[categoria])).join("")}
-      </tr>
-    `);
-    });
-    body.innerHTML = rows.length ? rows.join("") : `<tr><td colspan="${totalCols}">Nenhum preco medio encontrado para os filtros atuais.</td></tr>`;
+async function carregarRelatorioPrecosVendas() {
+  const requestId = (vendasState.relatorioRequestId || 0) + 1;
+  vendasState.relatorioRequestId = requestId;
+  fecharPdvsPrecosVendas();
+  vendasState.precosCidade = null;
+  const status = document.getElementById('vendasPrecosStatus');
+  const body = document.getElementById('vendasPrecosBody');
+  const resumo = document.getElementById('vendasPrecosResumo');
+  const totais = document.getElementById('vendasRelTotaisPadrao');
+  document.getElementById('vendasViewRelatorioVariacao')?.classList.remove('hidden');
+  body.innerHTML = '';
+  resumo.textContent = '';
+  document.getElementById('vendasPrecosHead').innerHTML = '';
+  status.textContent = 'Carregando preços por cidade...';
+  totais.textContent = 'Carregando totais...';
+  try {
+    const tipo = ['variacao_preco', 'preco_medio'].find(_vendasPrecoPermitido);
+    if (!tipo) throw new Error('Consulta de preços não liberada para seu usuário.');
+    const params = _vendasPrecosParametros();
+    params.set('tipo_relatorio', tipo);
+    const resp = await apiFetch(`/api/vendas/relatorio?${params}`);
+    const data = await resp.json();
+    if (requestId !== vendasState.relatorioRequestId) return;
+    if (!resp.ok) throw new Error(data.erro || 'Falha ao carregar preços.');
+    if (!_vendasPrecoPermitido(tipo)) throw new Error('Consulta de preços não liberada para seu usuário.');
+    // Fixar o período resolvido no servidor também para a consulta dos PDVs.
+    for (const [campo, id] of [['data_inicio', 'vendasPeriodoInicio'], ['data_fim', 'vendasPeriodoFim']]) {
+      const valor = data.filtros?.[campo] || '';
+      document.getElementById(id).value = valor;
+      if (valor) params.set(campo, valor);
+    }
+    vendasState.precosCidade = {data, parametros: params.toString(), tipo};
+    const selecionado = params.get('vendedor') || '';
+    const vendedores = [...(data.vendedores || [])];
+    if (selecionado && !vendedores.some(v => v.chave === selecionado)) vendedores.push({chave: selecionado, nome: selecionado});
+    _vendasPreencherSelectVendedores(vendedores, selecionado, 'vendasVarVendedor');
+    const grupo = document.getElementById('vendasPrecosGrupo');
+    const grupos = [...new Set([...(data.grupos_disponiveis || []), params.get('grupo')].filter(Boolean))];
+    grupo.innerHTML = '<option value="">Todos os grupos</option>' + grupos.map(g => `<option value="${_escHtml(g)}">${_escHtml(g)}</option>`).join('');
+    grupo.value = params.get('grupo') || '';
+    _vendasRenderCabecalho(data);
+    const variacao = tipo === 'variacao_preco';
+    document.getElementById('vendasPrecosTitulo').textContent = variacao ? 'Variação de preço' : 'Preços por cidade';
+    const r = data.resumo_geral || {};
+    const indicadores = [['Cidades', r.cidades || 0], ['Produtos', r.produtos || 0], ['PDVs', r.pdvs || 0]];
+    if (variacao) indicadores.push(['Mínimo', _vendasPrecoTexto(r.preco_min)], ['Máximo', _vendasPrecoTexto(r.preco_max)]);
+    resumo.innerHTML = indicadores.map(([nome, valor]) => `<span>${_escHtml(nome)} <strong>${_escHtml(String(valor))}</strong></span>`).join('');
+    document.getElementById('vendasPrecosHead').innerHTML = `<tr><th>Cidade</th><th>Produto</th>${variacao ? '<th>Mínimo</th><th>Máximo</th>' : ''}<th>PDVs</th></tr>`;
+    body.innerHTML = (data.linhas || []).map((linha, indice) => `<tr data-preco-linha="${indice}">
+      <td>${_escHtml(linha.cidade)}</td><td>${_escHtml(linha.produto)}</td>
+      ${variacao ? `<td>${_vendasPrecoTexto(linha.preco_min)}</td><td>${_vendasPrecoTexto(linha.preco_max)}</td>` : ''}
+      <td><button type="button" onclick="abrirPdvsPrecosVendas(${indice}); event.stopPropagation()" aria-haspopup="dialog" aria-controls="vendasPrecosPdvsDialog" aria-label="Ver ${Number(linha.pdvs) || 0} PDVs de ${_escHtml(linha.produto)} em ${_escHtml(linha.cidade)}">${Number(linha.pdvs) || 0} PDVs</button></td></tr>`).join('') || `<tr><td colspan="${variacao ? 5 : 3}">Nenhum preço encontrado para os filtros atuais.</td></tr>`;
+    body.onclick = event => {
+      const linha = event.target.closest('tr[data-preco-linha]');
+      if (linha) abrirPdvsPrecosVendas(Number(linha.dataset.precoLinha));
+    };
+    status.textContent = data.linhas?.length ? 'Clique em uma linha para consultar os PDVs e os preços.' : '';
+  } catch (erro) {
+    if (requestId !== vendasState.relatorioRequestId) return;
+    status.textContent = erro.message || 'Falha ao carregar preços.';
+    totais.textContent = 'Totais indisponíveis.';
   }
 }
 
-async function carregarRelatorioPrecoMedioVendas(){
-  const infoEl = document.getElementById("vendasRelArquivoInfo");
-  if (infoEl) infoEl.textContent = "Carregando relatorio de preco medio...";
-  const params = new URLSearchParams();
-  const vendedor = document.getElementById("vendasPrecoVendedor")?.value || "";
-  const dataInicio = document.getElementById("vendasPrecoDataInicio")?.value || "";
-  const dataFim = document.getElementById("vendasPrecoDataFim")?.value || "";
-  params.set("tipo_relatorio", "preco_medio");
-  if (vendedor) params.set("vendedor", vendedor);
-  if (dataInicio) params.set("data_inicio", dataInicio);
-  if (dataFim) params.set("data_fim", dataFim);
-  const resp = await apiFetch(`/api/vendas/relatorio?${params.toString()}`);
-  const data = await resp.json().catch(() => ({}));
-  if (!resp.ok) {
-    const erro = data?.erro || "Falha ao carregar relatorio de preco medio.";
-    if (infoEl) infoEl.textContent = erro;
-    if (resp.status !== 409) alert(erro);
-    return;
-  }
-  renderRelatorioPrecoMedioVendas(data || {});
+function invalidarPdvsPrecosVendas() {
+  if (document.getElementById('vendasPrecosPdvsDialog')?.open) return;
+  vendasState.precosPdvRequestId = (vendasState.precosPdvRequestId || 0) + 1;
+  vendasState.precosPdvs = null;
 }
 
-function limparFiltrosRelatorioPrecoMedioVendas(){
-  const dataInicio = document.getElementById("vendasPrecoDataInicio");
-  const dataFim = document.getElementById("vendasPrecoDataFim");
-  const vendedor = document.getElementById("vendasPrecoVendedor");
-  if (dataInicio) dataInicio.value = "";
-  if (dataFim) dataFim.value = "";
-  if (vendedor) vendedor.value = "";
-  carregarRelatorioPrecoMedioVendas().catch(() => {});
+function fecharPdvsPrecosVendas() {
+  const dialog = document.getElementById('vendasPrecosPdvsDialog');
+  if (dialog?.open) dialog.close();
+  invalidarPdvsPrecosVendas();
 }
 
-function abrirPdfRelatorioPrecoMedioVendas(){
-  const params = new URLSearchParams();
-  const vendedor = document.getElementById("vendasPrecoVendedor")?.value || "";
-  const dataInicio = document.getElementById("vendasPrecoDataInicio")?.value || "";
-  const dataFim = document.getElementById("vendasPrecoDataFim")?.value || "";
-  if (vendedor) params.set("vendedor", vendedor);
-  if (dataInicio) params.set("data_inicio", dataInicio);
-  if (dataFim) params.set("data_fim", dataFim);
-  const qs = params.toString();
-  window.open(`/api/vendas/relatorio/preco-medio/pdf${qs ? `?${qs}` : ""}`, "_blank");
+async function abrirPdvsPrecosVendas(indice) {
+  const consulta = vendasState.precosCidade;
+  const linha = consulta?.data.linhas?.[indice];
+  if (!linha || !_vendasPrecoPermitido(consulta.tipo)) return;
+  const dialog = document.getElementById('vendasPrecosPdvsDialog');
+  const requestId = (vendasState.precosPdvRequestId || 0) + 1;
+  vendasState.precosPdvRequestId = requestId;
+  vendasState.precosPdvs = null;
+  document.getElementById('vendasPrecosPdvsTitulo').textContent = `${linha.cidade} · ${linha.produto}`;
+  document.getElementById('vendasPrecosPdvsResumo').textContent = '';
+  document.getElementById('vendasPrecosPdvsHead').innerHTML = '';
+  document.getElementById('vendasPrecosPdvsBody').innerHTML = '';
+  const status = document.getElementById('vendasPrecosPdvsStatus');
+  const ordem = document.getElementById('vendasPrecosPdvsOrdem');
+  ordem.innerHTML = '<option value="nome">Nome</option>';
+  ordem.disabled = true;
+  status.textContent = 'Carregando PDVs...';
+  if (!dialog.open) dialog.showModal();
+  const tipos = ['variacao_preco', 'preco_medio'].filter(_vendasPrecoPermitido);
+  const resultados = await Promise.allSettled(tipos.map(async tipo => {
+    const params = new URLSearchParams(consulta.parametros);
+    params.set('tipo_relatorio', tipo);
+    params.set('detalhe', '1');
+    for (const campo of ['cidade', 'produto', 'grupo']) params.set(campo, linha[campo]);
+    const resp = await apiFetch(`/api/vendas/relatorio?${params}`);
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.erro || 'Falha ao consultar PDVs.');
+    // Uma nova importação exige atualizar a lista antes de abrir seus detalhes.
+    for (const campo of ['id', 'updated_at', 'source_signature']) {
+      if (consulta.data.cache?.[campo] !== data.cache?.[campo]) throw new Error('A base mudou. Atualize o relatório para consultar os PDVs.');
+    }
+    return data;
+  }));
+  if (!dialog.open || requestId !== vendasState.precosPdvRequestId || consulta !== vendasState.precosCidade) return;
+  const pdvs = new Map(), dados = {}, erros = [];
+  resultados.forEach((resultado, i) => {
+    const tipo = tipos[i];
+    if (!_vendasPrecoPermitido(tipo)) return;
+    if (resultado.status === 'rejected') {
+      erros.push(`${tipo === 'preco_medio' ? 'Preço médio' : 'Variação'}: ${resultado.reason?.message || 'consulta indisponível'}`);
+      return;
+    }
+    dados[tipo] = resultado.value;
+    for (const pdv of resultado.value.pdvs || []) pdvs.set(pdv.chave, {...pdvs.get(pdv.chave), ...pdv});
+  });
+  vendasState.precosPdvs = {linhas: [...pdvs.values()], dados};
+  const opcoes = [['nome', 'Nome']];
+  if (dados.preco_medio) opcoes.push(['preco_medio', 'Valor: preço médio']);
+  if (dados.variacao_preco) opcoes.push(['preco_min', 'Valor: mínimo'], ['preco_max', 'Valor: máximo']);
+  ordem.innerHTML = opcoes.map(([value, nome]) => `<option value="${value}">${nome}</option>`).join('');
+  ordem.disabled = !pdvs.size;
+  status.textContent = erros.join(' ');
+  renderPdvsPrecosVendas();
+}
+
+function renderPdvsPrecosVendas() {
+  const dados = vendasState.precosPdvs;
+  if (!dados || !document.getElementById('vendasPrecosPdvsDialog')?.open) return;
+  const variacao = !!dados.dados.variacao_preco && _vendasPrecoPermitido('variacao_preco');
+  const media = !!dados.dados.preco_medio && _vendasPrecoPermitido('preco_medio');
+  const campos = [['nome', 'PDV']];
+  if (variacao) campos.push(['preco_min', 'Mínimo'], ['preco_max', 'Máximo']);
+  if (media) campos.push(['preco_medio', 'Preço médio']);
+  const pedido = document.getElementById('vendasPrecosPdvsOrdem').value;
+  const campo = campos.some(([key]) => key === pedido) ? pedido : 'nome';
+  const direcao = document.getElementById('vendasPrecosPdvsDirecao').value;
+  const linhas = !variacao && !media ? [] : ordenarResultados(dados.linhas.map(linha => ({
+    linha, grupo: linha.nome, valor: linha[campo],
+  })), campo === 'nome' ? 'grupo' : 'valor', direcao).map(item => item.linha);
+  document.getElementById('vendasPrecosPdvsHead').innerHTML = `<tr>${campos.map(([,nome]) => `<th>${nome}</th>`).join('')}</tr>`;
+  document.getElementById('vendasPrecosPdvsBody').innerHTML = linhas.map(linha => `<tr>${campos.map(([key]) => `<td>${key === 'nome' ? _escHtml(linha.nome) : _vendasPrecoTexto(linha[key])}</td>`).join('')}</tr>`).join('') || `<tr><td colspan="${campos.length}">Nenhum PDV disponível.</td></tr>`;
+  const partes = [`${linhas.length} PDVs`];
+  if (media) partes.push(`Preço médio na cidade para este produto: ${_vendasPrecoTexto(dados.dados.preco_medio.linhas?.[0]?.preco_medio)}`);
+  document.getElementById('vendasPrecosPdvsResumo').textContent = partes.join(' · ');
+}
+
+async function carregarRelatorioPrecoMedioVendas() {
+  return carregarRelatorioPrecosVendas();
+}
+
+function limparFiltrosRelatorioPrecoMedioVendas() {
+  limparPeriodoRelatoriosVendas();
+  document.getElementById('vendasVarVendedor').value = '';
+  document.getElementById('vendasPrecosGrupo').value = '';
+  carregarRelatorioPrecosVendas().catch(() => {});
 }
 
 function _vendasMesLabelTexto(valor) {
@@ -5132,10 +5284,17 @@ function _vendasPreencherSelectVendedores(vendedores, selected = "", selectId = 
   select.value = (Array.isArray(vendedores) && vendedores.some((item) => String(item?.chave || "") === current)) ? current : "";
 }
 
+function _vendasPeriodoLabel(payload = {}) {
+  const filtros = payload.filtros || {};
+  if (filtros.data_inicio || filtros.data_fim) {
+    const data = valor => valor ? String(valor).split("-").reverse().join("/") : "Sem limite";
+    return `${data(filtros.data_inicio)} a ${data(filtros.data_fim)}`;
+  }
+  return _vendasMesLabelTexto(payload.mes_atual);
+}
+
 function _vendasResumoBonificacoesCards(resumo = {}, payload = {}) {
-  const mes = payload?.mes_atual || "";
   return [
-    ["Mês", _vendasMesLabelTexto(mes)],
     ["Itens", _fmtNumVendas(resumo.itens)],
     ["Vendedores", _fmtNumVendas(resumo.vendedores)],
     ["PDV", _fmtNumVendas(resumo.clientes)],
@@ -5154,7 +5313,7 @@ function _vendasRenderGrupoBonificacoes(resumoGrupos = []) {
   }
   const labelGrupo = (item) => {
     const grupo = String(item?.grupo || "").toLowerCase();
-    if (grupo === "todos") return "Rio Branco";
+    if (grupo === "todos") return "RioB (valor total)";
     if (grupo === "rio_branco") return "CLT";
     if (grupo === "autonomos") return "Autônomos";
     return item?.nome || item?.grupo || "-";
@@ -5192,10 +5351,14 @@ function _vendasRenderGrupoBonificacoes(resumoGrupos = []) {
 }
 
 function _vendasResumoMixEmbalagensCards(resumo = {}, payload = {}) {
-  const mes = payload?.mes_atual || "";
+  const info = document.getElementById("vendasMixCarteiraInfo");
+  if (info) info.textContent = resumo.aviso_carteira || "";
+  const totalImportado = resumo.total_carteira_importada ?? resumo.total_carteira;
+  const parcial = totalImportado != null && resumo.total_carteira == null;
   return [
-    ["Mês", _vendasMesLabelTexto(mes)],
-    ["PDVs", _fmtNumVendas(resumo.pdvs)],
+    ["Período", _vendasPeriodoLabel(payload)],
+    ["PDVs com venda", _fmtNumVendas(resumo.pdvs)],
+    [parcial ? "PDVs importados (parcial)" : "Total de PDVs da carteira", totalImportado == null ? "Pendente" : _fmtNumVendas(totalImportado)],
     ["6 grupos", _fmtNumVendas(resumo.pdvs_6)],
     ["5 grupos", _fmtNumVendas(resumo.pdvs_5)],
     ["4 grupos", _fmtNumVendas(resumo.pdvs_4)],
@@ -5213,7 +5376,7 @@ function _vendasRenderMixEmbalagensFaixas(faixas = [], bodyId = "vendasMixFaixas
     <tr>
       <td>${_escHtml(item.faixa || "-")}</td>
       <td>${_escHtml(_fmtNumVendas(item.pdvs))}</td>
-      <td>${_escHtml(`${_fmtNumVendas(item.percentual || 0, 2)}%`)}</td>
+      <td>${item.percentual == null ? "Pendente" : _escHtml(`${_fmtNumVendas(item.percentual, 2)}%`)}</td>
     </tr>
   `).join("") : '<tr><td colspan="3">Nenhum PDV encontrado no período.</td></tr>';
 }
@@ -5223,11 +5386,11 @@ function _vendasRenderMixEmbalagensDetalhe(item = null, hintId = "vendasMixDetal
   const body = document.getElementById(bodyId);
   if (!hint || !body) return;
   if (!item) {
-    hint.textContent = "Selecione um PDV para ver exatamente quais grupos ele usou no mês.";
+    hint.textContent = "Selecione um PDV para ver exatamente quais grupos ele comprou no período.";
     body.innerHTML = '<tr><td colspan="6">Nenhum PDV selecionado.</td></tr>';
     return;
   }
-  hint.textContent = `PDV ${item.cliente || "-"} no mês selecionado.`;
+  hint.textContent = `PDV ${item.cliente || "-"} no período selecionado.`;
   body.innerHTML = `
     <tr>
       <td>${_escHtml(item.cliente || "-")}</td>
@@ -5241,16 +5404,38 @@ function _vendasRenderMixEmbalagensDetalhe(item = null, hintId = "vendasMixDetal
 }
 
 function selecionarClienteRelatorioMixEmbalagens(chave = "") {
-  const select = document.getElementById("vendasMixCliente");
-  if (select) select.value = chave || "";
+  const clientes = vendasState.lastPayload?.clientes || [];
+  _vendasRenderMixEmbalagensDetalhe(clientes.find(item => item.chave === chave) || null);
+}
+
+function abrirPdvsRelatorioMixEmbalagens() {
+  if (!document.getElementById("vendasMixVendedor")?.value || vendasState.mixCarregando) return;
+  const dialog = document.getElementById("vendasMixPdvsDialog");
+  if (dialog && !dialog.open) dialog.showModal();
+}
+
+function abrirGruposRelatorioMixEmbalagens() {
+  const grupos = vendasState.lastPayload?.grupos_disponiveis || [];
+  const selecionados = vendasState.mixGrupos;
+  const opcoes = document.getElementById("vendasMixGruposOpcoes");
+  if (opcoes) opcoes.innerHTML = grupos.map(grupo => `<label><input type="checkbox" value="${_escAttr(grupo)}" ${selecionados == null || selecionados.includes(grupo) ? "checked" : ""}>${_escHtml(grupo)}</label>`).join("");
+  const dialog = document.getElementById("vendasMixGruposDialog");
+  if (dialog && !dialog.open) dialog.showModal();
+}
+
+function aplicarGruposRelatorioMixEmbalagens() {
+  const opcoes = [...document.querySelectorAll("#vendasMixGruposOpcoes input")];
+  const selecionados = opcoes.filter(el => el.checked).map(el => el.value);
+  vendasState.mixGrupos = selecionados.length === opcoes.length ? null : selecionados;
+  document.getElementById("vendasMixGruposDialog")?.close();
   carregarRelatorioMixEmbalagens().catch(() => {});
 }
 
 function limparFiltrosRelatorioMixEmbalagens() {
-  const mes = document.getElementById("vendasMixMes");
+  limparPeriodoRelatoriosVendas();
+  vendasState.mixGrupos = null;
   const vendedor = document.getElementById("vendasMixVendedor");
   const cliente = document.getElementById("vendasMixCliente");
-  if (mes) mes.value = "";
   if (vendedor) vendedor.value = "";
   if (cliente) cliente.value = "";
   carregarRelatorioMixEmbalagens().catch(() => {});
@@ -5262,7 +5447,6 @@ function renderRelatorioMixEmbalagens(payload = {}) {
   vendasState.mes = payload?.mes_atual || payload?.filtros?.mes || "";
 
   const mesAtual = payload?.mes_atual || payload?.filtros?.mes || "";
-  const meses = Array.isArray(payload?.meses_disponiveis) ? payload.meses_disponiveis : [];
   const vendedores = Array.isArray(payload?.vendedores) ? payload.vendedores : [];
   const clientes = Array.isArray(payload?.clientes) ? payload.clientes : [];
   const clientesDisponiveis = Array.isArray(payload?.clientes_disponiveis) ? payload.clientes_disponiveis : [];
@@ -5274,7 +5458,14 @@ function renderRelatorioMixEmbalagens(payload = {}) {
   const pdvLabel = detalhe?.cliente || clienteFiltro;
   const arquivo = payload?.arquivo || {};
 
-  _vendasPreencherSelectMeses(meses, mesAtual, "vendasMixMes");
+  // Expose the API's default month as dates; subsequent requests use only the range.
+  const inicio = document.getElementById("vendasPeriodoInicio");
+  const fim = document.getElementById("vendasPeriodoFim");
+  if (inicio && fim && !inicio.value && !fim.value && /^\d{4}-\d{2}$/.test(mesAtual)) {
+    inicio.value = `${mesAtual}-01`;
+    const [ano, mes] = mesAtual.split("-").map(Number);
+    fim.value = `${mesAtual}-${new Date(ano, mes, 0).getDate()}`;
+  }
   _vendasPreencherSelectVendedores(vendedores, vendedorFiltro, "vendasMixVendedor");
   _vendasPreencherSelectClientes(clientesDisponiveis, clienteFiltro, "vendasMixCliente", "Todos os PDVs");
 
@@ -5284,7 +5475,7 @@ function renderRelatorioMixEmbalagens(payload = {}) {
       `Arquivo: ${arquivo.nome || "Base atual"}`,
       `Atualizado em: ${arquivo.atualizado_em || "-"}`,
       `Relatorio: Grupos Embalagem`,
-      `Mês: ${_vendasMesLabelTexto(mesAtual)}`,
+      `Período: ${_vendasPeriodoLabel(payload)}`,
     ];
     if (vendedorFiltro) parts.push(`Vendedor: ${vendedorFiltro}`);
     if (clienteFiltro) parts.push(`PDV: ${pdvLabel}`);
@@ -5302,7 +5493,7 @@ function renderRelatorioMixEmbalagens(payload = {}) {
   if (clientesBody) {
     clientesBody.innerHTML = clientes.length ? clientes.map((item) => `
       <tr onclick="selecionarClienteRelatorioMixEmbalagens('${_escJsString(item.chave || "")}')">
-        <td>${_escHtml(item.cliente || "-")}</td>
+        <td><button type="button" class="btn-secondary" onclick="event.stopPropagation(); selecionarClienteRelatorioMixEmbalagens('${_escJsString(item.chave || "")}')">${_escHtml(item.cliente || "-")}</button></td>
         <td>${_escHtml(item.cidade || "-")}</td>
         <td>${_escHtml(item.vendedor || item.vendedores_lista || "-")}</td>
         <td>${_escHtml(_fmtNumVendas(item.qtd_grupos))}</td>
@@ -5315,23 +5506,55 @@ function renderRelatorioMixEmbalagens(payload = {}) {
   }
 
   _vendasRenderMixEmbalagensDetalhe(detalhe);
+  const grupos = payload.filtros?.grupos;
+  const gruposTexto = grupos == null ? "todos" : (grupos.length ? grupos.join(", ") : "nenhum");
+  const gruposResumo = document.getElementById("vendasMixGruposResumo");
+  if (gruposResumo) gruposResumo.textContent = `Grupos: ${gruposTexto}.`;
+  const gruposBtn = document.getElementById("vendasMixGruposBtn");
+  if (gruposBtn) {
+    gruposBtn.textContent = grupos == null ? "Grupos" : `Grupos (${grupos.length})`;
+    gruposBtn.disabled = false;
+  }
+  const contexto = document.getElementById("vendasMixPdvsContexto");
+  if (contexto) contexto.textContent = `${vendedorFiltro} | ${_vendasPeriodoLabel(payload)} | Grupos: ${gruposTexto}`;
+  const verPdvs = document.getElementById("vendasMixVerPdvs");
+  if (verPdvs) {
+    verPdvs.classList.toggle("hidden", !document.getElementById("vendasMixVendedor")?.value);
+    verPdvs.disabled = false;
+  }
+  vendasState.mixCarregando = false;
 }
 
 async function carregarRelatorioMixEmbalagens() {
+  const requestId = (vendasState.relatorioRequestId || 0) + 1;
+  vendasState.relatorioRequestId = requestId;
+  const dialog = document.getElementById("vendasMixPdvsDialog");
+  if (dialog?.open) dialog.close();
+  const gruposDialog = document.getElementById("vendasMixGruposDialog");
+  if (gruposDialog?.open) gruposDialog.close();
+  const gruposBtn = document.getElementById("vendasMixGruposBtn");
+  if (gruposBtn) gruposBtn.disabled = true;
+  vendasState.mixCarregando = true;
+  const verPdvs = document.getElementById("vendasMixVerPdvs");
+  if (verPdvs) {
+    verPdvs.classList.toggle("hidden", !document.getElementById("vendasMixVendedor")?.value);
+    verPdvs.disabled = true;
+  }
   const infoEl = document.getElementById("vendasRelArquivoInfo");
   if (infoEl) infoEl.textContent = "Carregando grupos embalagem...";
 
   const params = new URLSearchParams();
-  const mes = document.getElementById("vendasMixMes")?.value || vendasState.mes || "";
   const vendedor = document.getElementById("vendasMixVendedor")?.value || "";
   const cliente = document.getElementById("vendasMixCliente")?.value || "";
   params.set("tipo_relatorio", "grupos_embalagem");
-  if (mes) params.set("mes", mes);
   if (vendedor) params.set("vendedor", vendedor);
   if (cliente) params.set("cliente", cliente);
+  if (vendasState.mixGrupos != null) params.set("grupos", vendasState.mixGrupos.join(","));
 
+  _vendasAplicarPeriodo(params);
   const resp = await apiFetch(`/api/vendas/relatorio?${params.toString()}`);
   const data = await resp.json().catch(() => ({}));
+  if (requestId !== vendasState.relatorioRequestId) return;
   if (!resp.ok) {
     const erro = data?.erro || "Falha ao carregar relatorio de grupos embalagem.";
     if (infoEl) infoEl.textContent = erro;
@@ -5339,10 +5562,79 @@ async function carregarRelatorioMixEmbalagens() {
     return;
   }
   renderRelatorioMixEmbalagens(data || {});
+  _vendasRenderCabecalho(data || {});
+}
+
+async function carregarRelatorioVendasDiario() {
+  const requestId = (vendasState.relatorioRequestId || 0) + 1;
+  vendasState.relatorioRequestId = requestId;
+  const info = document.getElementById("vendasRelArquivoInfo");
+  const totais = document.getElementById("vendasRelTotaisPadrao");
+  if (info) info.textContent = "Carregando vendas diárias...";
+  if (totais) totais.textContent = "Carregando totais...";
+  const params = new URLSearchParams();
+  _vendasAplicarPeriodo(params);
+  const vendedor = document.getElementById("vendasDiaVendedor")?.value || "";
+  const cliente = document.getElementById("vendasDiaCliente")?.value || "";
+  if (vendedor) params.set("vendedor", vendedor);
+  if (cliente) params.set("cliente", cliente);
+  const resp = await apiFetch(`/api/vendas/diario/relatorio?${params}`);
+  const data = await resp.json().catch(() => ({}));
+  if (requestId !== vendasState.relatorioRequestId) return;
+  if (!resp.ok) {
+    if (info) info.textContent = data?.erro || "Falha ao carregar vendas diárias.";
+    return;
+  }
+  vendasState.lastPayload = data;
+  vendasState.tipoRelatorio = "diario";
+  if (!params.has("data_inicio") && !params.has("data_fim")) {
+    for (const [id, campo] of [["vendasPeriodoInicio", "data_inicio"], ["vendasPeriodoFim", "data_fim"]]) {
+      const input = document.getElementById(id);
+      if (input) input.value = data.periodo?.[campo] || "";
+    }
+  }
+  _vendasRenderCabecalho(data);
+  _vendasPreencherSelectVendedores(data.vendedores_disponiveis || [], vendedor, "vendasDiaVendedor");
+  _vendasPreencherSelectClientes(data.clientes_disponiveis || [], cliente, "vendasDiaCliente", "Todos os clientes");
+  const resumo = data.resumo || {};
+  const cards = document.getElementById("vendasDiaResumo");
+  if (cards) cards.innerHTML = _renderCardsVendasResumo([
+    ["Vendedores", _fmtNumVendas(resumo.vendedores)],
+    ["Pedidos", _fmtNumVendas(resumo.positivos)], ["Volume", _fmtNumVendas(resumo.volume_total, 3)],
+    ["Valor bruto", _fmtMoneyVendas(resumo.valor_bruto)],
+    ["Bonificação", _fmtMoneyVendas(resumo.valor_bonificacao)],
+    ["Valor líquido", _fmtMoneyVendas(resumo.valor_liquido)],
+  ]);
+  const body = document.getElementById("vendasDiaBody");
+  const linhas = data.vendedores || [];
+  if (body) body.innerHTML = linhas.length ? linhas.map(item => `<tr>
+    <td>${_escHtml(String(item.data_ref || "").split("-").reverse().join("/"))}</td>
+    <td>${_escHtml([item.vendedor_codigo, item.vendedor_nome].filter(Boolean).join(" - "))}</td>
+    <td>${_escHtml(_fmtNumVendas(item.positivos))}</td>
+    <td>${_escHtml(_fmtNumVendas(item.volume_total, 3))}</td>
+    <td>${_escHtml(_fmtNumVendas(item.volume_bonificado, 3))}</td>
+    <td>${_escHtml(_fmtMoneyVendas(item.valor_bruto))}</td>
+    <td>${_escHtml(_fmtMoneyVendas(item.valor_bonificacao))}</td>
+    <td>${_escHtml(_fmtNumVendas(item.bonificacao_percentual, 2))}%</td>
+    <td>${_escHtml(_fmtMoneyVendas(item.valor_liquido))}</td>
+  </tr>`).join("") : '<tr><td colspan="9">Nenhuma venda no período selecionado.</td></tr>';
+}
+
+function limparFiltrosRelatorioVendasDiario() {
+  limparPeriodoRelatoriosVendas();
+  for (const id of ["vendasDiaVendedor", "vendasDiaCliente"]) {
+    const input = document.getElementById(id);
+    if (input) input.value = "";
+  }
+  carregarRelatorioVendasDiario().catch(() => {});
 }
 
 async function recarregarRelatorioVendasAtual() {
   const modo = String(window.__vendasRelatorioModo || vendasState.tipoRelatorio || "bonificacoes").toLowerCase();
+  if (modo === "diario") {
+    await carregarRelatorioVendasDiario();
+    return;
+  }
   if (modo === "variacao_preco") {
     await carregarRelatorioVariacaoPreco();
     return;
@@ -5362,49 +5654,190 @@ async function recarregarRelatorioVendasAtual() {
   await carregarRelatorioVendas();
 }
 
+function _vendasAnualPermitido() {
+  return window.nanotechMenuAllowed?.('/apps/riob#vendas:relatorio_anual') !== false;
+}
+
+function alterarVendedorRelatorioAnual() {
+  const cliente = document.getElementById('vendasAnualCliente');
+  cliente.innerHTML = '<option value="">Todos os clientes</option>';
+  return carregarRelatorioVendasAnual();
+}
+
 async function carregarRelatorioVendasAnual() {
   const requestId = (vendasState.relatorioRequestId || 0) + 1;
   vendasState.relatorioRequestId = requestId;
-  const infoEl = document.getElementById("vendasRelArquivoInfo");
-  if (infoEl) infoEl.textContent = "Carregando comparativo anual de vendas...";
-  const params = new URLSearchParams({tipo_relatorio: "percentual_vendas_anual"});
-  const vendedor = document.getElementById("vendasAnualVendedor")?.value || "";
-  const cliente = document.getElementById("vendasAnualCliente")?.value || "";
-  if (vendedor) params.set("vendedor", vendedor);
-  if (cliente) params.set("cliente", cliente);
-  const resp = await apiFetch(`/api/vendas/relatorio?${params.toString()}`);
-  const data = await resp.json().catch(() => ({}));
-  if (requestId !== vendasState.relatorioRequestId) return;
-  if (!resp.ok) {
-    const erro = data?.erro || "Falha ao carregar o relatório anual de vendas.";
-    if (infoEl) infoEl.textContent = erro;
-    if (resp.status !== 409) alert(erro);
-    return;
+  fecharVendasAnualPopup();
+  vendasState.anualConsulta = null;
+  const status = document.getElementById('vendasAnualStatus');
+  const totais = document.getElementById('vendasRelTotaisPadrao');
+  const clienteEl = document.getElementById('vendasAnualCliente');
+  const vendedor = document.getElementById('vendasAnualVendedor')?.value || '';
+  const cliente = clienteEl?.value || '';
+  const params = new URLSearchParams({tipo_relatorio:'percentual_vendas_anual', visao:'anual_clientes'});
+  if (vendedor) params.set('vendedor', vendedor);
+  if (cliente) params.set('cliente', cliente);
+  _vendasAplicarPeriodo(params);
+  if (status) status.textContent = 'Carregando comparativo e ranking...';
+  if (totais) totais.textContent = 'Carregando totais...';
+  for (const id of ['vendasAnualResumoCards','vendasAnualHead','vendasAnualBody','vendasAnualRankHead','vendasAnualRankBody']) {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = '';
   }
-  vendasState.lastPayload = data || {};
-  vendasState.tipoRelatorio = "vendas_anual";
-  _vendasRenderComparativoAnual(data, {
-    cardsId: "vendasAnualResumoCards",
-    headId: "vendasAnualHead",
-    bodyId: "vendasAnualBody",
-    vendedorId: "vendasAnualVendedor",
-    clienteId: "vendasAnualCliente",
-  });
-  _vendasAtualizarInfoAnual(data);
+  if (clienteEl) { clienteEl.disabled = true; clienteEl.innerHTML = '<option value="">Carregando clientes...</option>'; }
+  try {
+    if (!_vendasAnualPermitido()) throw new Error('Relatório anual não liberado para seu usuário.');
+    const resp = await apiFetch(`/api/vendas/relatorio?${params}`);
+    const data = await resp.json();
+    if (requestId !== vendasState.relatorioRequestId) return;
+    if (!resp.ok) throw new Error(data.erro || 'Falha ao carregar o relatório anual.');
+    if (!_vendasAnualPermitido()) throw new Error('Relatório anual não liberado para seu usuário.');
+    // Datas podem remover o cliente antes selecionado: limpar e consultar o novo conjunto.
+    if (cliente && !(data.clientes_disponiveis || []).some(item => item.chave === cliente)) {
+      if (clienteEl) clienteEl.innerHTML = '<option value="">Todos os clientes</option>';
+      return carregarRelatorioVendasAnual();
+    }
+    if (vendedor && !(data.vendedores || []).some(item => item.chave === vendedor)) {
+      data.vendedores = [...(data.vendedores || []), {chave:vendedor,nome:vendedor}];
+    }
+    vendasState.lastPayload = data;
+    vendasState.tipoRelatorio = 'vendas_anual';
+    vendasState.anualConsulta = {data, parametros:params.toString()};
+    _vendasRenderComparativoAnual(data, {
+      cardsId:'vendasAnualResumoCards',headId:'vendasAnualHead',bodyId:'vendasAnualBody',
+      vendedorId:'vendasAnualVendedor',clienteId:'vendasAnualCliente',
+    });
+    renderRankingVendasAnual();
+    _vendasAtualizarInfoAnual(data);
+    _vendasRenderCabecalho(data);
+    if (status) status.textContent = `Comparativo ${data.ano_anterior || 'anterior'} × ${data.ano_atual || 'atual'} em hectolitros. O ranking usa a diferença de volume no mesmo período.`;
+    if (clienteEl) clienteEl.disabled = false;
+  } catch (erro) {
+    if (requestId !== vendasState.relatorioRequestId) return;
+    if (status) status.textContent = erro.message || 'Falha ao carregar o relatório anual.';
+    if (totais) totais.textContent = 'Totais indisponíveis.';
+    if (clienteEl) clienteEl.innerHTML = '<option value="">Clientes indisponíveis</option>';
+  }
 }
 
 function limparFiltrosRelatorioVendasAnual() {
-  const vendedor = document.getElementById("vendasAnualVendedor");
-  const cliente = document.getElementById("vendasAnualCliente");
-  if (vendedor) vendedor.value = "";
-  if (cliente) cliente.value = "";
-  carregarRelatorioVendasAnual().catch(() => {});
+  limparPeriodoRelatoriosVendas();
+  for (const id of ['vendasAnualVendedor', 'vendasAnualCliente']) {
+    const input = document.getElementById(id);
+    if (input) input.value = '';
+  }
+  document.getElementById('vendasAnualRankOrdem').value = 'maior_perda';
+  return carregarRelatorioVendasAnual();
+}
+
+function renderRankingVendasAnual() {
+  const consulta = vendasState.anualConsulta;
+  if (!consulta || !_vendasAnualPermitido()) return;
+  const data = consulta.data;
+  const clientes = data.ranking_tipo === 'cliente';
+  document.getElementById('vendasAnualRankTitulo').textContent = clientes ? 'Ranking de clientes' : 'Ranking de vendedores';
+  const direcao = document.getElementById('vendasAnualRankOrdem').value === 'maior_perda' ? 'asc' : 'desc';
+  const linhas = ordenarResultados((data.ranking || []).map((linha, indice) => ({linha, indice, valor:linha.diferenca_volume})), 'valor', direcao);
+  document.getElementById('vendasAnualRankHead').innerHTML = `<tr><th>Rank</th><th>${clientes ? 'Cliente' : 'Vendedor'}</th><th>${_escHtml(data.ano_anterior)} (hl)</th><th>${_escHtml(data.ano_atual)} (hl)</th><th>Diferença (hl)</th><th>Variação</th><th>Vendas</th></tr>`;
+  const body = document.getElementById('vendasAnualRankBody');
+  body.innerHTML = linhas.map(({linha, indice}, i) => {
+    const meta = _vendasAnualMovimentoMeta(linha);
+    const diferenca = Number(linha.diferenca_volume || 0);
+    return `<tr data-anual-cliente="${indice}"><td>${i+1}</td><td>${_escHtml(linha.nome)}</td>
+      <td>${_fmtNumVendas(linha.total_anterior,3)}</td><td>${_fmtNumVendas(linha.total_atual,3)}</td>
+      <td><span class="vendas-dashboard-chip ${meta.classe}">${diferenca > 0 ? '+' : ''}${_fmtNumVendas(diferenca,3)}</span></td>
+      <td>${_vendasAnualPercentualTexto(linha.variacao_percentual)}</td>
+      <td><button type="button" onclick="abrirVendasAnualPopup(${indice}); event.stopPropagation()" aria-haspopup="dialog" aria-controls="vendasAnualDialog" aria-label="Ver vendas de ${_escHtml(linha.nome)}">Ver vendas</button></td></tr>`;
+  }).join('') || '<tr><td colspan="7">Nenhuma venda encontrada para os filtros selecionados.</td></tr>';
+  body.onclick = event => {
+    const row = event.target.closest('tr[data-anual-cliente]');
+    if (row) abrirVendasAnualPopup(Number(row.dataset.anualCliente));
+  };
+}
+
+function invalidarVendasAnualPopup() {
+  if (document.getElementById('vendasAnualDialog')?.open) return;
+  vendasState.anualPopupRequestId = (vendasState.anualPopupRequestId || 0) + 1;
+  vendasState.anualDetalhe = null;
+}
+
+function fecharVendasAnualPopup() {
+  const dialog = document.getElementById('vendasAnualDialog');
+  if (dialog?.open) dialog.close();
+  invalidarVendasAnualPopup();
+}
+
+async function abrirVendasAnualPopup(indice) {
+  const consulta = vendasState.anualConsulta;
+  const item = consulta?.data.ranking?.[indice];
+  if (!item || !_vendasAnualPermitido()) return;
+  const params = new URLSearchParams(consulta.parametros);
+  params.set(item.tipo === 'vendedor' ? 'vendedor' : 'cliente', item.chave);
+  params.set('detalhe','1');
+  vendasState.anualDetalhe = {consulta, item, parametros:params.toString(), pagina:1};
+  const dialog = document.getElementById('vendasAnualDialog');
+  document.getElementById('vendasAnualDialogTitulo').textContent = `Vendas · ${item.nome}`;
+  document.getElementById('vendasAnualDialogResumo').textContent =
+    `${consulta.data.ano_anterior}: ${_fmtNumVendas(item.total_anterior,3)} hl · ${_fmtMoneyVendas(item.venda_anterior)} | ${consulta.data.ano_atual}: ${_fmtNumVendas(item.total_atual,3)} hl · ${_fmtMoneyVendas(item.venda_atual)}`;
+  if (!dialog.open) dialog.showModal();
+  return carregarVendasAnualPopup(1);
+}
+
+async function carregarVendasAnualPopup(pagina) {
+  const contexto = vendasState.anualDetalhe;
+  if (!contexto || !_vendasAnualPermitido()) return;
+  const requestId = (vendasState.anualPopupRequestId || 0) + 1;
+  vendasState.anualPopupRequestId = requestId;
+  contexto.carregando = true;
+  const body = document.getElementById('vendasAnualDialogBody');
+  const status = document.getElementById('vendasAnualDialogStatus');
+  const anterior = document.getElementById('vendasAnualPaginaAnterior');
+  const proxima = document.getElementById('vendasAnualPaginaProxima');
+  anterior.disabled = true; proxima.disabled = true;
+  body.innerHTML = '';
+  document.getElementById('vendasAnualPaginaInfo').textContent = '';
+  status.textContent = 'Carregando vendas...';
+  try {
+    const params = new URLSearchParams(contexto.parametros);
+    params.set('pagina',String(pagina));
+    const resp = await apiFetch(`/api/vendas/relatorio?${params}`);
+    const data = await resp.json();
+    if (requestId !== vendasState.anualPopupRequestId || contexto !== vendasState.anualDetalhe || !document.getElementById('vendasAnualDialog').open) return;
+    if (!resp.ok) throw new Error(data.erro || 'Falha ao consultar as vendas.');
+    if (!_vendasAnualPermitido()) throw new Error('Relatório anual não liberado para seu usuário.');
+    for (const campo of ['id','updated_at','source_signature']) {
+      if (data.cache?.[campo] !== contexto.consulta.data.cache?.[campo]) throw new Error('A base mudou. Atualize o relatório para consultar as vendas.');
+    }
+    contexto.pagina = data.pagina || pagina;
+    contexto.temProxima = !!data.tem_proxima;
+    contexto.carregando = false;
+    body.innerHTML = (data.vendas || []).map(item => `<tr>
+      <td>${_escHtml(String(item.data || '').split('-').reverse().join('/'))}</td><td>${_escHtml(item.numero_nf || '—')}</td>
+      <td>${_escHtml(item.vendedor || '—')}</td><td>${_escHtml(item.produto || '—')}</td>
+      <td>${_fmtNumVendas(item.volume,3)}</td><td>${_fmtMoneyVendas(item.valor_venda)}</td></tr>`).join('') || '<tr><td colspan="6">Nenhuma venda encontrada.</td></tr>';
+    document.getElementById('vendasAnualPaginaInfo').textContent = `Página ${contexto.pagina}`;
+    anterior.disabled = contexto.pagina <= 1;
+    proxima.disabled = !contexto.temProxima;
+    status.textContent = 'Vendas dos dois anos comparados, respeitando os filtros do relatório.';
+  } catch (erro) {
+    if (requestId !== vendasState.anualPopupRequestId || contexto !== vendasState.anualDetalhe) return;
+    contexto.carregando = false;
+    status.textContent = erro.message || 'Falha ao consultar as vendas.';
+  }
+}
+
+function paginarVendasAnual(direcao) {
+  const contexto = vendasState.anualDetalhe;
+  if (!contexto || contexto.carregando || (direcao > 0 && !contexto.temProxima) || (direcao < 0 && contexto.pagina <= 1)) return;
+  return carregarVendasAnualPopup(contexto.pagina + direcao);
 }
 
 function setVendasRelatorioModo(modo){
   const raw = String(modo || "bonificacoes").toLowerCase();
-  const valor = raw === "variacao_preco"
-    ? "variacao_preco"
+  const valor = raw === "diario" || raw === "relatorio_diario"
+    ? "diario"
+    : raw === "variacao_preco"
+    ? "preco_medio"
     : raw === "mix_embalagens" || raw === "grupos_embalagem"
     ? "grupos_embalagem"
     : raw === "preco_medio" || raw === "preco_medio_vendedor_cidade"
@@ -5414,25 +5847,57 @@ function setVendasRelatorioModo(modo){
     : "bonificacoes";
   window.__vendasRelatorioModo = valor;
   vendasState.tipoRelatorio = valor;
+  fecharPdvsPrecosVendas();
+  vendasState.relatorioRequestId = (vendasState.relatorioRequestId || 0) + 1;
+  const vendasSection = document.getElementById('vendas');
+  const bonificacoesAtivo = valor === 'bonificacoes';
+  const diarioAtivo = valor === 'diario';
+  const precosAtivo = valor === 'preco_medio';
+  const anualAtivo = valor === 'vendas_anual';
+  fecharVendasAnualPopup();
+  vendasSection?.classList.toggle('vendas-bonificacoes-ativo', bonificacoesAtivo);
+  document.querySelectorAll('.vendas-bonificacoes-controle').forEach(el => el.classList.toggle('hidden', !bonificacoesAtivo));
+  vendasSection?.classList.toggle('vendas-diario-ativo', diarioAtivo);
+  document.querySelectorAll('.vendas-diario-controle').forEach(el => el.classList.toggle('hidden', !diarioAtivo));
+  vendasSection?.classList.toggle('vendas-anual-ativo', anualAtivo);
+  document.querySelectorAll('.vendas-anual-controle').forEach(el => el.classList.toggle('hidden', !anualAtivo));
+
+  vendasSection?.classList.toggle('vendas-precos-ativo', precosAtivo);
+  document.querySelectorAll('.vendas-precos-controle').forEach(el => el.classList.toggle('hidden', !precosAtivo));
+  const totais = document.getElementById('vendasRelTotaisPadrao');
+  if (totais) {
+    if (bonificacoesAtivo || diarioAtivo || precosAtivo || anualAtivo) document.getElementById('vendasRelatorioHeader').append(totais);
+    else document.getElementById('vendasRelCabecalho').prepend(totais);
+  }
+  const mixAtivo = valor === "grupos_embalagem";
+  document.getElementById("vendasRelCabecalho")?.classList.toggle("vendas-mix-ativo", mixAtivo);
+  document.querySelectorAll(".vendas-mix-controle").forEach(el => el.classList.toggle("hidden", !mixAtivo));
+  const mixDialog = document.getElementById("vendasMixPdvsDialog");
+  if (mixDialog?.open) mixDialog.close();
+  const gruposDialog = document.getElementById("vendasMixGruposDialog");
+  if (gruposDialog?.open) gruposDialog.close();
+  const viewDia = document.getElementById("vendasViewRelatorioDiario");
+  const tabDia = document.getElementById("vendasRelTabDiario");
+  if (viewDia) viewDia.classList.toggle("hidden", valor !== "diario");
+  if (tabDia) tabDia.classList.toggle("active", valor === "diario");
   const viewBon = document.getElementById("vendasViewRelatorio");
   const viewVar = document.getElementById("vendasViewRelatorioVariacao");
   const viewMix = document.getElementById("vendasViewRelatorioMix");
-  const viewPreco = document.getElementById("vendasViewRelatorioPrecoMedio");
   const viewAnual = document.getElementById("vendasViewRelatorioAnual");
   const tabBon = document.getElementById("vendasRelTabBonificacoes");
-  const tabVar = document.getElementById("vendasRelTabVariacao");
   const tabMix = document.getElementById("vendasRelTabMix");
   const tabPreco = document.getElementById("vendasRelTabPrecoMedio");
   const tabAnual = document.getElementById("vendasRelTabAnual");
   if (viewBon) viewBon.classList.toggle("hidden", valor !== "bonificacoes");
-  if (viewVar) viewVar.classList.toggle("hidden", valor !== "variacao_preco");
+  if (viewVar) viewVar.classList.add("hidden");
   if (viewMix) viewMix.classList.toggle("hidden", valor !== "grupos_embalagem");
-  if (viewPreco) viewPreco.classList.toggle("hidden", valor !== "preco_medio");
   if (viewAnual) viewAnual.classList.toggle("hidden", valor !== "vendas_anual");
   if (tabBon) tabBon.classList.toggle("active", valor === "bonificacoes");
-  if (tabVar) tabVar.classList.toggle("active", valor === "variacao_preco");
   if (tabMix) tabMix.classList.toggle("active", valor === "grupos_embalagem");
-  if (tabPreco) tabPreco.classList.toggle("active", valor === "preco_medio");
+  if (tabPreco) {
+    tabPreco.classList.toggle("active", valor === "preco_medio");
+    tabPreco.classList.toggle("hidden", !_vendasPrecoPermitido("preco_medio") && !_vendasPrecoPermitido("variacao_preco"));
+  }
   if (tabAnual) tabAnual.classList.toggle("active", valor === "vendas_anual");
   recarregarRelatorioVendasAtual().catch(() => {});
 }
@@ -5440,7 +5905,7 @@ function setVendasRelatorioModo(modo){
 function _vendasResumoVariacaoCards(resumo = {}, payload = {}) {
   const mes = payload?.mes_atual || "";
   return [
-    ["Mês", _vendasMesLabelTexto(mes)],
+    ["Período", _vendasPeriodoLabel(payload)],
     ["Linhas válidas", _fmtNumVendas(resumo.itens)],
     ["Vendedores", _fmtNumVendas(resumo.vendedores)],
     ["Grupos", _fmtNumVendas(resumo.grupos)],
@@ -5461,8 +5926,8 @@ function _vendasRenderGrupoVariacao(resumoGrupos = []) {
   }
   const labelGrupo = (item) => {
     const grupo = String(item?.grupo || "").toLowerCase();
-    if (grupo === "todos") return "Todos";
-    if (grupo === "rio_branco") return "Rio Branco";
+    if (grupo === "todos") return "RioB (valor total)";
+    if (grupo === "rio_branco") return "CLT";
     if (grupo === "autonomos") return "Autônomos";
     return item?.nome || item?.grupo || "-";
   };
@@ -5658,86 +6123,16 @@ function selecionarVendedorRelatorioVariacao(chave = "") {
   carregarRelatorioVariacaoPreco().catch(() => {});
 }
 
-function renderRelatorioVariacaoPreco(payload = {}) {
-  const filtros = payload?.filtros || {};
-  const mesAtual = payload?.mes_atual || filtros?.mes || "";
-  vendasState.mes = mesAtual;
-  const meses = Array.isArray(payload?.meses_disponiveis) ? payload.meses_disponiveis : [];
-  const vendedores = Array.isArray(payload?.vendedores) ? payload.vendedores : Array.isArray(payload?.vendedores_disponiveis) ? payload.vendedores_disponiveis : [];
-  const variacoes = Array.isArray(payload?.variacoes) ? payload.variacoes : [];
-  const detalhes = Array.isArray(payload?.detalhes_vendedor) ? payload.detalhes_vendedor : [];
-  const resumo = payload?.resumo_geral || {};
-  const resumoGrupos = Array.isArray(payload?.resumo_grupos) ? payload.resumo_grupos : [];
-  const arquivo = payload?.arquivo || {};
-  const vendedorFiltro = filtros?.vendedor || document.getElementById("vendasVarVendedor")?.value || "";
-  const cacheId = payload?.cache?.id || payload?.cache_entry?.id || "";
-
-  vendasState.tipoRelatorio = "variacao_preco";
-  _vendasPreencherSelectMeses(meses, mesAtual, "vendasVarMes");
-  _vendasPreencherSelectVendedores(vendedores, vendedorFiltro, "vendasVarVendedor");
-  atualizarVisibilidadeFiltrosRelatorioVendas();
-
-  const infoEl = document.getElementById("vendasVarArquivoInfo");
-  if (infoEl) {
-    const parts = [
-      "Cache remoto carregado",
-      `Arquivo: ${arquivo.nome || "Base atual"}`,
-        `Atualizado em: ${arquivo.atualizado_em || "-"}`,
-        `Mês: ${_vendasMesLabelTexto(mesAtual)}`,
-    ];
-    if (vendedorFiltro) parts.push(`Vendedor: ${vendedorFiltro}`);
-    if (cacheId) parts.push(`Cache: ${cacheId}`);
-    infoEl.textContent = parts.join(" | ");
-  }
-
-  const cardsEl = document.getElementById("vendasVarResumoCards");
-  if (cardsEl) {
-    cardsEl.innerHTML = _renderCardsVendasResumo(_vendasResumoVariacaoCards(resumo, payload));
-  }
-
-  const grupoResumoEl = document.getElementById("vendasVarGrupoResumo");
-  if (grupoResumoEl) {
-    grupoResumoEl.innerHTML = _vendasRenderGrupoVariacao(resumoGrupos);
-  }
-
-  const vendedoresBody = document.getElementById("vendasVarVendedoresBody");
-  if (vendedoresBody) {
-    vendedoresBody.innerHTML = _vendasRenderVariacoesTabela(variacoes);
-  }
-
-  _vendasRenderDetalheVariacao(detalhes, vendedorFiltro, mesAtual, "vendasVarDetalhesHint", "vendasVarDetalhesBody");
-}
-
 async function carregarRelatorioVariacaoPreco() {
-  const infoEl = document.getElementById("vendasVarArquivoInfo");
-  if (infoEl) infoEl.textContent = "Carregando relatorios vendas...";
-
-  const params = new URLSearchParams();
-  const mes = document.getElementById("vendasVarMes")?.value || vendasState.mes || "";
-  const vendedor = document.getElementById("vendasVarVendedor")?.value || "";
-  if (mes) params.set("mes", mes);
-  if (vendedor) params.set("vendedor", vendedor);
-  params.set("tipo_relatorio", "variacao_preco");
-
-  const resp = await apiFetch(`/api/vendas/relatorio?${params.toString()}`);
-  const data = await resp.json().catch(() => ({}));
-  if (!resp.ok) {
-    const erro = data?.erro || "Falha ao carregar relatorio de variacao de preco.";
-    if (infoEl) infoEl.textContent = erro;
-    if (resp.status !== 409) {
-      alert(erro);
-    }
-    return;
-  }
-  renderRelatorioVariacaoPreco(data || {});
+  return carregarRelatorioPrecosVendas();
 }
 
 function limparFiltrosRelatorioVendas() {
   const mes = document.getElementById("vendasRelMes");
   const vendedor = document.getElementById("vendasRelVendedor");
   const cliente = document.getElementById("vendasRelCliente");
-  const dataInicio = document.getElementById("vendasRelDataInicio");
-  const dataFim = document.getElementById("vendasRelDataFim");
+  const dataInicio = document.getElementById("vendasPeriodoInicio");
+  const dataFim = document.getElementById("vendasPeriodoFim");
   if (mes) mes.value = "";
   if (vendedor) vendedor.value = "";
   if (cliente) cliente.value = "";
@@ -6827,7 +7222,7 @@ function showTab(tabId, el) {
     setPontosVendaView(window.__pontosVendaView);
   }
   if (tabId === "estoque") {
-    if (!window.__estoqueView || !["importar_xml", "importar_xml_bipe", "importar_xml_auto", "movimentar", "posicao", "acerto", "contagem", "rastreio"].includes(window.__estoqueView)) {
+    if (!window.__estoqueView || !["importar_xml", "importar_xml_bipe", "importar_xml_auto", "movimentar", "posicao", "acerto", "contagem", "perdas", "rastreio"].includes(window.__estoqueView)) {
       window.__estoqueView = "posicao";
     }
     setEstoqueView(window.__estoqueView);
@@ -14467,6 +14862,150 @@ function _resumoItensPreManutencaoXml(itens = []){
     .join(", ") + (normalizados.length > 3 ? ` +${normalizados.length - 3}` : "");
 }
 
+function selecionarArquivosManutencaoTxt(){
+  const input = document.getElementById("manutTxtArquivos");
+  if (!input) return;
+  input.value = "";
+  input.click();
+}
+
+function _documentosPreviewManutencaoTxt(){
+  const arquivos = Array.isArray(manutencaoTxtImportState.preview?.arquivos)
+    ? manutencaoTxtImportState.preview.arquivos
+    : [];
+  return arquivos.flatMap((arquivo) => (
+    Array.isArray(arquivo.documentos)
+      ? arquivo.documentos.map((documento) => ({ ...documento, arquivo: documento.arquivo || arquivo.arquivo }))
+      : []
+  ));
+}
+
+function _opcoesVeiculosManutencaoTxt(selecionado){
+  const veiculos = Array.isArray(manutencaoTxtImportState.preview?.veiculos)
+    ? manutencaoTxtImportState.preview.veiculos
+    : [];
+  return [
+    `<option value="">Selecionar na conferencia</option>`,
+    ...veiculos.map((veiculo) => {
+      const id = Number(veiculo.id || 0);
+      const label = [veiculo.nome, veiculo.placa, veiculo.modelo].filter(Boolean).join(" / ") || `Veiculo ${id}`;
+      return `<option value="${id}" ${Number(selecionado || 0) === id ? "selected" : ""}>${_escHtml(label)}</option>`;
+    }),
+  ].join("");
+}
+
+function _renderImportacaoManutencaoTxt(){
+  const body = document.getElementById("manutTxtImportBody");
+  const resumo = document.getElementById("manutTxtImportResumo");
+  const avisosBox = document.getElementById("manutTxtImportAvisos");
+  if (!body || !resumo || !avisosBox) return;
+  const documentos = _documentosPreviewManutencaoTxt();
+  const meta = manutencaoTxtImportState.preview?.meta || {};
+  resumo.textContent = `${Number(meta.arquivos || 0)} arquivo(s), ${documentos.length} nota(s) e ${Number(meta.itens || 0)} item(ns). Revise os campos antes de enviar.`;
+
+  const avisos = [];
+  (manutencaoTxtImportState.preview?.arquivos || []).forEach((arquivo) => {
+    (arquivo.warnings || []).forEach((aviso) => avisos.push(`${arquivo.arquivo}: ${aviso}`));
+    (arquivo.linhas_invalidas || []).forEach((linha) => avisos.push(`${arquivo.arquivo}, linha ${linha.linha}: ${linha.erro}`));
+  });
+  avisosBox.classList.toggle("hidden", !avisos.length);
+  avisosBox.innerHTML = avisos.length
+    ? `<strong>Linhas que exigem atencao:</strong><ul>${avisos.map((aviso) => `<li>${_escHtml(aviso)}</li>`).join("")}</ul>`
+    : "";
+
+  body.innerHTML = documentos.map((documento) => {
+    const total = Number(documento.valor_total || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+    const alertas = Array.isArray(documento.warnings) && documento.warnings.length
+      ? documento.warnings.join(" ")
+      : "Sem alerta estrutural.";
+    return `
+      <tr data-manut-txt-documento="${_escAttr(documento.documento_id)}">
+        <td><input class="manut-txt-selecionado" type="checkbox" checked aria-label="Importar nota ${_escAttr(documento.numero_nota)}"></td>
+        <td><strong>${_escHtml(documento.arquivo || "-")}</strong><br>${_escHtml(documento.numero_nota || "-")}</td>
+        <td>${_escHtml(documento.data_documento || "-")}</td>
+        <td><input class="manut-txt-fornecedor" value="${_escAttr(documento.emitente_nome || "")}" aria-label="Fornecedor da nota ${_escAttr(documento.numero_nota)}"></td>
+        <td>${_escHtml(documento.referencia_veiculo || "Nao informada")}</td>
+        <td><select class="manut-txt-veiculo" aria-label="Veiculo da nota ${_escAttr(documento.numero_nota)}">${_opcoesVeiculosManutencaoTxt(documento.veiculo_id)}</select></td>
+        <td>${Number((documento.itens || []).length)} item(ns)<br><strong>${_escHtml(total)}</strong><br><small>${_escHtml(_resumoItensPreManutencaoXml(documento.itens || []))}</small></td>
+        <td>${_escHtml(alertas)}</td>
+      </tr>`;
+  }).join("") || `<tr><td colspan="8">Nenhuma nota valida encontrada.</td></tr>`;
+}
+
+async function prepararImportacaoManutencaoTxt(fileList){
+  const files = Array.from(fileList || []);
+  if (!files.length) return;
+  manutencaoTxtImportState = { files, preview: null };
+  const status = document.getElementById("manutOcrStatus");
+  if (status) status.textContent = `Lendo ${files.length} arquivo(s) de manutencao...`;
+  const form = new FormData();
+  files.forEach((file) => form.append("arquivos", file, file.name));
+  try {
+    const resp = await apiFetch("/api/manutencoes/importacoes-txt/preview", { method: "POST", body: form });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data?.erro || "Falha ao interpretar os arquivos.");
+    manutencaoTxtImportState.preview = data;
+    _renderImportacaoManutencaoTxt();
+    const dialog = document.getElementById("manutTxtImportDialog");
+    if (dialog && !dialog.open) dialog.showModal();
+    if (status) status.textContent = "Previa pronta. Confira notas, fornecedor e veiculo antes de enviar.";
+  } catch (err) {
+    manutencaoTxtImportState = { files: [], preview: null };
+    if (status) status.textContent = err?.message || "Falha ao ler os arquivos.";
+    alert(err?.message || "Falha ao ler os arquivos.");
+  }
+}
+
+function fecharImportacaoManutencaoTxt(){
+  const dialog = document.getElementById("manutTxtImportDialog");
+  if (dialog?.open) dialog.close();
+}
+
+async function confirmarImportacaoManutencaoTxt(){
+  if (!manutencaoTxtImportState.files.length || !manutencaoTxtImportState.preview) return;
+  const ajustes = {};
+  let selecionados = 0;
+  document.querySelectorAll("[data-manut-txt-documento]").forEach((row) => {
+    const documentoId = String(row.dataset.manutTxtDocumento || "");
+    const selecionado = Boolean(row.querySelector(".manut-txt-selecionado")?.checked);
+    if (selecionado) selecionados += 1;
+    ajustes[documentoId] = {
+      selecionado,
+      emitente_nome: String(row.querySelector(".manut-txt-fornecedor")?.value || "").trim(),
+      veiculo_id: Number(row.querySelector(".manut-txt-veiculo")?.value || 0),
+    };
+  });
+  if (!selecionados) return alert("Selecione ao menos uma nota para importar.");
+  const botao = document.getElementById("manutTxtConfirmarBtn");
+  if (botao) {
+    botao.disabled = true;
+    botao.textContent = "Importando...";
+  }
+  const form = new FormData();
+  manutencaoTxtImportState.files.forEach((file) => form.append("arquivos", file, file.name));
+  form.append("ajustes", JSON.stringify(ajustes));
+  try {
+    const resp = await apiFetch("/api/manutencoes/importacoes-txt", { method: "POST", body: form });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data?.erro || "Falha ao importar as notas.");
+    fecharImportacaoManutencaoTxt();
+    await carregarPreLancamentosManutencaoXml();
+    const meta = data?.meta || {};
+    const mensagem = `${Number(meta.importados || 0)} nota(s) enviada(s) para conferencia; ${Number(meta.ignorados || 0)} ignorada(s).`;
+    const status = document.getElementById("manutOcrStatus");
+    if (status) status.textContent = mensagem;
+    alert(mensagem);
+    manutencaoTxtImportState = { files: [], preview: null };
+  } catch (err) {
+    alert(err?.message || "Falha ao importar as notas.");
+  } finally {
+    if (botao) {
+      botao.disabled = false;
+      botao.textContent = "Enviar para conferencia";
+    }
+  }
+}
+
 function _chaveOrdenacaoItensManutencaoXml(row = {}){
   const itens = _normalizarItensManutencao(row.itens || []);
   const nomes = itens
@@ -14524,23 +15063,29 @@ function _renderPreLancamentosManutencaoXml(){
         const sugestao = veiculo
           ? `${veiculo}${confianca > 0 && confianca < 1 ? ` (${Math.round(confianca * 100)}%)` : ""}`
           : "Selecionar na conferencia";
+        const origemTipo = String(row.origem_tipo || "xml").toLowerCase();
+        const origemArquivo = origemTipo === "txt" || origemTipo === "ods";
+        const origem = origemArquivo
+          ? `${origemTipo === "ods" ? "ODS" : "TXT/CSV"}: ${row.arquivo_origem || "arquivo"}`
+          : "NF-e / XML";
         return `
           <tr class="${Number(row.id) === Number(manutencaoXmlPreLancamentoId) || selecionada ? "is-selected" : ""}">
-            <td><input type="checkbox" class="manut-xml-selecao" aria-label="Selecionar nota ${_escAttr(row.numero_nota || row.chave_nfe || id)}" ${selecionada ? "checked" : ""} onchange="selecionarPendenciaManutencaoXml(${id}, this.checked)"></td>
+            <td>${origemArquivo ? "-" : `<input type="checkbox" class="manut-xml-selecao" aria-label="Selecionar nota ${_escAttr(row.numero_nota || row.chave_nfe || id)}" ${selecionada ? "checked" : ""} onchange="selecionarPendenciaManutencaoXml(${id}, this.checked)">`}</td>
             <td>${_escHtml(row.numero_nota || row.chave_nfe || "-")}</td>
+            <td>${_escHtml(origem)}</td>
             <td>${_escHtml(row.placa_xml || "-")}</td>
             <td>${_escHtml(sugestao)}</td>
             <td>${_escHtml(_resumoItensPreManutencaoXml(row.itens || []))}</td>
             <td>${_escHtml(row.motivo || "Revisao necessaria")}</td>
             <td class="abastecimento-actions">
               <button type="button" onclick="conferirPreLancamentoManutencaoXml(${Number(row.id)})">Conferir</button>
-              <button type="button" class="btn-secondary" onclick="devolverPreLancamentosManutencaoSelecionados([${id}])">Devolver</button>
+              ${origemArquivo ? "" : `<button type="button" class="btn-secondary" onclick="devolverPreLancamentosManutencaoSelecionados([${id}])">Devolver</button>`}
               <button type="button" class="btn-secondary" onclick="descartarPreLancamentoManutencaoXml(${Number(row.id)})">Descartar</button>
             </td>
           </tr>
         `;
       }).join("")
-    : `<tr><td colspan="7">Nenhum pre-lancamento de manutencao pendente.</td></tr>`;
+    : `<tr><td colspan="8">Nenhum pre-lancamento de manutencao pendente.</td></tr>`;
   _atualizarControlesPreLancamentosManutencaoXml();
 }
 
@@ -14556,7 +15101,7 @@ async function carregarPreLancamentosManutencaoXml(){
   const data = await resp.json().catch(() => ({}));
   if (!resp.ok) {
     resumo.textContent = data?.erro || "Falha ao carregar pre-lancamentos.";
-    body.innerHTML = `<tr><td colspan="7">Falha ao carregar pendencias.</td></tr>`;
+    body.innerHTML = `<tr><td colspan="8">Falha ao carregar pendencias.</td></tr>`;
     return;
   }
   manutencaoXmlPendencias = Array.isArray(data?.rows) ? data.rows : [];
@@ -14575,8 +15120,15 @@ function _atualizarControlesPreLancamentosManutencaoXml(){
   const selecionarTodas = document.getElementById("manutXmlSelecionarTodas");
   const botaoLancar = document.getElementById("manutXmlLancarSelecionadasBtn");
   const botaoDevolver = document.getElementById("manutXmlDevolverSelecionadasBtn");
-  const ids = manutencaoXmlPendencias.map((row) => Number(row.id || 0)).filter((id) => id > 0);
+  const ids = manutencaoXmlPendencias
+    .filter((row) => String(row.origem_tipo || "xml") === "xml")
+    .map((row) => Number(row.id || 0))
+    .filter((id) => id > 0);
   const selecionadas = ids.filter((id) => manutencaoXmlPendenciasSelecionadas.has(id));
+  const selecionadasXml = selecionadas.filter((id) => {
+    const row = manutencaoXmlPendencias.find((item) => Number(item.id || 0) === Number(id));
+    return String(row?.origem_tipo || "xml") === "xml";
+  });
   if (selecionarTodas) {
     selecionarTodas.checked = ids.length > 0 && selecionadas.length === ids.length;
     selecionarTodas.indeterminate = selecionadas.length > 0 && selecionadas.length < ids.length;
@@ -14587,8 +15139,8 @@ function _atualizarControlesPreLancamentosManutencaoXml(){
     botaoLancar.disabled = !selecionadas.length;
   }
   if (botaoDevolver) {
-    botaoDevolver.textContent = `Devolver ao estoque (${selecionadas.length})`;
-    botaoDevolver.disabled = !selecionadas.length;
+    botaoDevolver.textContent = `Devolver ao estoque (${selecionadasXml.length})`;
+    botaoDevolver.disabled = !selecionadasXml.length;
   }
 }
 
@@ -14606,21 +15158,28 @@ function selecionarPendenciaManutencaoXml(id, selecionada){
 function selecionarTodasPendenciasManutencaoXml(selecionar){
   manutencaoXmlPendenciasSelecionadas = new Set(
     selecionar
-      ? manutencaoXmlPendencias.map((row) => Number(row.id || 0)).filter((id) => id > 0)
+      ? manutencaoXmlPendencias
+          .filter((row) => String(row.origem_tipo || "xml") === "xml")
+          .map((row) => Number(row.id || 0))
+          .filter((id) => id > 0)
       : []
   );
   _renderPreLancamentosManutencaoXml();
 }
 
 async function lancarPreLancamentosManutencaoSelecionados(idsOverride = null){
-  const ids = Array.isArray(idsOverride)
+  const idsBrutos = Array.isArray(idsOverride)
     ? idsOverride.map((id) => Number(id || 0)).filter((id) => id > 0)
     : Array.from(manutencaoXmlPendenciasSelecionadas || []).map((id) => Number(id || 0)).filter((id) => id > 0);
+  const ids = idsBrutos.filter((id) => {
+    const row = manutencaoXmlPendencias.find((item) => Number(item.id || 0) === Number(id));
+    return String(row?.origem_tipo || "xml") === "xml";
+  });
   if (!ids.length) {
     alert("Selecione ao menos uma nota para lancar em manutencao.");
     return;
   }
-  if (!confirm(`Lancar ${ids.length} nota(s) como manutencao usando os dados sugeridos da NF-e?`)) return;
+  if (!confirm(`Lancar ${ids.length} nota(s) como manutencao usando os dados sugeridos?`)) return;
   const botaoLancar = document.getElementById("manutXmlLancarSelecionadasBtn");
   const botaoDevolver = document.getElementById("manutXmlDevolverSelecionadasBtn");
   if (botaoLancar) botaoLancar.disabled = true;
@@ -14678,9 +15237,13 @@ async function lancarPreLancamentosManutencaoSelecionados(idsOverride = null){
 }
 
 async function devolverPreLancamentosManutencaoSelecionados(idsOverride = null){
-  const ids = Array.isArray(idsOverride)
+  const idsBrutos = Array.isArray(idsOverride)
     ? idsOverride.map((id) => Number(id || 0)).filter((id) => id > 0)
     : Array.from(manutencaoXmlPendenciasSelecionadas || []).map((id) => Number(id || 0)).filter((id) => id > 0);
+  const ids = idsBrutos.filter((id) => {
+    const row = manutencaoXmlPendencias.find((item) => Number(item.id || 0) === Number(id));
+    return String(row?.origem_tipo || "xml") === "xml";
+  });
   if (!ids.length) {
     alert("Selecione ao menos uma nota para devolver ao estoque.");
     return;
@@ -14729,7 +15292,7 @@ function conferirPreLancamentoManutencaoXml(id){
   if (!row) return;
   manutencaoXmlPreLancamentoId = Number(row.id || 0);
   _aplicarPreviewOcrManutencao({
-    arquivo_origem: `Importar XML #${row.xml_id || row.id}`,
+    arquivo_origem: row.arquivo_origem || `Importar XML #${row.xml_id || row.id}`,
     emitente_nome: row.emitente_nome || "",
     numero_nota: row.numero_nota || "",
     data_documento: row.data_documento || "",
@@ -18877,6 +19440,8 @@ function setEstoqueView(view){
     ? "posicao"
     : requestedView === "contagem"
     ? "contagem"
+    : requestedView === "perdas"
+    ? "perdas"
     : requestedView === "rastreio"
     ? "rastreio"
     : requestedView === "movimentar"
@@ -18900,6 +19465,7 @@ function setEstoqueView(view){
   if (viewLancar) viewLancar.classList.toggle("hidden", !["importar_xml_bipe", "importar_xml_auto", "movimentar"].includes(nextView));
   if (viewConferir) viewConferir.classList.toggle("hidden", nextView !== "posicao");
   document.getElementById("estoqueViewContagem")?.classList.toggle("hidden", nextView !== "contagem");
+  document.getElementById("estoqueViewPerdas")?.classList.toggle("hidden", nextView !== "perdas");
   if (viewAcerto) viewAcerto.classList.toggle("hidden", nextView !== "acerto");
   if (viewRastreio) viewRastreio.classList.toggle("hidden", nextView !== "rastreio");
   if (importacoesBox) importacoesBox.classList.toggle("hidden", nextView !== "importar_xml_auto");
@@ -18913,6 +19479,7 @@ function setEstoqueView(view){
       movimentar: "Estoque / Movimentar",
       posicao: "Estoque / Posicao atual",
       contagem: "Estoque / Contagem",
+      perdas: "Estoque / Baixas por perda",
       acerto: "Estoque / Acerto",
       rastreio: "Estoque / Rastreio de lotes",
     };
@@ -18927,7 +19494,9 @@ function setEstoqueView(view){
 
   renderEstoqueImportPreview();
   atualizarStatusCodbarSistema();
-  if (nextView === "contagem") {
+  if (nextView === "perdas") {
+    abrirPerdasEstoque();
+  } else if (nextView === "contagem") {
     carregarContagemEstoque().catch(e => { document.getElementById("estoqueContagemStatus").textContent = e.message || "Falha ao carregar produtos."; });
   } else if (nextView === "acerto") {
     carregarAcertoEstoque().catch((e) => console.warn("acerto estoque erro:", e));

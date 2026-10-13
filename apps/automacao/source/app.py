@@ -589,6 +589,11 @@ def novo_setor():
 
     return redirect("/setores")
 
+@app.route("/arduino")
+def arduino():
+    return render_template("arduino.html")
+
+
 @app.route("/tempo-real")
 def tempo_real():
     conn = get_connection()

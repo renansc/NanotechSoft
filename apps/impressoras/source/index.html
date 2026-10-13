@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <link rel="stylesheet" href="./styles.css">
+  <title>Impressoras</title>
+</head>
+<body>
+<main class="printerApp">
+  <div id="cupsStatus" class="notice">Conectando ao CUPS...</div>
+
+  <section class="printerView" data-page="fila">
+    <div class="heading"><div><span>Impressao protegida</span><h1>Minha fila segura</h1></div><button class="btn secondary" data-refresh>Atualizar</button></div>
+    <p class="lead">Arquivos enviados aqui ficam retidos no CUPS. Eles somente seguem para a impressora depois que voce informa novamente a senha do portal.</p>
+    <form id="uploadForm" class="panel formGrid">
+      <label>Impressora<select id="uploadPrinter" name="printer" required></select></label>
+      <label>Copias<input name="copies" type="number" min="1" max="50" value="1" required></label>
+      <label class="wide">Arquivo (PDF, imagem, TXT ou CSV; ate 50 MB)<input name="file" type="file" accept=".pdf,.png,.jpg,.jpeg,.txt,.csv" required></label>
+      <button class="btn" type="submit">Enviar e reter</button>
+    </form>
+    <div class="panel releaseBox">
+      <label>Senha do portal<input id="releasePassword" type="password" autocomplete="current-password" placeholder="Digite para liberar"></label>
+      <button class="btn" id="releaseAll" type="button">Liberar todas as minhas impressoes</button>
+      <small>A senha e verificada no momento da liberacao e nunca e gravada no historico.</small>
+    </div>
+    <div class="panel"><div class="panelTitle"><h2>Meus trabalhos</h2><span id="heldCount"></span></div><div class="tableWrap"><table><thead><tr><th>Documento</th><th>Impressora</th><th>Estado</th><th>Paginas</th><th>Enviado</th><th>Acoes</th></tr></thead><tbody id="myJobs"></tbody></table></div></div>
+  </section>
+
+  <section class="printerView hidden" data-page="monitor">
+    <div class="heading"><div><span>CUPS</span><h1>Estado das impressoras</h1></div><button class="btn secondary" data-refresh>Atualizar</button></div>
+    <div id="printerCards" class="cardGrid"></div>
+  </section>
+
+  <section class="printerView hidden" data-page="historico">
+    <div class="heading"><div><span>Auditoria</span><h1>Historico de impressoes</h1></div><button class="btn secondary" id="loadHistory">Atualizar</button></div>
+    <div class="panel filters"><input id="historySearch" type="search" placeholder="Pessoa, documento ou impressora"><select id="historyState"><option value="">Todos os estados</option><option>RETIDO</option><option>PENDENTE</option><option>IMPRIMINDO</option><option>CONCLUIDO</option><option>CANCELADO</option><option>FALHOU</option></select></div>
+    <div class="panel"><div class="tableWrap"><table><thead><tr><th>Quem</th><th>Documento</th><th>Impressora</th><th>Estado</th><th>Paginas</th><th>Copias</th><th>Data e hora</th></tr></thead><tbody id="historyJobs"></tbody></table></div></div>
+  </section>
+
+  <section class="printerView hidden" data-page="gerenciar">
+    <div class="heading"><div><span>Administracao</span><h1>Gerenciar filas CUPS</h1></div><button class="btn secondary" data-refresh>Atualizar</button></div>
+    <p class="lead">Pausar ou rejeitar afeta todos os usuarios da fila. O portal nao altera esses estados automaticamente.</p>
+    <div id="manageCards" class="cardGrid"></div>
+  </section>
+  <div id="toast" role="status" aria-live="polite"></div>
+</main>
+<script src="./app.js"></script>
+</body>
+</html>

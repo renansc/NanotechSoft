@@ -103,7 +103,7 @@ services:
       RB_EMAIL_AUTO_INTERVAL_MINUTES: ${RB_EMAIL_AUTO_INTERVAL_MINUTES:-5}
       RB_EMAIL_TIMEZONE: ${RB_EMAIL_TIMEZONE:-America/Sao_Paulo}
       RB_SELLOUT_M_AUTO: ${RB_SELLOUT_M_AUTO:-1}
-      RB_SELLOUT_M_ARQUIVO: /imports/sellout/SELLOUT_M.CSV
+      RB_SELLOUT_M_ARQUIVOS: /imports/sellout/IND3/SELLOUT_M.CSV:/imports/sellout/INDB/SELLOUT_M.CSV
       RB_VENDAS_DIARIO_DIR: /imports/vendas-diario
       RB_VENDAS_DIARIO_TXT_DIR: /imports/vendas-diario/txt
       RB_VENDAS_DIARIO_PDF_DIR: /imports/vendas-diario/pdf
@@ -112,6 +112,7 @@ services:
       RB_VENDAS_DIARIO_JANELA_FIM: ${RB_VENDAS_DIARIO_JANELA_FIM:-17:00}
       RB_VENDAS_DIARIO_INTERVALO_MINUTOS: ${RB_VENDAS_DIARIO_INTERVALO_MINUTOS:-15}
       RB_VENDAS_DIARIO_AUTO: ${RB_VENDAS_DIARIO_AUTO:-1}
+      RB_VENDAS_DIARIO_LIMPAR_PROCESSADOS: ${RB_VENDAS_DIARIO_LIMPAR_PROCESSADOS:-1}
       RB_RASTREIO_BOOTSTRAP_STARTUP: ${RB_RASTREIO_BOOTSTRAP_STARTUP:-0}
     volumes:
       - riob_app_data:/data/app
@@ -124,9 +125,10 @@ services:
       - ./apps/riob/source/certs:/app/certs:ro
       - ./apps/riob/source/ImportarXml:/legacy/ImportarXml:ro
       - ./apps/riob/source/GestorEmails:/legacy/GestorEmails:ro
-      - ${RB_SELLOUT_M_HOST_DIR:-/media/serverwin/INDB/AnalyticsCTA/Dados}:/imports/sellout:ro
-      - ${RB_VENDAS_DIARIO_TXT_HOST_DIR:-/media/serverwin/CARGAS/CargasTxt}:/imports/vendas-diario/txt:ro
-      - ${RB_VENDAS_DIARIO_PDF_HOST_DIR:-/media/serverwin/CARGAS/VendasDiarioPdfs}:/imports/vendas-diario/pdf:ro
+      - ${RB_SELLOUT_M_HOST_DIR_IND3:-/media/serverwin/IND3/AnalyticsCTA/Dados}:/imports/sellout/IND3:ro
+      - ${RB_SELLOUT_M_HOST_DIR_INDB:-/media/serverwin/INDB/AnalyticsCTA/Dados}:/imports/sellout/INDB:ro
+      - ${RB_VENDAS_DIARIO_TXT_HOST_DIR:-/media/serverwin/CARGAS/CargasTxt}:/imports/vendas-diario/txt:rw
+      - ${RB_VENDAS_DIARIO_PDF_HOST_DIR:-/media/serverwin/CARGAS/VendasDiarioPdfs}:/imports/vendas-diario/pdf:rw
 
   riob-proxy:
     image: nginx:1.27-alpine
@@ -211,6 +213,10 @@ services:
       TECH_ALERT_RECOVERY_MARGIN_PCT: ${TECH_ALERT_RECOVERY_MARGIN_PCT:-5}
       TECH_BACKUP_AGENT_BASE_URL: ${TECH_BACKUP_AGENT_BASE_URL:-}
       TECH_ARP_TABLE_PATH: /run/host-network/arp
+      CUPS_SERVER: ${CUPS_SERVER:-/run/cups/cups.sock}
+      CUPS_PORT: ${CUPS_PORT:-}
+      CUPS_USER: ${CUPS_USER:-root}
+      CUPS_PASSWORD: ${CUPS_PASSWORD:-}
       CHAMADOS_AGENDA_ENABLED: ${CHAMADOS_AGENDA_ENABLED:-1}
       CHAMADOS_AGENDA_INTERVAL_SECONDS: ${CHAMADOS_AGENDA_INTERVAL_SECONDS:-60}
       CHAMADOS_KANBAN_ENABLED: ${CHAMADOS_KANBAN_ENABLED:-1}
@@ -226,6 +232,11 @@ services:
         source: ${TECH_HOST_ARP_PATH:-/proc/1/net/arp}
         target: /run/host-network/arp
         read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${CUPS_SOCKET:-/run/cups/cups.sock}
+        target: /run/cups/cups.sock
         bind:
           create_host_path: false
     healthcheck:

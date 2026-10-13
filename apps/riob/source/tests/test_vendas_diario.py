@@ -131,14 +131,19 @@ class VendasDiarioNavigationTest(unittest.TestCase):
         self.assertIn("2. Carga PDF formada", kanban)
         self.assertIn("3. SELLOUT confirmado", kanban)
         self.assertIn("Listar cargas da semana", kanban)
-        self.assertIn('type="week" id="vendasDiarioSemana"', kanban)
-        self.assertIn('id="vendasDiarioCargasSemanaBody"', kanban)
+        self.assertIn('type="week" id="vendasDiarioSemana"', self.page)
+        self.assertNotIn('type="week" id="vendasDiarioSemana"', kanban)
+        self.assertIn('id="vendasDiarioCargasSemanaBody"', self.page)
         self.assertIn('id="vendasDiarioSellout"', importacao)
+        self.assertIn('id="vendasDiarioLeituraStatus"', importacao)
+        self.assertIn('id="vendasDiarioLerPastasBtn"', importacao)
         self.assertIn('id="vendasDiarioClientes"', importacao)
         self.assertIn('id="vendasDiarioRotas"', importacao)
         self.assertIn("Import / Importar SELLOUT", importacao)
         self.assertNotIn('Selecionar TXT do PC', kanban)
         self.assertNotIn('id="vendasDiarioBody"', kanban)
+        self.assertIn('function _renderStatusLeituraVendasDiario(payload)', self.script)
+        self.assertIn('_renderStatusLeituraVendasDiario(data?.ultima_leitura)', self.script)
 
     def test_navegacao_preserva_links_antigos_no_novo_workflow(self):
         self.assertIn(
@@ -151,11 +156,11 @@ class VendasDiarioNavigationTest(unittest.TestCase):
         )
         self.assertIn('function openImportView(ev, view)', self.script)
 
-    def test_dashboard_diario_usa_periodo_e_colunas_operacionais(self):
+    def test_dashboard_diario_somente_mes_atual_e_colunas_operacionais(self):
         dashboard = self.page.split('id="dashViewVendasDiario"', 1)[1]
         dashboard = dashboard.split('id="dashViewVendas"', 1)[0]
-        self.assertIn('id="dashVendasDiarioDataInicio"', dashboard)
-        self.assertIn('id="dashVendasDiarioDataFim"', dashboard)
+        self.assertNotIn('id="dashVendasDiarioDataInicio"', dashboard)
+        self.assertNotIn('id="dashVendasDiarioDataFim"', dashboard)
         self.assertIn('<th>N. de pedidos</th>', dashboard)
         self.assertIn('<th>Bonificação sobre venda</th>', dashboard)
         self.assertNotIn('<th>Status</th>', dashboard)
@@ -164,8 +169,8 @@ class VendasDiarioNavigationTest(unittest.TestCase):
         carregar = self.script.split(
             "async function carregarDashboardVendasDiario(){", 1
         )[1].split("async function carregarDashboardComissoes", 1)[0]
-        self.assertIn('params.set("data_inicio", inputInicio.value)', carregar)
-        self.assertIn('params.set("data_fim", inputFim.value)', carregar)
+        self.assertNotIn('params.set("data_inicio"', carregar)
+        self.assertNotIn('params.set("data_fim"', carregar)
         self.assertIn("item.volume_total", carregar)
 
     def test_card_resumido_tem_uma_acao_e_salvar_mantem_popup_aberto(self):

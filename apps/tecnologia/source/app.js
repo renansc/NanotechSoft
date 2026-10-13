@@ -544,7 +544,7 @@
   }
 
   const backupHealthLabel = {
-    ONLINE: "Conectado", WARNING: "Atenção", OFFLINE: "Sem contato",
+    ONLINE: "Conectado", WARNING: "Erro na execução", OFFLINE: "Erro: agente sem contato",
     WAITING: "Aguardando agente", DISABLED: "Inativo",
   };
   const backupRunLabel = { RUNNING: "Executando", SUCCESS: "Concluído", FAILED: "Falhou", SKIPPED: "Ignorado" };
@@ -577,6 +577,17 @@
     const active = state.backups.filter((job) => job.active);
     const warning = active.filter((job) => ["WARNING", "OFFLINE", "WAITING"].includes(job.health));
     const successes = state.backupRuns.filter((run) => run.status === "SUCCESS" && run.completedAt);
+    const status = $("#backupCurrentStatus");
+    status.className = `diag ${warning.length ? "critical" : ""}`;
+    status.textContent = warning.length
+      ? `Atenção: ${warning.length} plano(s) com falha ou sem confirmação do agente. Um sucesso antigo no histórico não confirma que os backups continuam funcionando.`
+      : active.length ? "Agentes conectados. Consulte as execuções; o contato não comprova a disponibilidade atual do disco." : "Nenhum plano de backup habilitado.";
+    $("#backupHealthTable").innerHTML = state.backups.map((job) => `<tr>
+      <td><strong>${esc(job.name)}</strong><br><small>${esc(job.machine)}</small></td>
+      <td>${backupBadge(job.health)}<br><small>${esc(job.healthMessage || "")}</small></td>
+      <td>${job.lastSeenAt ? esc(dateTime(job.lastSeenAt)) : "Nenhum contato"}</td>
+      <td><span class="backupPath">${esc(job.destinationPath)}</span></td>
+    </tr>`).join("") || '<tr><td colspan="4">Nenhum plano configurado.</td></tr>';
     $("#backupKpiActive").textContent = active.length;
     $("#backupKpiWarning").textContent = warning.length;
     $("#backupKpiLastSuccess").textContent = successes.length ? dateTime(successes[0].completedAt) : "—";
@@ -602,6 +613,8 @@
       state.backupRuns = data.executions || [];
       renderBackups();
     } catch (error) {
+      $("#backupCurrentStatus").className = "diag critical";
+      $("#backupCurrentStatus").textContent = "Erro ao atualizar o monitoramento. Os dados exibidos podem estar desatualizados; o estado atual dos backups é desconhecido.";
       if (!options.quiet) showToast(error.message, true);
     }
   }

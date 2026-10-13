@@ -1,5 +1,9 @@
 # API e Modelo de Dados do Sistema RioBranco
 
+Baixas justificadas de estoque: `estoque_perdas` e `/api/estoque/perdas`, com
+recurso proprio `estoque_perdas`, conferencia, confirmacao idempotente e saida
+no livro existente. Esquema e contrato em [Baixas por perda](BAIXAS_POR_PERDA.md).
+
 As superficies complementares de logistica XML/frete, rastreabilidade, pontos
 de venda, caches, escala, rotas de cargas, agente e blueprints legados estao
 inventariadas em `ROTAS_E_RECURSOS_COMPLEMENTARES.md`.
@@ -211,6 +215,153 @@ Observacoes:
 - cada importacao gera um registro identificavel por `id`, com `source_path`, `rows_importadas`, `importado_em` e os itens persistidos em `vendas_relatorio_itens`
 - o endpoint `PUT /api/vendas/cache/<id>/ativar` define qual import passa a ser usado pelo relatorio de vendas
 - `GET /api/vendas/config` tambem devolve `regras_importacao`, usado pela tela `Config -> Vendas` para documentar no proprio sistema quais grupos e descartes estao ativos
+
+### Cabecalho e periodo dos relatorios (29/09/2026)
+
+As cinco abas (Bonificacoes, Variacao de Preco, Grupos Embalagem, Preco Medio e
+Vendas Anual) compartilham submenu e nome do arquivo na primeira linha, sem o
+titulo redundante Vendas. O cabecalho mostra RioB (valor total), CLT e Autonomos, exceto em Grupos Embalagem.
+`cabecalho_resumo` soma `valor_venda` ajustado pela regra existente de bonificacao;
+nao representa valor liquido. RioB corresponde a CLT + Autonomos. As selecoes de
+vendedor/cliente e periodo tambem se aplicam a esses totais.
+
+Em Bonificacoes, os tres totais ficam ao lado do submenu. Datas, Atualizar
+relatorio, Limpar filtros, mes, vendedor e cliente ocupam uma unica linha no PC.
+Os indicadores acima da tabela tambem permanecem em uma linha e omitem o card
+Periodo, ja representado pelos filtros. Em larguras menores os controles e cards
+voltam a quebrar em linhas para preservar a leitura.
+
+`data_inicio` e `data_fim` sao inclusivas e podem ser usadas individualmente.
+Quando informadas, prevalecem sobre `mes`, inclusive entre meses diferentes.
+Datas invalidas ou intervalo invertido retornam 400 na API e no PDF de preco
+medio. Sem intervalo, as abas mensais usam o mes selecionado/ultimo disponivel;
+preco medio e o cabecalho anual usam a base ativa completa. O comparativo anual
+mantem seus dois anos de referencia e a regra de ano parcial dentro do filtro.
+O intervalo permanece ao trocar de aba e e enviado tambem ao PDF.
+
+Os tres autonomos existentes foram preservados: Luis Carlos Pires, Norival
+Vignoto e Luiz Humberto Vignoto. A grafia legada Luiz Humbert Vignoto identifica
+a mesma pessoa em Python e SQL. Nao foi necessario criar novo cadastro, pois a
+identificacao anterior foi localizada. Vendedores identificados como Balcao
+(com ou sem acento) e Outros ficam fora dos calculos, opcoes e detalhes dos
+relatorios SELLOUT; os registros importados permanecem preservados.
+
+Astuba 2L constitui grupo separado de PET 2L nos precos medios, variacoes e
+mix de embalagens, incluindo o PDF (excecao de 02/10 para o mix abaixo). Consultas usam os itens ja importados e
+agregacoes por periodo, sem exigir reimportacao ou reutilizar resumos persistidos
+antigos nessas abas. Cabecalho e opcoes compactas respeitam a revisao da base e
+o limite do cache. Respostas antigas nao sobrescrevem a aba/filtro mais recente.
+
+O recurso continua `riob:vendas`, identificado em Config > Usuarios e acessos
+como relatorios mensais/anuais por periodo, RioB/CLT/autonomos e importacoes.
+O proxy continua validando sessao, contrato e bloqueios individuais, inclusive
+para acesso direto ao PDF. Nenhuma permissao foi concedida automaticamente.
+
+Validacao: `test_vendas_relatorios_periodo.py`, `test_vendas_relatorio_anual.py`
+e `test_vendas_relatorios_performance.py` no RioB, mais
+`tests/test_vendas_reports_access.py`, `tests/test_vendas_reports_frontend.js` e
+`tests/check_vendas_reports.py` na raiz. A integracao MariaDB usa tabelas
+temporarias com dados sinteticos; o teste visual usa respostas simuladas.
+
+### Grupos de embalagem: periodo e popup de PDVs (02/10/2026)
+
+A aba omite os totais RioB/CLT/Autonomos e o seletor de mes. Datas inicial/final,
+vendedor, PDV, Atualizar relatorio e Limpar filtros ficam juntos no desktop e
+se reorganizam no celular. Resumo por Faixa ocupa toda a largura; Resumo do
+periodo vem abaixo. O intervalo pode abranger varios meses, com limites inclusivos.
+Sem datas, a API conserva o ultimo mes disponivel, que a tela apresenta como
+intervalo explicito; Limpar filtros restaura esse padrao e remove vendedor/PDV.
+Nao envia um mes herdado de outra aba. Trocar vendedor limpa o PDV anterior.
+
+Ver PDVs aparece ao selecionar vendedor e fica disponivel apos carregar o
+relatorio. Abre um dialogo com PDVs do filtro e Detalhe do PDV; clicar em um
+cliente mostra seus grupos sem alterar filtros nem reduzir a lista. Fechar ou
+Escape retorna ao relatorio. Atualizar filtros fecha o popup, evitando detalhes
+antigos. O texto do popup identifica vendedor e periodo.
+
+O botao Grupos ao lado do PDV abre a selecao multipla. O parametro opcional
+`grupos` envia nomes separados por virgula; ausente inclui todos, vazio nao
+inclui nenhum. A filtragem acontece antes de acumular PDVs, notas, itens e
+faixas, preservando a combinacao com vendedor/PDV/datas. PDVs sem compras nos
+grupos selecionados nao entram nos totais, mas permanecem no seletor para que
+um filtro de PDV nao seja apagado silenciosamente. Selecionar todos ou Limpar
+filtros restaura o conjunto completo. O popup de PDVs identifica a selecao.
+
+Taxonomia exclusiva desta projecao: PET 2L inclui Astuba; agua com/sem gas e
+um unico grupo; PET 600 ml, PET 200 ml, 600 ml retornavel e 200 ml retornavel
+permanecem separados. A selecao integra as duas chaves de cache (rota e
+payload), sem reimportar ou modificar itens. Precos/variacoes preservam Astuba
+separada. Testes de agregacao e cache: `test_vendas_mix_grupos.py`.
+
+Reutiliza GET /api/vendas/relatorio?tipo_relatorio=grupos_embalagem e o recurso
+`riob:vendas`; o catalogo explicita filtro de grupos e PDVs em popup, preservando destinos, chaves,
+concessoes e os bloqueios de sessao/contrato/recurso no servidor. Nao cria rota.
+Validacao visual e interativa: `tests/check_vendas_reports.py`; autorizacao:
+`tests/test_vendas_reports_access.py`.
+
+Validado em 02/10/2026: cinco testes de filtro/cache/rota, cinco de acesso,
+cinco de periodo (incluindo SQL real em tabelas temporarias) e navegador em
+PC/celular aprovados. Aplicado localmente com `./up.sh`; arquivos HTML, JS,
+CSS e servidor no container conferem com o workspace. HTTPS entrega o botao
+Grupos e a API retorna as seis categorias esperadas, Astuba dentro de PET 2L,
+Agua unica e zero PDVs para selecao vazia. Healthcheck do portal aprovado.
+Sem commit/push ou deploy Render nesta alteracao. A resposta externa que citava
+`agents/riob/...` e `docker-compose-reborn-deploy.yml` nao correspondia a
+arquivos existentes neste checkout; o caminho real segue `apps/riob/source`.
+
+### Vendas Diario em Relatorios e dashboard do mes atual (29/09/2026)
+
+Validacao local em 29/09: portal e RioB reconstruidos com `./up.sh`; navegador
+HTTPS confirmou a entrada unica Vendas, as seis abas com respostas 200, o link
+direto do Diario, o intervalo historico e o dashboard limitado ao mes corrente,
+sem erros JavaScript. Testes de menu e autorizacao: 27 aprovados, incluindo
+usuarios com apenas uma aba liberada. A aplicacao desse ultimo ajuste foi
+bloqueada em 29/09 pelo compartilhamento `/media/serverwin` indisponivel
+(`Host is down`). Em 01/10/2026, com o compartilhamento disponivel, `./up.sh`
+concluiu a atualizacao local. Os 27 testes passaram novamente, assim como os
+cinco testes de acesso executados diretamente na imagem reconstruida. Os
+arquivos de codigo do portal e do RioB em execucao correspondem ao workspace;
+o healthcheck HTTPS retorna 200. O navegador confirmou menu unico, abertura
+do Diario por clique e link direto, sem erros JavaScript; o dashboard retornou
+01/10 a 31/10 mesmo com parametros historicos. Nao houve commit/push desta alteracao.
+
+`Relatorios > RioB > Vendas` concentra as seis abas, incluindo Vendas Diario
+e Vendas Anual, sem atalhos duplicados no menu principal. O link direto
+`#vendas:relatorio_diario` abre a mesma aba Vendas Diario. Reutiliza o cabecalho com
+RioB (valor bruto total), CLT e Autonomos ao lado do submenu. No desktop, datas,
+Atualizar relatorio, Limpar filtros, vendedor e cliente formam uma unica linha.
+O resumo imediatamente acima da tabela tambem usa uma linha e nao repete o
+periodo, pois o intervalo ja esta visivel nos filtros. No celular, cabecalho,
+filtros e indicadores se reorganizam em varias linhas.
+A tabela agrupa por dia e vendedor, com pedidos, volumes, bonificacao e liquido;
+vendedor e cliente sao filtros adicionais. O diario consulta TXT/PDF operacionais
+em `vendas_diario_pedidos`, enquanto os demais relatorios usam a base SELLOUT.
+Nao mistura essas duas fontes nem importa documentos ao abrir a tela.
+
+- `GET /api/vendas/diario/relatorio`: `data_inicio`/`data_fim` inclusivas,
+  `vendedor` (codigo) e `cliente`. Sem datas, usa o mes corrente; somente um
+  limite informado deixa o outro aberto. Intervalos invalidos retornam 400.
+- `GET /api/vendas/diario/dashboard`: sempre usa o primeiro e ultimo dia do mes
+  corrente em America/Sao_Paulo, inclusive se a URL informar datas historicas.
+  Mantem filtro de cliente; os seletores de datas foram retirados do dashboard.
+
+Ambos reutilizam a mesma consulta e regras de volumes/bonificacao por pedido.
+TXT prevalece sobre PDF da mesma data/vendedor; cards excluidos e fontes de
+cards principais excluidos nao participam. Somente vendas positivas com valor
+maior que zero entram nos totais. Balcao/Outros ficam fora tambem das opcoes.
+Os tres autonomos usam a classificacao compartilhada com os demais relatorios.
+Os nomes dos arquivos correspondem as fontes efetivamente incluidas no filtro.
+
+O recurso continua `riob:vendas`. O catalogo de Config > Usuarios e acessos
+inclui o atalho diario nos perfis Rio Branco e Nanotech; bloqueios individuais
+do relatorio e dashboard sao independentes e verificados no proxy. URLs
+`#workflow:vendas_diario` e aliases antigos `#vendas:diario` continuam no Kanban.
+Nao houve alteracao de schema, importacao, sessao ou concessao de permissoes.
+
+Testes: `test_vendas_diario_relatorio.py` valida periodo, fuso, agregacao diaria,
+fontes, exclusoes, filtros e bonificacao com MariaDB isolado;
+`tests/check_vendas_reports.py` cobre seis abas, link direto e dashboard sem
+intervalo; `tests/test_vendas_reports_access.py` verifica acesso e bloqueios.
 
 ### Desempenho dos relatorios (24/09/2026)
 
@@ -1592,12 +1743,31 @@ Do ponto de vista de API e dados, o sistema e um monolito com:
 
 ### Leitura conjunta de pastas (11/09/2026)
 
-`POST /api/vendas/diario/importar` sem upload le TXT, PDF e SELLOUT mensal,
+`POST /api/vendas/diario/importar` sem upload le TXT, PDF e o SELLOUT mensal
+unificado de `IND3/AnalyticsCTA/Dados` e `INDB/AnalyticsCTA/Dados`,
 sem restricao de horario, com recurso `vendas` no proxy. Retorna `sellout.status`
 (`importado`, `ja_importado`, `processando`, `desabilitado`, `erro`) e preserva
-o processamento dos TXT/PDF se o CSV falhar. Upload individual le somente TXT.
+o processamento dos TXT/PDF se um CSV falhar. O bloco `sellout` tambem informa
+fontes, linhas do mes e duplicatas identicas ignoradas entre bases. Upload
+individual le somente TXT.
 SELLOUT automatico e diario as 08:00, no fuso America/Sao_Paulo; detalhes em
 [SELLOUT_AUTOMATICO.md](SELLOUT_AUTOMATICO.md).
+
+Se o lock ja estiver ocupado, o POST retorna `202`, `processando=true` e
+`manual_agendada=true`. Uma fila unica repete automaticamente a leitura completa
+assim que a execucao atual terminar. `GET /api/vendas/diario/status-leitura`
+retorna os metadados leves usados pela tela durante esse acompanhamento.
+
+`GET /api/vendas/diario` e a resposta da leitura conjunta incluem
+`ultima_leitura`. O objeto guarda `origem`, `atualizado_em`, `em_andamento` e
+um mapa `fontes` para TXT, PDF, SELLOUT IND3 e SELLOUT INDB. Cada fonte informa
+estado, horario da tentativa, caminho, quantidades e mensagem. O resultado
+persiste no volume de dados e continua visivel depois de atualizar a pagina ou
+reiniciar o container. A rota e o quadro mantem o recurso existente `vendas`.
+Quando `RB_VENDAS_DIARIO_LIMPAR_PROCESSADOS=1`, arquivos TXT e PDF confirmados
+sao removidos das pastas de entrada depois do commit idempotente; arquivos com
+qualquer erro permanecem. O status por fonte inclui `removidos` e
+`falhas_limpeza`. SELLOUT nao e removido.
 
 ## Custo do produto
 
@@ -1640,3 +1810,69 @@ perdas especificas de producao ficam para uma etapa futura. As APIs
 `/api/custo-diario` (GET/PUT) e `/api/custo-diario/dashboard` (GET) validam sessao,
 recursos e bloqueios individuais; nao concedem acesso nem movimentam estoque.
 Regras, snapshots e limites em `apps/riob/source/docs/CUSTO_DIARIO.md` na raiz.
+
+### Carteira total de PDVs (03/10/2026)
+
+Dados > RioB > Totais de PDVs por vendedor importa PDF de Cobertura com
+conferencia. GET/POST `/api/vendas/pdvs-totais` e POST `/conferir` usam o
+recurso proprio `vendas_pdvs`; os relatorios conservam `vendas`. O percentual
+das faixas usa a carteira total atual, independente do periodo/grupos/PDV,
+com pendencia quando falta denominador. PDF, usuario e alteracoes permanecem
+no historico transacional. Ver [regras, API e testes](PDVS_POR_VENDEDOR.md).
+
+Em 05/10/2026, o resumo do mix distingue `total_carteira_importada` (soma
+conhecida, visivel mesmo parcial) de `total_carteira` (denominador completo).
+Pendencias nao ocultam o que ja foi importado; percentuais de um conjunto
+incompleto permanecem nulos. Vendedor com carteira conserva seu percentual.
+
+### preço med.varia (07/10/2026)
+
+`GET /api/vendas/relatorio` aceita `visao=precos_cidade` nos tipos canonicos
+`variacao_preco` e `preco_medio`. Resumo: cidade/produto/grupo com numero de
+PDVs, itens e min/max (somente variacao). Detalhe: `detalhe=1`, `cidade`,
+`produto` e `grupo` obrigatorios, preservando vendedor/datas. Retorna PDVs e
+media ponderada somente no tipo autorizado. Datas ausentes resolvem o ultimo
+mes disponivel e retornam limites explicitos; um limite isolado e preservado.
+
+O frontend mostra totais ao lado do submenu e filtros abaixo, sem mes nem
+periodo duplicado. PDVs, media e ordenacao por nome/valor ficam no popup.
+O cache inclui todos os filtros e a visao/detalhe. SQL parametrizado, sem
+amostragem de PDVs, preserva exclusao de Balcao/Outros e bonificacoes.
+Min/max excluem devolucoes; medias usam valor/quantidade liquidos dos PDVs
+incluidos na linha. Veja criterios e casos limites em
+[Precos por cidade e ordenacao](ORDENACAO_PRECOS.md).
+
+As duas escolhas individuais de Usuarios e acessos continuam independentes
+sob `riob:vendas`. O proxy discrimina tipo/alias; `origem=dashboard` so vale
+para a visao antiga do dashboard. A nova visao nunca emite valores do tipo
+nao autorizado. APIs antigas sem visao, PDF e dashboard mantem seus contratos.
+Sem concessoes automaticas, alteracoes de banco ou sincronizacao de dados.
+
+### Ranking anual e relacao vendedor/cliente (08/10/2026)
+
+O tipo percentual_vendas_anual aceita visao=anual_clientes: retorna ranking
+por vendedor quando Todos, por cliente quando ha vendedor, com diferenca de
+volume em hl. detalhe=1 e pagina adicionam vendas paginadas da entidade com
+os mesmos filtros. A lista clientes_disponiveis passa a respeitar vendedor,
+inclusive com opcoes em cache; referencia e vendedores permanecem globais.
+Preserva as regras anuais de arredondamento, ano parcial e intervalo inclusivo.
+O servidor exige a escolha individual do relatorio; dashboard envia origem
+propria, sem liberar ranking/detalhes. Contratos antigos permanecem compativeis,
+sem concessao automatica ou operacao de banco persistente. Ver
+[Vendas anual: ranking e popup](VENDAS_ANUAL_RANKING.md).
+
+### Importacao TXT/CSV/ODS de manutencao (09/10/2026)
+
+`POST /api/manutencoes/importacoes-txt/preview` recebe ate 20 arquivos TXT/CSV/ODS
+multipart, interpreta cabecalhos conhecidos ou quatro/cinco colunas posicionais
+e, no ODS, o padrao `LOCAL`, `TIPO/AGRUPADO`, `VEICULO`, `DIA`, `MES`, `DESC`,
+`VALOR`, `ID` e `ANO` opcional. Retorna notas agrupadas sem expor o texto bruto. `POST
+/api/manutencoes/importacoes-txt` rele os mesmos arquivos, aplica somente os
+ajustes permitidos de fornecedor, veiculo e selecao e grava a fila de
+conferencia. Ambos exigem `gestaofrota:manutencao` (`frota`).
+
+Entradas usam chave idempotente; confirmadas nao reabrem. A fila
+`manutencao_xml_pre_lancamentos` distingue `origem_tipo=txt` ou `ods`, preserva arquivo,
+linhas originais e alertas. A confirmacao em `POST /api/manutencoes` copia essa
+origem para o historico. Formatos, limites e casos ambiguos estao em
+[Importacao TXT/CSV/ODS de manutencao](IMPORTACAO_TXT_MANUTENCAO.md).

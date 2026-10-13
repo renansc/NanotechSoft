@@ -19,7 +19,11 @@
   ],
   "menu_groups": {
     "gestao": [
-      {"nome": "Rede", "url": "/apps/tecnologia#rede", "recurso": "rede"}
+      {
+        "nome": "Rede",
+        "url": "/apps/tecnologia#rede",
+        "recurso": "rede"
+      }
     ],
     "dashboards": [
       {
@@ -162,7 +166,11 @@
           }
         ],
         "gestao": [
-          {"nome": "Rede", "url": "/apps/tecnologia#rede", "recurso": "rede"}
+          {
+            "nome": "Rede",
+            "url": "/apps/tecnologia#rede",
+            "recurso": "rede"
+          }
         ],
         "docs": [
           {
@@ -206,15 +214,21 @@
     }
   },
   "access_resources": [
-    {"recurso": "rede_scan", "nome": "Rede: buscar dispositivos online nao cadastrados (sem monitorar)"},
-    {"recurso": "rede", "nome": "Rede: equipamentos, MAC da coleta/ARP e consumo diario"},
+    {
+      "recurso": "rede_scan",
+      "nome": "Rede: buscar dispositivos online nao cadastrados (sem monitorar)"
+    },
+    {
+      "recurso": "rede",
+      "nome": "Rede: equipamentos, MAC da coleta/ARP e consumo diario e status dos sensores Arduino"
+    },
     {
       "recurso": "dashboard",
-      "nome": "Visao geral e monitoramento de link"
+      "nome": "Visao geral e monitoramento de link e status dos sensores Arduino"
     },
     {
       "recurso": "equipamentos",
-      "nome": "Equipamentos, verificacao inicial de MAC, exclusao e descoberta"
+      "nome": "Equipamentos, verificacao inicial de MAC, exclusao e descoberta e status dos sensores Arduino"
     },
     {
       "recurso": "historico",
@@ -226,7 +240,7 @@
     },
     {
       "recurso": "backup",
-      "nome": "Backups: planos, execucoes e agentes"
+      "nome": "Backups: estado atual, falhas de contato, planos, execucoes e agentes"
     }
   ]
 }

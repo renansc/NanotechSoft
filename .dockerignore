@@ -6,6 +6,9 @@ __pycache__/
 *.log
 .git/
 deploy/tmp/
+# Independent router installations contain host configuration, not portal assets.
+linux-router/
+router/
 backups/
 *.db
 *.sqlite

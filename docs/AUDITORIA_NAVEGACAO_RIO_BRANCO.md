@@ -1,7 +1,7 @@
 # Auditoria de navegacao do Rio Branco — 14/09/2026
 
 Atualizacao de acessos: os destinos agora possuem controles individuais em
-Configurar > Usuarios e acessos. Veja o [mapa de 137 itens](MAPA_ACESSOS_MENU.csv)
+Configurar > Usuarios e acessos. Veja o [mapa de 149 itens](MAPA_ACESSOS_MENU.csv)
 e as [regras de bloqueio e liberacao](ACESSOS_POR_ITEM_MENU.md). Os numeros abaixo
 registram a auditoria original; o CSV de rotas e regenerado pelo inventario atual.
 

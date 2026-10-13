@@ -451,6 +451,27 @@ nao deve disparar o mensal. Preservar o recurso `vendas`, a validacao do CSV e a
 assinatura contra repeticoes; nao confundir consolidado mensal com confirmacao
 diaria dos cards. Ver `docs/SELLOUT_AUTOMATICO.md`.
 
+Em 09/10/2026 o SELLOUT mensal passou a unir obrigatoriamente os arquivos das
+bases IND3 e INDB antes da substituicao da competencia. Preservar linhas de um
+vendedor que apareca nas duas bases; eliminar somente linhas integralmente
+identicas entre origens. A leitura e conjunta: ausencia, instabilidade ou
+cabecalho divergente de qualquer fonte preserva a base anterior. A configuracao
+Compose usa `RB_SELLOUT_M_HOST_DIR_IND3`, `RB_SELLOUT_M_HOST_DIR_INDB` e
+`RB_SELLOUT_M_ARQUIVOS`; `RB_SELLOUT_M_ARQUIVO` permanece como compatibilidade
+fora do Compose.
+
+Em 09/10/2026 a tela Importar SELLOUT passou a exibir permanentemente a ultima
+tentativa de TXT, PDF, SELLOUT IND3 e SELLOUT INDB. O backend persiste somente
+metadados em `RB_DATA_DIR/vendas-diario-ultima-leitura.json`; leitura manual e
+agendadores atualizam suas respectivas fontes. Preservar `ultima_leitura` nas
+respostas de GET e POST, inclusive quando outra leitura estiver em andamento.
+O pedido manual feito durante outra leitura deve permanecer na fila e executar
+as quatro fontes ao liberar o lock. TXT/PDF sao caixas de entrada: com a limpeza
+habilitada, remover somente arquivos integralmente processados ou ja importados;
+preservar qualquer arquivo com erro. SELLOUT permanece somente leitura e nunca
+deve ser removido. O acompanhamento leve usa
+`GET /api/vendas/diario/status-leitura` sob a permissao individual de importacao.
+
 
 ## Auditoria de navegacao e tarefas (14/09/2026)
 
@@ -506,3 +527,113 @@ perdas especificas de producao ficam para uma etapa futura. As APIs
 `/api/custo-diario` (GET/PUT) e `/api/custo-diario/dashboard` (GET) validam sessao,
 recursos e bloqueios individuais; nao concedem acesso nem movimentam estoque.
 Regras, snapshots e limites em `apps/riob/source/docs/CUSTO_DIARIO.md` na raiz.
+
+## Sales report header and period (29/09/2026)
+
+All five SELLOUT report tabs share one submenu/file row, RioB total/CLT/autonomous
+sales cards, and inclusive date bounds that override the month when present.
+Exception: Grupos Embalagem hides the RioB/CLT/autonomous cards and has no
+month selector. Its shared dates, seller, PDV and actions form one desktop row.
+The full-width range summary precedes the period summary. Selecting a seller
+enables Ver PDVs; list and detail live only in a native modal dialog. Selecting
+a row there updates detail without filtering the list. Clearing filters restores
+the latest available month as dates. The existing vendas permission covers it.
+Preserve the three existing autonomous sellers (Luis Carlos Pires, Norival
+Vignoto, Luiz Humberto Vignoto, including the legacy Humbert spelling). Exclude
+Balcao/Outros sellers from report calculations without deleting imported rows.
+Keep Astuba 2L separate from ordinary PET 2L in prices and variations.
+Exception requested on 02/10: packaging mix counts Astuba inside PET 2L and
+all water as one group. Its Grupos button selects included groups, including
+independent 600 ml/200 ml returnable exclusions. Filter before PDV aggregation
+and include selection in both payload and HTTP cache keys; none selected means
+empty results, missing selection means all. Other reports keep their taxonomy. Read current imported items for these reports rather than old persisted
+summaries. Resource remains `vendas`; see `docs/API_E_DADOS.md` section 5.1.
+
+The operational daily report is `#vendas:relatorio_diario` and
+`GET /api/vendas/diario/relatorio`, using the same header and inclusive range
+with seller/customer filters. It groups active TXT/PDF sales by day and seller;
+keep the existing TXT precedence and logical deletion rules. The separate
+`/api/vendas/diario/dashboard` always uses the current calendar month in
+America/Sao_Paulo, ignoring historical date parameters. Both use `vendas` but
+have independent menu denials. Legacy `#vendas:diario` still opens the Kanban.
+
+The only sales-report navigation entry is Relatorios > RioB > Vendas. The six
+tabs include the daily and annual reports. Child entries in the manifest use
+`navigation_parent` to remain in the access catalog with their original keys,
+but are omitted from the main menu, including for administrators. Direct links
+still open the corresponding tab. Deploy the rebuilt RioB image along with the
+portal; the live-mounted manifest alone cannot add a report to an older image.
+For users allowed only a child tab, the single Vendas menu links to the first
+allowed child, preserving access without granting the parent or sibling tabs.
+
+## Stock losses (01/10/2026)
+
+Estoque > Baixas por perda (`#estoque:perdas`, resource `estoque_perdas`)
+records justified losses with a preview and an idempotent confirmation.
+Reuse `_estoque_contagem_snapshot` and the canonical movement ledger; the
+snapshot also exposes stock unit and group. Never subtract a loss twice during
+the following count. Confirmation locks the ledger like inventory counts and
+rejects stale balances/conversions. See `docs/BAIXAS_POR_PERDA.md` for schema,
+authorization, APIs, audit fields and tests. No automatic permission grants.
+
+## Seller PDV portfolios (03/10/2026)
+
+Dados > Totais de PDVs por vendedor imports the coverage PDF's Total Clientes
+column by seller code, with explicit review and atomic updates. Never sum city
+rows or substitute Clients C/Compra. Mix percentages use the current imported
+portfolio, independent of date/group/customer filters; missing/zero is pending.
+Preserve original PDF and audit, optimistic concurrency, code-based identity
+and cross-worker cache revision. Resource `vendas_pdvs` is separate from sales
+report reading (`vendas`). See `docs/PDVS_POR_VENDEDOR.md`.
+
+## Unified prices report (07/10/2026)
+
+The preço med.varia tab now shows city/product minimum and maximum prices.
+Keep RioB/CLT/autonomous totals beside the submenu on desktop, with dates,
+refresh/clear, seller and group in the next row. No month selector, duplicated
+period, seller or group columns. A row opens its PDVs in a native dialog;
+average prices and local sorting by name/value live inside that dialog.
+
+Use GET /api/vendas/relatorio with visao=precos_cidade and each authorized
+report type. Drilldown requires detalhe=1 plus city/product/group and the
+same effective dates/seller. Aggregate all eligible rows in SQL, never the
+legacy limited sample. Average by net value/net quantity for those PDVs;
+never average averages. Preserve independent variation/average permissions,
+including server checks. origem=dashboard cannot authorize this new view.
+Ignore stale loads and closed dialogs; compare import metadata for detail.
+Keep old API/PDF/dashboard contracts. No permission grants or data migration.
+See docs/ORDENACAO_PRECOS.md for eligibility, cache, API and tests.
+
+## Annual sales ranking (08/10/2026)
+
+The annual report shares the compact price-report header. One Clear filters
+button clears dates/seller/customer. The ranking compares volume differences
+in hectolitres, ascending/descending: sellers when all are selected, customers
+when a seller is selected. Customer options must use the seller relationship
+from grouped imported rows; changing sellers clears the previous customer.
+Preserve the global reference and existing inclusive date/partial-year rules.
+Do not replace per-item Python rounding by SQL SUM(litros)/100.
+
+visao=anual_clientes on the typed annual GET adds ranking. detalhe=1 adds a
+100-item page of sales for the selected entity, preserving filters and import
+revision. Use SQL histograms and bound parameters; no full raw history load.
+Annual report and dashboard now require their respective individual menu keys;
+dashboard sends origem=dashboard, which cannot authorize ranking/detail.
+Preserve grants and shared layouts. See docs/VENDAS_ANUAL_RANKING.md and tests.
+
+## Maintenance TXT/CSV import (08/10/2026)
+
+Gestao de Frota > Manutencoes accepts pipe, semicolon or tabular TXT/CSV notes
+through a mandatory preview. Treat file contents only as data. Group rows by
+document/date/vehicle reference, preserve row order and exact duplicates, and
+never silently fix uncertain document numbers, illegible descriptions or
+missing vehicles. The operator may edit supplier, select a vehicle or exclude a
+document before creating pending entries. Final maintenance still requires the
+existing conference/save flow.
+
+The parser is `manutencao_txt.py`; preview/import routes are under
+`/api/manutencoes/importacoes-txt`. Reimports are idempotent and confirmed notes
+stay closed. The shared pending table records source type, filename, source
+lines and warnings. Keep the existing `frota` resource and individual
+`gestaofrota:manutencao` menu permission. See
+`docs/IMPORTACAO_TXT_MANUTENCAO.md` for formats, limits and tests.

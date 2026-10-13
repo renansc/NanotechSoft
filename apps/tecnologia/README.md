@@ -381,6 +381,35 @@ estado local para continuar correto mesmo após reinício do serviço.
 
 ### Inicialização automática
 
+O monitoramento mostra o estado atual de cada agente, ultimo contato e destino,
+com alerta vermelho para agente sem contato ha mais de dez minutos ou execucao
+com falha. O prazo e calculado em UTC, independentemente do fuso do servidor.
+Um sucesso anterior permanece no historico, sem representar a saude atual.
+Falha ao atualizar a consulta tambem gera alerta de dados desatualizados.
+Contato do agente nao verifica a integridade ou disponibilidade atual do disco.
+O recurso existente `tecnologia:backup` identifica estado atual e falhas em
+Config > Usuarios e acessos; as APIs mantem autorizacao e bloqueios individuais,
+sem concessoes novas. A visao de monitoramento nao inclui acoes administrativas.
+
+Para destino USB local, montagem no `fstab` durante boot nao garante retomada
+depois de desconexao. `BindsTo` interrompe o agente quando a montagem cai;
+`Restart=always` nao desfaz essa parada por dependencia. Os modelos
+`deploy/systemd/nanotech-backup-reconnect.service` e `.timer` fazem nova tentativa
+a cada dois minutos: montam a unidade configurada e so entao iniciam os agentes.
+Uma falha de montagem impede a segunda etapa; nao usam montagem forcada nem
+reparam NTFS automaticamente. Instalar essas unidades e operacao separada no host,
+fora de `up.sh`/`update.sh`, depois de verificar a integridade do disco.
+O arquivo local `/etc/nanotech-backup-reconnect.conf` deve definir
+`BACKUP_MOUNT_UNIT` (nome da unidade `.mount`) e `BACKUP_AGENT_UNITS` (nomes dos
+servicos separados por espacos). Nomes de planos, UUID e destinos pertencem ao
+ambiente e nao sao embutidos no modelo. Mantenha a verificacao `mountpoint` e a
+dependencia da montagem nos agentes de destino USB. Para suspender os backups
+manualmente, pare tambem o timer; caso contrario ele retomara os agentes.
+O compartilhamento Windows de origem e sua automontagem sao independentes do
+disco USB de destino. Erros de NTFS exigem verificacao separada; nunca use `force`
+na rotina de reconexao. `ntfsfix` corrige inconsistencias basicas e nao substitui
+uma verificacao completa com `chkdsk`.
+
 No Linux, instale uma unidade `systemd` com `After=network-online.target`,
 `Restart=always` e `WantedBy=multi-user.target`. Quando o destino usa
 `x-systemd.automount` com tempo de inatividade, não use `RequiresMountsFor=`: o

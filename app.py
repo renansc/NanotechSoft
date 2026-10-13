@@ -36,6 +36,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 from PIL import Image, UnidentifiedImageError
 import menu_access
+from apps.automacao.source.arduino_monitor import read_device as read_arduino, unavailable as arduino_unavailable
 
 from apps.financeiro.pdf_import import (
     FinancePdfImportError,
@@ -185,6 +186,7 @@ GPSMUSICAL_DIR = Path(os.environ.get("GPSMUSICAL_APP_DIR", str(app_source_dir("g
 BPA_DIR = Path(os.environ.get("BPA_APP_DIR", str(app_source_dir("bpa"))))
 TATOO_DIR = Path(os.environ.get("TATOO_APP_DIR", str(app_source_dir("tatoo"))))
 TECNOLOGIA_DIR = Path(os.environ.get("TECNOLOGIA_APP_DIR", str(app_source_dir("tecnologia"))))
+IMPRESSORAS_DIR = Path(os.environ.get("IMPRESSORAS_APP_DIR", str(app_source_dir("impressoras"))))
 CHAMADOS_DIR = Path(os.environ.get("CHAMADOS_APP_DIR", str(app_source_dir("chamados"))))
 CHAMADOS_UPLOAD_DIR = Path(os.environ.get(
     "CHAMADOS_UPLOAD_DIR",
@@ -767,6 +769,7 @@ def add_no_cache_headers(resp):
     if (
         request.path.startswith("/api/")
         or request.path.startswith("/apps/tecnologia/api/")
+        or request.path.startswith("/apps/impressoras/api/")
         or request.path.startswith("/apps/chamados/api/")
         or request.path in {"/", "/login", "/config"}
         or (request.path.startswith("/apps/") and resp.mimetype == "text/html")
@@ -1785,7 +1788,7 @@ def enforce_individual_menu_access(usuario, app_key, path=None, full_path=None):
         if not isinstance(keys, (dict, list)):
             return False
         return all(menu_navigation_access(usuario, menu_access.zap_setting_destination(key)) is True for key in keys)
-    targets = menu_access.api_destinations(app_key, path, request.method)
+    targets = menu_access.api_destinations(app_key, path, request.method, request.args)
     candidates = [item for item in items if menu_access.destination(item['url']) in {menu_access.destination(url) for url in targets}]
     if not targets and '/api/' not in path:
         candidates = menu_access.page_candidates(full_path, items)
@@ -1843,7 +1846,7 @@ def enforce_app_permission():
 
     usuario = current_user_or_logout()
     if not usuario:
-        if path.startswith(("/apps/tecnologia/api/", "/apps/chamados/api/")):
+        if path.startswith(("/apps/tecnologia/api/", "/apps/impressoras/api/", "/apps/chamados/api/")):
             return jsonify({"erro": "login necessário"}), 401
         return redirect(url_for("login_page"))
     if not app_visible_to_user({"app_key": app_key}, usuario):
@@ -1881,7 +1884,9 @@ def enforce_app_permission():
         if "*" not in recursos:
             if app_key == "automacao":
                 relative_automation = path.removeprefix("/apps/automacao").removeprefix("/original").strip("/")
-                if relative_automation == "documentacao/cadastrar":
+                if relative_automation in {"arduino", "api/arduino"}:
+                    automation_allowed = "arduino" in recursos
+                elif relative_automation == "documentacao/cadastrar":
                     automation_allowed = "documentos_cadastrar" in recursos
                 elif request.method in {"GET", "HEAD"} and (
                     relative_automation == "documentacao"
@@ -1905,6 +1910,8 @@ def enforce_app_permission():
                 elif technology_api == "overview":
                     # Dependencia de leitura das telas de rede, sem liberar backup.
                     required_technology = {"dashboard", "equipamentos", "historico", "config"}
+                elif technology_api.startswith("sensors/"):
+                    required_technology = {"dashboard", "equipamentos"}
                 elif technology_api.startswith("devices/") and technology_api.endswith("/print-usage"):
                     required_technology = {"dashboard", "equipamentos", "historico"}
                 elif technology_api.startswith(("devices", "discover-")):
@@ -1912,6 +1919,20 @@ def enforce_app_permission():
                 else:
                     required_technology = {"dashboard"}
                 if not required_technology.intersection(recursos):
+                    return jsonify({"erro": "recurso nao liberado para este usuario"}), 403
+            if app_key == "impressoras" and path.startswith("/apps/impressoras/api/"):
+                printer_api = path.removeprefix("/apps/impressoras/api/")
+                if printer_api == "overview":
+                    required_printers = {"fila", "monitor", "gerenciar"}
+                elif printer_api == "jobs" and request.method in {"GET", "HEAD"} and request.args.get("scope") == "all":
+                    required_printers = {"historico"}
+                elif printer_api.startswith("printers/"):
+                    required_printers = {"gerenciar"}
+                elif printer_api.startswith("jobs"):
+                    required_printers = {"fila", "gerenciar"}
+                else:
+                    required_printers = set()
+                if not required_printers.intersection(recursos):
                     return jsonify({"erro": "recurso nao liberado para este usuario"}), 403
             if app_key == "zap":
                 relative_zap = path.removeprefix("/apps/zap").removeprefix("/original").strip("/")
@@ -1953,10 +1974,14 @@ def enforce_app_permission():
                     required = aliases.get(resource, resource)
                     if api_path in {"custo-produto/dashboard", "custo-diario/dashboard"}:
                         required = "custo_produto_dashboard"
+                    if api_path == "vendas/pdvs-totais" or api_path.startswith("vendas/pdvs-totais/"):
+                        required = "vendas_pdvs"
                     if api_path == "vendas/orcamentos/relatorio":
                         required = "vendas_orcamentos_relatorio"
                     if api_path.startswith("estoque/contagens/"):
                         required = "estoque_contagem_relatorio" if api_path.startswith("estoque/contagens/relatorio") else "estoque_contagem_finalizar"
+                    if api_path == "estoque/perdas" or api_path.startswith("estoque/perdas/"):
+                        required = "estoque_perdas"
                     if ("/config" in api_path or api_path.startswith("vendas/cache") or api_path.startswith("vendas/sellout")) and request.method not in {"GET", "HEAD"}:
                         required = "config"
                     read_dependencies = {
@@ -2059,13 +2084,16 @@ def application_entry_url(usuario):
         for definition in (app_menu_definition(item), item):
             for groups_key in ("menu_groups", "config_groups"):
                 for entries in (definition.get(groups_key) or {}).values():
-                    for entry in entries:
+                    for entry in menu_navigation_entries(entries, item, usuario):
                         if menu_item_visible(entry, item, usuario):
                             return entry["url"]
     return None
 
 
 def menu_item_visible(item, app_item, usuario):
+    # Abas internas permanecem no catalogo de acessos, sem duplicar o menu.
+    if item.get('navigation_parent'):
+        return False
     if user_is_admin(usuario):
         return True
     grants = get_user_permissions(usuario).get(app_item['app_key'], set())
@@ -2075,6 +2103,25 @@ def menu_item_visible(item, app_item, usuario):
 def app_menu_definition(app_item):
     """O perfil do cliente reorganiza atalhos sem alterar o manifest global."""
     return (app_item.get("menu_profiles") or {}).get(configured_client_id(), app_item)
+
+
+def menu_navigation_entries(items, app_item, usuario):
+    """Um atalho por grupo de abas, apontando para uma aba ja autorizada."""
+    for item in items:
+        if item.get('navigation_parent'):
+            continue
+        if menu_item_visible(item, app_item, usuario):
+            yield item
+            continue
+        # Quem possui somente uma aba continua chegando a ela pelo menu unico.
+        # Mudar o destino do atalho nao concede acesso ao pai nem as outras abas.
+        for child in items:
+            if child.get('navigation_parent') != item['url']:
+                continue
+            candidate = {key: value for key, value in child.items() if key != 'navigation_parent'}
+            if menu_item_visible(candidate, app_item, usuario):
+                yield {**candidate, 'nome': item['nome']}
+                break
 
 
 def menu_sections(apps, usuario=None):
@@ -2088,7 +2135,7 @@ def menu_sections(apps, usuario=None):
         groups = definition.get("menu_groups") or {}
         config_groups = definition.get("config_groups") or {}
         for section in MENU_SECTIONS:
-            for item in groups.get(section, []):
+            for item in menu_navigation_entries(groups.get(section, []), app_item, usuario):
                 if menu_item_visible(item, app_item, usuario):
                     sections[section].append(
                         {
@@ -2142,7 +2189,7 @@ def menu_sections(apps, usuario=None):
                  ("cadastros", "CADASTRO"), ("relatorios", "RELATORIOS"), ("import_export", "DADOS"),
                  ("estoque", "ESTOQUE"), ("monitor", "MONITOR"), ("config", "CONFIGURAR"),
                  ("docs", "DOCUMENTOS")]
-        modules = ["riob", "riob-email", "riob-xml", "automacao", "chamados", "tecnologia", "zap"]
+        modules = ["riob", "riob-email", "riob-xml", "automacao", "chamados", "tecnologia", "impressoras", "zap"]
         sections["primary"] = []
         for key, label in order:
             grouped = []
@@ -5147,6 +5194,7 @@ STATIC_APP_DIRS = {
     "bpa": BPA_DIR,
     "tatoo": TATOO_DIR,
     "tecnologia": TECNOLOGIA_DIR,
+    "impressoras": IMPRESSORAS_DIR,
     "chamados": CHAMADOS_DIR,
 }
 
@@ -5155,6 +5203,7 @@ STATIC_APP_INDEX = {
     "bpa": "index.html",
     "tatoo": "index.html",
     "tecnologia": "index.html",
+    "impressoras": "index.html",
     "chamados": "index.html",
 }
 
@@ -5163,6 +5212,7 @@ STATIC_APP_NAMES = {
     "bpa": "BPA",
     "tatoo": "Tatoo",
     "tecnologia": "Tecnologia",
+    "impressoras": "Impressoras",
     "chamados": "Chamados",
 }
 
@@ -5174,6 +5224,9 @@ def static_app_active_page(app_key, subpath):
         return "cadastros"
     if app_key == "tecnologia":
         return "dashboards"
+    if app_key == "impressoras":
+        fragment = str(request.args.get("view") or "").strip().lower()
+        return {"historico": "relatorios", "gerenciar": "config", "monitor": "monitor"}.get(fragment, "workflow")
     if app_key == "chamados":
         view = str(request.args.get("view") or "chamados").strip().lower()
         return {
@@ -5266,7 +5319,7 @@ def extract_static_app_integrated(html_text, app_key, subpath=""):
     # Estes modulos usam as variaveis do tema do shell. Injetar o tema
     # standalone aqui reaplicava CSS global aos botoes e ao cabecalho.
     text = (rewrite_static_app_paths(html_text, app_key, integrated=True)
-            if app_key in {"tecnologia", "chamados"}
+            if app_key in {"tecnologia", "impressoras", "chamados"}
             else rewrite_static_app_html(html_text, app_key, integrated=True))
     link_tags = "\n".join(re.findall(r'<link[^>]+rel=["\']stylesheet["\'][^>]*>', text, flags=re.I))
     style_tags = "\n".join(re.findall(r"<style[^>]*>.*?</style>", text, flags=re.I | re.S))
@@ -7317,6 +7370,7 @@ def technology_public_device(row):
         "tipo": row.get("tipo") or "OUTRO",
         "host": row.get("host") or "",
         "networkAddresses": device_network_addresses(row),
+        "arduino": is_arduino_device(row),
         "porta": int(row["porta"]) if row.get("porta") is not None else None,
         "sonda": row.get("sonda") or "ICMP",
         "localizacao": row.get("localizacao") or "",
@@ -8434,7 +8488,7 @@ def technology_public_backup(row):
         health = "DISABLED"
     elif not last_seen:
         health = "WAITING"
-    elif dt.datetime.now() - last_seen > dt.timedelta(minutes=10):
+    elif dt.datetime.now(dt.UTC) - (last_seen.replace(tzinfo=dt.UTC) if last_seen.tzinfo is None else last_seen) > dt.timedelta(minutes=10):
         health = "OFFLINE"
     elif last_status == "FAILED":
         health = "WARNING"
@@ -8462,6 +8516,13 @@ def technology_public_backup(row):
         "monthlyRetentionMonths": int(row.get("retencao_mensal_meses") or 12),
         "active": bool(row.get("ativo")),
         "health": health,
+        "healthMessage": {
+            "DISABLED": "Plano desativado.",
+            "WAITING": "Nenhum contato recebido do agente; backup ainda não confirmado.",
+            "OFFLINE": "Erro: agente sem contato há mais de 10 minutos. Novos backups não confirmados; verifique o serviço e o disco de destino.",
+            "WARNING": "Erro na última execução do backup. Verifique a mensagem no histórico.",
+            "ONLINE": "Agente conectado. O contato não verifica a disponibilidade atual dos arquivos no destino.",
+        }[health],
         "lastSeenAt": technology_db_timestamp_iso(last_seen) if last_seen else "",
         "agentVersion": row.get("agente_versao") or "",
         "forcePending": bool(row.get("forcar_execucao_id")),
@@ -8862,6 +8923,45 @@ def tecnologia_backup_agent_report_api(agent_id):
     cur.close()
     conn.close()
     return jsonify({"ok": True})
+
+
+def is_arduino_device(row):
+    configured = os.environ.get("AUTOMACAO_ARDUINO_DEVICE_ID", "").strip()
+    if configured:
+        return str(row.get("id")) == configured
+    return configured_client_id() == "rio-branco" and row.get("host") == "192.168.200.2"
+
+
+def arduino_snapshot(device_id=None):
+    if CLOUD_READ_ONLY:
+        return arduino_unavailable("indisponivel", "Leituras ao vivo disponíveis somente no ambiente local.")
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute("SELECT id, nome, host, porta, ativo FROM tecnologia_dispositivos")
+        devices = [row for row in cur.fetchall() if is_arduino_device(row)]
+    finally:
+        cur.close()
+        conn.close()
+    device = next((row for row in devices if device_id is None or int(row["id"]) == device_id), None)
+    if not device:
+        return arduino_unavailable("nao_configurado", "Arduino não vinculado a um equipamento de Tecnologia neste ambiente.")
+    try:
+        result = dict(read_arduino(device))
+    except ValueError as exc:
+        result = arduino_unavailable("erro", str(exc))
+    result.update(deviceId=int(device["id"]), name=device["nome"], host=device["host"])
+    return result
+
+
+@app.route("/apps/automacao/api/arduino")
+@app.route("/apps/tecnologia/api/sensors/<int:device_id>")
+@app.route("/apps/tecnologia/api/network/<int:device_id>/sensors")
+@login_required
+def arduino_live_api(device_id=None):
+    response = jsonify(arduino_snapshot(device_id))
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @app.route("/apps/tecnologia/api/network")
@@ -10193,6 +10293,19 @@ def db_error(exc):
             "NS_DB_USER, NS_DB_PASSWORD e NS_DB_NAME no web service."
         )
     return render_template("db_error.html", detalhe=detail), status
+
+
+from apps.impressoras.source.backend import register_printer_module
+
+register_printer_module(
+    app,
+    get_conn=get_conn,
+    current_user=current_user_or_logout,
+    can_access=can_access,
+    static_response=static_app_response,
+    integrated_redirect=integrated_app_redirect,
+    cloud_read_only=CLOUD_READ_ONLY,
+)
 
 
 start_chamados_agenda_scheduler()

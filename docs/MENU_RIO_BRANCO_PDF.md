@@ -33,7 +33,7 @@ Financeiro, Ponto, Store, Cameras e ESXi ficam fora do contrato `rio-branco`, do
 | DASHBOARD | riob | Processos operacionais | `/apps/riob#dashboard:processos` | `processos` |
 | DASHBOARD | riob | Compras | `/apps/riob#dashboard:compras` | `compras` |
 | DASHBOARD | riob | Vendas anual | `/apps/riob#dashboard:vendas_anual` | `vendas` |
-| DASHBOARD | riob | Vendas do dia | `/apps/riob#dashboard:vendas_diario` | `vendas` |
+| DASHBOARD | riob | Vendas diarias - mes atual | `/apps/riob#dashboard:vendas_diario` | `vendas` |
 | DASHBOARD | riob | Bonificacoes de vendas | `/apps/riob#dashboard:bonificacoes` | `vendas` |
 | DASHBOARD | riob | Variacao de preco | `/apps/riob#dashboard:variacao_preco` | `vendas` |
 | DASHBOARD | riob | Grupos de embalagem | `/apps/riob#dashboard:grupos_embalagem` | `vendas` |
@@ -55,6 +55,7 @@ Financeiro, Ponto, Store, Cameras e ESXi ficam fora do contrato `rio-branco`, do
 | WORKFLOW | riob | Compras RioB | `/apps/riob#workflow:compras` | `compras` |
 | WORKFLOW | automacao | Kanban Automacao | `/workflow/automacao` | `*` |
 | WORKFLOW | chamados | Chamados e Manutenções | `/apps/chamados?view=chamados` | `chamados` |
+| WORKFLOW | impressoras | Fila segura | `/apps/impressoras#fila` | `fila` |
 | GESTAO | riob | Lista da frota | `/apps/riob#gestaofrota:lista` | `frota` |
 | GESTAO | riob | Manutencoes | `/apps/riob#gestaofrota:manutencao` | `frota` |
 | GESTAO | riob | Trocas de oleo | `/apps/riob#gestaofrota:oleo` | `frota` |
@@ -105,16 +106,13 @@ Financeiro, Ponto, Store, Cameras e ESXi ficam fora do contrato `rio-branco`, do
 | RELATORIOS | riob | Frota | `/apps/riob#gestaofrota:relatorios` | `frota` |
 | RELATORIOS | riob | Contagens, desperdicio e sobras | `/apps/riob#relatorios:contagens` | `estoque_contagem_relatorio` |
 | RELATORIOS | riob | Compras RioB | `/apps/riob#relatorios:compras` | `compras` |
-| RELATORIOS | riob | Vendas Anual RioB | `/apps/riob#vendas:relatorio_anual` | `vendas` |
 | RELATORIOS | riob | Visitas dos pontos de venda | `/apps/riob#vendas:pontosvenda_relatorio` | `pontos_venda` |
 | RELATORIOS | riob | Cargas da semana | `/apps/riob#relatorios:cargas_semana` | `vendas` |
-| RELATORIOS | riob | Variacao de preco | `/apps/riob#vendas:variacao_preco` | `vendas` |
-| RELATORIOS | riob | Grupos de embalagem | `/apps/riob#vendas:grupos_embalagem` | `vendas` |
-| RELATORIOS | riob | Preco medio | `/apps/riob#vendas:preco_medio` | `vendas` |
 | RELATORIOS | chamados | Histórico de Soluções | `/apps/chamados?view=historico` | `historico` |
 | RELATORIOS | tecnologia | Historico | `/apps/tecnologia#historico` | `historico` |
 | RELATORIOS | tecnologia | Ocupacao do link | `/apps/tecnologia#ocupacao-link` | `historico` |
-| DADOS | riob | Vendas do dia | `/apps/riob#workflow:vendas_diario_importar` | `vendas` |
+| RELATORIOS | impressoras | Historico de impressoes | `/apps/impressoras#historico` | `historico` |
+| DADOS | riob | Importar Vendas Diario | `/apps/riob#workflow:vendas_diario_importar` | `vendas` |
 | DADOS | riob | Comissoes | `/apps/riob#comissao:exportar` | `comissao` |
 | DADOS | riob | E-mails | `/apps/riob#monitor:gestor_emails` | `gestor-emails` |
 | DADOS | riob | Importar XML (Bipe) RioB | `/apps/riob#estoque:importar_xml_bipe` | `estoque` |
@@ -130,18 +128,21 @@ Financeiro, Ponto, Store, Cameras e ESXi ficam fora do contrato `rio-branco`, do
 | ESTOQUE | riob | Rastreio | `/apps/riob#estoque:rastreio` | `estoque` |
 | ESTOQUE | riob | Acerto | `/apps/riob#estoque:acerto` | `estoque` |
 | ESTOQUE | riob | Contagem | `/apps/riob#estoque:contagem` | `estoque_contagem` |
+| ESTOQUE | riob | Baixas por perda | `/apps/riob#estoque:perdas` | `estoque_perdas` |
 | ESTOQUE | riob-xml | Estoque de XMLs recebidos | `/apps/riob-xml/riob/estoque` | `*` |
 | ESTOQUE | riob-xml | Abastecimentos de XMLs recebidos | `/apps/riob-xml/riob/abastecimentos` | `*` |
 | MONITOR | riob | Monitor Automacao RioB | `/apps/riob#monitor:automacao` | `automacao` |
 | MONITOR | riob-email | Status de e-mails | `/apps/riob-email/riob/?painel=status` | `operacao` |
 | MONITOR | automacao | Tempo real | `/apps/automacao/tempo-real` | `*` |
 | MONITOR | zap | Status das integracoes | `/apps/zap/settings?secao=status` | `settings` |
+| MONITOR | impressoras | Estado das impressoras | `/apps/impressoras#monitor` | `monitor` |
 | CONFIGURAR | riob | Backup do RioB | `/apps/riob#config:backup` | `config` |
 | CONFIGURAR | riob | NF-e / Receita | `/apps/riob#config:nfe` | `config` |
 | CONFIGURAR | riob | Parametros de orcamentos | `/apps/riob#config:orcamentos` | `config` |
 | CONFIGURAR | riob-email | Contas de e-mail | `/apps/riob-email/riob/config` | `operacao` |
 | CONFIGURAR | riob-xml | Configuracao da empresa | `/apps/riob-xml/riob/config` | `*` |
 | CONFIGURAR | tecnologia | Configuracao | `/apps/tecnologia#config` | `config` |
+| CONFIGURAR | impressoras | Gerenciar filas CUPS | `/apps/impressoras#gerenciar` | `gerenciar` |
 | CONFIGURAR | zap | Webhook WhatsApp | `/apps/zap/settings?secao=webhook` | `settings` |
 | CONFIGURAR | zap | WhatsApp Business | `/apps/zap/settings?secao=whatsapp` | `settings` |
 | CONFIGURAR | zap | Backup AlwaysData | `/apps/zap/settings?secao=backup` | `settings` |
@@ -290,3 +291,13 @@ perdas especificas de producao ficam para uma etapa futura. As APIs
 `/api/custo-diario` (GET/PUT) e `/api/custo-diario/dashboard` (GET) validam sessao,
 recursos e bloqueios individuais; nao concedem acesso nem movimentam estoque.
 Regras, snapshots e limites em `apps/riob/source/docs/CUSTO_DIARIO.md` na raiz.
+
+Os relatorios de vendas ficam em **RELATORIOS > RioB > Vendas**. Bonificacoes,
+Variacao de Preco, Grupos Embalagem, Preco Medio, Vendas Diario e Vendas Anual
+sao abas internas; os atalhos individuais continuam no catalogo de acessos e
+os links diretos permanecem validos.
+
+Em 03/10/2026, DADOS > RioB recebe **Totais de PDVs por vendedor**
+(`#vendas:pdvs_totais`, recurso `vendas_pdvs`). Importa PDF de Cobertura com
+conferencia e atualiza o denominador dos percentuais de Grupos de embalagem.
+Permissoes individuais permanecem independentes do recurso de consulta `vendas`.

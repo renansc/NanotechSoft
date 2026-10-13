@@ -1,6 +1,7 @@
 import datetime as dt
 import os
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -9,6 +10,59 @@ import server
 
 
 class VendasDiarioPastasTest(unittest.TestCase):
+    def setUp(self):
+        self.status_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.status_dir.cleanup)
+        status_path = os.path.join(self.status_dir.name, "ultima-leitura.json")
+        patcher = mock.patch.object(server, "VENDAS_DIARIO_STATUS_FILE", status_path)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        lock_patcher = mock.patch.object(server, "_VENDAS_DIARIO_IMPORT_LOCK", threading.Lock())
+        lock_patcher.start()
+        self.addCleanup(lock_patcher.stop)
+        server._VENDAS_DIARIO_MANUAL_PENDING = False
+
+    def test_cleanup_removes_only_successfully_processed_files(self):
+        with tempfile.TemporaryDirectory() as root, \
+                mock.patch.object(server, "VENDAS_DIARIO_LIMPAR_PROCESSADOS", "1"):
+            imported = Path(root) / "importado.txt"
+            failed = Path(root) / "erro.pdf"
+            imported.write_text("ok", encoding="utf-8")
+            failed.write_bytes(b"%PDF-erro")
+
+            clean_result = server._vendas_diario_aplicar_limpeza(
+                os.fspath(imported), root, [{"status": "ja_importado", "tipo": "txt"}]
+            )
+            error_result = server._vendas_diario_aplicar_limpeza(
+                os.fspath(failed), root, [{"status": "erro", "tipo": "pdf", "erro": "invalido"}]
+            )
+
+            self.assertFalse(imported.exists())
+            self.assertTrue(clean_result[0]["arquivo_removido"])
+            self.assertTrue(failed.exists())
+            self.assertNotIn("arquivo_removido", error_result[0])
+
+    def test_manual_read_waits_in_queue_until_current_read_finishes(self):
+        completed = threading.Event()
+        calls = []
+
+        def run(**kwargs):
+            calls.append(kwargs)
+            if len(calls) == 1:
+                return {"processando": True}
+            completed.set()
+            return {"processando": False}
+
+        with mock.patch.object(server, "_vendas_diario_importar_pasta", side_effect=run), \
+                mock.patch.object(server.time, "sleep"):
+            self.assertTrue(server._vendas_diario_agendar_manual_pendente())
+            self.assertTrue(completed.wait(2))
+
+        self.assertEqual(2, len(calls))
+        self.assertEqual(
+            {"incluir_sellout": True, "origem": "manual_fila"}, calls[-1]
+        )
+
     def test_scheduler_runs_repeatedly_only_inside_windows_share_window(self):
         with mock.patch.object(server, "VENDAS_DIARIO_JANELA_INICIO", "07:10"), \
                 mock.patch.object(server, "VENDAS_DIARIO_JANELA_FIM", "17:00"), \
@@ -95,6 +149,9 @@ class VendasDiarioPastasTest(unittest.TestCase):
             self.assertEqual(1, result["pdf"]["arquivos"])
             self.assertEqual("2026-08-04", result["data_ref"])
             self.assertEqual(["txt", "pdf"], [item["tipo"] for item in result["resultados"]])
+            self.assertEqual("sucesso", result["ultima_leitura"]["fontes"]["txt"]["status"])
+            self.assertEqual("sucesso", result["ultima_leitura"]["fontes"]["pdf"]["status"])
+            self.assertEqual("automatico_pastas", result["ultima_leitura"]["origem"])
             txt_import.assert_called_once_with(os.fspath(txt_path))
             pdf_import.assert_called_once_with(
                 os.fspath(pdf_path), usuario="importacao_automatica", carga={"pagina": 1, "mapa": "060401"}
@@ -119,6 +176,50 @@ class VendasDiarioPastasTest(unittest.TestCase):
 
             self.assertEqual("erro", result["resultados"][0]["status"])
             self.assertEqual("importado", result["resultados"][1]["status"])
+            self.assertEqual("erro", result["ultima_leitura"]["fontes"]["txt"]["status"])
+            self.assertEqual("sucesso", result["ultima_leitura"]["fontes"]["pdf"]["status"])
+
+    def test_manual_status_persists_each_sellout_source(self):
+        with tempfile.TemporaryDirectory() as root:
+            txt_dir = Path(root) / "txt"
+            pdf_dir = Path(root) / "pdf"
+            txt_dir.mkdir()
+            pdf_dir.mkdir()
+            sellout = {
+                "status": "ja_importado",
+                "fontes": [
+                    {"nome": "IND3", "linhas": 201, "linhas_incluidas": 201},
+                    {"nome": "INDB", "linhas": 929, "linhas_incluidas": 929},
+                ],
+            }
+            sources = [
+                os.path.join(root, "IND3", "SELLOUT_M.CSV"),
+                os.path.join(root, "INDB", "SELLOUT_M.CSV"),
+            ]
+            for source in sources:
+                Path(source).parent.mkdir()
+                Path(source).write_text("csv", encoding="utf-8")
+            with mock.patch.object(server, "VENDAS_DIARIO_TXT_DIR", os.fspath(txt_dir)), \
+                    mock.patch.object(server, "VENDAS_DIARIO_PDF_DIR", os.fspath(pdf_dir)), \
+                    mock.patch.object(server, "fontes_mensais_configuradas", return_value=sources), \
+                    mock.patch.object(server, "_vendas_sellout_mensal_importar", return_value=sellout), \
+                    mock.patch.object(server, "_vendas_diario_unificar_cards_semelhantes", return_value={}):
+                result = server._vendas_diario_importar_pasta(incluir_sellout=True, origem="manual")
+                persisted = server._vendas_diario_status_publico()
+            self.assertEqual("manual", result["ultima_leitura"]["origem"])
+            self.assertEqual("sem_arquivos", persisted["fontes"]["txt"]["status"])
+            self.assertEqual("sem_arquivos", persisted["fontes"]["pdf"]["status"])
+            self.assertEqual("sem_alteracoes", persisted["fontes"]["sellout_ind3"]["status"])
+            self.assertEqual(201, persisted["fontes"]["sellout_ind3"]["linhas"])
+            self.assertEqual(929, persisted["fontes"]["sellout_indb"]["linhas"])
+            self.assertFalse(persisted["em_andamento"])
+
+    def test_status_em_andamento_vira_interrompido_sem_lock(self):
+        server._vendas_diario_status_iniciar("manual", incluir_sellout=True)
+        status = server._vendas_diario_status_publico()
+        self.assertFalse(status["em_andamento"])
+        self.assertEqual("interrompido", status["fontes"]["txt"]["status"])
+        self.assertEqual("interrompido", status["fontes"]["sellout_ind3"]["status"])
 
 
 if __name__ == "__main__":

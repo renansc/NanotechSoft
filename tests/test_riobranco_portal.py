@@ -14,6 +14,7 @@ EXPECTED_APPS = [
     ("riob-telefonia", "Telefonia"),
     ("chamados", "Chamados"),
     ("tecnologia", "Tecnologia"),
+    ("impressoras", "Impressoras"),
     ("riob-email", "Email"),
     ("riob-xml", "XML"),
 ]
@@ -58,7 +59,7 @@ class RioBrancoPortalTests(unittest.TestCase):
 
         self.assertEqual(EXPECTED_APPS, [(item["app_key"], item["nome"]) for item in ordered])
         self.assertEqual(sorted(item["ordem"] for item in ordered), [item["ordem"] for item in ordered])
-        self.assertEqual(10, len(ordered))
+        self.assertEqual(11, len(ordered))
 
     def test_desktop_portal_grid_has_five_columns(self):
         css = (PROJECT_DIR / "static/style.css").read_text(encoding="utf-8")

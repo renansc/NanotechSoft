@@ -1,0 +1,11 @@
+[Unit]
+Description=Reconectar destino local e agentes de backup NanotechSoft
+After=network-online.target
+ConditionPathExists=/etc/nanotech-backup-reconnect.conf
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/nanotech-backup-reconnect.conf
+ExecStart=/usr/bin/systemctl start ${BACKUP_MOUNT_UNIT}
+ExecStart=/usr/bin/systemctl start $BACKUP_AGENT_UNITS
+TimeoutStartSec=90

@@ -12,8 +12,9 @@ sys.path.insert(0, str(ROOT))
 import menu_access
 SOURCES = ['app.py', 'apps/riob/source/server.py', 'apps/riob/source/legacy_services.py',
            'apps/riob/source/gestao_processos_compras.py', 'apps/riob/source/estoque_contagem.py',
-           'apps/automacao/source/app.py', 'apps/zap/source/app/routes.py']
-ACTIVE = ['riob', 'riob-email', 'riob-xml', 'automacao', 'chamados', 'tecnologia', 'zap']
+           'apps/automacao/source/app.py', 'apps/impressoras/source/backend.py',
+           'apps/zap/source/app/routes.py']
+ACTIVE = ['riob', 'riob-email', 'riob-xml', 'automacao', 'chamados', 'tecnologia', 'impressoras', 'zap']
 
 
 def menu_entries():
@@ -59,6 +60,12 @@ def routes():
 
 def owner(row):
     file,path=row['arquivo'],row['rota']
+    if file == 'apps/impressoras/source/backend.py':
+        if path.endswith('/overview'): dest = 'monitor'
+        elif '/printers/' in path: dest = 'gerenciar'
+        elif path.endswith('/jobs') and 'GET' in row['metodos']: dest = 'historico'
+        else: dest = 'fila'
+        return 'acao_da_tela','/apps/impressoras#'+dest
     if file=='app.py':
         for app in ['nanoponto','nanostore','gpsmusical','bpa','tatoo','financeiro']:
             if path.startswith('/apps/'+app) or (app=='financeiro' and path.startswith('/api/finance')):
@@ -146,10 +153,10 @@ def main():
     rows=inventory()
     target=ROOT/'docs/AUDITORIA_ROTAS_RIO_BRANCO.csv'
     with target.open('w',newline='') as stream:
-        writer=csv.DictWriter(stream,fieldnames=list(rows[0]));writer.writeheader();writer.writerows(rows)
+        writer=csv.DictWriter(stream,fieldnames=list(rows[0]),lineterminator='\n');writer.writeheader();writer.writerows(rows)
     catalog = access_catalog_rows()
     with (ROOT/'docs/MAPA_ACESSOS_MENU.csv').open('w', newline='') as stream:
-        writer=csv.DictWriter(stream,fieldnames=list(catalog[0]));writer.writeheader();writer.writerows(catalog)
+        writer=csv.DictWriter(stream,fieldnames=list(catalog[0]),lineterminator='\n');writer.writeheader();writer.writerows(catalog)
     frontend=ROOT/'apps/riob/source'
     html=(frontend/'RioBranco.html').read_text()
     js='\n'.join(p.read_text() for p in frontend.glob('*.js'))

@@ -110,15 +110,16 @@ class AnualSqlTest(unittest.TestCase):
                 self.assertEqual(expected, actual)
                 expected_vendors, expected_customers = s._vendas_publicar_opcoes_relatorio(rows)
                 self.assertEqual(expected_vendors, vendors)
-                self.assertEqual(expected_customers, customers)
+                self.assertEqual(s._vendas_publicar_opcoes_relatorio([r for r in rows if not seller or r['vendedor_key_upper'] == seller])[1], customers)
                 self.assertLessEqual(len(compact), 24)
 
     def test_opcoes_sao_reutilizadas_ao_trocar_vendedor(self):
         s = self.s
         first = s._vendas_anual_consultar_sql('teste')
         second = s._vendas_anual_consultar_sql('teste', 'VENDEDOR 1')
-        self.assertEqual(first[1:], second[1:])
-        self.assertEqual(3, len(second[3]))
+        self.assertEqual(first[1:3], second[1:3])
+        self.assertEqual(3, len(first[3]))
+        self.assertEqual(['CLIENTE A'], [c['chave'] for c in second[3]])
 
 
 if __name__ == '__main__':
