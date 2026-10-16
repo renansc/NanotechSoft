@@ -61,6 +61,8 @@
       ? { label: text.slice(0, separator).trim(), host: text.slice(separator + 1).trim() }
       : { label: `Interface ${index + 1}`, host: text };
   }).filter(Boolean);
+  const interfaceNamesFromText = (value) => [...new Set(String(value || "")
+    .split(/[\r\n,;]+/).map((name) => name.trim()).filter(Boolean))];
   const statusKey = (metric) => ({ OK: "online", FALHA: "offline" })[metric?.status] || (metric?.status || "PENDING").toLowerCase();
   const statusLabel = (metric) => ({ ONLINE: "Online", DEGRADADO: "Instável", OFFLINE: "Offline", PENDING: "Aguardando", OK: "Normal", FALHA: "Falhou" })[metric?.status || "PENDING"] || metric?.status;
   const statusBadge = (metric) => `<span class="status ${statusKey(metric)}">${statusLabel(metric)}</span>`;
@@ -141,7 +143,7 @@
     $("#kpiDownload").textContent = state.speed?.downloadMbps == null ? "—" : `${number(state.speed.downloadMbps)} Mbps`;
     $("#kpiUpload").textContent = state.speed?.uploadMbps == null ? "—" : `${number(state.speed.uploadMbps)} Mbps`;
     $("#linkDownload").textContent = $("#kpiDownload").textContent;
-    $("#linkUpload").textContent = $("#kpiUpload").textContent;
+    $("#linkUpload").textContent = `Upload: ${$("#kpiUpload").textContent}`;
     const internet = active.find((device) => device.tipo === "INTERNET");
     $("#linkConnection").textContent = internet?.ultimaMetrica?.status || "Aguardando coleta";
   }
@@ -195,9 +197,58 @@
     const usage = state.linkUsage;
     const summary = $("#linkUsageSummary");
     const table = $("#linkConsumersTable");
+    const internetUsage = $("#linkInternetUsage");
+    const internalUsage = $("#linkInternalUsage");
+    const unattributedUsage = $("#linkUnattributedUsage");
+    const diagnosis = $("#linkUsageDiagnosis");
     if (!usage) {
       summary.textContent = "Aguardando telemetria...";
       return;
+    }
+    if (internetUsage) {
+      internetUsage.textContent = usage.internet?.available
+        ? `${number(usage.internet.downloadMbps, 2)} ↓ / ${number(usage.internet.uploadMbps, 2)} ↑ Mbps`
+        : "Não configurado";
+    }
+    if (internalUsage) {
+      internalUsage.textContent = usage.internal?.available
+        ? `${number(usage.internal.downloadMbps, 2)} ↓ / ${number(usage.internal.uploadMbps, 2)} ↑ Mbps`
+        : "Não configurado";
+      const additional = usage.internal?.additionalDownloadMbps == null ? ""
+        : ` · interno adicional estimado: ${number(usage.internal.additionalDownloadMbps, 2)} ↓ / ${number(usage.internal.additionalUploadMbps, 2)} ↑ Mbps`;
+      internalUsage.nextElementSibling.textContent = usage.internal?.available
+        ? `inclui Internet${additional}` : "selecione as interfaces LAN/Wi-Fi";
+    }
+    if (unattributedUsage) {
+      unattributedUsage.textContent = usage.internet?.available
+        ? `${number(usage.unattributed?.downloadMbps, 2)} ↓ / ${number(usage.unattributed?.uploadMbps, 2)} ↑ Mbps`
+        : "—";
+    }
+    if (diagnosis) {
+      const contractedDownload = Number(usage.downloadCapacityMbps || 0);
+      const contractedUpload = Number(usage.uploadCapacityMbps || 0);
+      const deliveredDownloadPct = contractedDownload > 0 && state.speed?.downloadMbps != null
+        ? Number(state.speed.downloadMbps) / contractedDownload * 100 : null;
+      const deliveredUploadPct = contractedUpload > 0 && state.speed?.uploadMbps != null
+        ? Number(state.speed.uploadMbps) / contractedUpload * 100 : null;
+      const deliveredValues = [deliveredDownloadPct, deliveredUploadPct].filter((value) => value != null);
+      const deliveredPct = deliveredValues.length ? Math.min(...deliveredValues) : null;
+      const consumptionPct = Number(usage.usagePct || 0);
+      let level = "info";
+      let message = "Configure em Equipamentos uma interface de Internet no switch/roteador SNMP para medir celulares e demais dispositivos sem cadastro.";
+      if (usage.internet?.available && usage.usagePct == null) {
+        message = `A fronteira já está sendo medida (${number(usage.internet.downloadMbps, 2)} ↓ / ${number(usage.internet.uploadMbps, 2)} ↑ Mbps). Informe a capacidade contratada para calcular a ocupação.`;
+      } else if (usage.internet?.available && consumptionPct >= 80) {
+        level = "warning";
+        message = `A rede está usando ${number(consumptionPct)}% da banda: a lentidão coincide com consumo local, inclusive dispositivos não cadastrados.`;
+      } else if (usage.internet?.available && deliveredPct != null && deliveredPct < 70 && consumptionPct < 30) {
+        level = "critical";
+        message = `O teste entregou cerca de ${number(deliveredPct)}% do contratado enquanto o consumo estava baixo; há indício de problema no link/operadora.`;
+      } else if (usage.internet?.available) {
+        message = `Consumo da Internet em ${number(consumptionPct)}%. O total da WAN inclui celulares; a parcela não atribuída estima dispositivos sem agente.`;
+      }
+      diagnosis.className = `diag ${level}`;
+      diagnosis.textContent = message;
     }
     if (usage.usagePct == null) {
       summary.innerHTML = '<span class="status pending">Sem percentual</span><small>Informe a capacidade do link</small>';
@@ -372,7 +423,14 @@
       telemetry?.diskPct == null ? "armazenamento" : "",
     ].filter(Boolean) : [];
     const nvrResourceNotice = unavailableNvrResources.length ? `<div class="detailNotice warning"><strong>Métricas não fornecidas pelo NVR</strong><span>O agente SNMP deste firmware não expõe ${esc(unavailableNvrResources.join(" nem "))} nas tabelas padrão. O monitoramento de disponibilidade, rede e identificação continua funcionando normalmente.</span></div>` : "";
-    const interfaces = telemetry?.interfaces?.length ? `<div class="detailSection"><h3>Interfaces monitoradas</h3><div class="detailTags">${telemetry.interfaces.map((name) => `<span>${esc(name)}</span>`).join("")}</div></div>` : "";
+    const internetInterfaces = new Set((device.internetInterfaces || []).map((name) => String(name).toLocaleLowerCase()));
+    const internalInterfaces = new Set((device.internalInterfaces || []).map((name) => String(name).toLocaleLowerCase()));
+    const interfaceMatches = (row, selected) => [row.index, row.name, row.alias]
+      .some((value) => selected.has(String(value || "").toLocaleLowerCase()));
+    const interfaces = telemetry?.interfaceTraffic?.length ? `<div class="detailSection"><h3>Interfaces monitoradas</h3><div class="detailTableWrap"><table><thead><tr><th>Índice / interface</th><th>Apelido</th><th>Recebido</th><th>Enviado</th><th>Uso no link</th></tr></thead><tbody>${telemetry.interfaceTraffic.map((row) => {
+      const role = interfaceMatches(row, internetInterfaces) ? "Internet" : interfaceMatches(row, internalInterfaces) ? "LAN/Wi-Fi" : "—";
+      return `<tr><td><strong>${esc(row.index)}</strong> · ${esc(row.name)}</td><td>${esc(row.alias || "—")}</td><td>${row.rxMbps == null ? "Aguardando 2ª coleta" : `${number(row.rxMbps, 3)} Mbps`}</td><td>${row.txMbps == null ? "Aguardando 2ª coleta" : `${number(row.txMbps, 3)} Mbps`}</td><td>${esc(role)}</td></tr>`;
+    }).join("")}</tbody></table></div></div>` : telemetry?.interfaces?.length ? `<div class="detailSection"><h3>Interfaces monitoradas</h3><div class="detailTags">${telemetry.interfaces.map((name) => `<span>${esc(name)}</span>`).join("")}</div></div>` : "";
     const supplies = telemetry?.supplies?.length ? `<div class="detailSection"><h3>Suprimentos</h3><div class="detailTableWrap"><table><thead><tr><th>Item</th><th>Nível</th><th>Atual</th><th>Capacidade</th></tr></thead><tbody>${telemetry.supplies.map((supply) => `<tr><td>${esc(supply.name)}</td><td>${supply.pct == null ? esc(supply.status || "Não informado") : `${number(supply.pct)}%`}</td><td>${supply.level == null || supply.level < 0 ? "—" : number(supply.level, 0)}</td><td>${supply.capacity == null || supply.capacity < 0 ? "—" : number(supply.capacity, 0)}</td></tr>`).join("")}</tbody></table></div></div>` : "";
     const printerUsage = isPrinter ? renderPrinterUsage(state.printerUsage[device.id]) : "";
     const addressRows = (metric?.addresses?.length ? metric.addresses : device.networkAddresses || []).map((address) => {
@@ -906,6 +964,8 @@
     $("#deviceSnmpPort").value = device?.snmpPort ?? 161;
     $("#deviceAgentPort").value = device?.agentPort || "";
     $("#deviceAgentPath").value = device?.agentPath || "/metrics";
+    $("#deviceInternetInterfaces").value = (device?.internetInterfaces || []).join("\n");
+    $("#deviceInternalInterfaces").value = (device?.internalInterfaces || []).join("\n");
     $("#deviceNotes").value = device?.observacoes || "";
     $("#deviceCritical").checked = Boolean(device?.critico);
     $("#deviceActive").checked = device ? Boolean(device.ativo) : true;
@@ -940,6 +1000,8 @@
       snmpPort: Number($("#deviceSnmpPort").value || 161),
       agentPort: $("#deviceAgentPort").value ? Number($("#deviceAgentPort").value) : null,
       agentPath: $("#deviceAgentPath").value || "/metrics",
+      internetInterfaces: interfaceNamesFromText($("#deviceInternetInterfaces").value),
+      internalInterfaces: interfaceNamesFromText($("#deviceInternalInterfaces").value),
       preserveSnmpCommunity: Boolean(editingId),
       observacoes: $("#deviceNotes").value,
       critico: $("#deviceCritical").checked,

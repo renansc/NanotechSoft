@@ -135,6 +135,8 @@ CREATE TABLE IF NOT EXISTS tecnologia_dispositivos (
     snmp_port INT NOT NULL DEFAULT 161,
     agente_porta INT NULL,
     agente_path VARCHAR(120) NOT NULL DEFAULT '/metrics',
+    interfaces_internet JSON NULL,
+    interfaces_rede_interna JSON NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     UNIQUE KEY uq_tecnologia_host_porta (host, porta),

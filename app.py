@@ -564,6 +564,8 @@ def ensure_database():
         "snmp_port": "INT NOT NULL DEFAULT 161",
         "agente_porta": "INT NULL",
         "agente_path": "VARCHAR(120) NOT NULL DEFAULT '/metrics'",
+        "interfaces_internet": "JSON NULL",
+        "interfaces_rede_interna": "JSON NULL",
     }
     for column_name, column_ddl in technology_columns.items():
         cur.execute(f"SHOW COLUMNS FROM tecnologia_dispositivos LIKE '{column_name}'")
@@ -7060,6 +7062,18 @@ def technology_json_value(value):
     return {}
 
 
+def technology_json_list(value):
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str) and value:
+        try:
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, list) else []
+        except (TypeError, ValueError):
+            return []
+    return []
+
+
 def technology_db_timestamp_iso(value):
     """Serializa DATETIME do banco, gravado em UTC, sem perder o fuso na API."""
     if not hasattr(value, "isoformat"):
@@ -7391,6 +7405,8 @@ def technology_public_device(row):
         "hasSnmpCommunity": bool(row.get("snmp_community")),
         "agentPort": int(row["agente_porta"]) if row.get("agente_porta") is not None else None,
         "agentPath": row.get("agente_path") or "/metrics",
+        "internetInterfaces": technology_json_list(row.get("interfaces_internet")),
+        "internalInterfaces": technology_json_list(row.get("interfaces_rede_interna")),
         "availability24h": float(row["disponibilidade_24h"]) if row.get("disponibilidade_24h") is not None else None,
         "avgLatency24h": float(row["latencia_media_24h"]) if row.get("latencia_media_24h") is not None else None,
         "avgLoss24h": float(row["perda_media_24h"]) if row.get("perda_media_24h") is not None else None,
@@ -7717,12 +7733,33 @@ def save_technology_alert_config(payload):
 
 
 def technology_link_usage_snapshot(devices, results=None, config=None):
-    """Estima o uso do link somando interfaces dos endpoints monitorados."""
+    """Prefer a boundary interface and retain the endpoint sum as attribution estimate."""
     config = config or technology_alert_config_defaults()
     contributors = []
+    boundary = {
+        "internetDownloadMbps": 0.0, "internetUploadMbps": 0.0,
+        "internalDownloadMbps": 0.0, "internalUploadMbps": 0.0,
+        "internetInterfaces": [], "internalInterfaces": [],
+    }
+
+    def selected_rows(telemetry, configured_names):
+        wanted = {str(name).strip().casefold() for name in configured_names or [] if str(name).strip()}
+        if not wanted:
+            return []
+        matched = []
+        for row in telemetry.get("interfaceTraffic") or []:
+            if not isinstance(row, dict):
+                continue
+            identities = {
+                str(row.get("index") or "").strip().casefold(),
+                str(row.get("name") or "").strip().casefold(),
+                str(row.get("alias") or "").strip().casefold(),
+            }
+            if wanted & (identities - {""}):
+                matched.append(row)
+        return matched
+
     for index, device in enumerate(devices or []):
-        if str(device.get("tipo") or "").upper() in {"INTERNET", "ROTEADOR"}:
-            continue
         result = results[index] if results is not None and index < len(results) else None
         if result is not None:
             details = result.get("details") if isinstance(result.get("details"), dict) else {}
@@ -7736,6 +7773,42 @@ def technology_link_usage_snapshot(devices, results=None, config=None):
             details = technology_json_value(device.get("ultima_detalhes"))
             telemetry = details.get("telemetry") if isinstance(details.get("telemetry"), dict) else {}
             measured_at = technology_db_timestamp_iso(device.get("ultima_verificado_em"))
+        internet_names = (
+            device.get("internetInterfaces")
+            if "internetInterfaces" in device
+            else technology_json_list(device.get("interfaces_internet"))
+        )
+        internal_names = (
+            device.get("internalInterfaces")
+            if "internalInterfaces" in device
+            else technology_json_list(device.get("interfaces_rede_interna"))
+        )
+        for row in selected_rows(telemetry, internet_names):
+            if row.get("rxMbps") is None and row.get("txMbps") is None:
+                continue
+            rx = max(0.0, float(row.get("rxMbps") or 0))
+            tx = max(0.0, float(row.get("txMbps") or 0))
+            boundary["internetDownloadMbps"] += rx
+            boundary["internetUploadMbps"] += tx
+            boundary["internetInterfaces"].append({
+                "deviceId": int(device["id"]), "deviceName": device.get("nome") or "Equipamento",
+                "name": row.get("name") or row.get("index"), "alias": row.get("alias") or "",
+                "downloadMbps": round(rx, 3), "uploadMbps": round(tx, 3), "measuredAt": measured_at,
+            })
+        for row in selected_rows(telemetry, internal_names):
+            if row.get("rxMbps") is None and row.get("txMbps") is None:
+                continue
+            download = max(0.0, float(row.get("txMbps") or 0))
+            upload = max(0.0, float(row.get("rxMbps") or 0))
+            boundary["internalDownloadMbps"] += download
+            boundary["internalUploadMbps"] += upload
+            boundary["internalInterfaces"].append({
+                "deviceId": int(device["id"]), "deviceName": device.get("nome") or "Equipamento",
+                "name": row.get("name") or row.get("index"), "alias": row.get("alias") or "",
+                "downloadMbps": round(download, 3), "uploadMbps": round(upload, 3), "measuredAt": measured_at,
+            })
+        if str(device.get("tipo") or "").upper() in {"INTERNET", "ROTEADOR"}:
+            continue
         try:
             download = max(0.0, float(telemetry.get("downloadMbps") or 0))
             upload = max(0.0, float(telemetry.get("uploadMbps") or 0))
@@ -7759,21 +7832,49 @@ def technology_link_usage_snapshot(devices, results=None, config=None):
     upload_total = sum(item["uploadMbps"] for item in contributors)
     download_capacity = float(config.get("linkDownloadCapacityMbps") or 0)
     upload_capacity = float(config.get("linkUploadCapacityMbps") or 0)
-    download_pct = (download_total / download_capacity * 100) if download_capacity > 0 else None
-    upload_pct = (upload_total / upload_capacity * 100) if upload_capacity > 0 else None
+    boundary_available = bool(boundary["internetInterfaces"])
+    effective_download = boundary["internetDownloadMbps"] if boundary_available else download_total
+    effective_upload = boundary["internetUploadMbps"] if boundary_available else upload_total
+    download_pct = (effective_download / download_capacity * 100) if download_capacity > 0 else None
+    upload_pct = (effective_upload / upload_capacity * 100) if upload_capacity > 0 else None
     percentages = [("download", download_pct), ("upload", upload_pct)]
     available_percentages = [(direction, value) for direction, value in percentages if value is not None]
     direction, usage_pct = max(available_percentages, key=lambda item: item[1]) if available_percentages else (None, None)
     return {
-        "available": bool(contributors and usage_pct is not None),
+        "available": bool((boundary_available or contributors) and usage_pct is not None),
         "usagePct": round(usage_pct, 2) if usage_pct is not None else None,
         "direction": direction,
-        "downloadMbps": round(download_total, 3),
-        "uploadMbps": round(upload_total, 3),
+        "downloadMbps": round(effective_download, 3),
+        "uploadMbps": round(effective_upload, 3),
         "downloadCapacityMbps": download_capacity,
         "uploadCapacityMbps": upload_capacity,
         "monitoredDeviceCount": len(contributors),
         "contributors": contributors,
+        "measurementMode": "boundary" if boundary_available else "monitored-estimate",
+        "internetMeasured": boundary_available,
+        "internet": {
+            "available": boundary_available,
+            "downloadMbps": round(boundary["internetDownloadMbps"], 3) if boundary_available else None,
+            "uploadMbps": round(boundary["internetUploadMbps"], 3) if boundary_available else None,
+            "downloadPct": round(download_pct, 2) if boundary_available and download_pct is not None else None,
+            "uploadPct": round(upload_pct, 2) if boundary_available and upload_pct is not None else None,
+            "interfaces": boundary["internetInterfaces"],
+        },
+        "internal": {
+            "available": bool(boundary["internalInterfaces"]),
+            "downloadMbps": round(boundary["internalDownloadMbps"], 3) if boundary["internalInterfaces"] else None,
+            "uploadMbps": round(boundary["internalUploadMbps"], 3) if boundary["internalInterfaces"] else None,
+            "additionalDownloadMbps": round(max(0, boundary["internalDownloadMbps"] - boundary["internetDownloadMbps"]), 3)
+                if boundary_available and boundary["internalInterfaces"] else None,
+            "additionalUploadMbps": round(max(0, boundary["internalUploadMbps"] - boundary["internetUploadMbps"]), 3)
+                if boundary_available and boundary["internalInterfaces"] else None,
+            "interfaces": boundary["internalInterfaces"],
+        },
+        "unattributed": {
+            "downloadMbps": round(max(0, effective_download - download_total), 3) if boundary_available else None,
+            "uploadMbps": round(max(0, effective_upload - upload_total), 3) if boundary_available else None,
+            "approximate": True,
+        },
         "exactWanAttribution": False,
     }
 
@@ -7794,8 +7895,13 @@ def technology_apply_link_usage_telemetry(devices, results, config):
         for item in top
     )
     direction_label = "download" if snapshot["direction"] == "download" else "upload"
+    source_label = (
+        "uso total medido na interface de Internet"
+        if snapshot.get("internetMeasured")
+        else "uso estimado dos equipamentos monitorados"
+    )
     summary = (
-        f"uso estimado dos equipamentos monitorados em {snapshot['usagePct']:.1f}% no {direction_label}; "
+        f"{source_label} em {snapshot['usagePct']:.1f}% no {direction_label}; "
         f"total {snapshot['downloadMbps']:.1f} Mbps ↓ / {snapshot['uploadMbps']:.1f} Mbps ↑"
     )
     alert_description = f"{summary}; maiores consumidores: {top_text}" if top_text else summary
@@ -9333,14 +9439,16 @@ def tecnologia_create_device_api():
                  critico, ativo, latencia_alerta_ms, perda_alerta_pct,
                  download_alerta_mbps, upload_alerta_mbps, cpu_alerta_pct,
                  memoria_alerta_pct, disco_alerta_pct, trafego_alerta_mbps,
-                 snmp_community, snmp_port, agente_porta, agente_path)
+                 snmp_community, snmp_port, agente_porta, agente_path,
+                 interfaces_internet, interfaces_rede_interna)
             VALUES (%(nome)s, %(tipo)s, %(host)s, %(enderecos_adicionais)s, %(porta)s, %(sonda)s,
                     %(localizacao)s, %(observacoes)s, %(critico)s, %(ativo)s,
                     %(latencia_alerta_ms)s, %(perda_alerta_pct)s,
                     %(download_alerta_mbps)s, %(upload_alerta_mbps)s,
                     %(cpu_alerta_pct)s, %(memoria_alerta_pct)s,
                     %(disco_alerta_pct)s, %(trafego_alerta_mbps)s,
-                    %(snmp_community)s, %(snmp_port)s, %(agente_porta)s, %(agente_path)s)
+                    %(snmp_community)s, %(snmp_port)s, %(agente_porta)s, %(agente_path)s,
+                    %(interfaces_internet)s, %(interfaces_rede_interna)s)
             """,
             data,
         )
@@ -9425,7 +9533,9 @@ def tecnologia_device_api(device_id):
                 disco_alerta_pct=%(disco_alerta_pct)s,
                 trafego_alerta_mbps=%(trafego_alerta_mbps)s,
                 snmp_community=%(snmp_community)s, snmp_port=%(snmp_port)s,
-                agente_porta=%(agente_porta)s, agente_path=%(agente_path)s
+                agente_porta=%(agente_porta)s, agente_path=%(agente_path)s,
+                interfaces_internet=%(interfaces_internet)s,
+                interfaces_rede_interna=%(interfaces_rede_interna)s
             WHERE id=%(id)s
             """,
             data,

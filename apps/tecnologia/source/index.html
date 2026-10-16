@@ -266,9 +266,12 @@
         </div>
         <div class="kpiGrid">
           <article class="kpi"><span>Internet</span><strong id="linkConnection">—</strong><small>última verificação do link</small></article>
-          <article class="kpi speed"><span>Download</span><strong id="linkDownload">—</strong><small>último teste de velocidade</small></article>
-          <article class="kpi speed"><span>Upload</span><strong id="linkUpload">—</strong><small>último teste de velocidade</small></article>
+          <article class="kpi speed"><span>Velocidade disponível</span><strong id="linkDownload">—</strong><small id="linkUpload">—</small></article>
+          <article class="kpi speed"><span>Consumo de Internet</span><strong id="linkInternetUsage">—</strong><small>WAN/uplink; inclui celulares</small></article>
+          <article class="kpi"><span>Tráfego LAN/Wi-Fi</span><strong id="linkInternalUsage">—</strong><small>inclui Internet e tráfego interno</small></article>
+          <article class="kpi warning"><span>Internet não atribuída</span><strong id="linkUnattributedUsage">—</strong><small>celulares e outros sem agente; estimativa</small></article>
         </div>
+        <div id="linkUsageDiagnosis" class="diag info">Aguardando a medição da interface que liga a rede à Internet.</div>
         <section class="panel">
           <div class="panelHead">
             <div><span class="eyebrow">Última coleta</span><h2>Consumo dos equipamentos monitorados</h2></div>
@@ -280,7 +283,7 @@
               <tbody id="linkConsumersTable"><tr><td colspan="5" class="muted">Nenhum equipamento com telemetria de rede.</td></tr></tbody>
             </table>
           </div>
-          <p class="scopeWarning">Estimativa do tráfego das interfaces monitoradas; pode incluir tráfego interno. Equipamentos sem agente ou SNMP não entram nesta soma.</p>
+          <p class="scopeWarning">A interface de Internet mede o total que atravessa o link, inclusive celulares sem cadastro. O detalhamento por equipamento continua estimado; identificação exata por IP exige API do roteador, NetFlow, sFlow ou IPFIX.</p>
         </section>
       </section>
 
@@ -401,6 +404,8 @@
           <label>Porta SNMP<input id="deviceSnmpPort" type="number" min="1" max="65535" value="161"></label>
           <label>Porta do exporter<input id="deviceAgentPort" type="number" min="1" max="65535" placeholder="9100 ou 9182"></label>
           <label>Caminho do exporter<input id="deviceAgentPath" maxlength="120" value="/metrics"></label>
+          <label class="wide">Interface(s) que ligam à Internet<textarea id="deviceInternetInterfaces" rows="2" placeholder="GigabitEthernet1/0/1"></textarea><small>Uma por linha, pelo índice, nome ou apelido informado pelo SNMP. Configure somente a fronteira WAN/uplink para incluir todos os dispositivos.</small></label>
+          <label class="wide">Interface(s) da rede interna / Wi-Fi<textarea id="deviceInternalInterfaces" rows="2" placeholder="GigabitEthernet1/0/2"></textarea><small>Uma por linha. A tela mostra o total LAN/Wi-Fi e estima o adicional interno descontando o tráfego da Internet.</small></label>
           <label class="wide">Observações<textarea id="deviceNotes" maxlength="500" rows="3"></textarea></label>
         </div>
         <div class="checkRow"><label><input id="deviceCritical" type="checkbox"> Equipamento crítico</label><label><input id="deviceActive" type="checkbox" checked> Monitoramento ativo</label></div>

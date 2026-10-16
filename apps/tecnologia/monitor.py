@@ -71,6 +71,31 @@ def normalize_network_addresses(value: Any, primary_host: str | None = None) -> 
     return result
 
 
+def normalize_monitored_interfaces(value: Any, label: str) -> list[str]:
+    """Normalize interface names selected to measure the Internet/LAN boundary."""
+    if value in (None, ""):
+        return []
+    if isinstance(value, str):
+        value = re.split(r"[\r\n,;]+", value)
+    if not isinstance(value, list):
+        raise ValueError(f"A lista de interfaces de {label} é inválida.")
+    result = []
+    seen = set()
+    for raw_name in value:
+        name = str(raw_name or "").strip()
+        if not name:
+            continue
+        if len(name) > 120 or any(ord(char) < 32 for char in name):
+            raise ValueError(f"Cada interface de {label} deve ter até 120 caracteres.")
+        key = name.casefold()
+        if key not in seen:
+            seen.add(key)
+            result.append(name)
+    if len(result) > 32:
+        raise ValueError(f"Cadastre no máximo 32 interfaces de {label}.")
+    return result
+
+
 def device_network_addresses(device: dict[str, Any]) -> list[dict[str, Any]]:
     primary = normalize_host(device.get("host"))
     additional = normalize_network_addresses(device.get("enderecos_adicionais"), primary)
@@ -136,6 +161,17 @@ def normalize_device_payload(payload: dict[str, Any]) -> dict[str, Any]:
     for field in ("download_alerta_mbps", "upload_alerta_mbps", "trafego_alerta_mbps"):
         if not (0.1 <= thresholds[field] <= 100000):
             raise ValueError("Limite de velocidade inválido.")
+    internet_interfaces = normalize_monitored_interfaces(
+        payload.get("internetInterfaces"), "Internet",
+    )
+    internal_interfaces = normalize_monitored_interfaces(
+        payload.get("internalInterfaces"), "rede interna",
+    )
+    overlap = {name.casefold() for name in internet_interfaces} & {
+        name.casefold() for name in internal_interfaces
+    }
+    if overlap:
+        raise ValueError("A mesma interface não pode medir Internet e rede interna.")
     return {
         "nome": name,
         "tipo": device_type,
@@ -154,6 +190,8 @@ def normalize_device_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "snmp_port": snmp_port,
         "agente_porta": agent_port,
         "agente_path": agent_path,
+        "interfaces_internet": json.dumps(internet_interfaces, ensure_ascii=False),
+        "interfaces_rede_interna": json.dumps(internal_interfaces, ensure_ascii=False),
     }
 
 
@@ -434,6 +472,46 @@ def _counter_rates(current: dict[str, Any], previous: dict[str, Any], checked_at
     return rates
 
 
+def _interface_counter_rates(
+    current: list[dict[str, Any]], previous: dict[str, Any], checked_at: float, source: str,
+) -> list[dict[str, Any]]:
+    """Calculate rates without losing each physical/logical interface identity."""
+    previous_at = float(previous.get("checkedEpoch") or 0)
+    elapsed = checked_at - previous_at
+    previous_source = str((previous.get("counters") or {}).get("source") or "")
+    previous_rows = {
+        str(row.get("index")): row
+        for row in (previous.get("interfaceCounters") or [])
+        if isinstance(row, dict) and row.get("index") is not None
+    }
+    result = []
+    for row in current:
+        old = previous_rows.get(str(row.get("index")), {})
+        rx_mbps = tx_mbps = None
+        if 0 < elapsed <= 86400 and (not previous_source or previous_source == source):
+            for counter, target in (("rxBytes", "rxMbps"), ("txBytes", "txMbps")):
+                old_value = old.get(counter)
+                new_value = row.get(counter)
+                if old_value is None or new_value is None or float(new_value) < float(old_value):
+                    continue
+                rate = round((float(new_value) - float(old_value)) * 8 / elapsed / 1_000_000, 3)
+                if target == "rxMbps":
+                    rx_mbps = rate
+                else:
+                    tx_mbps = rate
+        result.append({
+            "index": str(row.get("index")),
+            "name": str(row.get("name") or f"Interface {row.get('index')}")[:120],
+            "alias": str(row.get("alias") or "")[:120],
+            "rxBytes": row.get("rxBytes"),
+            "txBytes": row.get("txBytes"),
+            "rxMbps": rx_mbps,
+            "txMbps": tx_mbps,
+            "capacityMbps": row.get("capacityMbps"),
+        })
+    return result
+
+
 def _snmp_walk(host: str, community: str, port: int, oid: str) -> list[tuple[str, str]]:
     try:
         result = subprocess.run(
@@ -563,6 +641,7 @@ def collect_snmp_metrics(device: dict[str, Any]) -> dict[str, Any]:
     port = int(device.get("snmp_port") or 161)
     system_rows = _snmp_walk(host, community, port, ".1.3.6.1.2.1.1")
     name_rows = _snmp_walk_optional(host, community, port, ".1.3.6.1.2.1.31.1.1.1.1")
+    alias_rows = _snmp_walk_optional(host, community, port, ".1.3.6.1.2.1.31.1.1.1.18")
     rx_rows = _snmp_walk_optional(host, community, port, ".1.3.6.1.2.1.31.1.1.1.6")
     tx_rows = _snmp_walk_optional(host, community, port, ".1.3.6.1.2.1.31.1.1.1.10")
     speed_rows = _snmp_walk_optional(host, community, port, ".1.3.6.1.2.1.31.1.1.1.15")
@@ -586,6 +665,7 @@ def collect_snmp_metrics(device: dict[str, Any]) -> dict[str, Any]:
         return {oid.rsplit(".", 1)[-1]: value for oid, value in rows}
 
     names = indexed(name_rows)
+    aliases = indexed(alias_rows)
     mac_rows = _snmp_walk_optional(host, community, port, ".1.3.6.1.2.1.2.2.1.6")
     rx = indexed(rx_rows)
     tx = indexed(tx_rows)
@@ -595,7 +675,31 @@ def collect_snmp_metrics(device: dict[str, Any]) -> dict[str, Any]:
     tx_total = sum(_snmp_number(value) or 0 for index, value in tx.items() if names.get(index, "").lower() not in ignored)
     checked_at = time.time()
     counters = {"rxBytes": rx_total if rx else None, "txBytes": tx_total if tx else None, "source": counter_source}
-    rates = _counter_rates(counters, _previous_telemetry(device), checked_at)
+    previous = _previous_telemetry(device)
+    rates = _counter_rates(counters, previous, checked_at)
+    interface_counters = []
+    for index in sorted(
+        set(names) | set(rx) | set(tx),
+        key=lambda value: (0, int(value)) if value.isdigit() else (1, value),
+    ):
+        name = _snmp_clean_text(names.get(index)) or f"Interface {index}"
+        if name.lower() in ignored:
+            continue
+        raw_speed = _snmp_number(speeds.get(index))
+        interface_counters.append({
+            "index": index,
+            "name": name,
+            "alias": _snmp_clean_text(aliases.get(index)),
+            "rxBytes": _snmp_number(rx.get(index)),
+            "txBytes": _snmp_number(tx.get(index)),
+            "capacityMbps": (
+                round(raw_speed / 1_000_000, 3) if raw_speed is not None and legacy_speed
+                else raw_speed
+            ),
+        })
+    interface_traffic = _interface_counter_rates(
+        interface_counters, previous, checked_at, counter_source,
+    )
     capacity_mbps = sum(
         ((_snmp_number(value) or 0) / 1_000_000 if legacy_speed else (_snmp_number(value) or 0))
         for index, value in speeds.items()
@@ -631,6 +735,11 @@ def collect_snmp_metrics(device: dict[str, Any]) -> dict[str, Any]:
         "networkCapacityMbps": round(capacity_mbps, 1) if capacity_mbps else None,
         "networkPct": network_pct,
         "counters": counters,
+        "interfaceCounters": [
+            {key: row.get(key) for key in ("index", "name", "alias", "rxBytes", "txBytes", "capacityMbps")}
+            for row in interface_traffic
+        ],
+        "interfaceTraffic": interface_traffic,
         "interfaces": [name for _, name in sorted(names.items()) if name],
         "macAddresses": network_mac_addresses(value for _, value in mac_rows),
         "interfaceCount": len(names),

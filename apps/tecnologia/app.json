@@ -224,11 +224,11 @@
     },
     {
       "recurso": "dashboard",
-      "nome": "Visao geral e monitoramento de link e status dos sensores Arduino"
+      "nome": "Visao geral e monitoramento de Internet/LAN, incluindo dispositivos sem agente, e status dos sensores Arduino"
     },
     {
       "recurso": "equipamentos",
-      "nome": "Equipamentos, verificacao inicial de MAC, exclusao e descoberta e status dos sensores Arduino"
+      "nome": "Equipamentos, interfaces WAN/LAN, verificacao inicial de MAC, exclusao e descoberta e status dos sensores Arduino"
     },
     {
       "recurso": "historico",

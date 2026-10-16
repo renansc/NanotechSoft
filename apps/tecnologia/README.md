@@ -128,22 +128,38 @@ de um servidor GLPI. O Zabbix Agent precisa de um servidor/proxy Zabbix. Nesta
 etapa o portal lê o formato aberto do ecossistema Prometheus sem exigir esses
 servidores adicionais.
 
-SNMP e exporters mostram tráfego total por interface. A tela **Monitoramento de link**
-pode somar download e upload dos endpoints monitorados, comparar os totais com
-a capacidade contratada do link e listar os maiores consumidores no instante
-da coleta. Essa soma é uma estimativa: pode incluir tráfego interno e não cobre
-máquinas sem agente. A identificação exata do IP que consome a internet exige
-que o roteador exporte NetFlow, sFlow, IPFIX ou ofereça uma API equivalente;
-isso não pode ser inferido apenas pelos contadores SNMP.
+SNMP coleta também os contadores separados de cada interface, incluindo índice,
+nome e `ifAlias`. No cadastro de um switch ou roteador é possível indicar quais
+interfaces representam a fronteira da Internet (WAN/uplink) e quais representam
+a rede interna (LAN/Wi-Fi). A tela **Monitoramento de link** usa a fronteira para
+mostrar o consumo total da Internet, incluindo celulares e outros dispositivos
+sem cadastro, e mostra separadamente o tráfego LAN/Wi-Fi. Como o tráfego de
+Internet também atravessa a LAN, o valor "interno adicional" é apenas a diferença
+não negativa entre os dois lados e pode ser afetado por offload, bridges e pelo
+conjunto de portas selecionado.
 
-O relatório **Ocupação do link**, disponível em Relatórios, reutiliza essas
+Sem uma interface de fronteira configurada, a tela mantém o modo legado: soma
+download e upload dos endpoints monitorados. A parcela "Internet não atribuída"
+é a diferença aproximada entre o total da fronteira e os endpoints com agente;
+ela evidencia celulares e outros dispositivos ausentes, mas não identifica um
+IP específico e pode ser reduzida por tráfego interno nos endpoints. A
+identificação exata do IP que consome a Internet exige NetFlow, sFlow, IPFIX ou
+API equivalente do roteador; isso não pode ser inferido por SNMP comum.
+
+Para configurar, faça uma coleta SNMP, abra o detalhe do equipamento para obter
+os nomes/índices das interfaces e edite o cadastro. Selecione somente uma
+fronteira que veja todo o link para evitar dupla contagem. Em switch, normalmente
+é a porta ligada ao gateway da operadora; as portas ligadas aos APs/roteadores
+Wi-Fi podem ser selecionadas como rede interna para acompanhar o tráfego móvel.
+
+O relatório **Ocupação do link**, disponível em Relatórios, reutiliza as
 amostras por períodos de 24 horas, 7, 30 ou 90 dias. Ele apresenta a série
 histórica de download/upload em relação às capacidades contratadas, médias e
 picos de cada dispositivo e o detalhamento por intervalo. Períodos maiores são
 agregados em intervalos mais largos para manter a consulta responsiva. Os
 percentuais só são calculados quando as capacidades de download e upload estão
-informadas na Configuração e continuam sendo uma estimativa das interfaces
-monitoradas, não uma atribuição WAN exata.
+informadas na Configuração. O detalhamento por dispositivo continua sendo uma
+estimativa e não equivale à atribuição WAN por IP.
 
 Alguns NVRs não implementam a tabela moderna `ifXTable`, embora respondam
 normalmente ao SNMP. Nesses casos, a coleta usa automaticamente a `ifTable`

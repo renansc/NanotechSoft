@@ -33,6 +33,8 @@ class TecnologiaMonitorTests(unittest.TestCase):
                 {"label": "Wi-Fi", "host": "192.168.200.122"},
                 {"label": "Tailscale", "host": "100.80.20.10"},
             ],
+            "internetInterfaces": ["GigabitEthernet1/0/1"],
+            "internalInterfaces": ["GigabitEthernet1/0/2", "Wi-Fi"],
         })
 
         self.assertEqual("192.168.200.121", row["host"])
@@ -43,6 +45,8 @@ class TecnologiaMonitorTests(unittest.TestCase):
             {"label": "Wi-Fi", "host": "192.168.200.122"},
             {"label": "Tailscale", "host": "100.80.20.10"},
         ], json.loads(row["enderecos_adicionais"]))
+        self.assertEqual(["GigabitEthernet1/0/1"], json.loads(row["interfaces_internet"]))
+        self.assertEqual(["GigabitEthernet1/0/2", "Wi-Fi"], json.loads(row["interfaces_rede_interna"]))
 
     def test_normalize_rejects_invalid_host_and_tcp_without_port(self):
         base = {"nome": "Teste", "tipo": "OUTRO", "sonda": "ICMP"}
@@ -54,6 +58,11 @@ class TecnologiaMonitorTests(unittest.TestCase):
             monitor.normalize_device_payload({
                 **base, "host": "192.168.200.10",
                 "networkAddresses": [{"label": "Wi-Fi", "host": "IP inválido"}],
+            })
+        with self.assertRaisesRegex(ValueError, "mesma interface"):
+            monitor.normalize_device_payload({
+                **base, "host": "192.168.200.10",
+                "internetInterfaces": ["eth0"], "internalInterfaces": ["ETH0"],
             })
 
     def test_normalize_supports_snmp_and_prometheus(self):
@@ -81,10 +90,21 @@ class TecnologiaMonitorTests(unittest.TestCase):
             {"checkedEpoch": 10, "counters": {"rxBytes": 1_000_000, "txBytes": 500_000}},
             12,
         )
+        interface_rates = monitor._interface_counter_rates(
+            [{"index": "7", "name": "eth0", "rxBytes": 2_000_000, "txBytes": 1_000_000}],
+            {
+                "checkedEpoch": 10,
+                "counters": {"source": "ifXTable64"},
+                "interfaceCounters": [{"index": "7", "rxBytes": 1_000_000, "txBytes": 500_000}],
+            },
+            12, "ifXTable64",
+        )
 
         self.assertEqual(2, len(parsed["node_cpu_seconds_total"]))
         self.assertEqual(4, rates["downloadMbps"])
         self.assertEqual(2, rates["uploadMbps"])
+        self.assertEqual(4, interface_rates[0]["rxMbps"])
+        self.assertEqual(2, interface_rates[0]["txMbps"])
 
     def test_snmp_collects_printer_mib_inventory_and_supplies(self):
         rows_by_oid = {
@@ -95,6 +115,7 @@ class TecnologiaMonitorTests(unittest.TestCase):
                 (".1.3.6.1.2.1.1.5.0", "HP-TESTE"),
             ],
             ".1.3.6.1.2.1.31.1.1.1.1": [(".1.3.6.1.2.1.31.1.1.1.1.1", "eth0")],
+            ".1.3.6.1.2.1.31.1.1.1.18": [(".1.3.6.1.2.1.31.1.1.1.18.1", "uplink")],
             ".1.3.6.1.2.1.31.1.1.1.6": [(".1.3.6.1.2.1.31.1.1.1.6.1", "1000000")],
             ".1.3.6.1.2.1.31.1.1.1.10": [(".1.3.6.1.2.1.31.1.1.1.10.1", "500000")],
             ".1.3.6.1.2.1.31.1.1.1.15": [(".1.3.6.1.2.1.31.1.1.1.15.1", "1000")],
@@ -128,6 +149,7 @@ class TecnologiaMonitorTests(unittest.TestCase):
 
         self.assertEqual("SNMPv2c", telemetry["protocol"])
         self.assertEqual(["AA:BB:CC:DD:EE:FF"], telemetry["macAddresses"])
+        self.assertEqual("uplink", telemetry["interfaceTraffic"][0]["alias"])
         self.assertEqual("Ociosa", telemetry["printerStatus"])
         self.assertEqual("SERIAL-123", telemetry["serialNumber"])
         self.assertEqual(125571, telemetry["pageCount"])
@@ -167,6 +189,7 @@ class TecnologiaMonitorTests(unittest.TestCase):
                 (".1.3.6.1.2.1.1.5.0", "(none)"),
             ],
             ".1.3.6.1.2.1.31.1.1.1.1": [],
+            ".1.3.6.1.2.1.31.1.1.1.18": [],
             ".1.3.6.1.2.1.31.1.1.1.6": [],
             ".1.3.6.1.2.1.31.1.1.1.10": [],
             ".1.3.6.1.2.1.31.1.1.1.15": [],
@@ -1221,6 +1244,39 @@ class TecnologiaIntegrationTests(unittest.TestCase):
         self.assertTrue(config["notifyLinkUsage"])
         self.assertEqual(80, config["linkUsageThresholdPct"])
 
+    def test_link_usage_prefers_boundary_and_keeps_unmonitored_gap(self):
+        devices = [
+            {
+                "id": 2, "nome": "Switch", "host": "192.168.1.2", "tipo": "ROTEADOR",
+                "internetInterfaces": ["Uplink operadora"],
+                "internalInterfaces": ["Wi-Fi"],
+            },
+            {"id": 3, "nome": "PC", "host": "192.168.1.10", "tipo": "COMPUTADOR"},
+        ]
+        results = [
+            {"checkedAt": "2026-10-15T12:00:00Z", "details": {"telemetry": {"interfaceTraffic": [
+                {"index": "1", "name": "eth1", "alias": "Uplink operadora", "rxMbps": 90, "txMbps": 9},
+                {"index": "2", "name": "eth2", "alias": "Wi-Fi", "rxMbps": 12, "txMbps": 95},
+            ]}}},
+            {"checkedAt": "2026-10-15T12:00:00Z", "details": {"telemetry": {
+                "downloadMbps": 20, "uploadMbps": 2,
+            }}},
+        ]
+        config = {
+            **portal.technology_alert_config_defaults(),
+            "linkDownloadCapacityMbps": 100, "linkUploadCapacityMbps": 20,
+        }
+
+        snapshot = portal.technology_link_usage_snapshot(devices, results, config)
+
+        self.assertEqual("boundary", snapshot["measurementMode"])
+        self.assertEqual(90, snapshot["downloadMbps"])
+        self.assertEqual("download", snapshot["direction"])
+        self.assertEqual(90, snapshot["usagePct"])
+        self.assertEqual(95, snapshot["internal"]["downloadMbps"])
+        self.assertEqual(5, snapshot["internal"]["additionalDownloadMbps"])
+        self.assertEqual(70, snapshot["unattributed"]["downloadMbps"])
+
     def test_link_usage_alert_lists_largest_monitored_consumers(self):
         devices = [
             {"id": 1, "nome": "Internet", "host": "1.1.1.1", "tipo": "INTERNET"},
@@ -1369,6 +1425,11 @@ class TecnologiaIntegrationTests(unittest.TestCase):
         self.assertIn("Alertas por e-mail", html)
         self.assertIn("O que será notificado", html)
         self.assertIn("Consumo dos equipamentos monitorados", html)
+        self.assertIn("Consumo de Internet", html)
+        self.assertIn("Tráfego LAN/Wi-Fi", html)
+        self.assertIn("deviceInternetInterfaces", html)
+        self.assertIn("deviceInternalInterfaces", html)
+        self.assertIn("interfaceTraffic", javascript)
         self.assertIn("Backups configurados", html)
         self.assertIn("08:00, 16:00", html)
         self.assertIn("backupOperatingWindows", html)
