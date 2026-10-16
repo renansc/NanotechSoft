@@ -79,6 +79,59 @@ class TecnologiaMonitorTests(unittest.TestCase):
         self.assertEqual(9100, exporter["agente_porta"])
         self.assertEqual(85, exporter["cpu_alerta_pct"])
 
+    def test_normalize_supports_huawei_api_and_host_scoped_credentials(self):
+        row = monitor.normalize_device_payload({
+            "nome": "Huawei", "tipo": "ROTEADOR", "host": "192.168.200.1",
+            "porta": 80, "sonda": "HUAWEI",
+            "internetInterfaces": ["WAN"],
+            "internalInterfaces": ["Wi-Fi", "Ethernet"],
+        })
+
+        self.assertEqual("HUAWEI", row["sonda"])
+        self.assertEqual("TECH_HUAWEI_192_168_200_1", monitor.huawei_credential_env_prefix(row["host"]))
+        self.assertTrue(monitor.huawei_credentials_configured(row["host"], {
+            "TECH_HUAWEI_192_168_200_1_PASSWORD": "segredo",
+        }))
+
+    def test_huawei_api_maps_wan_and_client_rates(self):
+        with mock.patch.object(monitor, "_huawei_api_payloads", return_value=(
+            {"DownBandwidth": 128, "UpBandwidth": 64},
+            [
+                {"Active46": True, "ActualName": "Celular", "IPAddress": "192.168.200.50",
+                 "MACAddress": "aa:bb:cc:dd:ee:ff", "InterfaceType": "5GHz",
+                 "DownRate": 64, "UpRate": 16},
+                {"Active46": True, "HostName": "PC", "IPAddress": "192.168.200.51",
+                 "MACAddress": "11:22:33:44:55:66", "InterfaceType": "LAN",
+                 "DownRate": 32, "UpRate": 8},
+                {"Active46": False, "HostName": "Offline", "InterfaceType": "2.4GHz",
+                 "DownRate": 500, "UpRate": 500},
+            ],
+            {"FriendlyName": "Huawei principal", "ProductName": "WS7001",
+             "SoftwareVersion": "2.0.0"},
+        )):
+            telemetry = monitor.collect_huawei_metrics({"host": "192.168.200.1"})
+
+        self.assertEqual("Huawei API", telemetry["protocol"])
+        self.assertEqual(1, telemetry["downloadMbps"])
+        self.assertEqual(0.5, telemetry["uploadMbps"])
+        self.assertEqual(2, telemetry["clientCount"])
+        self.assertEqual(1, telemetry["wirelessClientCount"])
+        self.assertEqual(1, telemetry["wiredClientCount"])
+        self.assertEqual("WAN", telemetry["interfaceTraffic"][0]["name"])
+        self.assertEqual(0.5, telemetry["interfaceTraffic"][1]["txMbps"])
+        self.assertEqual(0.125, telemetry["interfaceTraffic"][1]["rxMbps"])
+        self.assertEqual("AA:BB:CC:DD:EE:FF", telemetry["clients"][0]["mac"])
+
+    def test_huawei_scram_proof_is_deterministic_and_sensitive_to_password(self):
+        first = monitor._huawei_scram_values("senha", "0011223344556677", 1000, "a", "abc")
+        second = monitor._huawei_scram_values("senha", "0011223344556677", 1000, "a", "abc")
+        different = monitor._huawei_scram_values("outra", "0011223344556677", 1000, "a", "abc")
+
+        self.assertEqual(first, second)
+        self.assertEqual(64, len(first[0]))
+        self.assertEqual(64, len(first[1]))
+        self.assertNotEqual(first, different)
+
     def test_prometheus_parser_and_counter_rates(self):
         parsed = monitor._parse_prometheus(
             'node_cpu_seconds_total{cpu="0",mode="idle"} 10\n'
@@ -1419,6 +1472,7 @@ class TecnologiaIntegrationTests(unittest.TestCase):
         self.assertIn("Agentes e protocolos", html)
         self.assertIn("RELOGIO_PONTO", html)
         self.assertIn("Prometheus exporter", html)
+        self.assertIn("Huawei WS7001 API", html)
         self.assertIn("Descobrir computadores", html)
         self.assertIn("deviceDetailsModal", html)
         self.assertIn("Atualizar agora", html)
@@ -1430,6 +1484,7 @@ class TecnologiaIntegrationTests(unittest.TestCase):
         self.assertIn("deviceInternetInterfaces", html)
         self.assertIn("deviceInternalInterfaces", html)
         self.assertIn("interfaceTraffic", javascript)
+        self.assertIn("huaweiCredentialEnvPrefix", javascript)
         self.assertIn("Backups configurados", html)
         self.assertIn("08:00, 16:00", html)
         self.assertIn("backupOperatingWindows", html)

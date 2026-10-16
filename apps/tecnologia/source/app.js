@@ -235,7 +235,7 @@
       const deliveredPct = deliveredValues.length ? Math.min(...deliveredValues) : null;
       const consumptionPct = Number(usage.usagePct || 0);
       let level = "info";
-      let message = "Configure em Equipamentos uma interface de Internet no switch/roteador SNMP para medir celulares e demais dispositivos sem cadastro.";
+      let message = "Configure em Equipamentos uma interface de Internet no switch/roteador SNMP ou use a API Huawei para medir celulares e demais dispositivos sem cadastro.";
       if (usage.internet?.available && usage.usagePct == null) {
         message = `A fronteira já está sendo medida (${number(usage.internet.downloadMbps, 2)} ↓ / ${number(usage.internet.uploadMbps, 2)} ↑ Mbps). Informe a capacidade contratada para calcular a ocupação.`;
       } else if (usage.internet?.available && consumptionPct >= 80) {
@@ -264,7 +264,7 @@
       <td>${number(item.uploadMbps, 3)} Mbps</td>
       <td>${item.networkPct == null ? "—" : `${number(item.networkPct)}%`}</td>
       <td>${esc(dateTime(item.measuredAt))}</td>
-    </tr>`).join("") || '<tr><td colspan="5" class="muted">Nenhum equipamento com exporter ou SNMP forneceu tráfego ainda.</td></tr>';
+    </tr>`).join("") || '<tr><td colspan="5" class="muted">Nenhum equipamento com exporter, SNMP ou API Huawei forneceu tráfego ainda.</td></tr>';
   }
 
   function renderCards() {
@@ -318,7 +318,7 @@
   function renderDeviceTable() {
     $("#deviceTable").innerHTML = state.devices.map((device) => `<tr class="clickableDevice" data-details="${device.id}" tabindex="0" aria-label="Abrir detalhes de ${esc(device.nome)}">
       <td><strong>${esc(device.nome)}</strong><br><small class="muted">${esc(device.tipo)}</small></td>
-      <td>${esc(device.sonda)}${device.hasSnmpCommunity ? '<br><small class="muted">SNMP configurado</small>' : ""}${device.agentPort ? `<br><small class="muted">Exporter :${device.agentPort}</small>` : ""}${device.critico ? '<br><small class="muted">Crítico</small>' : ""}</td>
+      <td>${esc(device.sonda)}${device.hasSnmpCommunity ? '<br><small class="muted">SNMP configurado</small>' : ""}${device.sonda === "HUAWEI" ? `<br><small class="muted">${device.huaweiCredentialsConfigured ? "Credencial configurada" : `Falta ${esc(device.huaweiCredentialEnvPrefix)}_PASSWORD`}</small>` : ""}${device.agentPort ? `<br><small class="muted">Exporter :${device.agentPort}</small>` : ""}${device.critico ? '<br><small class="muted">Crítico</small>' : ""}</td>
       <td><span class="target">${esc(target(device))}</span></td>
       <td>${esc(device.localizacao || "—")}</td>
       <td>${number(device.latenciaAlertaMs, 0)} ms / ${number(device.perdaAlertaPct)}%</td>
@@ -354,10 +354,12 @@
     const endpointHost = telemetry?.endpointHost || metric?.activeAddress || device.host;
     const protocol = telemetry?.protocol || device.sonda;
     const isSnmp = String(protocol).toUpperCase().startsWith("SNMP");
+    const isHuawei = String(protocol).toUpperCase().startsWith("HUAWEI");
     const isPrinter = isSnmp && device.tipo === "IMPRESSORA";
     const isNvr = isSnmp && device.tipo === "NVR";
     const collectionEndpoint = isSnmp
       ? `udp://${endpointHost}:${device.snmpPort || 161}`
+      : isHuawei ? `https://${endpointHost}/api`
       : device.agentPort ? `http://${endpointHost}:${device.agentPort}${device.agentPath || "/metrics"}` : "Não configurado";
     $("#deviceDetailsTitle").textContent = device.nome;
     $("#deviceDetailsSubtitle").textContent = `${device.tipo} · ${target(device)}`;
@@ -387,7 +389,14 @@
       ["Rede recebida", telemetry?.downloadMbps == null ? "Aguardando 2ª coleta" : `${number(telemetry.downloadMbps, 3)} Mbps`],
       ["Rede enviada", telemetry?.uploadMbps == null ? "Aguardando 2ª coleta" : `${number(telemetry.uploadMbps, 3)} Mbps`],
     ];
-    const resourceCards = (isPrinter ? printerResourceCards : isNvr ? nvrResourceCards : genericResourceCards)
+    const huaweiResourceCards = [
+      ["Download WAN", telemetry?.downloadMbps == null ? "—" : `${number(telemetry.downloadMbps, 3)} Mbps`],
+      ["Upload WAN", telemetry?.uploadMbps == null ? "—" : `${number(telemetry.uploadMbps, 3)} Mbps`],
+      ["Clientes ativos", number(telemetry?.clientCount, 0)],
+      ["Clientes Wi-Fi", number(telemetry?.wirelessClientCount, 0)],
+      ["Clientes cabeados", number(telemetry?.wiredClientCount, 0)],
+    ];
+    const resourceCards = (isPrinter ? printerResourceCards : isNvr ? nvrResourceCards : isHuawei ? huaweiResourceCards : genericResourceCards)
       .map(([label, value]) => `<div><span>${esc(label)}</span><strong>${esc(value)}</strong></div>`).join("");
     const genericIdentity = [
       ["Nome do sistema", telemetry?.systemName || "—"],
@@ -415,7 +424,13 @@
       ["Sistema operacional", [telemetry?.osName, telemetry?.osVersion].filter(Boolean).join(" ") || "—"],
       ["Tempo ligado", duration(telemetry?.uptimeSeconds)],
     ];
-    const identity = (isPrinter ? printerIdentity : isNvr ? nvrIdentity : genericIdentity)
+    const huaweiIdentity = [
+      ["Nome do sistema", telemetry?.systemName || "Huawei WiFi AX2"],
+      ["Modelo", telemetry?.model || "WS7001"],
+      ["Firmware", telemetry?.firmwareVersion || "—"],
+      ["API", "HTTPS interna do roteador"],
+    ];
+    const identity = (isPrinter ? printerIdentity : isNvr ? nvrIdentity : isHuawei ? huaweiIdentity : genericIdentity)
       .map(([label, value]) => `<div><span>${esc(label)}</span><strong>${esc(value)}</strong></div>`).join("");
     const disks = telemetry?.disks?.length ? `<div class="detailSection"><h3>Discos</h3><div class="detailTableWrap"><table><thead><tr><th>Volume</th><th>Uso</th><th>Livre</th><th>Total</th></tr></thead><tbody>${telemetry.disks.map((disk) => `<tr><td>${esc(disk.name)}</td><td>${number(disk.usedPct)}%</td><td>${esc(bytes(disk.freeBytes))}</td><td>${esc(bytes(disk.sizeBytes))}</td></tr>`).join("")}</tbody></table></div></div>` : "";
     const unavailableNvrResources = isNvr ? [
@@ -431,6 +446,7 @@
       const role = interfaceMatches(row, internetInterfaces) ? "Internet" : interfaceMatches(row, internalInterfaces) ? "LAN/Wi-Fi" : "—";
       return `<tr><td><strong>${esc(row.index)}</strong> · ${esc(row.name)}</td><td>${esc(row.alias || "—")}</td><td>${row.rxMbps == null ? "Aguardando 2ª coleta" : `${number(row.rxMbps, 3)} Mbps`}</td><td>${row.txMbps == null ? "Aguardando 2ª coleta" : `${number(row.txMbps, 3)} Mbps`}</td><td>${esc(role)}</td></tr>`;
     }).join("")}</tbody></table></div></div>` : telemetry?.interfaces?.length ? `<div class="detailSection"><h3>Interfaces monitoradas</h3><div class="detailTags">${telemetry.interfaces.map((name) => `<span>${esc(name)}</span>`).join("")}</div></div>` : "";
+    const huaweiClients = isHuawei && telemetry?.clients?.length ? `<div class="detailSection"><h3>Clientes do Huawei</h3><div class="detailTableWrap"><table><thead><tr><th>Dispositivo</th><th>IP / MAC</th><th>Conexão</th><th>Download</th><th>Upload</th></tr></thead><tbody>${telemetry.clients.map((client) => `<tr><td><strong>${esc(client.name)}</strong></td><td>${esc(client.ip || "—")}<br><small>${esc(client.mac || "—")}</small></td><td>${esc(client.interfaceType || "—")}</td><td>${number(client.downloadMbps, 3)} Mbps</td><td>${number(client.uploadMbps, 3)} Mbps</td></tr>`).join("")}</tbody></table></div></div>` : "";
     const supplies = telemetry?.supplies?.length ? `<div class="detailSection"><h3>Suprimentos</h3><div class="detailTableWrap"><table><thead><tr><th>Item</th><th>Nível</th><th>Atual</th><th>Capacidade</th></tr></thead><tbody>${telemetry.supplies.map((supply) => `<tr><td>${esc(supply.name)}</td><td>${supply.pct == null ? esc(supply.status || "Não informado") : `${number(supply.pct)}%`}</td><td>${supply.level == null || supply.level < 0 ? "—" : number(supply.level, 0)}</td><td>${supply.capacity == null || supply.capacity < 0 ? "—" : number(supply.capacity, 0)}</td></tr>`).join("")}</tbody></table></div></div>` : "";
     const printerUsage = isPrinter ? renderPrinterUsage(state.printerUsage[device.id]) : "";
     const addressRows = (metric?.addresses?.length ? metric.addresses : device.networkAddresses || []).map((address) => {
@@ -440,8 +456,12 @@
       return `<tr><td><strong>${esc(address.label)}</strong>${address.primary ? '<br><small class="muted">Principal</small>' : ""}</td><td><code>${esc(address.host)}</code></td><td>${address.latencyMs == null ? "—" : `${number(address.latencyMs)} ms`}</td><td><span class="status ${stateClass}">${stateLabel}</span>${address.active ? '<br><small class="muted">em uso</small>' : ""}</td></tr>`;
     }).join("");
     const addresses = `<div class="detailSection"><h3>Endereços e caminhos de rede</h3><div class="detailTableWrap"><table><thead><tr><th>Interface</th><th>IP ou host</th><th>Latência</th><th>Situação</th></tr></thead><tbody>${addressRows}</tbody></table></div></div>`;
-    const collectionSummary = isSnmp ? `${telemetry?.interfaceCount ?? telemetry?.interfaces?.length ?? 0} interfaces consultadas` : `${number(telemetry?.series, 0)} séries coletadas`;
-    const telemetryBlock = telemetry ? `<div class="detailSection"><div class="detailSectionHead"><h3>${esc(protocol)}</h3><span>${esc(collectionSummary)}</span></div><div class="detailResources">${resourceCards}</div></div>${nvrResourceNotice}<div class="detailSection"><h3>Identificação do equipamento</h3><div class="detailIdentity">${identity}</div></div>${printerUsage}${supplies}${disks}${interfaces}` : `<div class="detailNotice warning"><strong>Sem métricas de ${esc(protocol)} nesta coleta.</strong><span>${esc(metric?.message || "Aguardando a primeira coleta.")}</span><small>${isSnmp ? `Confirme o SNMP somente leitura na porta ${esc(device.snmpPort || 161)} e permita consultas do servidor 192.168.200.254.` : `Confirme se o exporter está iniciado e se a porta ${esc(device.agentPort || 9182)} aceita conexão do servidor 192.168.200.254.`}</small></div>`;
+    const collectionSummary = isSnmp ? `${telemetry?.interfaceCount ?? telemetry?.interfaces?.length ?? 0} interfaces consultadas` : isHuawei ? `${number(telemetry?.clientCount, 0)} clientes ativos` : `${number(telemetry?.series, 0)} séries coletadas`;
+    const telemetryHelp = isSnmp
+      ? `Confirme o SNMP somente leitura na porta ${esc(device.snmpPort || 161)} e permita consultas do servidor 192.168.200.254.`
+      : isHuawei ? `Configure ${esc(device.huaweiCredentialEnvPrefix)}_PASSWORD no ambiente do Portal e reinicie pelo fluxo oficial.`
+      : `Confirme se o exporter está iniciado e se a porta ${esc(device.agentPort || 9182)} aceita conexão do servidor 192.168.200.254.`;
+    const telemetryBlock = telemetry ? `<div class="detailSection"><div class="detailSectionHead"><h3>${esc(protocol)}</h3><span>${esc(collectionSummary)}</span></div><div class="detailResources">${resourceCards}</div></div>${nvrResourceNotice}<div class="detailSection"><h3>Identificação do equipamento</h3><div class="detailIdentity">${identity}</div></div>${printerUsage}${supplies}${disks}${interfaces}${huaweiClients}` : `<div class="detailNotice warning"><strong>Sem métricas de ${esc(protocol)} nesta coleta.</strong><span>${esc(metric?.message || "Aguardando a primeira coleta.")}</span><small>${telemetryHelp}</small></div>`;
     $("#deviceDetailsBody").innerHTML = `<div class="detailStatus"><div>${statusBadge(metric)}<span>${esc(metric?.message || "Aguardando medição")}</span></div><small>Última coleta: ${esc(dateTime(metric?.checkedAt))}</small></div><div class="detailEndpoint"><span>Coleta</span><strong>${esc(protocol)}</strong><span>Endpoint ativo</span><code>${esc(collectionEndpoint)}</code></div>${addresses}${telemetryBlock}`;
   }
 
@@ -966,6 +986,10 @@
     $("#deviceAgentPath").value = device?.agentPath || "/metrics";
     $("#deviceInternetInterfaces").value = (device?.internetInterfaces || []).join("\n");
     $("#deviceInternalInterfaces").value = (device?.internalInterfaces || []).join("\n");
+    if (device?.sonda === "HUAWEI") {
+      if (!$("#deviceInternetInterfaces").value.trim()) $("#deviceInternetInterfaces").value = "WAN";
+      if (!$("#deviceInternalInterfaces").value.trim()) $("#deviceInternalInterfaces").value = "Wi-Fi\nEthernet";
+    }
     $("#deviceNotes").value = device?.observacoes || "";
     $("#deviceCritical").checked = Boolean(device?.critico);
     $("#deviceActive").checked = device ? Boolean(device.ativo) : true;
@@ -1343,6 +1367,11 @@
   $("#closeDeviceDetails").addEventListener("click", closeDeviceDetails);
   $("#closeDeviceDetailsFooter").addEventListener("click", closeDeviceDetails);
   $("#refreshDeviceDetails").addEventListener("click", refreshDeviceDetails);
+  $("#deviceProbe").addEventListener("change", () => {
+    if ($("#deviceProbe").value !== "HUAWEI") return;
+    if (!$("#deviceInternetInterfaces").value.trim()) $("#deviceInternetInterfaces").value = "WAN";
+    if (!$("#deviceInternalInterfaces").value.trim()) $("#deviceInternalInterfaces").value = "Wi-Fi\nEthernet";
+  });
   $("#deviceDetailsModal").addEventListener("click", (event) => { if (event.target.id === "deviceDetailsModal") closeDeviceDetails(); });
   $("#discoverPrinters").addEventListener("click", discover);
   $("#discoverComputers").addEventListener("click", discoverComputers);

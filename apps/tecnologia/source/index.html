@@ -73,7 +73,7 @@
               <li>Queda, perda de pacotes, latência e variação até cada equipamento.</li>
               <li>Disponibilidade das portas críticas: HTTPS, SMB e impressão.</li>
               <li>Saída para internet e resolução DNS.</li>
-              <li>Download e upload periódicos, CPU, memória, disco e tráfego quando houver agente/SNMP.</li>
+              <li>Download e upload periódicos, CPU, memória, disco e tráfego quando houver agente, SNMP ou API compatível.</li>
             </ul>
             <p class="scopeWarning">Consumo por IP depende de NetFlow, sFlow, IPFIX ou API do roteador. O SNMP comum informa o volume total de cada interface.</p>
           </section>
@@ -84,6 +84,12 @@
             <p>Use SNMP somente leitura para roteadores, switches, NVRs e impressoras. O módulo coleta identificação, CPU quando disponível e tráfego das interfaces.</p>
             <ol><li>Ative SNMP no equipamento.</li><li>Restrinja o acesso ao servidor <strong>192.168.200.254</strong>.</li><li>Edite o equipamento, escolha SNMP e informe a comunidade.</li></ol>
             <p class="scopeWarning">SNMP v2c não criptografa a comunidade. Prefira uma comunidade exclusiva e somente leitura; suporte a SNMPv3 fica indicado como próxima evolução.</p>
+          </section>
+          <section class="panel protocolCard">
+            <span class="protocolTag">Huawei WiFi AX2</span><h2>API do roteador</h2>
+            <p>A sonda Huawei usa a API HTTPS interna do WS7001 para medir a WAN total e as taxas de cada cliente cabeado ou Wi-Fi.</p>
+            <ol><li>Escolha <strong>Huawei WS7001 API</strong> no equipamento.</li><li>Use <strong>WAN</strong> como Internet.</li><li>Use <strong>Wi-Fi</strong> e <strong>Ethernet</strong> como rede interna.</li></ol>
+            <p class="scopeWarning">A senha não fica no cadastro nem no Git: configure a variável de ambiente indicada no equipamento.</p>
           </section>
           <section class="panel protocolCard">
             <span class="protocolTag">Linux</span><h2>Node Exporter</h2>
@@ -103,7 +109,7 @@
             <p class="muted">Zabbix Agent também é compatível como estratégia futura, mas nesta etapa o formato aberto Prometheus evita instalar um servidor Zabbix separado.</p>
           </section>
         </div>
-        <section class="panel flowPanel"><span class="eyebrow">Limites e segurança</span><h2>Como os dados se completam</h2><div class="protocolFlow"><span>ICMP/TCP<br><small>disponibilidade</small></span><b>+</b><span>SNMP/exporter<br><small>recursos e interfaces</small></span><b>+</b><span>GLPI Agent<br><small>hardware e programas</small></span><b>=</b><span>Diagnóstico completo</span></div></section>
+        <section class="panel flowPanel"><span class="eyebrow">Limites e segurança</span><h2>Como os dados se completam</h2><div class="protocolFlow"><span>ICMP/TCP<br><small>disponibilidade</small></span><b>+</b><span>SNMP/exporter/API<br><small>recursos e interfaces</small></span><b>+</b><span>GLPI Agent<br><small>hardware e programas</small></span><b>=</b><span>Diagnóstico completo</span></div></section>
       </section>
 
       <section class="techView hidden" data-page="equipamentos" data-recurso="equipamentos">
@@ -390,7 +396,7 @@
           <label>IP ou host<input id="deviceHost" maxlength="253" required placeholder="192.168.200.10"></label>
           <label>Porta TCP<input id="devicePort" type="number" min="1" max="65535" placeholder="9100"></label>
           <label class="wide">Interfaces e IPs adicionais<textarea id="deviceAddresses" rows="3" placeholder="Wi-Fi = 192.168.200.122&#10;Cabo = 192.168.200.123&#10;Tailscale = 100.x.x.x"></textarea><small>Um por linha, no formato Nome = IP. O endereço acima continua sendo o principal.</small></label>
-          <label>Teste/coleta<select id="deviceProbe"><option value="ICMP">ICMP + porta</option><option value="TCP">TCP</option><option value="SNMP">SNMP v2c + ICMP</option><option value="PROMETHEUS">Prometheus exporter + ICMP</option></select></label>
+          <label>Teste/coleta<select id="deviceProbe"><option value="ICMP">ICMP + porta</option><option value="TCP">TCP</option><option value="SNMP">SNMP v2c + ICMP</option><option value="PROMETHEUS">Prometheus exporter + ICMP</option><option value="HUAWEI">Huawei WS7001 API + ICMP</option></select></label>
           <label>Localização<input id="deviceLocation" maxlength="160"></label>
           <label>Alerta de latência (ms)<input id="deviceLatency" type="number" min="1" max="60000" value="80" required></label>
           <label>Alerta de perda (%)<input id="deviceLoss" type="number" min="0" max="100" step="0.1" value="5" required></label>
@@ -404,8 +410,8 @@
           <label>Porta SNMP<input id="deviceSnmpPort" type="number" min="1" max="65535" value="161"></label>
           <label>Porta do exporter<input id="deviceAgentPort" type="number" min="1" max="65535" placeholder="9100 ou 9182"></label>
           <label>Caminho do exporter<input id="deviceAgentPath" maxlength="120" value="/metrics"></label>
-          <label class="wide">Interface(s) que ligam à Internet<textarea id="deviceInternetInterfaces" rows="2" placeholder="GigabitEthernet1/0/1"></textarea><small>Uma por linha, pelo índice, nome ou apelido informado pelo SNMP. Configure somente a fronteira WAN/uplink para incluir todos os dispositivos.</small></label>
-          <label class="wide">Interface(s) da rede interna / Wi-Fi<textarea id="deviceInternalInterfaces" rows="2" placeholder="GigabitEthernet1/0/2"></textarea><small>Uma por linha. A tela mostra o total LAN/Wi-Fi e estima o adicional interno descontando o tráfego da Internet.</small></label>
+          <label class="wide">Interface(s) que ligam à Internet<textarea id="deviceInternetInterfaces" rows="2" placeholder="GigabitEthernet1/0/1 ou WAN"></textarea><small>Uma por linha, pelo índice, nome ou apelido. Na API Huawei use WAN. Configure somente uma fronteira WAN/uplink para evitar dupla contagem.</small></label>
+          <label class="wide">Interface(s) da rede interna / Wi-Fi<textarea id="deviceInternalInterfaces" rows="2" placeholder="GigabitEthernet1/0/2 ou Wi-Fi"></textarea><small>Uma por linha. Na API Huawei use Wi-Fi e Ethernet. A tela estima o adicional interno descontando o tráfego da Internet.</small></label>
           <label class="wide">Observações<textarea id="deviceNotes" maxlength="500" rows="3"></textarea></label>
         </div>
         <div class="checkRow"><label><input id="deviceCritical" type="checkbox"> Equipamento crítico</label><label><input id="deviceActive" type="checkbox" checked> Monitoramento ativo</label></div>

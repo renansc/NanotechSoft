@@ -146,6 +146,31 @@ IP específico e pode ser reduzida por tráfego interno nos endpoints. A
 identificação exata do IP que consome a Internet exige NetFlow, sFlow, IPFIX ou
 API equivalente do roteador; isso não pode ser inferido por SNMP comum.
 
+### Huawei WiFi AX2 / WS7001
+
+O WS7001 não publica SNMP, mas o firmware oferece a API HTTPS interna usada pelo
+próprio painel web. A sonda `HUAWEI` autentica com o protocolo SCRAM-SHA-256 do
+equipamento e consulta `ntwk/wan?type=active` para a taxa WAN total e
+`system/HostInfo` para as taxas dos clientes cabeados e Wi-Fi. Essa API não é
+uma interface pública documentada pela Huawei e pode exigir adaptação após uma
+atualização de firmware; falhas de autenticação ou mudança de contrato aparecem
+como diagnóstico, sem interromper os testes ICMP/HTTP.
+
+A senha administrativa não é gravada no banco, na API do Portal nem no Git.
+Para cada host, configure variáveis no arquivo de ambiente do deploy usando o
+IP normalizado. Para `192.168.200.1`, use:
+
+```dotenv
+TECH_HUAWEI_192_168_200_1_USERNAME=admin
+TECH_HUAWEI_192_168_200_1_PASSWORD=senha-do-painel
+```
+
+Depois de reiniciar pelo `./up.sh`, escolha **Huawei WS7001 API + ICMP** no
+cadastro do roteador. Selecione `WAN` como interface de Internet e `Wi-Fi` e
+`Ethernet` como interfaces internas. O painel passa a mostrar o total entregue
+pelo roteador, inclusive clientes conectados diretamente ao Wi-Fi do Huawei, e
+o detalhe apresenta IP, MAC, meio de conexão e taxa atual de cada cliente.
+
 Para configurar, faça uma coleta SNMP, abra o detalhe do equipamento para obter
 os nomes/índices das interfaces e edite o cadastro. Selecione somente uma
 fronteira que veja todo o link para evitar dupla contagem. Em switch, normalmente

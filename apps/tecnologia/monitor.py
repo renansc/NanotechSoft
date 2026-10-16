@@ -1,15 +1,19 @@
 from __future__ import annotations
 
 import concurrent.futures
+import hashlib
+import hmac
 import http.client
 import ipaddress
 import json
 import os
 import random
 import re
+import secrets
 import socket
 import struct
 import subprocess
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -17,14 +21,22 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+import requests
+import urllib3
+
 
 DEVICE_TYPES = {
     "INTERNET", "ROTEADOR", "SERVIDOR", "IMPRESSORA",
     "COMPUTADOR", "NOTEBOOK", "RELOGIO_PONTO", "NVR", "OUTRO",
 }
-PROBE_TYPES = {"ICMP", "TCP", "SNMP", "PROMETHEUS"}
+PROBE_TYPES = {"ICMP", "TCP", "SNMP", "PROMETHEUS", "HUAWEI"}
 PRINTER_PORTS = (9100, 631, 515)
 COMPUTER_PORTS = (22, 135, 139, 445, 3389, 5357, 5985, 5986, 9100, 9182)
+_HUAWEI_SESSION_LOCK = threading.Lock()
+_HUAWEI_SESSIONS: dict[str, tuple[requests.Session, float]] = {}
+_HUAWEI_FAILURES: dict[str, tuple[str, float]] = {}
+
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
 def normalize_host(value: Any) -> str:
@@ -193,6 +205,18 @@ def normalize_device_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "interfaces_internet": json.dumps(internet_interfaces, ensure_ascii=False),
         "interfaces_rede_interna": json.dumps(internal_interfaces, ensure_ascii=False),
     }
+
+
+def huawei_credential_env_prefix(host: Any) -> str:
+    """Return the host-scoped environment prefix without exposing credentials."""
+    normalized = normalize_host(host)
+    suffix = re.sub(r"[^A-Za-z0-9]+", "_", normalized).strip("_").upper()
+    return f"TECH_HUAWEI_{suffix}"
+
+
+def huawei_credentials_configured(host: Any, environ: dict[str, str] | None = None) -> bool:
+    environ = os.environ if environ is None else environ
+    return bool(str(environ.get(f"{huawei_credential_env_prefix(host)}_PASSWORD") or "").strip())
 
 
 def parse_ping_output(output: str, return_code: int = 0) -> dict[str, Any]:
@@ -630,6 +654,244 @@ def _snmp_enterprise_nvr_metrics(host: str, community: str, port: int, system_ob
         "osName": text(operating_system, ".1.3.6.1.4.1.1004849.2.1.10.1.0"),
         "osVersion": text(operating_system, ".1.3.6.1.4.1.1004849.2.1.10.2.0"),
         "channelCapacity": int(channel_capacity) if channel_capacity is not None else None,
+    }
+
+
+def _huawei_scram_values(password: str, salt_hex: str, iterations: int,
+                          first_nonce: str, final_nonce: str) -> tuple[str, str]:
+    """Build the SCRAM-SHA-256 proof used by the WS7001 web interface."""
+    try:
+        salt = bytes.fromhex(str(salt_hex))
+        rounds = int(iterations)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("resposta de autenticação Huawei inválida") from exc
+    if not salt or rounds < 1 or rounds > 1_000_000:
+        raise RuntimeError("resposta de autenticação Huawei inválida")
+    salted = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, rounds, dklen=32)
+    client_key = hmac.new(salted, b"Client Key", hashlib.sha256).digest()
+    stored_key = hashlib.sha256(client_key).digest()
+    server_key = hmac.new(salted, b"Server Key", hashlib.sha256).digest()
+    auth_message = f"{first_nonce},{final_nonce},{final_nonce}".encode("utf-8")
+    client_signature = hmac.new(stored_key, auth_message, hashlib.sha256).digest()
+    client_proof = bytes(left ^ right for left, right in zip(client_key, client_signature)).hex()
+    server_signature = hmac.new(server_key, auth_message, hashlib.sha256).hexdigest()
+    return client_proof, server_signature
+
+
+def _huawei_csrf(html: str) -> dict[str, str]:
+    csrf = {}
+    for name in ("csrf_param", "csrf_token"):
+        match = re.search(
+            rf'<meta[^>]+name=["\']{name}["\'][^>]+content=["\']([^"\']+)',
+            str(html or ""), flags=re.I,
+        )
+        if match:
+            csrf[name] = match.group(1)
+    if len(csrf) != 2:
+        raise RuntimeError("o painel Huawei não forneceu os tokens de sessão")
+    return csrf
+
+
+def _huawei_post(session: requests.Session, base_url: str, endpoint: str,
+                  data: dict[str, Any], csrf: dict[str, str]) -> dict[str, Any]:
+    try:
+        response = session.post(
+            f"{base_url}/api/{endpoint}",
+            json={"data": data, "csrf": csrf},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+            timeout=8,
+            verify=False,
+        )
+        response.raise_for_status()
+        payload = response.json()
+    except (requests.RequestException, ValueError) as exc:
+        raise RuntimeError("a API do Huawei não respondeu corretamente") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError("a API do Huawei retornou uma resposta inválida")
+    return payload
+
+
+def _huawei_login(host: str, username: str, password: str) -> requests.Session:
+    base_url = f"https://{host}"
+    session = requests.Session()
+    try:
+        landing = session.get(f"{base_url}/html/index.html", timeout=8, verify=False)
+        landing.raise_for_status()
+    except requests.RequestException as exc:
+        session.close()
+        raise RuntimeError("não foi possível abrir o painel HTTPS do Huawei") from exc
+    csrf = _huawei_csrf(landing.text)
+    first_nonce = secrets.token_hex(32)
+    nonce = _huawei_post(
+        session, base_url, "system/user_login_nonce",
+        {"username": username, "firstnonce": first_nonce}, csrf,
+    )
+    if nonce.get("err") not in (0, "0"):
+        session.close()
+        raise RuntimeError("o Huawei recusou o início da autenticação")
+    final_nonce = str(nonce.get("servernonce") or "")
+    client_proof, expected_server_signature = _huawei_scram_values(
+        password, str(nonce.get("salt") or ""), int(nonce.get("iterations") or 0),
+        first_nonce, final_nonce,
+    )
+    csrf = {
+        "csrf_param": str(nonce.get("csrf_param") or csrf["csrf_param"]),
+        "csrf_token": str(nonce.get("csrf_token") or csrf["csrf_token"]),
+    }
+    proof = _huawei_post(
+        session, base_url, "system/user_login_proof",
+        {"clientproof": client_proof, "finalnonce": final_nonce}, csrf,
+    )
+    if proof.get("err") not in (0, "0"):
+        session.close()
+        raise RuntimeError("usuário ou senha do Huawei recusados")
+    if not hmac.compare_digest(
+        str(proof.get("serversignature") or ""), expected_server_signature,
+    ):
+        session.close()
+        raise RuntimeError("a assinatura de autenticação do Huawei é inválida")
+    return session
+
+
+def _huawei_get(session: requests.Session, host: str, endpoint: str) -> Any:
+    try:
+        response = session.get(
+            f"https://{host}/api/{endpoint}",
+            headers={"X-Requested-With": "XMLHttpRequest"},
+            timeout=8,
+            verify=False,
+        )
+        response.raise_for_status()
+        payload = response.json()
+    except (requests.RequestException, ValueError) as exc:
+        raise RuntimeError("sessão da API Huawei indisponível") from exc
+    if isinstance(payload, dict) and payload.get("ERRORSTATUS"):
+        raise RuntimeError("sessão da API Huawei expirada")
+    return payload
+
+
+def _huawei_api_payloads(device: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any]]:
+    host = normalize_host(device.get("host"))
+    prefix = huawei_credential_env_prefix(host)
+    username = str(os.environ.get(f"{prefix}_USERNAME") or "admin").strip()
+    password = str(os.environ.get(f"{prefix}_PASSWORD") or "")
+    if not password:
+        raise RuntimeError(f"credencial ausente: configure {prefix}_PASSWORD no ambiente")
+
+    with _HUAWEI_SESSION_LOCK:
+        previous_failure = _HUAWEI_FAILURES.get(host)
+        if previous_failure and previous_failure[1] > time.monotonic():
+            raise RuntimeError(previous_failure[0])
+        cached = _HUAWEI_SESSIONS.get(host)
+        session = cached[0] if cached and cached[1] > time.monotonic() else None
+        if session is not None:
+            try:
+                wan = _huawei_get(session, host, "ntwk/wan?type=active")
+                hosts = _huawei_get(session, host, "system/HostInfo")
+                device_info = _huawei_get(session, host, "system/deviceinfo")
+                _HUAWEI_SESSIONS[host] = (session, time.monotonic() + 600)
+                return wan, hosts, device_info
+            except RuntimeError:
+                session.close()
+                _HUAWEI_SESSIONS.pop(host, None)
+
+        try:
+            session = _huawei_login(host, username, password)
+        except RuntimeError as exc:
+            message = str(exc)
+            authentication_failure = any(
+                marker in message for marker in ("senha", "autenticação", "assinatura")
+            )
+            _HUAWEI_FAILURES[host] = (
+                message,
+                time.monotonic() + (600 if authentication_failure else 60),
+            )
+            raise
+        try:
+            wan = _huawei_get(session, host, "ntwk/wan?type=active")
+            hosts = _huawei_get(session, host, "system/HostInfo")
+            device_info = _huawei_get(session, host, "system/deviceinfo")
+        except RuntimeError:
+            session.close()
+            raise
+        _HUAWEI_SESSIONS[host] = (session, time.monotonic() + 600)
+        _HUAWEI_FAILURES.pop(host, None)
+        return wan, hosts, device_info
+
+
+def _huawei_rate_mbps(value: Any) -> float:
+    try:
+        return round(max(0.0, float(value or 0)) * 8 / 1024, 3)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def collect_huawei_metrics(device: dict[str, Any]) -> dict[str, Any]:
+    """Collect live WAN and per-client rates from the WS7001 private web API."""
+    wan, raw_hosts, device_info = _huawei_api_payloads(device)
+    if not isinstance(wan, dict) or not isinstance(raw_hosts, list):
+        raise RuntimeError("a API Huawei retornou tráfego em formato inesperado")
+    clients = []
+    groups = {
+        "Wi-Fi": {"downloadMbps": 0.0, "uploadMbps": 0.0, "count": 0},
+        "Ethernet": {"downloadMbps": 0.0, "uploadMbps": 0.0, "count": 0},
+    }
+    wifi_types = {"2.4GHz", "5GHz", "5GHz_1", "5GHz_2", "DC", "Guest"}
+    for row in raw_hosts:
+        if not isinstance(row, dict) or not bool(row.get("Active46")):
+            continue
+        interface_type = str(row.get("InterfaceType") or "").strip()
+        group_name = "Wi-Fi" if interface_type in wifi_types else "Ethernet"
+        download = _huawei_rate_mbps(row.get("DownRate"))
+        upload = _huawei_rate_mbps(row.get("UpRate"))
+        groups[group_name]["downloadMbps"] += download
+        groups[group_name]["uploadMbps"] += upload
+        groups[group_name]["count"] += 1
+        clients.append({
+            "name": str(row.get("ActualName") or row.get("HostName") or row.get("MACAddress") or "Dispositivo"),
+            "ip": str(row.get("IPAddress") or row.get("IPv4Address") or ""),
+            "mac": str(row.get("MACAddress") or "").upper(),
+            "interfaceType": interface_type or group_name,
+            "downloadMbps": download,
+            "uploadMbps": upload,
+        })
+    clients.sort(key=lambda item: item["downloadMbps"] + item["uploadMbps"], reverse=True)
+    download = _huawei_rate_mbps(wan.get("DownBandwidth"))
+    upload = _huawei_rate_mbps(wan.get("UpBandwidth"))
+    interface_traffic = [{
+        "index": "wan", "name": "WAN", "alias": "Internet total no Huawei",
+        "rxBytes": None, "txBytes": None, "rxMbps": download, "txMbps": upload,
+        "capacityMbps": None,
+    }]
+    for index, (name, values) in enumerate(groups.items(), start=1):
+        interface_traffic.append({
+            "index": f"client-{index}", "name": name,
+            "alias": f"{values['count']} cliente(s) ativo(s)",
+            "rxBytes": None, "txBytes": None,
+            "rxMbps": round(values["uploadMbps"], 3),
+            "txMbps": round(values["downloadMbps"], 3),
+            "capacityMbps": None,
+        })
+    device_info = device_info if isinstance(device_info, dict) else {}
+    customer = device_info.get("custinfo") if isinstance(device_info.get("custinfo"), dict) else {}
+    return {
+        "ok": True,
+        "protocol": "Huawei API",
+        "checkedEpoch": time.time(),
+        "systemName": str(device_info.get("FriendlyName") or device_info.get("ProductName") or "Huawei WiFi AX2"),
+        "model": str(customer.get("CustDeviceName") or device_info.get("ProductName") or "WS7001"),
+        "firmwareVersion": str(device_info.get("SoftwareVersion") or ""),
+        "downloadMbps": download,
+        "uploadMbps": upload,
+        "networkCapacityMbps": None,
+        "networkPct": None,
+        "interfaceTraffic": interface_traffic,
+        "interfaces": [row["name"] for row in interface_traffic],
+        "interfaceCount": len(interface_traffic),
+        "clients": clients,
+        "clientCount": len(clients),
+        "wirelessClientCount": groups["Wi-Fi"]["count"],
+        "wiredClientCount": groups["Ethernet"]["count"],
     }
 
 
@@ -1167,7 +1429,7 @@ def probe_device(device: dict[str, Any]) -> dict[str, Any]:
     dns_failed = bool(dns_result and not dns_result["ok"])
     telemetry = None
     telemetry_error = ""
-    if probe_type in {"SNMP", "PROMETHEUS"} and reachable:
+    if probe_type in {"SNMP", "PROMETHEUS", "HUAWEI"} and reachable:
         candidates = [item for item in address_results if item["reachable"]]
         if probe_type == "PROMETHEUS":
             candidates.sort(key=lambda item: not bool(item.get("exporter") and item["exporter"].get("reachable")))
@@ -1175,7 +1437,12 @@ def probe_device(device: dict[str, Any]) -> dict[str, Any]:
         for candidate in candidates:
             endpoint_device = {**device, "host": candidate["host"]}
             try:
-                telemetry = collect_snmp_metrics(endpoint_device) if probe_type == "SNMP" else collect_prometheus_metrics(endpoint_device)
+                if probe_type == "SNMP":
+                    telemetry = collect_snmp_metrics(endpoint_device)
+                elif probe_type == "HUAWEI":
+                    telemetry = collect_huawei_metrics(endpoint_device)
+                else:
+                    telemetry = collect_prometheus_metrics(endpoint_device)
                 telemetry["endpointLabel"] = candidate["label"]
                 active_address = candidate
                 break
