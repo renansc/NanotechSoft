@@ -668,13 +668,15 @@ def _huawei_scram_values(password: str, salt_hex: str, iterations: int,
     if not salt or rounds < 1 or rounds > 1_000_000:
         raise RuntimeError("resposta de autenticação Huawei inválida")
     salted = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, rounds, dklen=32)
-    client_key = hmac.new(salted, b"Client Key", hashlib.sha256).digest()
+    # O SCRAMJS 1.0.1 embarcado no WS7001 chama HmacSHA256(message, key),
+    # invertendo a ordem usada pelo SCRAM padrao nos passos abaixo.
+    client_key = hmac.new(b"Client Key", salted, hashlib.sha256).digest()
     stored_key = hashlib.sha256(client_key).digest()
-    server_key = hmac.new(salted, b"Server Key", hashlib.sha256).digest()
+    server_key = hmac.new(b"Server Key", salted, hashlib.sha256).digest()
     auth_message = f"{first_nonce},{final_nonce},{final_nonce}".encode("utf-8")
-    client_signature = hmac.new(stored_key, auth_message, hashlib.sha256).digest()
+    client_signature = hmac.new(auth_message, stored_key, hashlib.sha256).digest()
     client_proof = bytes(left ^ right for left, right in zip(client_key, client_signature)).hex()
-    server_signature = hmac.new(server_key, auth_message, hashlib.sha256).hexdigest()
+    server_signature = hmac.new(auth_message, server_key, hashlib.sha256).hexdigest()
     return client_proof, server_signature
 
 
