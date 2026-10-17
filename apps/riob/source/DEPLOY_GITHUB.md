@@ -3,9 +3,9 @@
 ## Preparacao
 
 1. Copie `.env.example` para `.env`.
-2. Ajuste as senhas do banco, `FLASK_SECRET`, `UI_*`, `ESXI_*`, `RB_FREEPBX_*` e `RB_OPEN_WEBUI_SECRET_KEY`.
+2. Ajuste as senhas do banco, `FLASK_SECRET`, `UI_*`, `ESXI_*` e `RB_FREEPBX_*`.
 3. Ajuste `RB_SERVER_NAME` e `RB_PUBLIC_BASE_URL` com o IP ou DNS real usado pelos clientes.
-4. Garanta que `80`, `443` e `3000` estejam liberadas no firewall da VM.
+4. Garanta que `80` e `443` estejam liberadas no firewall da VM.
 5. Se quiser restore automatico em banco vazio, deixe o backup `.sql` ou `.sql.gz` em `backupsSql/`.
 6. O monitor ESXi fica versionado em `esxi/`; altere `RB_VSPHERE_CLIENT_PATH` apenas se quiser outra copia local.
 7. Garanta que `RB_AUTOMACAO_MONITOR_PATH` aponte para o projeto do monitor industrial; o Compose monta esse diretorio somente para leitura.
@@ -73,8 +73,6 @@ RB_AGENT_OLLAMA_TIMEOUT=120
 RB_AGENT_LLM_CONTEXT_MODE=compact
 RB_AGENT_OLLAMA_NUM_CTX=4096
 RB_AGENT_OLLAMA_NUM_PREDICT=256
-RB_OPEN_WEBUI_PORT=3000
-RB_OPEN_WEBUI_SECRET_KEY=gere-com-openssl-rand-hex-32
 ```
 
 VM secundaria ou homologacao usando o mesmo FreePBX:
@@ -103,7 +101,7 @@ Comportamento padrao:
 - `cert-bootstrap` prepara certificados antes de subir `app` e `proxy`
 - `ollama-model-init` baixa e valida `qwen2.5:3b` no volume persistente do Ollama
 - depois da validacao, remove automaticamente o modelo antigo `qwen2.5:7b`
-- `open-webui` sobe ligado diretamente ao Ollama do mesmo compose
+- o Open WebUI nao e criado por este compose; quando usado, roda em host externo
 - o backend aplica alteracoes de schema automaticamente na inicializacao
 - o `db-restore` importa o backup mais recente apenas quando o banco estiver vazio
 - `update.sh` executa `git pull` e `docker compose up -d --build`
@@ -157,8 +155,8 @@ No sistema principal, o mesmo chat tambem aparece no menu `Agent IA` da pagina
 estiver configurado, o backend tenta usar o modelo definido em
 `RB_AGENT_OLLAMA_MODEL` antes de cair para o agente local.
 
-Os comandos canônicos não administram Ollama ou Open WebUI. Serviços de IA são
-opcionais e devem ser operados separadamente quando estiverem configurados.
+Os comandos canônicos não administram o Ollama opcional nem o Open WebUI. O
+WebUI e sempre externo ao deploy e deve ser operado em host proprio.
 Consulte `../../../docs/AI_RESEARCH_MANUAL.md` antes de alterar o fluxo
 operacional.
 
@@ -170,47 +168,24 @@ RB_AGENT_OLLAMA_URL=http://ollama:11434
 RB_MANAGED_OLLAMA_MODEL=qwen2.5:3b
 RB_OLLAMA_REMOVE_MODELS=qwen2.5:7b
 RB_AGENT_OLLAMA_MODEL=qwen2.5:3b
-RB_OPEN_WEBUI_IMAGE=ghcr.io/open-webui/open-webui:v0.9.6
-RB_OPEN_WEBUI_COMPAT_IMAGE=riob-open-webui:v0.9.6-numpy2.2.6
-RB_OPEN_WEBUI_NUMPY_VERSION=2.2.6
-RB_OPEN_WEBUI_PORT=3000
-RB_OPEN_WEBUI_OLLAMA_URL=http://ollama:11434
-RB_OPEN_WEBUI_SECRET_KEY=gere-com-openssl-rand-hex-32
-RB_OPEN_WEBUI_OFFLINE_MODE=true
-RB_OPEN_WEBUI_HF_HUB_OFFLINE=1
 ```
 
 No modo gerenciado, o compose usa `RB_MANAGED_OLLAMA_MODEL` e assume
 `qwen2.5:3b` quando a variavel nao existe. Assim, uma `.env` antiga que ainda
 tenha `RB_AGENT_OLLAMA_MODEL=qwen2.5:7b` nao impede a migracao.
 
-O projeto cria uma imagem derivada do Open WebUI com NumPy `2.2.6`. Essa
-versao evita a exigencia de CPU `x86-64-v2` introduzida pelo NumPy `2.4` e
-mantem o deploy compativel com o Xeon E5410 usado em producao.
-
-O modo offline impede downloads automaticos do Hugging Face durante o startup.
-O chat com o Qwen continua funcionando normalmente. Recursos de RAG,
-documentos e transcricao exigem modelos locais adicionais antes de serem
-habilitados.
-
-Gere a chave do WebUI antes do primeiro deploy:
-
-```bash
-openssl rand -hex 32
-```
-
-No primeiro acesso a `http://192.168.200.254:3000`, a primeira conta criada se torna
-administradora. Depois desse cadastro, desative novos registros em `.env` com
-`RB_OPEN_WEBUI_ENABLE_SIGNUP=false` e execute `../../../update.sh`.
+O Open WebUI deve usar composicao, segredos, volume e ciclo de atualizacao no
+host externo. Quando ele consumir o Ollama deste servidor, publique
+`RB_OLLAMA_PORT` somente no IP Tailscale com `RB_OLLAMA_BIND`; nunca em
+`0.0.0.0`. Consulte `../../../docs/OPEN_WEBUI_EXTERNO.md`.
 
 O sistema principal fica em `https://192.168.200.254`. O compose publica o
-proxy e o Open WebUI em `0.0.0.0`; `../../../up.sh` e `../../../update.sh` falham quando
+proxy em `0.0.0.0`; `../../../up.sh` e `../../../update.sh` falham quando
 `/api/status` nao responde pelo IP configurado. Em hosts com UFW ativo:
 
 ```bash
 sudo ufw allow 80/tcp
 sudo ufw allow 443/tcp
-sudo ufw allow 3000/tcp
 ```
 
 Como o HTTPS usa uma CA interna, cada computador cliente deve confiar nela.
@@ -341,7 +316,7 @@ Resumo do fluxo:
 - Fotos, arquivos da aplicacao e SQLite do monitor de automacao no volume `app_data`
 - Banco SQLite e segmentos das cameras no volume `cameras_data`
 - Modelos do Ollama, incluindo Qwen, no volume `ollama_data`
-- Usuarios, conversas e configuracoes do Open WebUI no volume `open_webui_data`
+- Usuarios e conversas do Open WebUI ficam no volume do host externo
 - Backups SQL em `backupsSql/`
 - CA e certificados emitidos em `certs/`
 - Backups de sync em `sync-backups/`
@@ -366,6 +341,6 @@ Esse pacote inclui `db/backup.sql`, `app_data`, `cameras_data`, `Relatorios/` e 
 ./deploy/restore-full-backup.sh backupsSql/backup_full_YYYYMMDD_HHMMSS.tar.gz --yes
 ```
 
-O pacote completo atual nao inclui `ollama_data` nem `open_webui_data`. O Qwen
-pode ser baixado novamente pelo `ollama-model-init`; para preservar usuarios e
-conversas do Open WebUI, faca backup separado do volume `open_webui_data`.
+O pacote completo atual nao inclui `ollama_data` nem dados do host externo. O
+Qwen pode ser baixado novamente pelo `ollama-model-init`; preserve usuarios e
+conversas do Open WebUI pelo backup da composicao externa.

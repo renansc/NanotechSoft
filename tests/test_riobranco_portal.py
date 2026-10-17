@@ -85,7 +85,22 @@ class RioBrancoPortalTests(unittest.TestCase):
 
         self.assertIn('profiles: ["ai"]', compose)
         self.assertIn("ollama_data:/root/.ollama", compose)
-        self.assertNotIn("11434:11434", compose)
+        self.assertIn(
+            '"${RB_OLLAMA_BIND:-127.0.0.1}:${RB_OLLAMA_PORT:-11434}:11434"',
+            compose,
+        )
+        self.assertNotIn('"0.0.0.0:11434:11434"', compose)
+
+    def test_open_webui_is_external_to_every_riob_compose(self):
+        root_compose = (PROJECT_DIR / "docker-compose.yml").read_text(encoding="utf-8")
+        riob_compose = (
+            PROJECT_DIR / "apps" / "riob" / "source" / "docker-compose.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertNotIn("open-webui:", root_compose)
+        self.assertNotIn("open-webui:", riob_compose)
+        self.assertNotIn("open_webui_data:", riob_compose)
+        self.assertNotIn("RB_OPEN_WEBUI_", riob_compose)
 
     def test_user_configuration_uses_the_wide_responsive_layout(self):
         html = (PROJECT_DIR / "templates/config.html").read_text(encoding="utf-8")

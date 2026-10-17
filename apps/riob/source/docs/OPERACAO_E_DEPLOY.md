@@ -17,7 +17,7 @@ Ele foi escrito para manter o deploy o mais automatico possivel, com foco em:
 flowchart LR
     U[Usuarios] --> P[Nginx proxy]
     P --> A[Flask app]
-    U --> W[Open WebUI]
+    U --> W[Open WebUI em host externo]
     W --> O[Ollama / Qwen]
     A --> O
     A --> DB[(MariaDB)]
@@ -130,15 +130,11 @@ Observacao adicional:
 - `RB_AGENT_OLLAMA_TIMEOUT`
 - `RB_AGENT_OLLAMA_TEMPERATURE`
 
-### 5.5 Open WebUI
+### 5.5 Open WebUI externo
 
-- `RB_OPEN_WEBUI_IMAGE`
-- `RB_OPEN_WEBUI_PORT`
-- `RB_OPEN_WEBUI_NAME`
-- `RB_OPEN_WEBUI_SECRET_KEY`
-- `RB_OPEN_WEBUI_ENABLE_SIGNUP`
-- `RB_OPEN_WEBUI_OLLAMA_URL`
-- `RB_OPEN_WEBUI_VOLUME`
+O Open WebUI nao possui variaveis neste deploy. Imagem, porta, chave, volume e
+cadastros pertencem a composicao do host externo. Para consumir o Ollama deste
+servidor, publique `RB_OLLAMA_BIND` somente no IP Tailscale.
 
 ### 5.6 SIP frontend
 
@@ -245,12 +241,10 @@ flowchart TD
     E --> F[cert-bootstrap instala WSS no FreePBX]
     F --> G[Ollama sobe]
     G --> H[ollama-model-init garante Qwen]
-    H --> I[Open WebUI sobe com Qwen padrao]
     H --> J[app sobe]
     J --> K[ensure_schema atualiza schema]
     K --> L[proxy sobe]
-    I --> M[sistema pronto]
-    L --> M
+    L --> M[sistema pronto]
 ```
 
 ## 8. Primeira subida
@@ -262,12 +256,6 @@ flowchart TD
 3. Confirme o papel da VM:
    - producao oficial: `RB_CERT_BOOTSTRAP=1`
    - secundaria/homologacao: `RB_CERT_BOOTSTRAP=0`
-4. Gere `RB_OPEN_WEBUI_SECRET_KEY`:
-
-```bash
-openssl rand -hex 32
-```
-
 ### 8.2 Comando
 
 ```bash
@@ -280,7 +268,6 @@ docker compose up -d --build
 docker compose ps
 docker compose logs --tail=200 cert-bootstrap
 docker compose logs --tail=200 ollama-model-init
-docker compose logs --tail=200 open-webui
 docker compose logs --tail=200 app
 docker compose logs --tail=200 proxy
 ```
@@ -292,7 +279,6 @@ Checklist:
 - `cert-bootstrap` deve concluir com sucesso ou sair rapidamente quando desabilitado
 - `ollama` deve estar `healthy`
 - `ollama-model-init` deve concluir depois de instalar ou confirmar o Qwen
-- `open-webui` deve estar `healthy` e listar `qwen2.5:3b`
 - `app` deve subir sem erro de schema
 - `proxy` deve publicar as portas esperadas
 
@@ -417,14 +403,14 @@ Regras de importacao:
 - `ollama_data`
   - modelos gerenciados pelo Ollama, incluindo `qwen2.5:3b`
 
-- `open_webui_data`
-  - usuarios, conversas, configuracoes e cache do Open WebUI
+- volume do Open WebUI externo
+  - usuarios, conversas, configuracoes e cache pertencem ao host externo
 
 Observacao de backup:
 
 - o backup completo atual cobre banco, `app_data`, `cameras_data` e `Relatorios/`
 - `ollama_data` pode ser recriado pelo `ollama-model-init`
-- `open_webui_data` exige backup separado quando for necessario preservar usuarios e conversas
+- os dados do Open WebUI exigem backup separado no host externo
 
 Persistencia por bind mount:
 
@@ -673,7 +659,6 @@ docker compose logs --tail=200 proxy
 docker compose logs --tail=200 cert-bootstrap
 docker compose logs --tail=200 db
 docker compose logs --tail=200 ollama
-docker compose logs --tail=200 open-webui
 ```
 
 ### 14.3 Validacao de HTTPS
@@ -821,8 +806,7 @@ Modo TV com `dashboards.html`:
 - nao manter senhas reais versionadas
 - limitar acesso SSH ao FreePBX
 - proteger a aplicacao com rede interna ou controle adicional
-- usar uma chave aleatoria longa em `RB_OPEN_WEBUI_SECRET_KEY`
-- desativar `RB_OPEN_WEBUI_ENABLE_SIGNUP` depois de criar a conta administradora
+- proteger a chave e desativar novos cadastros na composicao externa do Open WebUI
 - revisar o uso de `localStorage` para sessao
 - manter os certificados e chaves privados apenas no servidor
 
@@ -842,7 +826,7 @@ O sistema foi preparado para que esse fluxo:
 - reaplique schema
 - restaure backup apenas quando o banco estiver vazio
 - mantenha onboarding de certificados padronizado
-- mantenha Ollama/Qwen e Open WebUI no mesmo compose oficial
+- mantenha o Open WebUI fora do compose oficial, em host e ciclo de deploy proprios
 
 O principal cuidado para ambientes multiplos continua sendo:
 
@@ -885,59 +869,36 @@ RB_AGENT_OLLAMA_TIMEOUT=120
 RB_AGENT_LLM_CONTEXT_MODE=compact
 RB_AGENT_OLLAMA_NUM_CTX=4096
 RB_AGENT_OLLAMA_NUM_PREDICT=256
-RB_OPEN_WEBUI_IMAGE=ghcr.io/open-webui/open-webui:v0.9.6
-RB_OPEN_WEBUI_COMPAT_IMAGE=riob-open-webui:v0.9.6-numpy2.2.6
-RB_OPEN_WEBUI_NUMPY_VERSION=2.2.6
-RB_OPEN_WEBUI_PORT=3000
-RB_OPEN_WEBUI_NAME=RioBranco IA
-RB_OPEN_WEBUI_SECRET_KEY=gere-com-openssl-rand-hex-32
-RB_OPEN_WEBUI_ENABLE_SIGNUP=true
-RB_OPEN_WEBUI_OFFLINE_MODE=true
-RB_OPEN_WEBUI_HF_HUB_OFFLINE=1
-RB_OPEN_WEBUI_OLLAMA_URL=http://ollama:11434
 ```
 
-Ollama e Open WebUI são componentes opcionais. Os comandos canônicos
-`../../../up.sh`, `../../../down.sh` e `../../../update.sh` não administram esses
-serviços. Instalação, atualização e validação de modelos devem ser operações
-separadas, explicitamente solicitadas.
-
-O Open WebUI e construido sobre a imagem oficial definida em
-`RB_OPEN_WEBUI_IMAGE`, com NumPy `2.2.6` fixado por
-`RB_OPEN_WEBUI_NUMPY_VERSION`. Isso preserva compatibilidade com o Xeon E5410
-de producao, que nao oferece todas as instrucoes exigidas por `x86-64-v2`.
-
-Por padrao, `RB_OPEN_WEBUI_OFFLINE_MODE=true` e
-`RB_OPEN_WEBUI_HF_HUB_OFFLINE=1` evitam downloads de modelos auxiliares no
-startup. Isso nao afeta o chat com o Qwen. RAG, documentos e transcricao
-precisam de modelos locais adicionais caso esses recursos sejam habilitados.
+Ollama e um componente opcional. O Open WebUI e um servico externo e nao faz
+parte deste compose. Os comandos canônicos `../../../up.sh`,
+`../../../down.sh` e `../../../update.sh` nao criam, atualizam, param nem
+removem o WebUI.
 
 Para producao usando o Ollama gerenciado pelo compose:
 
 1. mantenha `RB_MANAGED_OLLAMA=1`
 2. deixe `RB_AGENT_OLLAMA_URL=http://ollama:11434`
 3. defina `RB_AGENT_OLLAMA_MODEL` com o mesmo Qwen validado na homologacao
-4. deixe `RB_OPEN_WEBUI_OLLAMA_URL=http://ollama:11434`
-5. gere uma chave longa para `RB_OPEN_WEBUI_SECRET_KEY`
-6. opere o serviço opcional de IA separadamente; `../../../update.sh` atualiza
-   apenas portal e RioB
+4. publique `RB_OLLAMA_BIND` somente no IP Tailscale quando houver consumidor externo
+5. opere o WebUI no host externo; `../../../update.sh` atualiza apenas portal e RioB
 
 No modo gerenciado, `RB_MANAGED_OLLAMA_MODEL` define o modelo oficial e assume
 `qwen2.5:3b` quando nao estiver presente. Depois do pull e da validacao, o
 bootstrap remove os modelos listados em `RB_OLLAMA_REMOVE_MODELS`; o padrao
 remove `qwen2.5:7b`.
 
-O proxy do RioB é atualizado pelo fluxo canônico. A publicação e validação do
-Open WebUI não fazem parte desse fluxo.
+O proxy do RioB e atualizado pelo fluxo canonico. A publicacao e validacao do
+Open WebUI pertencem exclusivamente ao host externo.
 
 Se for necessario usar um Ollama externo, defina `RB_MANAGED_OLLAMA=0` e informe
 `RB_AGENT_OLLAMA_URL`; nesse modo o deploy nao instala modelo no servidor externo,
 mas a validacao final ainda falha se o modelo configurado nao estiver acessivel.
 
-O Open WebUI fica disponivel por padrao em `http://IP-DA-VM:3000`. A primeira
-conta cadastrada se torna administradora. Depois do primeiro cadastro, defina
-`RB_OPEN_WEBUI_ENABLE_SIGNUP=false` e reinicie explicitamente o serviço do
-Open WebUI para bloquear novos registros públicos.
+O endereco, a administracao de contas e o bloqueio de novos cadastros do Open
+WebUI sao definidos na composicao externa. Consulte
+`../../../../docs/OPEN_WEBUI_EXTERNO.md`.
 
 Evite instalações concorrentes do mesmo serviço de IA na mesma VM. Elas não
 fazem parte dos quatro comandos operacionais canônicos.

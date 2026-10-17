@@ -17,7 +17,7 @@ configure_public_access_env() {
   local prefix
   prefix="${RIOB_DEPLOY_LOG_PREFIX:-riob}"
 
-  echo "[${prefix}] proxy e Open WebUI configurados para acesso de rede em 0.0.0.0."
+  echo "[${prefix}] proxy configurado para acesso de rede em 0.0.0.0."
 }
 
 ensure_public_certificate() {
@@ -67,7 +67,7 @@ riob_public_base_url() {
 }
 
 validate_public_access() {
-  local prefix base webui_port attempt body proxy_binding webui_binding public_ok webui_ok
+  local prefix base attempt body proxy_binding public_ok
   prefix="${RIOB_DEPLOY_LOG_PREFIX:-riob}"
   public_ok=0
   base="$(riob_public_base_url)" || {
@@ -98,31 +98,5 @@ validate_public_access() {
     return 1
   fi
 
-  webui_port="${RB_OPEN_WEBUI_PORT:-$(riob_env_file_value RB_OPEN_WEBUI_PORT)}"
-  webui_port="${webui_port:-3000}"
-  webui_binding="$(docker compose port open-webui 8080 2>/dev/null || true)"
-  if [[ "$webui_binding" != 0.0.0.0:* && "$webui_binding" != \[::\]:* ]]; then
-    echo "[${prefix}] ERRO: Open WebUI nao esta publicado em todas as interfaces: ${webui_binding:-sem porta}." >&2
-    return 1
-  fi
-
-  echo "[${prefix}] validando Open WebUI publicado na porta ${webui_port}..."
-  webui_ok=0
-  for ((attempt=1; attempt<=90; attempt+=1)); do
-    if curl --silent --show-error --fail --connect-timeout 5 --max-time 15 \
-      "http://127.0.0.1:${webui_port}/health" >/dev/null 2>&1; then
-      webui_ok=$((webui_ok + 1))
-      if [[ "$webui_ok" -ge 3 ]]; then
-        echo "[${prefix}] Open WebUI validado na porta ${webui_port}."
-        return 0
-      fi
-    else
-      webui_ok=0
-    fi
-    sleep 2
-  done
-
-  echo "[${prefix}] ERRO: Open WebUI nao permaneceu saudavel na porta ${webui_port}." >&2
-  docker compose logs --tail=120 open-webui >&2 || true
-  return 1
+  return 0
 }

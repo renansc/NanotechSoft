@@ -122,7 +122,7 @@ class VendasReportsAccessTest(unittest.TestCase):
                 resource = next(item for item in catalog['recursos'] if item['key'] == 'vendas')
                 self.assertIn('mensais/anuais', str(resource))
                 self.assertIn('RioB/CLT/autonomos', str(resource))
-                self.assertIn('grupos de embalagem com filtro de grupos e PDVs em popup', str(resource))
+                self.assertIn('grupos de embalagem com selecao multipla de vendedores/grupos e PDVs em popup', str(resource))
                 self.assertIn('PDVs e preco medio em popup com ordenacao por valor e nome', str(resource))
                 for entry in catalog['menus']:
                     if entry['url'] in ['/apps/riob#vendas:relatorio', '/apps/riob#vendas:relatorio_anual', '/apps/riob#vendas:relatorio_diario']:

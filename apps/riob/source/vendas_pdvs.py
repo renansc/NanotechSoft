@@ -43,12 +43,20 @@ def identidade(key):
     return str(int(match[1])) if match else str(key).upper()
 
 
+def _filtros_vendedores(filtro):
+    if isinstance(filtro, (list, tuple, set)):
+        return [str(item).strip() for item in filtro if str(item).strip()]
+    valor = str(filtro or '').strip()
+    return [valor] if valor else None
+
+
 def base_carteira(totais, vendedores, filtro=''):
     saved = {identidade(r['vendedor_key']): int(r['total']) for r in totais}
     required = {identidade(v['chave']): v['chave'] for v in vendedores}
     required.update({identidade(r['vendedor_key']): r['vendedor_key'] for r in totais})
-    if filtro:
-        required = {identidade(filtro): filtro}
+    filtros = _filtros_vendedores(filtro)
+    if filtros is not None:
+        required = {identidade(item): item for item in filtros}
     missing = sorted(required[k] for k in required if k not in saved)
     total = None if missing or not required else sum(saved[k] for k in required)
     return total, missing
@@ -68,9 +76,11 @@ def resumo_carteira(totais, vendedores, filtro=''):
         for row in totais
         if isinstance(row, dict) and row.get('vendedor_key') not in (None, '')
     }
-    filtro_id = identidade(filtro) if filtro else ''
-    if filtro_id:
-        total_importado = salvos.get(filtro_id)
+    filtros = _filtros_vendedores(filtro)
+    if filtros is not None:
+        filtro_ids = {identidade(item) for item in filtros}
+        valores_importados = [salvos[item] for item in filtro_ids if item in salvos]
+        total_importado = sum(valores_importados) if valores_importados else None
     else:
         total_importado = sum(salvos.values()) if salvos else None
     total_carteira, faltantes = base_carteira(totais, vendedores, filtro)

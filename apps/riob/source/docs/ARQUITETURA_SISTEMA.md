@@ -147,18 +147,17 @@ Responsabilidade:
 
 - executar o servidor Ollama dentro do compose
 - persistir os modelos em `ollama_data`
-- baixar e validar `qwen2.5:3b` antes da aplicacao e do WebUI
+- baixar e validar `qwen2.5:3b` antes da aplicacao
 - remover `qwen2.5:7b` depois que o novo modelo estiver validado
 
-### 5.5 `open-webui`
+### 5.5 Open WebUI externo
 
 Responsabilidade:
 
-- publicar a interface conversacional da IA
-- acessar o Ollama pela rede interna em `http://ollama:11434`
-- usar `RB_AGENT_OLLAMA_MODEL` como modelo padrao
-- usar uma imagem derivada com NumPy compativel com CPUs anteriores a x86-64-v2
-- persistir usuarios, conversas e configuracoes em `open_webui_data`
+- publicar a interface conversacional em host e composicao proprios
+- acessar o Ollama somente pelo IP Tailscale publicado pelo servidor
+- persistir usuarios, conversas e configuracoes no volume do host externo
+- manter ciclo de atualizacao independente do deploy do RioB
 
 ### 5.6 `app`
 
@@ -191,13 +190,14 @@ flowchart TD
     D --> E[cert-bootstrap instala WSS no FreePBX]
     E --> F[Ollama sobe]
     F --> G[ollama-model-init garante Qwen]
-    G --> H[Open WebUI sobe]
     G --> I[app sobe]
     I --> J[ensure_schema cria e ajusta schema]
     J --> K[proxy sobe]
-    H --> L[usuarios acessam a IA]
     K --> M[usuarios acessam o sistema]
 ```
+
+O Open WebUI externo pode acessar o Ollama depois que o servico estiver
+saudavel, mas nao participa deste fluxo de inicializacao.
 
 ## 7. Modelo de aplicacao
 

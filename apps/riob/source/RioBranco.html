@@ -2716,11 +2716,9 @@
         <label class="vendas-precos-controle hidden">Grupo
           <select id="vendasPrecosGrupo" onchange="carregarRelatorioPrecosVendas()"><option value="">Todos os grupos</option></select>
         </label>
-        <label class="vendas-mix-controle hidden">Vendedor
-          <select id="vendasMixVendedor" onchange="document.getElementById('vendasMixCliente').value=''; carregarRelatorioMixEmbalagens()">
-            <option value="">Todos os vendedores</option>
-          </select>
-        </label>
+        <div class="vendas-toolbar vendas-mix-controle hidden">
+          <button type="button" id="vendasMixVendedoresBtn" class="btn-secondary" onclick="abrirVendedoresRelatorioMixEmbalagens()" aria-haspopup="dialog" aria-controls="vendasMixVendedoresDialog">Vendedores</button>
+        </div>
         <label class="vendas-mix-controle hidden">PDV
           <select id="vendasMixCliente" onchange="carregarRelatorioMixEmbalagens()">
             <option value="">Todos os PDVs</option>
@@ -2957,6 +2955,20 @@
         <h3>Resumo do período</h3>
         <div id="vendasMixResumoCards" class="vendas-resumo-cards vendas-resumo-cards--wide"></div>
       </div>
+
+      <dialog id="vendasMixVendedoresDialog" class="vendas-mix-pdvs-dialog vendas-mix-grupos-dialog" aria-labelledby="vendasMixVendedoresTitulo">
+        <div class="vendas-box-head">
+          <h3 id="vendasMixVendedoresTitulo">Filtrar vendedores</h3>
+          <button type="button" class="btn-secondary" onclick="document.getElementById('vendasMixVendedoresDialog').close()">Cancelar</button>
+        </div>
+        <p>Marque um ou mais vendedores para aplicar ao relatório.</p>
+        <div class="vendas-toolbar">
+          <button type="button" class="btn-secondary" onclick="document.querySelectorAll('#vendasMixVendedoresOpcoes input').forEach(el => el.checked = true)">Selecionar todos</button>
+          <button type="button" class="btn-secondary" onclick="document.querySelectorAll('#vendasMixVendedoresOpcoes input').forEach(el => el.checked = false)">Desmarcar todos</button>
+        </div>
+        <div id="vendasMixVendedoresOpcoes" class="vendas-mix-grupos-opcoes"></div>
+        <button type="button" onclick="aplicarVendedoresRelatorioMixEmbalagens()">Aplicar vendedores</button>
+      </dialog>
 
       <dialog id="vendasMixGruposDialog" class="vendas-mix-pdvs-dialog vendas-mix-grupos-dialog" aria-labelledby="vendasMixGruposTitulo">
         <div class="vendas-box-head">

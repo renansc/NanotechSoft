@@ -6,6 +6,8 @@ services:
     environment:
       OLLAMA_HOST: 0.0.0.0:11434
       OLLAMA_KEEP_ALIVE: ${RB_OLLAMA_KEEP_ALIVE:-5m}
+    ports:
+      - "${RB_OLLAMA_BIND:-127.0.0.1}:${RB_OLLAMA_PORT:-11434}:11434"
     volumes:
       - ollama_data:/root/.ollama
     healthcheck:

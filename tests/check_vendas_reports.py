@@ -68,14 +68,15 @@ with sync_playwright() as p:
  apiFetch=async url => {
    salesUrls.push(url);
    const params=new URL(url, location.origin).searchParams;
-   const vendedor=params.get('vendedor') || '';
+   const vendedores=params.getAll('vendedor').filter(Boolean);
    const cliente=params.get('cliente') || '';
    const clientes=[{chave:'A',cliente:'Mercado A',cidade:'Cidade',vendedor:'Vendedor A',qtd_grupos:1,grupos_lista:'PET 2L'},
                    {chave:'B',cliente:'Mercado B',cidade:'Cidade',vendedor:'Vendedor A',qtd_grupos:1,grupos_lista:'PET 600ml'}];
    return {ok:true,json:async()=>({arquivo:{nome:'SELLOUT.csv'},
      mes_atual:params.has('data_inicio') || params.has('data_fim') ? '' : '2026-09',
      grupos_disponiveis:['PET 2L','PET 600 ml','PET 200 ml','Água','600 ml retornável','200 ml retornável'],
-     filtros:{...Object.fromEntries(params),grupos:params.has('grupos') ? params.get('grupos').split(',').filter(Boolean) : null}, vendedores:[{chave:'VENDEDOR A',nome:'Vendedor A'},{chave:'VENDEDOR B',nome:'Vendedor B'}],
+     filtros:{...Object.fromEntries(params),vendedor:vendedores.length===1 ? vendedores[0] : '',vendedores:params.has('vendedor') ? vendedores : null,grupos:params.has('grupos') ? params.get('grupos').split(',').filter(Boolean) : null},
+     vendedores:[{chave:'VENDEDOR A',nome:'Vendedor A'},{chave:'VENDEDOR B',nome:'Vendedor B'},{chave:'VENDEDOR C',nome:'Vendedor C'}],
      clientes:cliente ? clientes.filter(c=>c.chave===cliente) : clientes,
      clientes_disponiveis:clientes, detalhe_pdv:clientes.find(c=>c.chave===cliente),
      resumo_geral:{pdvs:2},resumo_faixas:[{faixa:'2 grupos',pdvs:1,percentual:50},{faixa:'1 grupo',pdvs:1,percentual:50}]
@@ -87,10 +88,14 @@ with sync_playwright() as p:
  assert page.locator('#vendasMixMes').count() == 0
  assert not page.locator('#vendasMixVerPdvs').is_visible()
  assert not page.locator('#vendasMixPdvsDialog').is_visible()
- page.locator('#vendasMixVendedor').select_option('VENDEDOR A')
+ page.locator('#vendasMixVendedoresBtn').click()
+ page.get_by_label('Vendedor C',exact=True).uncheck()
+ page.get_by_role('button',name='Aplicar vendedores',exact=True).click()
  assert page.locator('#vendasMixVerPdvs').is_visible()
+ assert page.locator('#vendasMixVendedoresBtn').inner_text()=='Vendedores (2)'
+ assert page.evaluate("new URL(salesUrls.at(-1), location.origin).searchParams.getAll('vendedor')") == ['VENDEDOR A','VENDEDOR B']
  assert 'mes=' not in page.evaluate('salesUrls.at(-1)')
- boxes=[page.locator('#'+id).bounding_box() for id in ['vendasPeriodoInicio','vendasPeriodoFim','vendasMixVendedor','vendasMixCliente','vendasMixGruposBtn','vendasMixVerPdvs']]
+ boxes=[page.locator('#'+id).bounding_box() for id in ['vendasPeriodoInicio','vendasPeriodoFim','vendasMixVendedoresBtn','vendasMixCliente','vendasMixGruposBtn','vendasMixVerPdvs']]
  assert max(b['y']+b['height'] for b in boxes)-min(b['y']+b['height'] for b in boxes)<3, boxes
  summary=page.locator('.vendas-mix-resumo').bounding_box()
  view=page.locator('#vendasViewRelatorioMix').bounding_box()
@@ -109,7 +114,9 @@ with sync_playwright() as p:
  assert not page.locator('#vendasMixPdvsDialog').is_visible()
  assert page.locator('#vendasMixVerPdvs').evaluate('(el)=>el===document.activeElement')
  page.locator('#vendasMixCliente').select_option('A')
- page.locator('#vendasMixVendedor').select_option('VENDEDOR B')
+ page.locator('#vendasMixVendedoresBtn').click()
+ page.get_by_label('Vendedor A',exact=True).uncheck()
+ page.get_by_role('button',name='Aplicar vendedores',exact=True).click()
  assert page.locator('#vendasMixCliente').input_value()==''
  assert 'cliente=' not in page.evaluate('salesUrls.at(-1)')
  # Group selection combines with the PDV and dates and persists after reopening.
@@ -142,7 +149,10 @@ with sync_playwright() as p:
  assert page.locator('#vendasPeriodoFim').is_visible()
  assert page.evaluate("document.getElementById('vendasRelatorioHeader').scrollWidth <= document.getElementById('vendasRelatorioHeader').clientWidth")
  assert page.evaluate("document.getElementById('vendasRelCabecalho').scrollWidth <= document.getElementById('vendasRelCabecalho').clientWidth")
- page.locator('#vendasMixVendedor').select_option('VENDEDOR A')
+ page.locator('#vendasMixVendedoresBtn').click()
+ page.get_by_label('Vendedor B',exact=True).uncheck()
+ page.get_by_label('Vendedor C',exact=True).uncheck()
+ page.get_by_role('button',name='Aplicar vendedores',exact=True).click()
  page.locator('#vendasMixVerPdvs').click()
  modal=page.locator('#vendasMixPdvsDialog').bounding_box()
  assert modal['x']>=0 and modal['x']+modal['width']<=390

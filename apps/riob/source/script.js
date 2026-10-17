@@ -85,6 +85,7 @@ let vendasState = {
   lastPayload: null,
   mes: "",
   tipoRelatorio: "bonificacoes",
+  mixVendedores: null,
 };
 let vendasOrcamentoState = {
   parametros: null,
@@ -5409,9 +5410,33 @@ function selecionarClienteRelatorioMixEmbalagens(chave = "") {
 }
 
 function abrirPdvsRelatorioMixEmbalagens() {
-  if (!document.getElementById("vendasMixVendedor")?.value || vendasState.mixCarregando) return;
+  if (!Array.isArray(vendasState.mixVendedores) || !vendasState.mixVendedores.length || vendasState.mixCarregando) return;
   const dialog = document.getElementById("vendasMixPdvsDialog");
   if (dialog && !dialog.open) dialog.showModal();
+}
+
+function abrirVendedoresRelatorioMixEmbalagens() {
+  const vendedores = vendasState.lastPayload?.vendedores || [];
+  const selecionados = vendasState.mixVendedores;
+  const opcoes = document.getElementById("vendasMixVendedoresOpcoes");
+  if (opcoes) opcoes.innerHTML = vendedores.map((vendedor) => {
+    const chave = vendedor?.chave || "";
+    const rotulo = [vendedor?.codigo, vendedor?.nome].filter(Boolean).join(" - ") || chave || "Sem vendedor";
+    const marcado = selecionados == null || selecionados.includes(chave);
+    return `<label><input type="checkbox" value="${_escAttr(chave)}" ${marcado ? "checked" : ""}>${_escHtml(rotulo)}</label>`;
+  }).join("");
+  const dialog = document.getElementById("vendasMixVendedoresDialog");
+  if (dialog && !dialog.open) dialog.showModal();
+}
+
+function aplicarVendedoresRelatorioMixEmbalagens() {
+  const opcoes = [...document.querySelectorAll("#vendasMixVendedoresOpcoes input")];
+  const selecionados = opcoes.filter(el => el.checked).map(el => el.value);
+  vendasState.mixVendedores = selecionados.length === opcoes.length ? null : selecionados;
+  const cliente = document.getElementById("vendasMixCliente");
+  if (cliente) cliente.value = "";
+  document.getElementById("vendasMixVendedoresDialog")?.close();
+  carregarRelatorioMixEmbalagens().catch(() => {});
 }
 
 function abrirGruposRelatorioMixEmbalagens() {
@@ -5433,10 +5458,9 @@ function aplicarGruposRelatorioMixEmbalagens() {
 
 function limparFiltrosRelatorioMixEmbalagens() {
   limparPeriodoRelatoriosVendas();
+  vendasState.mixVendedores = null;
   vendasState.mixGrupos = null;
-  const vendedor = document.getElementById("vendasMixVendedor");
   const cliente = document.getElementById("vendasMixCliente");
-  if (vendedor) vendedor.value = "";
   if (cliente) cliente.value = "";
   carregarRelatorioMixEmbalagens().catch(() => {});
 }
@@ -5453,7 +5477,14 @@ function renderRelatorioMixEmbalagens(payload = {}) {
   const faixas = Array.isArray(payload?.resumo_faixas) ? payload.resumo_faixas : [];
   const resumo = payload?.resumo_geral || {};
   const detalhe = payload?.detalhe_pdv || null;
-  const vendedorFiltro = payload?.filtros?.vendedor || document.getElementById("vendasMixVendedor")?.value || "";
+  const vendedoresFiltro = Array.isArray(payload?.filtros?.vendedores)
+    ? payload.filtros.vendedores
+    : (payload?.filtros?.vendedor ? [payload.filtros.vendedor] : vendasState.mixVendedores);
+  vendasState.mixVendedores = vendedoresFiltro == null ? null : [...vendedoresFiltro];
+  const vendedoresSelecionados = vendasState.mixVendedores;
+  const vendedoresTexto = vendedoresSelecionados == null
+    ? "todos"
+    : (vendedoresSelecionados.length ? vendedoresSelecionados.join(", ") : "nenhum");
   const clienteFiltro = payload?.filtros?.cliente || document.getElementById("vendasMixCliente")?.value || "";
   const pdvLabel = detalhe?.cliente || clienteFiltro;
   const arquivo = payload?.arquivo || {};
@@ -5466,7 +5497,6 @@ function renderRelatorioMixEmbalagens(payload = {}) {
     const [ano, mes] = mesAtual.split("-").map(Number);
     fim.value = `${mesAtual}-${new Date(ano, mes, 0).getDate()}`;
   }
-  _vendasPreencherSelectVendedores(vendedores, vendedorFiltro, "vendasMixVendedor");
   _vendasPreencherSelectClientes(clientesDisponiveis, clienteFiltro, "vendasMixCliente", "Todos os PDVs");
 
   const infoEl = document.getElementById("vendasRelArquivoInfo");
@@ -5477,7 +5507,7 @@ function renderRelatorioMixEmbalagens(payload = {}) {
       `Relatorio: Grupos Embalagem`,
       `Período: ${_vendasPeriodoLabel(payload)}`,
     ];
-    if (vendedorFiltro) parts.push(`Vendedor: ${vendedorFiltro}`);
+    if (vendedoresSelecionados != null) parts.push(`Vendedores: ${vendedoresTexto}`);
     if (clienteFiltro) parts.push(`PDV: ${pdvLabel}`);
     infoEl.textContent = parts.join(" | ");
   }
@@ -5515,11 +5545,16 @@ function renderRelatorioMixEmbalagens(payload = {}) {
     gruposBtn.textContent = grupos == null ? "Grupos" : `Grupos (${grupos.length})`;
     gruposBtn.disabled = false;
   }
+  const vendedoresBtn = document.getElementById("vendasMixVendedoresBtn");
+  if (vendedoresBtn) {
+    vendedoresBtn.textContent = vendedoresSelecionados == null ? "Vendedores" : `Vendedores (${vendedoresSelecionados.length})`;
+    vendedoresBtn.disabled = false;
+  }
   const contexto = document.getElementById("vendasMixPdvsContexto");
-  if (contexto) contexto.textContent = `${vendedorFiltro} | ${_vendasPeriodoLabel(payload)} | Grupos: ${gruposTexto}`;
+  if (contexto) contexto.textContent = `Vendedores: ${vendedoresTexto} | ${_vendasPeriodoLabel(payload)} | Grupos: ${gruposTexto}`;
   const verPdvs = document.getElementById("vendasMixVerPdvs");
   if (verPdvs) {
-    verPdvs.classList.toggle("hidden", !document.getElementById("vendasMixVendedor")?.value);
+    verPdvs.classList.toggle("hidden", !Array.isArray(vendedoresSelecionados) || !vendedoresSelecionados.length);
     verPdvs.disabled = false;
   }
   vendasState.mixCarregando = false;
@@ -5532,22 +5567,28 @@ async function carregarRelatorioMixEmbalagens() {
   if (dialog?.open) dialog.close();
   const gruposDialog = document.getElementById("vendasMixGruposDialog");
   if (gruposDialog?.open) gruposDialog.close();
+  const vendedoresDialog = document.getElementById("vendasMixVendedoresDialog");
+  if (vendedoresDialog?.open) vendedoresDialog.close();
   const gruposBtn = document.getElementById("vendasMixGruposBtn");
   if (gruposBtn) gruposBtn.disabled = true;
+  const vendedoresBtn = document.getElementById("vendasMixVendedoresBtn");
+  if (vendedoresBtn) vendedoresBtn.disabled = true;
   vendasState.mixCarregando = true;
   const verPdvs = document.getElementById("vendasMixVerPdvs");
   if (verPdvs) {
-    verPdvs.classList.toggle("hidden", !document.getElementById("vendasMixVendedor")?.value);
+    verPdvs.classList.toggle("hidden", !Array.isArray(vendasState.mixVendedores) || !vendasState.mixVendedores.length);
     verPdvs.disabled = true;
   }
   const infoEl = document.getElementById("vendasRelArquivoInfo");
   if (infoEl) infoEl.textContent = "Carregando grupos embalagem...";
 
   const params = new URLSearchParams();
-  const vendedor = document.getElementById("vendasMixVendedor")?.value || "";
   const cliente = document.getElementById("vendasMixCliente")?.value || "";
   params.set("tipo_relatorio", "grupos_embalagem");
-  if (vendedor) params.set("vendedor", vendedor);
+  if (vendasState.mixVendedores != null) {
+    if (vendasState.mixVendedores.length) vendasState.mixVendedores.forEach(vendedor => params.append("vendedor", vendedor));
+    else params.set("vendedor", "");
+  }
   if (cliente) params.set("cliente", cliente);
   if (vendasState.mixGrupos != null) params.set("grupos", vendasState.mixGrupos.join(","));
 
@@ -5558,6 +5599,10 @@ async function carregarRelatorioMixEmbalagens() {
   if (!resp.ok) {
     const erro = data?.erro || "Falha ao carregar relatorio de grupos embalagem.";
     if (infoEl) infoEl.textContent = erro;
+    vendasState.mixCarregando = false;
+    if (gruposBtn) gruposBtn.disabled = false;
+    if (vendedoresBtn) vendedoresBtn.disabled = false;
+    if (verPdvs) verPdvs.disabled = false;
     if (resp.status !== 409) alert(erro);
     return;
   }
@@ -5876,6 +5921,8 @@ function setVendasRelatorioModo(modo){
   if (mixDialog?.open) mixDialog.close();
   const gruposDialog = document.getElementById("vendasMixGruposDialog");
   if (gruposDialog?.open) gruposDialog.close();
+  const vendedoresDialog = document.getElementById("vendasMixVendedoresDialog");
+  if (vendedoresDialog?.open) vendedoresDialog.close();
   const viewDia = document.getElementById("vendasViewRelatorioDiario");
   const tabDia = document.getElementById("vendasRelTabDiario");
   if (viewDia) viewDia.classList.toggle("hidden", valor !== "diario");

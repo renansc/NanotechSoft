@@ -533,9 +533,11 @@ Regras, snapshots e limites em `apps/riob/source/docs/CUSTO_DIARIO.md` na raiz.
 All five SELLOUT report tabs share one submenu/file row, RioB total/CLT/autonomous
 sales cards, and inclusive date bounds that override the month when present.
 Exception: Grupos Embalagem hides the RioB/CLT/autonomous cards and has no
-month selector. Its shared dates, seller, PDV and actions form one desktop row.
-The full-width range summary precedes the period summary. Selecting a seller
-enables Ver PDVs; list and detail live only in a native modal dialog. Selecting
+month selector. Its shared dates, multi-seller selector, PDV and actions form
+one desktop row. Seller selection uses the same checkbox-dialog pattern as the
+group filter; repeated `vendedor` parameters are combined before PDV aggregation.
+The full-width range summary precedes the period summary. Selecting one or more
+sellers enables Ver PDVs; list and detail live only in a native modal dialog. Selecting
 a row there updates detail without filtering the list. Clearing filters restores
 the latest available month as dates. The existing vendas permission covers it.
 Preserve the three existing autonomous sellers (Luis Carlos Pires, Norival

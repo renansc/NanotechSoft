@@ -16,7 +16,7 @@ Ele complementa:
 flowchart TB
     U[Usuarios] --> N[Nginx]
     N --> APP[Flask app]
-    U --> WEBUI[Open WebUI]
+    U --> WEBUI[Open WebUI em host externo]
     WEBUI --> OLLAMA[Ollama / Qwen]
     APP --> OLLAMA
     APP --> DB[(MariaDB)]
@@ -47,13 +47,14 @@ flowchart TD
     L --> M[Ollama sobe]
     K --> M
     M --> N[ollama-model-init garante Qwen]
-    N --> O[Open WebUI sobe]
     N --> P[app sobe]
     P --> Q[ensure_schema]
     Q --> R[proxy sobe]
-    O --> S[Sistema pronto]
     R --> S
 ```
+
+O Open WebUI externo tem composicao e deploy independentes e nao participa do
+fluxo acima.
 
 ## 4. Processo de inicializacao do backend
 

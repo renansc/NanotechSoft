@@ -103,48 +103,6 @@ services:
     volumes:
       - ./deploy/ollama/pull-model.sh:/deploy/ollama/pull-model.sh:ro
 
-  open-webui:
-    build:
-      context: .
-      dockerfile: deploy/open-webui/Dockerfile
-      network: host
-      args:
-        OPEN_WEBUI_BASE_IMAGE: ${RB_OPEN_WEBUI_IMAGE:-ghcr.io/open-webui/open-webui:v0.9.6}
-        OPEN_WEBUI_NUMPY_VERSION: ${RB_OPEN_WEBUI_NUMPY_VERSION:-2.2.6}
-    image: ${RB_OPEN_WEBUI_COMPAT_IMAGE:-riob-open-webui:v0.9.6-numpy2.2.6}
-    container_name: riobranco-open-webui
-    restart: unless-stopped
-    depends_on:
-      ollama:
-        condition: service_healthy
-      ollama-model-init:
-        condition: service_completed_successfully
-    environment:
-      OLLAMA_BASE_URL: ${RB_OPEN_WEBUI_OLLAMA_URL:-http://ollama:11434}
-      DEFAULT_MODELS: ${RB_MANAGED_OLLAMA_MODEL:-qwen2.5:3b}
-      WEBUI_NAME: ${RB_OPEN_WEBUI_NAME:-RioBranco IA}
-      WEBUI_SECRET_KEY: ${RB_OPEN_WEBUI_SECRET_KEY:?RB_OPEN_WEBUI_SECRET_KEY deve ser definida no .env}
-      ENABLE_SIGNUP: ${RB_OPEN_WEBUI_ENABLE_SIGNUP:-true}
-      OFFLINE_MODE: ${RB_OPEN_WEBUI_OFFLINE_MODE:-true}
-      HF_HUB_OFFLINE: ${RB_OPEN_WEBUI_HF_HUB_OFFLINE:-1}
-      ENABLE_VERSION_UPDATE_CHECK: "false"
-      RAG_EMBEDDING_MODEL_AUTO_UPDATE: "false"
-      RAG_RERANKING_MODEL_AUTO_UPDATE: "false"
-      WHISPER_MODEL_AUTO_UPDATE: "false"
-      SCARF_NO_ANALYTICS: "true"
-      DO_NOT_TRACK: "true"
-      ANONYMIZED_TELEMETRY: "false"
-    ports:
-      - "0.0.0.0:${RB_OPEN_WEBUI_PORT:-3000}:8080"
-    volumes:
-      - open_webui_data:/app/backend/data
-    healthcheck:
-      test: ["CMD-SHELL", "curl --silent --fail --output /tmp/open-webui-health.json http://localhost:8080/health && jq -e '.status == true' /tmp/open-webui-health.json >/dev/null"]
-      interval: 10s
-      timeout: 5s
-      retries: 30
-      start_period: 90s
-
   app:
     build:
       context: .
@@ -286,5 +244,3 @@ volumes:
   app_data:
   cameras_data:
   ollama_data:
-  open_webui_data:
-    name: ${RB_OPEN_WEBUI_VOLUME:-riob_open_webui_data}

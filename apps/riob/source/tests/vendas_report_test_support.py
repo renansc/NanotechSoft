@@ -19,6 +19,7 @@ def load_sales_server():
     names = {
         '_vendas_vendedor_excluido', '_vendas_sql_vendedores_validos', '_vendas_texto_sem_acentos',
         '_normalizar_chave_texto', '_vendas_tipo_vendedor', '_vendas_sql_campos_financeiros',
+        '_vendas_filtro_vendedores_normalizar',
         '_vendas_sql_categoria_preco_medio_expr', '_vendas_sql_periodo_where', '_vendas_mes_subtrair',
         '_vendas_validar_periodo', '_vendas_cabecalho_resumo', '_vendas_periodo_opcoes',
         '_vendas_bonificacoes_payload', '_vendas_bonificacoes_normalizar_mes', '_vendas_meses_disponiveis_db',

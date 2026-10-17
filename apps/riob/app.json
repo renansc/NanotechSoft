@@ -47,7 +47,7 @@
         "nome": "Vendas diarias - mes atual",
         "url": "/apps/riob#dashboard:vendas_diario",
         "recurso": "vendas",
-        "recurso_nome": "Vendas, relatorios diarios e mensais/anuais por periodo, RioB/CLT/autonomos e filtros compactos no desktop, grupos de embalagem com filtro de grupos e PDVs em popup e importacoes (TXT, PDF e SELLOUT unificado IND3/INDB) com status persistente por pasta; carteira de PDVs completa ou parcial; preço med.varia por cidade e produto; PDVs e preco medio em popup com ordenacao por valor e nome; ranking anual de vendedores e clientes por perda em hl, vendas em popup"
+        "recurso_nome": "Vendas, relatorios diarios e mensais/anuais por periodo, RioB/CLT/autonomos e filtros compactos no desktop, grupos de embalagem com selecao multipla de vendedores/grupos e PDVs em popup e importacoes (TXT, PDF e SELLOUT unificado IND3/INDB) com status persistente por pasta; carteira de PDVs completa ou parcial; preço med.varia por cidade e produto; PDVs e preco medio em popup com ordenacao por valor e nome; ranking anual de vendedores e clientes por perda em hl, vendas em popup"
       },
       {
         "nome": "Vendas Anual RioB - ranking e vendas em popup",
@@ -503,7 +503,7 @@
             "nome": "Vendas anual",
             "url": "/apps/riob#dashboard:vendas_anual",
             "recurso": "vendas",
-            "recurso_nome": "Vendas, relatorios diarios e mensais/anuais por periodo, RioB/CLT/autonomos e filtros compactos no desktop, grupos de embalagem com filtro de grupos e PDVs em popup e importacoes (TXT, PDF e SELLOUT unificado IND3/INDB) com status persistente por pasta; carteira de PDVs completa ou parcial; preço med.varia por cidade e produto; PDVs e preco medio em popup com ordenacao por valor e nome; ranking anual de vendedores e clientes por perda em hl, vendas em popup"
+            "recurso_nome": "Vendas, relatorios diarios e mensais/anuais por periodo, RioB/CLT/autonomos e filtros compactos no desktop, grupos de embalagem com selecao multipla de vendedores/grupos e PDVs em popup e importacoes (TXT, PDF e SELLOUT unificado IND3/INDB) com status persistente por pasta; carteira de PDVs completa ou parcial; preço med.varia por cidade e produto; PDVs e preco medio em popup com ordenacao por valor e nome; ranking anual de vendedores e clientes por perda em hl, vendas em popup"
           },
           {
             "nome": "Vendas diarias - mes atual",

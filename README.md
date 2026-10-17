@@ -65,10 +65,12 @@ Bonificacoes e Vendas Diario mantem os totais ao lado do submenu; no PC, datas,
 acoes e filtros ocupam uma unica linha. Seus indicadores ficam em uma linha
 acima da tabela e nao repetem o periodo ja informado nas datas.
 Grupos de embalagem dispensa os totais RioB/CLT/Autonomos e o seletor de mes:
-usa datas, vendedor e PDV na mesma linha no PC, com Atualizar e Limpar filtros.
+usa datas, selecao de um ou mais vendedores e PDV na mesma linha no PC, com
+Atualizar e Limpar filtros.
 Resumo por Faixa ocupa a largura, seguido do Resumo do periodo. Selecionar
-um vendedor libera Ver PDVs, com lista e detalhe somente em popup. O botao
-Grupos ao lado do PDV permite marcar quais embalagens entram nos calculos,
+um ou mais vendedores libera Ver PDVs, com lista e detalhe somente em popup.
+Os botoes Vendedores e Grupos permitem marcar, respectivamente, quais
+vendedores e embalagens entram nos calculos,
 inclusive excluir os retornaveis individualmente. Neste relatorio, Astuba
 integra PET 2L e Agua conta como um unico grupo.
 Balcao/Outros ficam fora dos calculos; Astuba 2L tem grupo de preco separado
@@ -220,6 +222,11 @@ O perfil Render publica pelo `render.yaml`; `up.sh`, `down.sh` e `update.sh`
 nao operam Docker local nesse perfil. O Git seguro valida e envia somente o
 codigo no Render. Nos perfis locais, `up.sh` inicia o banco com `--no-recreate`,
 `down.sh` para apenas as aplicacoes e `update.sh` nao opera bancos.
+
+O Open WebUI e um servico externo e nao faz parte desses comandos nem do deploy
+canonico. Quando ele usa o Ollama opcional deste servidor, a API deve ser
+publicada somente no IP Tailscale. Consulte
+[Open WebUI em host externo](docs/OPEN_WEBUI_EXTERNO.md).
 Publicar no Git nao atualiza automaticamente os demais clientes: cada deploy
 aplica `./update.sh` em seu proprio ambiente e momento autorizado.
 
@@ -281,6 +288,12 @@ de e-mail já configurada no RioB e `TECH_ALERT_EMAIL_TO` define somente o
 destinatário; a substituição opcional por `SMTP_*` fica documentada no README
 do módulo. Consulte
 `apps/tecnologia/README.md` para os limites do diagnóstico de Wi-Fi e a operação.
+No Monitoramento de link, uma interface SNMP marcada como WAN/uplink mede o
+consumo total da Internet, inclusive celulares sem cadastro; interfaces LAN/Wi-Fi
+mostram separadamente o tráfego do lado interno. Sem essa fronteira configurada,
+o painel informa que continua usando apenas a estimativa dos equipamentos com
+agente. A parcela não atribuída não identifica IP: atribuição exata exige API do
+roteador, NetFlow, sFlow ou IPFIX.
 O mesmo módulo possui uma seção de backups externos: o portal configura
 periodicidade e retenção, enquanto um agente instalado na máquina responsável
 gera dumps MySQL/MariaDB e troca configurações e resultados em JSON. Essa rotina

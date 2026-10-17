@@ -266,14 +266,16 @@ temporarias com dados sinteticos; o teste visual usa respostas simuladas.
 ### Grupos de embalagem: periodo e popup de PDVs (02/10/2026)
 
 A aba omite os totais RioB/CLT/Autonomos e o seletor de mes. Datas inicial/final,
-vendedor, PDV, Atualizar relatorio e Limpar filtros ficam juntos no desktop e
+selecao de vendedores, PDV, Atualizar relatorio e Limpar filtros ficam juntos no desktop e
 se reorganizam no celular. Resumo por Faixa ocupa toda a largura; Resumo do
 periodo vem abaixo. O intervalo pode abranger varios meses, com limites inclusivos.
 Sem datas, a API conserva o ultimo mes disponivel, que a tela apresenta como
-intervalo explicito; Limpar filtros restaura esse padrao e remove vendedor/PDV.
-Nao envia um mes herdado de outra aba. Trocar vendedor limpa o PDV anterior.
+intervalo explicito; Limpar filtros restaura esse padrao e remove vendedores/PDV.
+Nao envia um mes herdado de outra aba. Trocar a selecao de vendedores limpa o
+PDV anterior. O filtro envia uma ocorrencia de `vendedor` por chave selecionada;
+ausente inclui todos e presente vazio nao inclui nenhum.
 
-Ver PDVs aparece ao selecionar vendedor e fica disponivel apos carregar o
+Ver PDVs aparece ao selecionar um ou mais vendedores e fica disponivel apos carregar o
 relatorio. Abre um dialogo com PDVs do filtro e Detalhe do PDV; clicar em um
 cliente mostra seus grupos sem alterar filtros nem reduzir a lista. Fechar ou
 Escape retorna ao relatorio. Atualizar filtros fecha o popup, evitando detalhes
@@ -289,13 +291,14 @@ filtros restaura o conjunto completo. O popup de PDVs identifica a selecao.
 
 Taxonomia exclusiva desta projecao: PET 2L inclui Astuba; agua com/sem gas e
 um unico grupo; PET 600 ml, PET 200 ml, 600 ml retornavel e 200 ml retornavel
-permanecem separados. A selecao integra as duas chaves de cache (rota e
-payload), sem reimportar ou modificar itens. Precos/variacoes preservam Astuba
+permanecem separados. A selecao de vendedores e grupos integra as duas chaves
+de cache (rota e payload), sem reimportar ou modificar itens. Precos/variacoes preservam Astuba
 separada. Testes de agregacao e cache: `test_vendas_mix_grupos.py`.
 
 Reutiliza GET /api/vendas/relatorio?tipo_relatorio=grupos_embalagem e o recurso
-`riob:vendas`; o catalogo explicita filtro de grupos e PDVs em popup, preservando destinos, chaves,
-concessoes e os bloqueios de sessao/contrato/recurso no servidor. Nao cria rota.
+`riob:vendas`; o catalogo explicita filtros de vendedores/grupos e PDVs em
+popup, preservando destinos, chaves, concessoes e os bloqueios de
+sessao/contrato/recurso no servidor. Nao cria rota.
 Validacao visual e interativa: `tests/check_vendas_reports.py`; autorizacao:
 `tests/test_vendas_reports_access.py`.
 
@@ -308,6 +311,14 @@ Agua unica e zero PDVs para selecao vazia. Healthcheck do portal aprovado.
 Sem commit/push ou deploy Render nesta alteracao. A resposta externa que citava
 `agents/riob/...` e `docker-compose-reborn-deploy.yml` nao correspondia a
 arquivos existentes neste checkout; o caminho real segue `apps/riob/source`.
+
+Atualizado em 17/10/2026: o filtro de vendedor de Grupos Embalagem passou a
+aceitar selecao multipla no mesmo padrao de checkboxes do filtro Grupos. A API
+aceita parametros `vendedor` repetidos, diferencia todos/nenhum e soma a
+carteira apenas dos vendedores selecionados. Foram aprovados sete testes do mix,
+sete da carteira de PDVs, nove de acesso, seis regras de periodo/cache (quatro
+integracoes SQL opcionais ficaram ignoradas) e a validacao visual em PC/celular.
+Esta atualizacao nao executou commit, push, rebuild da pilha local ou deploy.
 
 ### Vendas Diario em Relatorios e dashboard do mes atual (29/09/2026)
 

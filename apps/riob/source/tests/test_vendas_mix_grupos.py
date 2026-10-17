@@ -97,6 +97,18 @@ class MixGruposTest(unittest.TestCase):
         self.assertEqual(all_rows, self.payload()['clientes'])
         self.assertEqual([], self.payload(['PET 2L'], 'B')['clientes'])
 
+    def test_sql_accepts_multiple_sellers_and_distinguishes_empty_selection(self):
+        where, params = self.s._vendas_sql_periodo_where(
+            'mix-test', data_inicio='2026-09-01', data_fim='2026-10-02',
+            filtro_vendedor=['VENDEDOR B', 'VENDEDOR A'])
+        self.assertIn('vendedor_key_upper IN (%s,%s)', where)
+        self.assertEqual(['VENDEDOR A', 'VENDEDOR B'], params[-2:])
+        where_empty, _ = self.s._vendas_sql_periodo_where('mix-test', filtro_vendedor=[])
+        self.assertIn('1=0', where_empty)
+        where_all, _ = self.s._vendas_sql_periodo_where('mix-test', filtro_vendedor='')
+        self.assertNotIn('vendedor_key_upper IN', where_all)
+        self.assertNotIn('1=0', where_all)
+
     def test_http_filter_and_cache_do_not_mix_selections(self):
         tree = ast.parse((Path(__file__).resolve().parents[1] / 'server.py').read_text())
         node = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'relatorio_vendas')
@@ -115,6 +127,12 @@ class MixGruposTest(unittest.TestCase):
                 response = client.get('/report', query_string=query)
                 self.assertEqual(200, response.status_code, response.json)
                 self.assertEqual(expected, response.json['resumo_geral']['pdvs'])
+            response = client.get('/report', query_string=[
+                ('tipo_relatorio', 'grupos_embalagem'), ('data_inicio', '2026-09-01'),
+                ('data_fim', '2026-10-02'), ('vendedor', 'VENDEDOR B'),
+                ('vendedor', 'VENDEDOR A')])
+            self.assertEqual(200, response.status_code, response.json)
+            self.assertEqual(['VENDEDOR A', 'VENDEDOR B'], response.json['filtros']['vendedores'])
 
 
 if __name__ == '__main__':

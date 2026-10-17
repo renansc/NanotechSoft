@@ -31385,9 +31385,16 @@ def _vendas_sql_campos_financeiros(alias=""):
         "tipo_vendedor": tipo_vendedor_expr,
     }
 
+def _vendas_filtro_vendedores_normalizar(filtro_vendedor):
+    if isinstance(filtro_vendedor, (list, tuple, set)):
+        return sorted({_as_str(item).upper() for item in filtro_vendedor if _as_str(item).strip()})
+    valor = _as_str(filtro_vendedor).upper()
+    return [valor] if valor else None
+
+
 def _vendas_sql_periodo_where(cache_id, mes_key=None, data_inicio=None, data_fim=None, filtro_vendedor="", filtro_cliente=""):
     cache_id = _as_str(cache_id)
-    filtro_vendedor = _as_str(filtro_vendedor).upper()
+    filtros_vendedores = _vendas_filtro_vendedores_normalizar(filtro_vendedor)
     filtro_cliente = _as_str(filtro_cliente).upper()
     where = ["import_id=%s", _vendas_sql_vendedores_validos()]
     params = [cache_id]
@@ -31409,9 +31416,12 @@ def _vendas_sql_periodo_where(cache_id, mes_key=None, data_inicio=None, data_fim
     if isinstance(data_fim, datetime.date):
         where.append("data_ref IS NOT NULL AND data_ref <= %s")
         params.append(data_fim)
-    if filtro_vendedor:
-        where.append("vendedor_key_upper=%s")
-        params.append(filtro_vendedor)
+    if filtros_vendedores is not None:
+        if filtros_vendedores:
+            where.append(f"vendedor_key_upper IN ({','.join(['%s'] * len(filtros_vendedores))})")
+            params.extend(filtros_vendedores)
+        else:
+            where.append("1=0")
     if filtro_cliente:
         where.append("cliente_norm=%s")
         params.append(filtro_cliente)
@@ -31823,13 +31833,14 @@ def _vendas_mix_embalagens_grupo_relatorio(grupo):
 
 def _vendas_mix_embalagens_payload(cache_entry, source, cfg, mes=None, filtro_vendedor="", filtro_cliente="", allow_rebuild=False, data_inicio=None, data_fim=None, filtro_grupos=None):
     cache_id = _as_str(cache_entry.get("id"))
+    filtros_vendedores = _vendas_filtro_vendedores_normalizar(filtro_vendedor)
     grupos_selecionados = None if filtro_grupos is None else {
         _vendas_mix_embalagens_grupo_relatorio(grupo) for grupo in filtro_grupos if _as_str(grupo).strip()
     }
     cache_key = _vendas_relatorio_cache_chave(
         "mix_embalagens",
         cache_id,
-        _as_str(filtro_vendedor),
+        None if filtros_vendedores is None else filtros_vendedores,
         _as_str(filtro_cliente),
         _as_str(mes),
         _as_str(data_inicio),
@@ -31844,7 +31855,7 @@ def _vendas_mix_embalagens_payload(cache_entry, source, cfg, mes=None, filtro_ve
     meses_disponiveis = _vendas_meses_disponiveis_db(cache_id)
     mes_key = "" if data_inicio or data_fim else _vendas_bonificacoes_normalizar_mes(mes, None, None, meses_disponiveis)
     vendedores, _ = _vendas_periodo_opcoes(cache_id, mes_key, data_inicio, data_fim)
-    where, params = _vendas_sql_periodo_where(cache_id, mes_key, data_inicio, data_fim, filtro_vendedor)
+    where, params = _vendas_sql_periodo_where(cache_id, mes_key, data_inicio, data_fim, filtros_vendedores)
     finance = _vendas_sql_campos_financeiros()
     conn = get_conn()
     cur = conn.cursor(dictionary=True)
@@ -31876,7 +31887,6 @@ def _vendas_mix_embalagens_payload(cache_entry, source, cfg, mes=None, filtro_ve
         conn.close()
     clientes_base = [_vendas_mix_embalagens_cliente_publico(acc) for acc in clientes_map.values()]
     clientes_base.sort(key=lambda item: (-item['qtd_grupos'], item['cliente'], item['chave']))
-    filtro_vendedor = _as_str(filtro_vendedor).upper()
     filtro_cliente = _as_str(filtro_cliente).upper()
 
     clientes_disponiveis = sorted(
@@ -31890,7 +31900,7 @@ def _vendas_mix_embalagens_payload(cache_entry, source, cfg, mes=None, filtro_ve
         if not filtro_cliente or _as_str(item.get("chave")).upper() == filtro_cliente
     ]
     totais_carteira = vendas_pdvs.ler_totais(get_conn)
-    carteira = vendas_pdvs.resumo_carteira(totais_carteira, vendedores, filtro_vendedor)
+    carteira = vendas_pdvs.resumo_carteira(totais_carteira, vendedores, filtros_vendedores)
     total_carteira = carteira['total_carteira']
     faltantes = carteira['carteiras_pendentes']
     resumo_geral, resumo_faixas = _vendas_mix_embalagens_resumo(clientes, total_carteira)
@@ -31914,7 +31924,8 @@ def _vendas_mix_embalagens_payload(cache_entry, source, cfg, mes=None, filtro_ve
         },
         "filtros": {
             "mes": mes_key,
-            "vendedor": filtro_vendedor,
+            "vendedor": filtros_vendedores[0] if filtros_vendedores and len(filtros_vendedores) == 1 else "",
+            "vendedores": filtros_vendedores,
             "cliente": filtro_cliente,
             "grupos": None if grupos_selecionados is None else sorted(grupos_selecionados),
         },
@@ -34720,10 +34731,15 @@ def relatorio_vendas():
             raise ValueError('Tipo de consulta anual inválido.')
         cache_entry, source, cfg = _vendas_obter_cache_ativo(force_refresh=False)
         cache_id = _as_str(cache_entry.get("id"))
+        filtro_vendedor_cache = (
+            request.args.getlist("vendedor")
+            if tipo_relatorio_norm in vendas_pdvs.MIX_TYPES and "vendedor" in request.args
+            else request.args.get("vendedor")
+        )
         cache_key = _vendas_relatorio_cache_chave(
             tipo_relatorio_norm,
             cache_id,
-            request.args.get("vendedor"),
+            filtro_vendedor_cache,
             request.args.get("cliente"),
             _as_str(request.args.get("mes")),
             _fmt_date(_parse_data_br(request.args.get("data_inicio"))) if request.args.get("data_inicio") else "",
@@ -34771,7 +34787,7 @@ def relatorio_vendas():
                 data_inicio=request.args.get("data_inicio"),
                 data_fim=request.args.get("data_fim"),
                 mes=request.args.get("mes") or request.args.get("data_inicio") or request.args.get("data_fim"),
-                filtro_vendedor=request.args.get("vendedor"),
+                filtro_vendedor=request.args.getlist("vendedor") if "vendedor" in request.args else None,
                 filtro_cliente=request.args.get("cliente"),
                 filtro_grupos=request.args.get("grupos").split(",") if "grupos" in request.args else None,
             )
