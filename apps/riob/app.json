@@ -16,7 +16,7 @@
         "url": "/apps/riob#custoProdutoDashboard",
         "grupo": "RioB",
         "recurso": "custo_produto_dashboard",
-        "recurso_nome": "Dashboard de custos: diario por grupo e mensal por produto"
+        "recurso_nome": "Consulta de custos em cards de agua, PET e retornavel e relatorio PDF por sabor com formulas, XML/SPED, notas, unidades, rateios e embalagens"
       },
       {
         "nome": "Painel RioB",
@@ -47,7 +47,7 @@
         "nome": "Vendas diarias - mes atual",
         "url": "/apps/riob#dashboard:vendas_diario",
         "recurso": "vendas",
-        "recurso_nome": "Vendas, relatorios diarios e mensais/anuais por periodo, RioB/CLT/autonomos e filtros compactos no desktop, grupos de embalagem com selecao multipla de vendedores/grupos e PDVs em popup e importacoes (TXT, PDF e SELLOUT unificado IND3/INDB) com status persistente por pasta; carteira de PDVs completa ou parcial; preço med.varia por cidade e produto; PDVs e preco medio em popup com ordenacao por valor e nome; ranking anual de vendedores e clientes por perda em hl, vendas em popup"
+        "recurso_nome": "Vendas e relatorios diarios e mensais/anuais RioB/CLT/autonomos baseados exclusivamente no SELLOUT_D unificado de IND3 e INDB, com datas reais; grupos de embalagem com selecao multipla de vendedores/grupos e PDVs em popup; PDVs e preco medio em popup com ordenacao por valor e nome; bonificacoes e ranking anual"
       },
       {
         "nome": "Vendas Anual RioB - ranking e vendas em popup",
@@ -155,7 +155,8 @@
         "nome": "Cadastrar produtos RioB",
         "url": "/apps/riob#cadastros:estoque_produtos",
         "grupo": "RioB",
-        "recurso": "estoque"
+        "recurso": "estoque",
+        "recurso_nome": "Estoque: cadastro e movimentacao, descricao SPED do produto, posicao diaria por grupo, pacotes/caixas, unidades, movimentos e PDF"
       },
       {
         "nome": "Grupos de estoque RioB",
@@ -212,6 +213,12 @@
         "recurso": "estoque"
       },
       {
+        "nome": "Aprovar XML e PDF de estoque",
+        "url": "/apps/riob#estoque:documentos",
+        "recurso": "estoque_documentos_aprovar",
+        "recurso_nome": "Estoque: revisar, aceitar ou rejeitar entradas/saidas de XML e cargas PDF da pasta compartilhada"
+      },
+      {
         "nome": "Rastreio de lotes RioB",
         "url": "/apps/riob#estoque:rastreio",
         "recurso": "estoque"
@@ -229,6 +236,18 @@
       }
     ],
     "relatorios": [
+      {
+        "nome": "Custo produto",
+        "url": "/apps/riob#relatorios:custo_produto",
+        "recurso": "custo_produto_dashboard",
+        "recurso_nome": "Consulta de custos em cards de agua, PET e retornavel e relatorio PDF por sabor com formulas, XML/SPED, notas, unidades, rateios e embalagens"
+      },
+      {
+        "nome": "Posicao de estoque do dia por grupo",
+        "url": "/apps/riob#relatorios:estoque_posicao_dia",
+        "recurso": "estoque",
+        "recurso_nome": "Estoque: cadastro e movimentacao, descricao SPED do produto, posicao diaria por grupo, pacotes/caixas, unidades, movimentos e PDF"
+      },
       {
         "nome": "Estoque Comprometido RioB",
         "url": "/apps/riob#relatorios:estoque_comprometido",
@@ -253,7 +272,8 @@
       {
         "nome": "Relatorios de Frota RioB",
         "url": "/apps/riob#gestaofrota:relatorios",
-        "recurso": "frota"
+        "recurso": "frota",
+        "recurso_nome": "Frota: relatorio mensal de medias KM/L, abastecimentos e PDFs operacionais"
       },
       {
         "nome": "Vendas",
@@ -311,7 +331,8 @@
       {
         "nome": "Importar Vendas Diario",
         "url": "/apps/riob#workflow:vendas_diario_importar",
-        "recurso": "vendas"
+        "recurso": "vendas",
+        "recurso_nome": "Atualizar vendas pelo SELLOUT_D unificado de IND3 e INDB; importacoes TXT, PDF e SELLOUT_M desativadas"
       },
       {
         "nome": "Comissões",
@@ -358,7 +379,7 @@
         "url": "/apps/riob#custoProduto",
         "grupo": "RioB",
         "recurso": "custo_produto",
-        "recurso_nome": "Custo do produto, xarope e precos do XML"
+        "recurso_nome": "Custo do produto: formulas, exclusao e recadastro de formulas, remocao e restauracao de itens da lista de producao, referencias de preco por NF-e e SPED, vinculo explicito pela descricao SPED do cadastro de produto, autocomplete de apresentacoes PET por sabor, embalagens por unidade, conversoes, pacotes, valores provisorios, rateios, caldeira por hora e combustivel por 44 h semanais ou abastecimentos"
       },
       {
         "nome": "Lista da frota",
@@ -440,6 +461,12 @@
         "recurso": "config"
       },
       {
+        "nome": "Rateio de custos de producao",
+        "url": "/apps/riob#config:custos_producao",
+        "recurso": "custo_produto",
+        "recurso_nome": "Custo do produto: formulas, exclusao e recadastro de formulas, remocao e restauracao de itens da lista de producao, referencias de preco por NF-e e SPED, vinculo explicito pela descricao SPED do cadastro de produto, autocomplete de apresentacoes PET por sabor, embalagens por unidade, conversoes, pacotes, valores provisorios, rateios, caldeira por hora e combustivel por 44 h semanais ou abastecimentos"
+      },
+      {
         "nome": "Monitor ESXi RioB",
         "url": "/apps/riob#monitor:esxi",
         "recurso": "esxi"
@@ -472,7 +499,7 @@
             "url": "/apps/riob#custoProdutoDashboard",
             "grupo": "RioB",
             "recurso": "custo_produto_dashboard",
-            "recurso_nome": "Dashboard de custos: diario por grupo e mensal por produto"
+            "recurso_nome": "Consulta de custos em cards de agua, PET e retornavel e relatorio PDF por sabor com formulas, XML/SPED, notas, unidades, rateios e embalagens"
           },
           {
             "nome": "RioB - Fretes",
@@ -503,7 +530,7 @@
             "nome": "Vendas anual",
             "url": "/apps/riob#dashboard:vendas_anual",
             "recurso": "vendas",
-            "recurso_nome": "Vendas, relatorios diarios e mensais/anuais por periodo, RioB/CLT/autonomos e filtros compactos no desktop, grupos de embalagem com selecao multipla de vendedores/grupos e PDVs em popup e importacoes (TXT, PDF e SELLOUT unificado IND3/INDB) com status persistente por pasta; carteira de PDVs completa ou parcial; preço med.varia por cidade e produto; PDVs e preco medio em popup com ordenacao por valor e nome; ranking anual de vendedores e clientes por perda em hl, vendas em popup"
+            "recurso_nome": "Vendas e relatorios diarios e mensais/anuais RioB/CLT/autonomos baseados exclusivamente no SELLOUT_D unificado de IND3 e INDB, com datas reais; grupos de embalagem com selecao multipla de vendedores/grupos e PDVs em popup; PDVs e preco medio em popup com ordenacao por valor e nome; bonificacoes e ranking anual"
           },
           {
             "nome": "Vendas diarias - mes atual",
@@ -550,7 +577,8 @@
           {
             "nome": "Cadastrar produtos RioB",
             "url": "/apps/riob#cadastros:estoque_produtos",
-            "recurso": "estoque"
+            "recurso": "estoque",
+            "recurso_nome": "Estoque: cadastro e movimentacao, descricao SPED do produto, posicao diaria por grupo, pacotes/caixas, unidades, movimentos e PDF"
           },
           {
             "nome": "Grupos de estoque RioB",
@@ -584,6 +612,18 @@
           }
         ],
         "relatorios": [
+          {
+            "nome": "Custo produto",
+            "url": "/apps/riob#relatorios:custo_produto",
+            "recurso": "custo_produto_dashboard",
+            "recurso_nome": "Consulta de custos em cards de agua, PET e retornavel e relatorio PDF por sabor com formulas, XML/SPED, notas, unidades, rateios e embalagens"
+          },
+          {
+            "nome": "Posicao de estoque do dia por grupo",
+            "url": "/apps/riob#relatorios:estoque_posicao_dia",
+            "recurso": "estoque",
+            "recurso_nome": "Estoque: cadastro e movimentacao, descricao SPED do produto, posicao diaria por grupo, pacotes/caixas, unidades, movimentos e PDF"
+          },
           {
             "nome": "Vendas",
             "url": "/apps/riob#vendas:relatorio",
@@ -619,7 +659,8 @@
           {
             "nome": "Frota",
             "url": "/apps/riob#gestaofrota:relatorios",
-            "recurso": "frota"
+            "recurso": "frota",
+            "recurso_nome": "Frota: relatorio mensal de medias KM/L, abastecimentos e PDFs operacionais"
           },
           {
             "nome": "Contagens, desperdicio e sobras",
@@ -671,7 +712,8 @@
           {
             "nome": "Importar Vendas Diario",
             "url": "/apps/riob#workflow:vendas_diario_importar",
-            "recurso": "vendas"
+            "recurso": "vendas",
+            "recurso_nome": "Atualizar vendas pelo SELLOUT_D unificado de IND3 e INDB; importacoes TXT, PDF e SELLOUT_M desativadas"
           },
           {
             "nome": "Comissoes",
@@ -721,6 +763,12 @@
             "nome": "Movimentar",
             "url": "/apps/riob#estoque:movimentar",
             "recurso": "estoque"
+          },
+          {
+            "nome": "Aprovar XML e PDF",
+            "url": "/apps/riob#estoque:documentos",
+            "recurso": "estoque_documentos_aprovar",
+            "recurso_nome": "Estoque: revisar, aceitar ou rejeitar entradas/saidas de XML e cargas PDF da pasta compartilhada"
           },
           {
             "nome": "Rastreio",
@@ -801,7 +849,7 @@
             "url": "/apps/riob#custoProduto",
             "grupo": "RioB",
             "recurso": "custo_produto",
-            "recurso_nome": "Custo do produto, xarope e precos do XML"
+            "recurso_nome": "Custo do produto: formulas, exclusao e recadastro de formulas, remocao e restauracao de itens da lista de producao, referencias de preco por NF-e e SPED, vinculo explicito pela descricao SPED do cadastro de produto, autocomplete de apresentacoes PET por sabor, embalagens por unidade, conversoes, pacotes, valores provisorios, rateios, caldeira por hora e combustivel por 44 h semanais ou abastecimentos"
           },
           {
             "nome": "Lista da frota",
@@ -876,6 +924,12 @@
             "nome": "Vendas RioB",
             "url": "/apps/riob#config:vendas",
             "recurso": "config"
+          },
+          {
+            "nome": "Rateio de custos de producao",
+            "url": "/apps/riob#config:custos_producao",
+            "recurso": "custo_produto",
+            "recurso_nome": "Custo do produto: formulas, exclusao e recadastro de formulas, remocao e restauracao de itens da lista de producao, referencias de preco por NF-e e SPED, vinculo explicito pela descricao SPED do cadastro de produto, autocomplete de apresentacoes PET por sabor, embalagens por unidade, conversoes, pacotes, valores provisorios, rateios, caldeira por hora e combustivel por 44 h semanais ou abastecimentos"
           }
         ],
         "config": [

@@ -118,6 +118,7 @@ Observacao critica:
 - `GET /api/dashboard_frota`
 - `GET /api/frota_resumo`
 - `GET /api/frota_historico/<veiculo_id>`
+- `GET /api/frota_relatorio/mensal`
 - `GET /api/frota_relatorio`
 - `GET /api/relatorio`
 - `GET /api/backup`
@@ -740,6 +741,11 @@ cadastrados. Posicao e cadastro identificam os itens por `estoque_area`,
 - `POST /api/estoque/importacoes-xml/lote/preparar`
 - `POST /api/estoque/importacoes-xml/descartar`
 - `POST /api/estoque/importacoes-xml/confirmar`
+- `POST /api/estoque/aprovacoes-pdf/sincronizar`
+- `GET /api/estoque/aprovacoes-pdf`
+- `GET /api/estoque/aprovacoes-pdf/<carga_id>`
+- `POST /api/estoque/aprovacoes-pdf/<carga_id>/confirmar`
+- `POST /api/estoque/aprovacoes-pdf/<carga_id>/rejeitar`
 - `POST /api/estoque/nfe/import`
 - `POST /api/estoque/conferencias/<id>/confirmar`
 - `GET /api/nfe/config`
@@ -801,9 +807,22 @@ Regras:
   estoque antes do comprometimento, evitando duplicidade e mistura de unidades
 - `GET /api/estoque/relatorio-comprometido/pdf` aplica os mesmos filtros e gera
   o PDF imprimivel da aba `Relatorios > Estoque comprometido`
+- `GET /api/estoque/relatorio-posicao-dia` aceita `data=AAAA-MM-DD` e o filtro
+  opcional `grupo_estoque`. Retorna a posição reconstruída no fim do dia, com
+  saldo inicial, entradas, saídas e saldo final por produto e por grupo.
+  Linhas usam o cadastro canônico resolvido (`produto_id`) e incluem
+  `pallet_meta`, fator e embalagem para exibir pacotes/caixas junto do total em
+  unidades, sem unir descrições semelhantes de produtos distintos.
+  `/api/estoque/relatorio-posicao-dia/pdf` gera o mesmo resultado para impressão.
+  Ambos usam o destino individual `relatorios:estoque_posicao_dia` e o recurso
+  existente `estoque`; detalhes em `RELATORIO_POSICAO_ESTOQUE_DIA.md`
 - excluir um produto e uma operacao logica: `estoque_produtos.ativo` e os aliases
   em `estoque_produto_codigos` sao desativados, mas os movimentos permanecem
   preservados para auditoria
+- `GET`, `POST` e `PUT /api/estoque/produtos` expoem `descricao_sped`. O campo
+  opcional guarda a descricao literal do 0200/C170 para vincular compras SPED
+  quando nao existe amarracao confirmada por XML. A API limita a 255 caracteres
+  e rejeita a mesma descricao normalizada em dois produtos ativos
 - grupos podem ser criados e ordenados pela tela `Cadastros > Grupos de estoque`; grupos
   padrao podem ser editados, mas nao excluidos, e grupos em uso precisam ter os
   produtos movidos antes da exclusao
@@ -929,7 +948,34 @@ Regras:
   direcionada para manutencao ou se possui vinculo definitivo com frete
 - a confirmacao consolida o transporte para o almoxarifado e grava as entradas correspondentes no estoque
 
-### 8.3 Configuracao NF-e
+### 8.3 Aprovação de XML e PDF compartilhado
+
+`Estoque > Aprovar XML e PDF` reutiliza a fila de XML de entrada/saída e inclui
+as cargas PDF de `RB_VENDAS_DIARIO_PDF_DIR`. Ler a pasta apenas prepara
+`cargas_estoque_itens`; o saldo só muda no aceite do operador. A prévia informa
+embalagens, fator, total em unidades e saldo projetado por produto.
+
+Fretes que avançam para carregado/entrega não baixam mais a carga
+automaticamente. Se uma NF-e de saída confirmada estiver vinculada à mesma
+`carga_id`, o PDF fica como evidência `coberto_xml` e a API bloqueia a segunda
+baixa. O acesso usa o recurso individual `estoque_documentos_aprovar` no proxy
+e no servidor. Contratos, estados e auditoria estão em
+`APROVACAO_DOCUMENTOS_ESTOQUE.md`.
+
+Cada item aceito gera uma saída `carga_pdf_item`, referenciada pelo ID de
+`cargas_estoque_itens`. Isso permite vários movimentos para a mesma carga sem
+violar o índice único do livro de estoque e conserva a idempotência por item.
+O saldo canônico é carregado uma vez por transação; se a conexão terminar antes
+da resposta, o cliente consulta novamente o estado da carga para distinguir
+falha real de uma baixa já confirmada no servidor.
+
+Cargas PDF anteriores ao acerto podem ser rejeitadas com motivo obrigatório.
+A rejeição é lógica e auditável (`estoque_rejeitado_em`,
+`estoque_rejeitado_por`, `estoque_rejeitado_motivo`): ela retira o documento
+da fila padrão, impede aceite posterior e não apaga a carga/PDF nem movimenta
+saldo. O filtro `Rejeitados` mantém esses registros consultáveis.
+
+### 8.4 Configuracao NF-e
 
 Tabela principal:
 
@@ -1037,6 +1083,7 @@ Marcar uma compra como recebida nao lanca estoque automaticamente.
 - `GET /api/frota_resumo`
 - `GET /api/dashboard_frota`
 - `GET /api/frota_historico/<veiculo_id>`
+- `GET /api/frota_relatorio/mensal`
 - `GET /api/frota_relatorio`
 
 ### `abastecimentos`
@@ -1134,6 +1181,21 @@ Campos:
 - `valor`
 - `observacao`
 - `data_registro`
+
+### `GET /api/frota_relatorio/mensal`
+
+Retorna o relatorio consultavel de abastecimentos do mes. Aceita `mes=AAAA-MM`
+(mes corrente quando omitido) e `veiculo_id` opcional. A resposta contem os
+totais do periodo, resumo por veiculo, opcoes do filtro e os lancamentos
+detalhados.
+
+A media de KM/L e ponderada: soma os quilometros validos entre abastecimentos
+consecutivos e divide pelos litros dos abastecimentos que produziram essas
+medicoes. O primeiro lancamento do mes usa o ultimo abastecimento anterior como
+base, quando existente. ARLA aparece nos litros e custos, mas nao movimenta o
+odometro nem participa da media de KM/L. A tela usa o recurso existente `frota`
+e o destino individual `gestaofrota:relatorios`; nenhuma permissao nova e
+concedida.
 
 ### `GET /api/frota_relatorio`
 
@@ -1752,16 +1814,15 @@ Do ponto de vista de API e dados, o sistema e um monolito com:
 - Gestor de e-mails: `GET /gestor-emails/historico`, `/recuperar`, `/backup` apresentam as acoes separadamente. Os POST existentes `/importar-historico-xml` e `/recuperar-conteudo` continuam sob `riob-email:operacao` (ou `*`).
 - `POST /gestor-emails/backup/download`: recurso `riob-email:backup` (ou `*`), ZIP dos registros importados e anexos disponiveis; metadados JSONL por lote de 100, sem credenciais/configuracoes, sem acesso aos servidores de e-mail. Exige acesso ao modulo e retorna `Cache-Control: no-store`. Anexos fora da raiz permitida ou ausentes sao marcados indisponiveis.
 
-### Leitura conjunta de pastas (11/09/2026)
+### Leitura do SELLOUT diario (20/10/2026)
 
-`POST /api/vendas/diario/importar` sem upload le TXT, PDF e o SELLOUT mensal
-unificado de `IND3/AnalyticsCTA/Dados` e `INDB/AnalyticsCTA/Dados`,
-sem restricao de horario, com recurso `vendas` no proxy. Retorna `sellout.status`
-(`importado`, `ja_importado`, `processando`, `desabilitado`, `erro`) e preserva
-o processamento dos TXT/PDF se um CSV falhar. O bloco `sellout` tambem informa
-fontes, linhas do mes e duplicatas identicas ignoradas entre bases. Upload
-individual le somente TXT.
-SELLOUT automatico e diario as 08:00, no fuso America/Sao_Paulo; detalhes em
+`POST /api/vendas/diario/importar` sem upload le exclusivamente
+`SELLOUT_D.CSV` de `IND3/AnalyticsCTA/Dados` e `INDB/AnalyticsCTA/Dados`, sem
+restricao de horario e com recurso `vendas` no proxy. As fontes sao validadas e
+unificadas antes da transacao; duplicatas identicas entre origens sao ignoradas.
+O bloco `sellout_diario` retorna `status`, fontes, linhas e duplicatas. Upload
+TXT retorna `400`; carga PDF e correcao TXT/PDF retornam `410`.
+A leitura automatica ocorre as 08:00, no fuso America/Sao_Paulo; detalhes em
 [SELLOUT_AUTOMATICO.md](SELLOUT_AUTOMATICO.md).
 
 Se o lock ja estiver ocupado, o POST retorna `202`, `processando=true` e
@@ -1771,34 +1832,92 @@ retorna os metadados leves usados pela tela durante esse acompanhamento.
 
 `GET /api/vendas/diario` e a resposta da leitura conjunta incluem
 `ultima_leitura`. O objeto guarda `origem`, `atualizado_em`, `em_andamento` e
-um mapa `fontes` para TXT, PDF, SELLOUT IND3 e SELLOUT INDB. Cada fonte informa
+um mapa `fontes` para SELLOUT_D IND3 e SELLOUT_D INDB. Cada fonte informa
 estado, horario da tentativa, caminho, quantidades e mensagem. O resultado
 persiste no volume de dados e continua visivel depois de atualizar a pagina ou
 reiniciar o container. A rota e o quadro mantem o recurso existente `vendas`.
-Quando `RB_VENDAS_DIARIO_LIMPAR_PROCESSADOS=1`, arquivos TXT e PDF confirmados
-sao removidos das pastas de entrada depois do commit idempotente; arquivos com
-qualquer erro permanecem. O status por fonte inclui `removidos` e
-`falhas_limpeza`. SELLOUT nao e removido.
+`GET /api/vendas/diario`, o dashboard diario e os relatorios por periodo leem
+as linhas dessa base unificada. O identificador continuo existente e mantido
+para preservar as competencias historicas, mas sua origem ativa passa a ser
+`source_type=sellout_diario_auto`. Periodos presentes no arquivo diario sao
+substituidos atomicamente; periodos historicos ausentes permanecem intactos.
 
 ## Custo do produto
 
-`GET /api/custo-produto` lista produtos PET/GFA ativos e suas estimativas;
-`PUT /api/custo-produto/<produto_id>` salva formula por 1000 litros com volume
-da garrafa, itens e revisao. Recurso `custo_produto`; tabela
+`GET /api/custo-produto` lista produtos AGUA/PET/GFA ativos e suas estimativas;
+`PUT /api/custo-produto/<produto_id>` salva formula com volume da garrafa,
+unidades por pacote, itens de apresentacao por uma garrafa pronta,
+quantidade/valor por litro de agua quente e revisao. Recurso `custo_produto`; tabela
 `custo_produto_formulas`. Contrato e calculo em [CUSTO_PRODUTO.md](CUSTO_PRODUTO.md).
+`DELETE /api/custo-produto/<produto_id>` recebe a `revisao` atual, remove somente
+a formula e preserva cadastro do produto, estoque e referencias fiscais. O produto
+volta a ficar disponivel para cadastrar ou autocompletar uma formula no futuro.
+`DELETE /api/custo-produto/produtos/<produto_id>` retira um produto somente da
+lista e do dashboard de custo de producao; `POST
+/api/custo-produto/produtos/<produto_id>/restaurar` o inclui novamente. Ambos
+preservam cadastro de estoque, saldo, formula e referencias NF-e/SPED e usam o
+recurso `custo_produto`.
 
-A base compartilhada usa `PUT /api/custo-produto/xarope` (rendimento e
-ingredientes). Itens referenciam produtos ativos por `produto_id`; cada formula
-informa `xarope_litros` por 1000 L e `xarope_revisao`. O GET inclui `insumos` e
-`xarope`. O recurso permanece `custo_produto` em todas essas operacoes.
+A base usa `PUT /api/custo-produto/xarope` (rendimento e ingredientes). Xaropes
+compostos por sabor usam `POST /api/custo-produto/xaropes-compostos` e `PUT
+/api/custo-produto/xaropes-compostos/<id>`, com litros de base, rendimento e
+itens do sabor. O rendimento significa litros de bebida pronta produzidos pelo
+lote; o custo por 1000 L e `custo_lote * 1000 / rendimento`. Cada produto informa
+`xarope_composto_id` e revisao; o volume da embalagem recebe a parcela proporcional
+do custo por 1000 L. `dose_litros_1000` permanece apenas como compatibilidade e
+e derivado em `xarope_base_litros_1000`; nao e entrada manual. O GET inclui `insumos`, `xarope` e `xaropes_compostos`. O recurso
+permanece `custo_produto` em todas essas operacoes. `GET/PUT
+/api/custo-produto/rateio` usa o mesmo recurso para configurar mao de obra,
+impostos, energia, caldeira/lenha, agua e outros por valor mensal, R$/h, R$/L
+ou percentual do custo direto. Valores por hora sao divididos pela
+`capacidade_litros_hora`; os dados ficam em `custo_produto_rateio` com revisao
+otimista.
 
 Precos sao calculados pela ultima NF-e de fornecedor importada, ate hoje,
-com origem exposta na resposta. Itens aceitam `fator_compra` e `unidade_compra`
-para embalagens sem conversao automatica; `preco_unitario` enviado e ignorado.
-`GET /api/custo-produto/dashboard?ano=YYYY` usa `custo_produto_dashboard`,
-independente da edicao. Retorna custo atual e serie mensal da formula atual com
-as compras disponiveis ate cada mes, sem snapshots historicos de receitas.
-Sem compra ou conversao valida, custos ficam pendentes. Ver regras de vinculo,
+com origem exposta na resposta. Itens aceitam `fator_compra`, `unidade_compra`
+e `preco_provisorio`. O provisorio e usado somente quando nao ha NF-e utilizavel;
+a NF-e passa a ter prioridade automaticamente. `preco_unitario` enviado e ignorado.
+No SPED, os vinculos confirmados pelo XML continuam prioritarios; sem eles, a
+descricao C170 e comparada ao `estoque_produtos.descricao_sped` cadastrado pelo
+operador, com igualdade apos normalizar caixa, acentos e espacos. O campo deve
+ser unico entre produtos ativos. Nome aproximado e assinaturas de embalagem
+permanecem apenas como contingencia para cadastros antigos sem a amarracao.
+Em itens de peca, `ML` no XML e interpretado como milheiro quando a descricao
+e os codigos SPED `28`/`68`/`429` confirmados no `0190` tambem equivalem a milheiro;
+o codigo historico `22` equivale a saco. Um nome tecnico manual distintivo pode
+identificar uma descricao C170 maior quando o resultado e unico. Rotulos
+truncados usam sabor e passo (`33,5`/`23`/`16,6` cm), e preformas usam cor e
+faixa de peso, sempre exigindo uma unica correspondencia. O SPED nao informa a
+capacidade de um saco: nesse caso `fator_compra` continua obrigatorio.
+Rotulo, tampa e preforma exigem que a descricao fiscal seja do mesmo tipo de
+embalagem, evitando vinculo com a bebida pronta de nome semelhante. A descricao
+identifica tampa, rotulo, preforma, garrafa ou rolha. Vinculos confirmados em
+XML de entrada continuam definindo a identidade do fornecedor. A capacidade
+cadastrada converte, por exemplo, uma caixa de preformas em custo por unidade.
+AGUA nao exige xarope; PET/GFA exigem composto. O calculo retorna custos sem
+rateio e com rateio por 1000 L, litro, unidade e pacote. PET/garrafa, tampa,
+rotulo e demais itens de apresentacao usam quantidade por garrafa; o servidor
+os converte para 1000 L com `1000000 / volume_ml` e retorna em `itens_unidade`
+os custos por garrafa, pacote e 1.000 L. O rateio aceita `combustivel` com tipo
+`mensal_horas`, dividido por `horas_semanais * 52 / 12` (44 por padrao) e pela
+capacidade em L/h. O tipo `abastecimentos` soma automaticamente todos os
+abastecimentos concluidos do mes mais recente com dados e divide o valor pelo
+volume mensal de producao, expondo periodo, registros e litros da origem. Os sabores retornam o custo dos ingredientes sem base e do
+composto com base por litro de bebida pronta.
+`GET /api/custo-produto/dashboard` usa `custo_produto_dashboard`, independente
+da edicao. Retorna `xarope_base`, `sabores`, `rateio` e somente produtos com
+formula de producao. A tela organiza cards de Agua, PET e Retornavel por sabor
+e exibe custo sem/com rateio por unidade e pacote, com a formula, o rateio e a
+ultima compra disponivel ate hoje, alem do custo individual da tampa,
+PET/garrafa, rotulo e demais itens por garrafa, pacote e 1.000 L. Nao
+retorna apuracao diaria nem serie mensal.
+RELATORIOS > RioB > Custo produto tambem consome esse mesmo endpoint e snapshot.
+Para isso, `xarope_base`, `sabores` e `produtos` incluem seus itens ja
+precificados, com fonte, compra, nota, unidade, conversao e `custo_formula`.
+A tela abre uma folha por sabor com a memoria de rateios, xaropes, componentes,
+embalagens e totais em 1.000 L/litro/unidade/pacote; nao cria uma segunda regra
+de calculo e usa a mesma permissao `custo_produto_dashboard`.
+Sem compra/conversao valida nem valor provisorio, custos ficam pendentes. Ver regras de vinculo,
 conversoes, datas e permissoes em [CUSTO_PRODUTO.md](CUSTO_PRODUTO.md).
 
 Custo do produto reaproveita os vinculos confirmados entre XML e estoque para
@@ -1807,14 +1926,15 @@ em Compras. Codigo/fornecedor ou codigo/descricao historica devem identificar
 um unico produto. Acucar em venda a ordem entra na referencia; TO/tonelada
 converte para kg e capacidade de saco ja cadastrada e reutilizada quando a
 apresentacao confirmada corresponde. O catalogo identifica o recurso existente
-`custo_produto` como Custo do produto, xarope e precos do XML; dashboard conserva
+`custo_produto` como Custo do produto: formulas, vinculo explicito pela descricao SPED do cadastro de produto, embalagens por unidade, conversoes XML, pacotes, valores provisorios, rateios, caldeira por hora e combustivel por 44 h semanais ou abastecimentos; dashboard conserva
 `custo_produto_dashboard`. APIs e bloqueios individuais mantem a autorizacao,
 sem novas concessoes. Detalhes e limites no documento CUSTO_PRODUTO.md do RioB.
 
 Em 23/09/2026, GESTAO > Custos diarios por grupo (`#custoDiario`, recurso
 `custo_diario`) passa a informar producao real, pessoal e despesas por grupo.
 Dashboard de custo do produto mantem o recurso `custo_produto_dashboard` e
-oferece custo diario por litro, garrafa e pacote, alem da comparacao mensal.
+oferece apenas o custo padrao mais recente por garrafa e pacote. A apuracao
+diaria permanece separada.
 Gastos compartilhados sao rateados pelos litros. Desperdicio vem exclusivamente
 das faltas em contagens finalizadas, agrupadas por setor/grupo de estoque;
 perdas especificas de producao ficam para uma etapa futura. As APIs

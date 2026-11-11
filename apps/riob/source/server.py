@@ -21,6 +21,7 @@ from werkzeug.security import generate_password_hash
 import os
 import json
 import ast
+import math
 import html as html_lib
 import shutil
 import socket
@@ -42,6 +43,7 @@ from urllib.parse import urlparse, unquote
 import paramiko
 import nfe_ws
 from sellout_auto import (
+    fontes_diarias_configuradas,
     fontes_mensais_configuradas,
     particionar_historico,
     preparar_mensal,
@@ -1198,6 +1200,7 @@ def ensure_schema():
             id INT AUTO_INCREMENT PRIMARY KEY,
             codigo_barras VARCHAR(120) DEFAULT '',
             codigo_produto_nfe VARCHAR(120) DEFAULT '',
+            descricao_sped VARCHAR(255) DEFAULT '',
             nome_produto VARCHAR(255) NOT NULL,
             grupo_estoque VARCHAR(30) DEFAULT '',
             produto_base_nome VARCHAR(255) DEFAULT '',
@@ -2410,6 +2413,18 @@ def ensure_schema():
         except Exception:
             pass
         try:
+            cur.execute("ALTER TABLE cargas ADD COLUMN estoque_rejeitado_em DATETIME NULL")
+        except Exception:
+            pass
+        try:
+            cur.execute("ALTER TABLE cargas ADD COLUMN estoque_rejeitado_por VARCHAR(180) DEFAULT ''")
+        except Exception:
+            pass
+        try:
+            cur.execute("ALTER TABLE cargas ADD COLUMN estoque_rejeitado_motivo VARCHAR(500) DEFAULT ''")
+        except Exception:
+            pass
+        try:
             cur.execute("ALTER TABLE cargas ADD INDEX idx_cargas_cidade (cidade)")
         except Exception:
             pass
@@ -2427,6 +2442,10 @@ def ensure_schema():
             pass
         try:
             cur.execute("ALTER TABLE cargas ADD INDEX idx_cargas_estoque_baixado_em (estoque_baixado_em)")
+        except Exception:
+            pass
+        try:
+            cur.execute("ALTER TABLE cargas ADD INDEX idx_cargas_estoque_rejeitado_em (estoque_rejeitado_em)")
         except Exception:
             pass
         try:
@@ -2689,6 +2708,10 @@ def ensure_schema():
             pass
         try:
             cur.execute("ALTER TABLE estoque_produtos ADD COLUMN codigo_produto_nfe VARCHAR(120) DEFAULT ''")
+        except Exception:
+            pass
+        try:
+            cur.execute("ALTER TABLE estoque_produtos ADD COLUMN descricao_sped VARCHAR(255) DEFAULT '' AFTER codigo_produto_nfe")
         except Exception:
             pass
         try:
@@ -4105,6 +4128,11 @@ def _estoque_base_nome_inferido(nome_produto="", grupo_estoque="", produto_base_
     grupo = _estoque_grupo_inferido(nome_produto=nome, grupo_estoque=grupo_estoque)
     texto = nome.upper()
     texto_norm = _produto_nome_normalizado(nome)
+    # Insumos podem conter sabor e volume na descricao (por exemplo, rotulos de
+    # Guarana 2L), mas nao representam a bebida vendida. Para grupos que nao
+    # sao de produto acabado, o nome explicito do cadastro e canonico.
+    if base_exp and grupo not in ("PET", "GFA", "AGUA"):
+        return base_exp
     if grupo == "AGUA":
         gas = "SEM GAS" if re.search(r"\bSEM GAS\b", texto_norm) else (
             "COM GAS" if re.search(r"\b(?:COM GAS|C GAS)\b", texto_norm) else ""
@@ -4697,13 +4725,37 @@ def _listar_itens_carga_estoque(cur, carga_id):
     """, (carga_id,))
     return cur.fetchall() or []
 
+
+def _xmls_saida_confirmados_carga(cur, carga_id):
+    """Lista NF-e de saida ja contabilizadas para a mesma carga/frete.
+
+    O PDF representa a carga inteira. Se uma NF-e vinculada a ela ja gerou a
+    saida definitiva, baixar novamente o PDF duplicaria ao menos parte do
+    estoque; por isso o PDF passa a ser somente evidencia nesse caso.
+    """
+    carga_id = _as_int(carga_id, 0)
+    if carga_id <= 0:
+        return []
+    cur.execute(
+        """
+        SELECT id, nota_key, chave_nfe, numero_nota, frete_id, criado_em
+        FROM estoque_xml_frete_vinculos
+        WHERE carga_id=%s
+        ORDER BY criado_em ASC, id ASC
+        """,
+        (carga_id,),
+    )
+    return cur.fetchall() or []
+
+
 def _baixar_estoque_carga(cur, carga_id, usuario="desconhecido"):
     carga_id = _as_int(carga_id, 0)
     if carga_id <= 0:
         return {"ok": False, "motivo": "carga_invalida"}
 
     cur.execute("""
-        SELECT id, nome, veiculo_numero, mapa_numero, estoque_baixado_em
+        SELECT id, nome, veiculo_numero, mapa_numero, estoque_baixado_em,
+               estoque_rejeitado_em, estoque_rejeitado_por, estoque_rejeitado_motivo
         FROM cargas
         WHERE id=%s
         LIMIT 1
@@ -4718,6 +4770,29 @@ def _baixar_estoque_carga(cur, carga_id, usuario="desconhecido"):
             "carga_id": carga_id,
             "nome": _as_str(carga.get("nome")),
         }
+    if carga.get("estoque_rejeitado_em"):
+        return {
+            "ok": False,
+            "motivo": "carga_rejeitada",
+            "carga_id": carga_id,
+            "nome": _as_str(carga.get("nome")),
+            "rejeitada_em": _fmt_dt(carga.get("estoque_rejeitado_em")),
+            "rejeitada_por": _as_str(carga.get("estoque_rejeitado_por")),
+            "rejeicao_motivo": _as_str(carga.get("estoque_rejeitado_motivo")),
+        }
+
+    xmls_confirmados = _xmls_saida_confirmados_carga(cur, carga_id)
+    if xmls_confirmados:
+        return {
+            "ok": False,
+            "motivo": "coberta_por_xml",
+            "carga_id": carga_id,
+            "nome": _as_str(carga.get("nome")),
+            "notas_xml": [
+                _as_str(row.get("numero_nota") or row.get("chave_nfe") or row.get("nota_key"))
+                for row in xmls_confirmados
+            ],
+        }
 
     itens = _listar_itens_carga_estoque(cur, carga_id)
     if not itens:
@@ -4729,8 +4804,21 @@ def _baixar_estoque_carga(cur, carga_id, usuario="desconhecido"):
     produtos_movimentados = set()
     destino_setor = _as_str(carga.get("veiculo_numero")) or _as_str(carga.get("nome")) or "Caminhao"
     numero_nota = f"CARGA-{_as_str(carga.get('mapa_numero')) or carga_id}"
+    try:
+        saldos_atuais = _estoque_resumo_produtos_data(
+            incluir_fornecedores=False,
+            somente_saldos=True,
+        ).get("rows") or []
+    except Exception:
+        app.logger.exception("Falha ao carregar saldos para aprovar PDF; baixa seguira sem alerta projetado")
+        saldos_atuais = []
+    saldos_iniciais = {}
+    baixas_acumuladas = {}
 
     for item in itens:
+        item_id = _as_int(item.get("id"), 0)
+        if item_id <= 0:
+            return {"ok": False, "motivo": "item_sem_referencia", "carga_id": carga_id}
         quantidade_total = _as_float(item.get("quantidade_total"), 0.0)
         if quantidade_total <= 0:
             quantidade_total = round(
@@ -4767,13 +4855,33 @@ def _baixar_estoque_carga(cur, carga_id, usuario="desconhecido"):
         if _as_int(produto.get("id"), 0) > 0 and _as_float(produto.get("estoque_minimo"), 0.0) > 0:
             produtos_movimentados.add(_as_int(produto.get("id"), 0))
 
-        saldo_antes = _saldo_atual_produto_estoque(
-            cur,
-            codigo_barras=produto.get("codigo_barras") or item.get("codigo_barras"),
-            codigo_produto_nfe=produto.get("codigo_produto_nfe") or item.get("codigo_produto"),
-            nome_produto=produto.get("nome_produto") or item.get("nome_produto"),
+        produto_id = _as_int(produto.get("id"), 0)
+        produto_chave = (
+            f"id:{produto_id}"
+            if produto_id > 0
+            else "|".join((
+                _normalizar_codigo_barras(produto.get("codigo_barras") or item.get("codigo_barras")),
+                _codigo_produto_nfe_saida(produto.get("codigo_produto_nfe") or item.get("codigo_produto")),
+                _produto_nome_normalizado(produto.get("nome_produto") or item.get("nome_produto")),
+            ))
+        )
+        if produto_chave not in saldos_iniciais:
+            saldos_iniciais[produto_chave] = _saldo_atual_produto_estoque(
+                cur,
+                codigo_barras=produto.get("codigo_barras") or item.get("codigo_barras"),
+                codigo_produto_nfe=produto.get("codigo_produto_nfe") or item.get("codigo_produto"),
+                nome_produto=produto.get("nome_produto") or item.get("nome_produto"),
+                linhas=saldos_atuais,
+            )
+        saldo_antes = round(
+            saldos_iniciais[produto_chave] - baixas_acumuladas.get(produto_chave, 0.0),
+            3,
         )
         saldo_depois = round(saldo_antes - quantidade_total, 3)
+        baixas_acumuladas[produto_chave] = round(
+            baixas_acumuladas.get(produto_chave, 0.0) + quantidade_total,
+            3,
+        )
         if saldo_depois < 0:
             insuficiencias.append({
                 "produto": _as_str(produto.get("nome_produto") or item.get("nome_produto")),
@@ -4789,7 +4897,7 @@ def _baixar_estoque_carga(cur, carga_id, usuario="desconhecido"):
                     origem_setor, destino_setor, referencia_tipo, referencia_id, usuario_registro
                 )
             VALUES
-                (%s, %s, %s, %s, %s, %s, 'saida', %s, %s, 'carga_pdf', %s, %s)
+                (%s, %s, %s, %s, %s, %s, 'saida', %s, %s, 'carga_pdf_item', %s, %s)
         """, (
             _normalizar_codigo_barras(produto.get("codigo_barras") or item.get("codigo_barras")),
             _codigo_produto_nfe_saida(produto.get("codigo_produto_nfe") or item.get("codigo_produto")),
@@ -4799,7 +4907,7 @@ def _baixar_estoque_carga(cur, carga_id, usuario="desconhecido"):
             0.0,
             "Almoxarifado",
             destino_setor,
-            carga_id,
+            item_id,
             usuario or "desconhecido",
         ))
         movimento_id = _as_int(cur.lastrowid, 0)
@@ -4848,7 +4956,12 @@ def _sincronizar_baixa_estoque_frete(cur, antes, depois, usuario="desconhecido")
     status_antes = _as_str((antes or {}).get("status")).lower()
     status_depois = _as_str((depois or {}).get("status")).lower()
     if _status_frete_gera_baixa_estoque(status_depois) and not _status_frete_gera_baixa_estoque(status_antes):
-        return _baixar_estoque_carga(cur, carga_id, usuario=usuario)
+        return {
+            "ok": False,
+            "motivo": "aguardando_aprovacao_documento",
+            "carga_id": carga_id,
+            "status_frete": status_depois,
+        }
     return None
 
 def _importar_cargas_pdf_bytes(pdf_bytes, source_name="", veiculo_override="", usuario="desconhecido") -> dict:
@@ -8195,7 +8308,7 @@ def _importar_nfe_abastecimento_por_xml_text(abastecimento_id, xml_text, chave_a
     return resumo_nfe
 
 _ESTOQUE_PRODUTO_SELECT = """
-    SELECT id, codigo_barras, codigo_produto_nfe, nome_produto, grupo_estoque,
+    SELECT id, codigo_barras, codigo_produto_nfe, descricao_sped, nome_produto, grupo_estoque,
            produto_base_nome, unidade, embalagem_tipo_padrao,
            fator_embalagem_padrao, estoque_minimo, origem_cadastro, ativo, criado_em, atualizado_em
     FROM estoque_produtos
@@ -8579,6 +8692,7 @@ def _produto_estoque_publico(row, codigos_por_origem=None):
         "id": _as_int(row.get("id"), 0),
         "codigo_barras": _normalizar_codigo_barras(row.get("codigo_barras")),
         "codigo_produto_nfe": _as_str(row.get("codigo_produto_nfe")),
+        "descricao_sped": _as_str(row.get("descricao_sped")),
         "codigos_por_origem": codigos_mapa,
         "codigos_nfe_entrada": codigos_mapa.get("nfe_entrada") or [],
         "codigos_sellout": codigos_mapa.get("sellout") or [],
@@ -8599,6 +8713,23 @@ def _produto_estoque_publico(row, codigos_por_origem=None):
         "criado_em": _fmt_dt(row.get("criado_em")),
         "atualizado_em": _fmt_dt(row.get("atualizado_em")),
     }
+
+
+def _validar_descricao_sped_unica(cur, descricao_sped, produto_id=0):
+    chave = _normalizar_chave_texto(descricao_sped)
+    if not chave:
+        return
+    cur.execute(
+        """
+        SELECT id, descricao_sped
+        FROM estoque_produtos
+        WHERE ativo=1 AND COALESCE(descricao_sped, '') <> '' AND id<>%s
+        """,
+        (_as_int(produto_id, 0),),
+    )
+    for row in cur.fetchall() or []:
+        if _normalizar_chave_texto(row.get("descricao_sped")) == chave:
+            raise ValueError("a descricao SPED ja esta vinculada a outro produto")
 
 def _aplicar_cadastro_embalagem_preview(preview):
     preview = _normalizar_preview_nfe(preview)
@@ -8713,6 +8844,7 @@ def _carregar_produto_estoque_por_id(cur, produto_id):
             id,
             codigo_barras,
             codigo_produto_nfe,
+            descricao_sped,
             nome_produto,
             grupo_estoque,
             produto_base_nome,
@@ -13433,6 +13565,7 @@ def _coletar_filtros_relatorio_abastecimentos_req():
     if data_inicio and data_fim and data_inicio > data_fim:
         data_inicio, data_fim = data_fim, data_inicio
 
+    veiculo_id = _as_int(request.args.get("veiculo_id"), 0)
     resumo = []
     if data_inicio and data_fim:
         resumo.append(f"Período: {data_inicio.strftime('%d/%m/%Y')} até {data_fim.strftime('%d/%m/%Y')}")
@@ -13442,10 +13575,13 @@ def _coletar_filtros_relatorio_abastecimentos_req():
         resumo.append(f"Período: até {data_fim.strftime('%d/%m/%Y')}")
     else:
         resumo.append("Período: todos")
+    if veiculo_id > 0:
+        resumo.append(f"Veículo: #{veiculo_id}")
 
     return {
         "data_inicio": data_inicio,
         "data_fim": data_fim,
+        "veiculo_id": veiculo_id,
         "resumo": resumo,
     }
 
@@ -13465,6 +13601,9 @@ def _coletar_abastecimentos_relatorio(
     if filtros.get("data_fim"):
         where.append(f"DATE({data_expr}) <= %s")
         params.append(filtros["data_fim"])
+    if _as_int(filtros.get("veiculo_id"), 0) > 0:
+        where.append("a.veiculo_id = %s")
+        params.append(_as_int(filtros.get("veiculo_id"), 0))
     cur.execute(
         f"""
         SELECT
@@ -13513,6 +13652,151 @@ def _coletar_abastecimentos_relatorio(
             }
         )
     ]
+
+
+def _frota_relatorio_mes_periodo(mes=""):
+    mes = _as_str(mes) or datetime.date.today().strftime("%Y-%m")
+    if not re.fullmatch(r"\d{4}-\d{2}", mes):
+        raise ValueError("Mês inválido. Use o formato AAAA-MM.")
+    try:
+        inicio = datetime.datetime.strptime(mes + "-01", "%Y-%m-%d").date()
+    except ValueError as exc:
+        raise ValueError("Mês inválido. Use o formato AAAA-MM.") from exc
+    fim = (inicio.replace(day=28) + datetime.timedelta(days=4)).replace(day=1)
+    return mes, inicio, fim
+
+
+def _frota_relatorio_data_evento(row):
+    value = row.get("data_evento") or row.get("data_abastecimento") or row.get("data_liberacao")
+    if isinstance(value, datetime.datetime):
+        return value.date()
+    if isinstance(value, datetime.date):
+        return value
+    return _as_date(value)
+
+
+def _montar_frota_relatorio_mensal(rows, mes="", veiculos=None, veiculo_id=0):
+    """Monta o resumo mensal sem perder o abastecimento-base do mês anterior."""
+    mes, inicio, fim = _frota_relatorio_mes_periodo(mes)
+    veiculo_id = _as_int(veiculo_id, 0)
+    historico = [
+        dict(row)
+        for row in (rows or [])
+        if (not veiculo_id or _as_int(row.get("veiculo_id"), 0) == veiculo_id)
+        and (_frota_relatorio_data_evento(row) or fim) < fim
+    ]
+    metricas = _calcular_metricas_abastecimentos(historico)
+    selecionados = [
+        row for row in historico
+        if (_frota_relatorio_data_evento(row) is not None)
+        and inicio <= _frota_relatorio_data_evento(row) < fim
+        and _as_str(row.get("status")).lower() == "abastecido"
+    ]
+
+    def base_resumo():
+        return {
+            "abastecimentos": 0,
+            "litros": 0.0,
+            "valor": 0.0,
+            "km_rodado": 0,
+            "litros_com_media": 0.0,
+            "postos": set(),
+            "combustiveis": set(),
+        }
+
+    total = base_resumo()
+    por_veiculo = {}
+    detalhes = []
+    for row in selecionados:
+        rid = _as_int(row.get("id"), 0)
+        vid = _as_int(row.get("veiculo_id"), 0)
+        metrica = metricas.get(rid) or {}
+        litros = _as_float(row.get("quantidade_litros"), 0.0)
+        valor = _as_float(row.get("valor"), 0.0)
+        posto = _normalizar_nome_local(
+            _as_str(row.get("posto")) or _as_str(row.get("emitente_nome"))
+        ) or "Sem posto informado"
+        combustivel = _normalizar_combustivel_tipo(row.get("combustivel_tipo"))
+        nome = _as_str(row.get("veiculo_nome")) or f"Veículo {vid}"
+        placa = _as_str(row.get("placa"))
+        modelo = _as_str(row.get("modelo"))
+        veiculo_label = " - ".join(item for item in (placa, nome) if item) or nome
+        entry = por_veiculo.setdefault(vid, {
+            **base_resumo(),
+            "veiculo_id": vid,
+            "veiculo": nome,
+            "placa": placa,
+            "modelo": modelo,
+        })
+        for alvo in (total, entry):
+            alvo["abastecimentos"] += 1
+            alvo["litros"] += litros
+            alvo["valor"] += valor
+            alvo["postos"].add(posto)
+            alvo["combustiveis"].add(_combustivel_tipo_label(combustivel))
+            if metrica.get("km_l") is not None and metrica.get("km_l") > 0:
+                alvo["km_rodado"] += _as_int(metrica.get("km_rodado"), 0)
+                alvo["litros_com_media"] += litros
+        detalhes.append({
+            "id": rid,
+            "data": _fmt_dt(row.get("data_evento") or row.get("data_abastecimento") or row.get("data_liberacao")),
+            "veiculo_id": vid,
+            "veiculo": nome,
+            "veiculo_label": veiculo_label,
+            "placa": placa,
+            "modelo": modelo,
+            "combustivel_tipo": combustivel,
+            "combustivel": _combustivel_tipo_label(combustivel),
+            "posto": posto,
+            "numero_nota": _as_str(row.get("numero_nota")),
+            "km_inicial": metrica.get("km_inicial"),
+            "km_final": metrica.get("km_atual"),
+            "km_rodado": metrica.get("km_rodado"),
+            "litros": round(litros, 3),
+            "media_km_l": round(_as_float(metrica.get("km_l"), 0.0), 3) if metrica.get("km_l") is not None else None,
+            "preco_litro": round(_as_float(metrica.get("valor_litro"), 0.0), 3) if metrica.get("valor_litro") is not None else None,
+            "valor": round(valor, 2),
+        })
+
+    def finalizar_resumo(item):
+        litros = _as_float(item.get("litros"), 0.0)
+        litros_com_media = _as_float(item.get("litros_com_media"), 0.0)
+        return {
+            **{key: value for key, value in item.items() if key not in {"postos", "combustiveis", "litros_com_media"}},
+            "litros": round(litros, 3),
+            "valor": round(_as_float(item.get("valor"), 0.0), 2),
+            "preco_medio_litro": round(_as_float(item.get("valor"), 0.0) / litros, 3) if litros > 0 else None,
+            "media_km_l": round(_as_float(item.get("km_rodado"), 0.0) / litros_com_media, 3) if litros_com_media > 0 else None,
+            "postos": sorted(item.get("postos") or []),
+            "combustiveis": sorted(item.get("combustiveis") or []),
+        }
+
+    veiculos_opcoes = [{
+        "id": _as_int(item.get("id"), 0),
+        "nome": _as_str(item.get("nome")),
+        "placa": _as_str(item.get("placa")),
+        "modelo": _as_str(item.get("modelo")),
+    } for item in (veiculos or [])]
+    detalhes.sort(key=lambda item: (item.get("data") or "", item.get("id") or 0), reverse=True)
+    return {
+        "periodo": {
+            "mes": mes,
+            "inicio": inicio.isoformat(),
+            "fim": (fim - datetime.timedelta(days=1)).isoformat(),
+            "label": inicio.strftime("%m/%Y"),
+        },
+        "filtros": {"veiculo_id": veiculo_id or None},
+        "resumo": {
+            **finalizar_resumo(total),
+            "veiculos": len(por_veiculo),
+        },
+        "veiculos": veiculos_opcoes,
+        "por_veiculo": sorted(
+            (finalizar_resumo(item) for item in por_veiculo.values()),
+            key=lambda item: (item.get("veiculo") or "", item.get("placa") or ""),
+        ),
+        "abastecimentos": detalhes,
+    }
 
 
 def _dados_relatorio_escala(cur, filtros=None):
@@ -14537,10 +14821,17 @@ def _estoque_merge_row(target, aliases, row):
     codigo_barras = _normalizar_codigo_barras(row.get("codigo_barras"))
     codigo_produto_nfe_norm = _codigo_produto_chave(row.get("codigo_produto_nfe"))
     codigo_produto_nfe_saida = _codigo_produto_nfe_saida(codigo_produto_nfe_norm) if codigo_produto_nfe_norm else _as_str(row.get("codigo_produto_nfe"))
-    nome_produto = _as_str(meta.get("produto_base_nome") or row.get("nome_produto"))
-    nome_produto_norm = _produto_nome_normalizado(nome_produto) or nome_produto
     grupo_estoque = meta.get("grupo_estoque") or "OUTROS"
-    produto_base_key = _as_str(meta.get("produto_base_key"))
+    base_explicita = _as_str(row.get("produto_base_nome")).strip()
+    if base_explicita and grupo_estoque not in _ESTOQUE_GRUPOS_PRODUTOS_VENDIDOS:
+        nome_produto = base_explicita
+        nome_produto_norm = _produto_nome_normalizado(nome_produto) or nome_produto
+        produto_base_key = f"{grupo_estoque}:{nome_produto_norm}"
+    else:
+        nome_produto = _as_str(meta.get("produto_base_nome") or row.get("nome_produto"))
+        nome_produto_norm = _produto_nome_normalizado(nome_produto) or nome_produto
+        produto_base_key = _as_str(meta.get("produto_base_key"))
+    produto_id_row = _as_int(row.get("produto_id"), 0)
 
     chaves_candidatas = []
     if produto_base_key:
@@ -14552,9 +14843,29 @@ def _estoque_merge_row(target, aliases, row):
     if nome_produto_norm:
         chaves_candidatas.append(f"nom:{nome_produto_norm}")
 
-    chave = next((aliases[ch] for ch in chaves_candidatas if ch in aliases), None)
+    def chave_compativel(chave_existente):
+        existente = target.get(chave_existente) or {}
+        produto_id_existente = _as_int(existente.get("produto_id"), 0)
+        if not (produto_id_row > 0 and produto_id_existente > 0) or produto_id_row == produto_id_existente:
+            return True
+        grupo_existente = _estoque_grupo_normalizado(existente.get("grupo_estoque"))
+        return (
+            grupo_estoque in _ESTOQUE_GRUPOS_PRODUTOS_VENDIDOS
+            and grupo_existente == grupo_estoque
+            and _as_str(existente.get("produto_base_key")) == produto_base_key
+        )
+
+    def alias_compativel(alias):
+        return chave_compativel(aliases.get(alias))
+
+    chave = next(
+        (aliases[ch] for ch in chaves_candidatas if ch in aliases and alias_compativel(ch)),
+        None,
+    )
     if not chave:
         chave = chaves_candidatas[0] if chaves_candidatas else f"row:{len(target) + 1}"
+        if chave in target and not chave_compativel(chave):
+            chave = f"produto:{produto_id_row}" if produto_id_row > 0 else f"row:{len(target) + 1}"
 
     atual = target.setdefault(chave, {
         "produto_key": chave,
@@ -14591,7 +14902,7 @@ def _estoque_merge_row(target, aliases, row):
     for alias in chaves_candidatas:
         aliases[alias] = chave
 
-    produto_id = _as_int(row.get("produto_id"), 0)
+    produto_id = produto_id_row
     if produto_id > 0:
         atual["produto_id"] = produto_id
         atual["produto_cadastrado"] = True
@@ -15734,6 +16045,290 @@ def _estoque_relatorio_comprometido_data(
             ),
         },
     }
+
+
+def _montar_relatorio_posicao_estoque_dia(
+    movimentos,
+    produtos_lookup,
+    grupos_estoque,
+    data_referencia,
+    grupo_estoque="",
+):
+    """Consolida o livro de movimentos em uma fotografia no fim do dia."""
+    grupo_filtro = _estoque_grupo_normalizado(grupo_estoque) if grupo_estoque else ""
+    linhas = {}
+    for row in movimentos or []:
+        cadastro = _resolver_produto_lookup_estoque(
+            produtos_lookup,
+            codigo_barras=row.get("codigo_barras"),
+            codigo_produto_nfe=row.get("codigo_produto_nfe"),
+            nome_produto=row.get("nome_produto"),
+        ) or {}
+        produto_id = _as_int(cadastro.get("id"), 0)
+        meta = _estoque_produto_meta({**row, **cadastro})
+        grupo_codigo = _estoque_grupo_normalizado(
+            cadastro.get("grupo_estoque") or meta.get("grupo_estoque")
+        ) or "OUTROS"
+        if grupo_codigo in _ESTOQUE_GRUPOS_PRODUTOS_VENDIDOS:
+            produto_nome = _as_str(meta.get("produto_base_nome"))
+        else:
+            produto_nome = _as_str(
+                cadastro.get("produto_base_nome")
+                or cadastro.get("nome_produto")
+                or row.get("nome_produto")
+                or meta.get("produto_base_nome")
+            )
+        codigo = _as_str(
+            cadastro.get("codigo_produto_nfe")
+            or cadastro.get("codigo_barras")
+            or row.get("codigo_produto_nfe")
+            or row.get("codigo_barras")
+        )
+        chave = (
+            f"produto:{produto_id}"
+            if produto_id > 0
+            else f"avulso:{grupo_codigo}:{_codigo_produto_chave(codigo)}:{_produto_nome_normalizado(produto_nome)}"
+        )
+        item = linhas.setdefault(chave, {
+            "produto_id": produto_id,
+            "produto": produto_nome or "-",
+            "codigo": codigo,
+            "grupo_estoque": grupo_codigo,
+            "embalagem_tipo_padrao": _as_str(cadastro.get("embalagem_tipo_padrao") or cadastro.get("unidade")),
+            "fator_embalagem_padrao": _as_float(cadastro.get("fator_embalagem_padrao"), 1.0),
+            "saldo_inicial": 0.0,
+            "entradas_dia": 0.0,
+            "saidas_dia": 0.0,
+            "saldo_final": 0.0,
+            "movimentacoes_dia": 0.0,
+            "ultima_movimentacao": "",
+        })
+        for campo in ("saldo_inicial", "entradas_dia", "saidas_dia", "saldo_final", "movimentacoes_dia"):
+            item[campo] = _as_float(item.get(campo), 0.0) + _as_float(row.get(campo), 0.0)
+        ultima = _as_str(_fmt_dt(row.get("ultima_movimentacao")))
+        if ultima > _as_str(item.get("ultima_movimentacao")):
+            item["ultima_movimentacao"] = ultima
+
+    rows = []
+    for item in linhas.values():
+        grupo_codigo = _estoque_grupo_normalizado(item.get("grupo_estoque")) or "OUTROS"
+        if grupo_filtro and grupo_codigo != grupo_filtro:
+            continue
+        saldo_inicial = round(_as_float(item.get("saldo_inicial"), 0.0), 3)
+        entradas_dia = round(_as_float(item.get("entradas_dia"), 0.0), 3)
+        saidas_dia = round(_as_float(item.get("saidas_dia"), 0.0), 3)
+        saldo_final = round(_as_float(item.get("saldo_final"), saldo_inicial + entradas_dia - saidas_dia), 3)
+        if not any((saldo_inicial, entradas_dia, saidas_dia, saldo_final)):
+            continue
+        grupo = grupos_estoque.get(grupo_codigo) or {}
+        row_publica = {
+            "produto_id": _as_int(item.get("produto_id"), 0),
+            "produto": _as_str(item.get("produto")) or "-",
+            "codigo": _as_str(item.get("codigo")),
+            "grupo_estoque": grupo_codigo,
+            "grupo_nome": _as_str(grupo.get("nome")) or grupo_codigo,
+            "grupo_ordem": _as_int(grupo.get("ordem"), _estoque_grupo_ordem(grupo_codigo)),
+            "saldo_inicial": saldo_inicial,
+            "entradas_dia": entradas_dia,
+            "saidas_dia": saidas_dia,
+            "saldo_final": saldo_final,
+            "movimentacoes_dia": _as_int(item.get("movimentacoes_dia"), 0),
+            "ultima_movimentacao": _as_str(item.get("ultima_movimentacao")),
+            "embalagem_tipo_padrao": _as_str(item.get("embalagem_tipo_padrao")),
+            "fator_embalagem_padrao": _as_float(item.get("fator_embalagem_padrao"), 1.0),
+        }
+        row_publica["pallet_meta"] = _estoque_pallet_meta({
+            "grupo_estoque": grupo_codigo,
+            "nome_produto": row_publica["produto"],
+            "produto_base_nome": row_publica["produto"],
+            "embalagem_tipo_padrao": row_publica["embalagem_tipo_padrao"],
+            "fator_embalagem_padrao": row_publica["fator_embalagem_padrao"],
+        })
+        rows.append(row_publica)
+    rows.sort(key=lambda row: (
+        row["grupo_ordem"],
+        _produto_nome_normalizado(row.get("grupo_nome")),
+        _produto_nome_normalizado(row.get("produto")),
+    ))
+
+    grupos = []
+    for grupo_codigo in dict.fromkeys(row["grupo_estoque"] for row in rows):
+        itens = [row for row in rows if row["grupo_estoque"] == grupo_codigo]
+        grupos.append({
+            "codigo": grupo_codigo,
+            "nome": itens[0]["grupo_nome"],
+            "produtos": len(itens),
+            "saldo_inicial": round(sum(row["saldo_inicial"] for row in itens), 3),
+            "entradas_dia": round(sum(row["entradas_dia"] for row in itens), 3),
+            "saidas_dia": round(sum(row["saidas_dia"] for row in itens), 3),
+            "saldo_final": round(sum(row["saldo_final"] for row in itens), 3),
+            "movimentacoes_dia": sum(row["movimentacoes_dia"] for row in itens),
+            "itens": itens,
+        })
+
+    return {
+        "data_referencia": _fmt_date(data_referencia),
+        "grupo_estoque": grupo_filtro,
+        "grupos": grupos,
+        "rows": rows,
+        "resumo": {
+            "grupos": len(grupos),
+            "produtos": len(rows),
+            "saldo_inicial": round(sum(row["saldo_inicial"] for row in rows), 3),
+            "entradas_dia": round(sum(row["entradas_dia"] for row in rows), 3),
+            "saidas_dia": round(sum(row["saidas_dia"] for row in rows), 3),
+            "saldo_final": round(sum(row["saldo_final"] for row in rows), 3),
+            "movimentacoes_dia": sum(row["movimentacoes_dia"] for row in rows),
+        },
+    }
+
+
+def _estoque_relatorio_posicao_dia_data(data_referencia=None, grupo_estoque=""):
+    data_ref = data_referencia or datetime.date.today()
+    if not isinstance(data_ref, datetime.date):
+        data_ref = _parse_data_br(data_ref)
+    if not data_ref:
+        raise ValueError("Data de referência inválida.")
+    proximo_dia = data_ref + datetime.timedelta(days=1)
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    try:
+        produtos_lookup = _carregar_lookup_produtos_estoque(cur)
+        grupos_estoque = _estoque_grupos_map(cur, incluir_inativos=True)
+        cur.execute(
+            """
+            SELECT
+                codigo_barras,
+                codigo_produto_nfe,
+                nome_produto,
+                COALESCE(SUM(CASE
+                    WHEN data_registro < %s AND tipo_movimento='entrada' THEN quantidade
+                    WHEN data_registro < %s AND tipo_movimento='saida' THEN -quantidade
+                    ELSE 0 END), 0) AS saldo_inicial,
+                COALESCE(SUM(CASE WHEN data_registro >= %s AND tipo_movimento='entrada' THEN quantidade ELSE 0 END), 0) AS entradas_dia,
+                COALESCE(SUM(CASE WHEN data_registro >= %s AND tipo_movimento='saida' THEN quantidade ELSE 0 END), 0) AS saidas_dia,
+                COALESCE(SUM(CASE WHEN tipo_movimento='entrada' THEN quantidade ELSE -quantidade END), 0) AS saldo_final,
+                SUM(CASE WHEN data_registro >= %s THEN 1 ELSE 0 END) AS movimentacoes_dia,
+                MAX(data_registro) AS ultima_movimentacao
+            FROM estoque_movimentos
+            WHERE data_registro < %s
+            GROUP BY codigo_barras, codigo_produto_nfe, nome_produto
+            """,
+            (data_ref, data_ref, data_ref, data_ref, data_ref, proximo_dia),
+        )
+        relatorio = _montar_relatorio_posicao_estoque_dia(
+            cur.fetchall() or [], produtos_lookup, grupos_estoque, data_ref, grupo_estoque
+        )
+        relatorio["opcoes"] = {
+            "grupos": sorted(
+                grupos_estoque.values(),
+                key=lambda grupo: (_as_int(grupo.get("ordem"), 100), _as_str(grupo.get("nome"))),
+            )
+        }
+        relatorio["gerado_em"] = _fmt_dt(datetime.datetime.now())
+        return relatorio
+    finally:
+        cur.close()
+        conn.close()
+
+
+def _estoque_quantidade_logistica_texto(row, valor):
+    def fmt_quantidade(numero):
+        return _fmt_decimal_br(numero, 3).rstrip("0").rstrip(",")
+
+    quantidade = _as_float(valor, 0.0)
+    meta = row.get("pallet_meta") or {}
+    fator = _as_float(meta.get("unidades_por_volume"), 0.0) or _as_float(
+        row.get("fator_embalagem_padrao"), 0.0
+    )
+    unidades = f"{fmt_quantidade(quantidade)} un."
+    if fator <= 1:
+        return unidades
+    rotulo = _as_str(meta.get("rotulo_volume"))
+    if not rotulo:
+        embalagem = _as_str(row.get("embalagem_tipo_padrao") or row.get("unidade")).upper()
+        grupo = _estoque_grupo_normalizado(row.get("grupo_estoque"))
+        if grupo == "GFA" or embalagem.startswith("CX"):
+            rotulo = "caixas"
+        elif grupo in ("PET", "AGUA") or embalagem in ("PCT", "FD", "FARDO"):
+            rotulo = "pacotes"
+        else:
+            rotulo = "embalagens"
+    sinal = "-" if quantidade < 0 else ""
+    absoluta = abs(quantidade)
+    volumes = int(math.floor((absoluta + 1e-9) / fator))
+    unidades_soltas = round(absoluta - (volumes * fator), 3)
+    partes = []
+    if volumes > 0:
+        partes.append(f"{sinal}{fmt_quantidade(volumes)} {rotulo}")
+    if unidades_soltas > 1e-9:
+        partes.append(f"{sinal}{fmt_quantidade(unidades_soltas)} un. soltas")
+    return f"{' + '.join(partes) if partes else '0 un.'} / {unidades}"
+
+
+def _build_estoque_posicao_dia_pdf(relatorio):
+    data_ref = _parse_data_br(relatorio.get("data_referencia")) or datetime.date.today()
+    arquivo = os.path.join("/tmp", f"estoque_posicao_{data_ref.strftime('%Y%m%d')}.pdf")
+    doc = SimpleDocTemplate(
+        arquivo, pagesize=landscape(A4), topMargin=24, leftMargin=18,
+        rightMargin=18, bottomMargin=36,
+    )
+    styles = getSampleStyleSheet()
+    body_style = styles["BodyText"].clone("EstoquePosicaoDiaBody")
+    body_style.fontSize = 7
+    body_style.leading = 8.2
+    def quantidade_produto(row, campo):
+        return _estoque_quantidade_logistica_texto(row, row.get(campo))
+    resumo = relatorio.get("resumo") or {}
+    elementos = [
+        _build_report_header(styles), Spacer(1, 12),
+        Paragraph("Posição de Estoque do Dia por Grupo", styles["Heading2"]),
+        Paragraph(_pdf_escape(
+            f"Data: {_fmt_date_br(data_ref)} | "
+            f"Grupos: {_as_int(resumo.get('grupos'), 0)} | Produtos: {_as_int(resumo.get('produtos'), 0)} | "
+            f"Totais em unidades-base — Saldo inicial: {_fmt_decimal_br(resumo.get('saldo_inicial'), 3)} | "
+            f"Entradas: {_fmt_decimal_br(resumo.get('entradas_dia'), 3)} | "
+            f"Saídas: {_fmt_decimal_br(resumo.get('saidas_dia'), 3)} | "
+            f"Saldo final: {_fmt_decimal_br(resumo.get('saldo_final'), 3)}"
+        ), styles["Normal"]), Spacer(1, 10),
+    ]
+    tabela = [["Grupo", "Produto", "Código", "Saldo inicial", "Entradas", "Saídas", "Saldo final"]]
+    for grupo in relatorio.get("grupos") or []:
+        tabela.append([
+            Paragraph(f"<b>{_pdf_escape(grupo.get('nome'))}</b>", body_style),
+            Paragraph(f"<b>Total do grupo ({_as_int(grupo.get('produtos'), 0)} produtos)</b>", body_style),
+            "", _fmt_decimal_br(grupo.get("saldo_inicial"), 3),
+            _fmt_decimal_br(grupo.get("entradas_dia"), 3),
+            _fmt_decimal_br(grupo.get("saidas_dia"), 3),
+            _fmt_decimal_br(grupo.get("saldo_final"), 3),
+        ])
+        for row in grupo.get("itens") or []:
+            tabela.append([
+                "", Paragraph(_pdf_escape(row.get("produto")), body_style),
+                Paragraph(_pdf_escape(row.get("codigo")), body_style),
+                quantidade_produto(row, "saldo_inicial"),
+                quantidade_produto(row, "entradas_dia"),
+                quantidade_produto(row, "saidas_dia"),
+                quantidade_produto(row, "saldo_final"),
+            ])
+    if len(tabela) == 1:
+        tabela.append(["Nenhum saldo ou movimento encontrado para a data.", "", "", "", "", "", ""])
+    tabela_pdf = Table(tabela, repeatRows=1, colWidths=[95, 225, 85, 85, 75, 75, 85])
+    tabela_pdf.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f59e0b")),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 7),
+        ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#cbd5e1")),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f8fafc")]),
+    ]))
+    elementos.append(tabela_pdf)
+    doc.build(
+        elementos,
+        onFirstPage=lambda canvas_obj, doc_obj: _draw_report_footer(canvas_obj, doc_obj, "Posição de Estoque"),
+        onLaterPages=lambda canvas_obj, doc_obj: _draw_report_footer(canvas_obj, doc_obj, "Posição de Estoque"),
+    )
+    return arquivo
 
 
 def _build_estoque_comprometido_pdf(relatorio):
@@ -19206,6 +19801,41 @@ def relatorio_estoque_comprometido_pdf():
     )
 
 
+@app.route("/api/estoque/relatorio-posicao-dia", methods=["GET"])
+def relatorio_posicao_estoque_dia():
+    try:
+        data_ref = _parse_data_br(request.args.get("data")) if request.args.get("data") else datetime.date.today()
+        if not data_ref:
+            raise ValueError("Data de referência inválida.")
+        return jsonify(_estoque_relatorio_posicao_dia_data(
+            data_referencia=data_ref,
+            grupo_estoque=request.args.get("grupo_estoque") or "",
+        ))
+    except ValueError as exc:
+        return jsonify({"erro": str(exc)}), 400
+
+
+@app.route("/api/estoque/relatorio-posicao-dia/pdf", methods=["GET"])
+def relatorio_posicao_estoque_dia_pdf():
+    try:
+        data_ref = _parse_data_br(request.args.get("data")) if request.args.get("data") else datetime.date.today()
+        if not data_ref:
+            raise ValueError("Data de referência inválida.")
+        relatorio = _estoque_relatorio_posicao_dia_data(
+            data_referencia=data_ref,
+            grupo_estoque=request.args.get("grupo_estoque") or "",
+        )
+    except ValueError as exc:
+        return jsonify({"erro": str(exc)}), 400
+    arquivo = _build_estoque_posicao_dia_pdf(relatorio)
+    return send_file(
+        arquivo,
+        as_attachment=False,
+        mimetype="application/pdf",
+        download_name=os.path.basename(arquivo),
+    )
+
+
 @app.route("/api/estoque/importacoes-xml", methods=["GET"])
 def listar_importacoes_xml_estoque():
     status_filtro = _as_str(request.args.get("status")).lower() or "pendente"
@@ -22030,6 +22660,7 @@ def listar_produtos_estoque():
             id,
             codigo_barras,
             codigo_produto_nfe,
+            descricao_sped,
             nome_produto,
             grupo_estoque,
             produto_base_nome,
@@ -22503,6 +23134,7 @@ def criar_produto_estoque():
     codigos_por_origem, codigos_informados = _estoque_codigos_payload(data)
     codigo_barras = _normalizar_codigo_barras(data.get("codigo_barras"))
     codigo_produto_nfe = _codigo_produto_nfe_saida(data.get("codigo_produto_nfe"))
+    descricao_sped = _as_str(data.get("descricao_sped")).strip()[:255]
     nome_produto = _as_str(data.get("nome_produto"))
     grupo_estoque = _estoque_grupo_normalizado(data.get("grupo_estoque")) or _estoque_grupo_inferido(
         nome_produto=nome_produto,
@@ -22525,17 +23157,19 @@ def criar_produto_estoque():
     try:
         if not _estoque_grupo_cadastrado(cur, grupo_estoque):
             return jsonify({"erro": "selecione um grupo de estoque cadastrado"}), 400
+        _validar_descricao_sped_unica(cur, descricao_sped)
         existente = _buscar_produto_estoque(cur, codigo_barras=codigo_barras, codigo_produto_nfe=codigo_produto_nfe, nome_produto=nome_produto)
         if existente:
             return jsonify({"erro": "ja existe cadastro para este produto"}), 409
         cur.execute("""
             INSERT INTO estoque_produtos
-                (codigo_barras, codigo_produto_nfe, nome_produto, grupo_estoque, produto_base_nome, unidade, embalagem_tipo_padrao, fator_embalagem_padrao, estoque_minimo, origem_cadastro)
+                (codigo_barras, codigo_produto_nfe, descricao_sped, nome_produto, grupo_estoque, produto_base_nome, unidade, embalagem_tipo_padrao, fator_embalagem_padrao, estoque_minimo, origem_cadastro)
             VALUES
-                (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """, (
             codigo_barras,
             codigo_produto_nfe,
+            descricao_sped,
             nome_produto,
             grupo_estoque,
             produto_base_nome,
@@ -22550,6 +23184,7 @@ def criar_produto_estoque():
             "id": produto_id,
             "codigo_barras": codigo_barras,
             "codigo_produto_nfe": codigo_produto_nfe,
+            "descricao_sped": descricao_sped,
             "nome_produto": nome_produto,
             "grupo_estoque": grupo_estoque,
             "produto_base_nome": produto_base_nome,
@@ -22568,7 +23203,7 @@ def criar_produto_estoque():
             else []
         )
         cur.execute("""
-            SELECT id, codigo_barras, codigo_produto_nfe, nome_produto, grupo_estoque, produto_base_nome, unidade,
+            SELECT id, codigo_barras, codigo_produto_nfe, descricao_sped, nome_produto, grupo_estoque, produto_base_nome, unidade,
                    embalagem_tipo_padrao, fator_embalagem_padrao, estoque_minimo, origem_cadastro, ativo, criado_em, atualizado_em
             FROM estoque_produtos
             WHERE id=%s
@@ -22592,7 +23227,7 @@ def atualizar_produto_estoque(produto_id):
     cur = conn.cursor(dictionary=True)
     try:
         cur.execute("""
-            SELECT id, codigo_barras, codigo_produto_nfe, nome_produto, grupo_estoque, produto_base_nome, unidade,
+            SELECT id, codigo_barras, codigo_produto_nfe, descricao_sped, nome_produto, grupo_estoque, produto_base_nome, unidade,
                    embalagem_tipo_padrao, fator_embalagem_padrao, estoque_minimo, origem_cadastro, ativo, criado_em, atualizado_em
             FROM estoque_produtos
             WHERE id=%s AND ativo=1
@@ -22604,6 +23239,7 @@ def atualizar_produto_estoque(produto_id):
 
         codigo_barras = _normalizar_codigo_barras(data.get("codigo_barras")) if "codigo_barras" in data else _normalizar_codigo_barras(row.get("codigo_barras"))
         codigo_produto_nfe = _codigo_produto_nfe_saida(data.get("codigo_produto_nfe")) if "codigo_produto_nfe" in data else _as_str(row.get("codigo_produto_nfe"))
+        descricao_sped = _as_str(data.get("descricao_sped")).strip()[:255] if "descricao_sped" in data else _as_str(row.get("descricao_sped"))
         nome_produto = _as_str(data.get("nome_produto")) if "nome_produto" in data else _as_str(row.get("nome_produto"))
         grupo_estoque = _estoque_grupo_normalizado(data.get("grupo_estoque")) if "grupo_estoque" in data else _as_str(row.get("grupo_estoque"))
         produto_base_nome = _as_str(data.get("produto_base_nome") or data.get("produto_base")) if ("produto_base_nome" in data or "produto_base" in data) else _as_str(row.get("produto_base_nome"))
@@ -22619,6 +23255,7 @@ def atualizar_produto_estoque(produto_id):
             return jsonify({"erro": "embalagem padrao e obrigatoria"}), 400
         if not _estoque_grupo_cadastrado(cur, grupo_estoque):
             return jsonify({"erro": "selecione um grupo de estoque cadastrado"}), 400
+        _validar_descricao_sped_unica(cur, descricao_sped, produto_id)
         if any(codigos_por_origem.values()) and grupo_estoque not in _ESTOQUE_GRUPOS_PRODUTOS_VENDIDOS:
             return jsonify({"erro": "a amarracao de codigos e exclusiva para PET e AGUA da producao"}), 400
 
@@ -22626,6 +23263,7 @@ def atualizar_produto_estoque(produto_id):
             UPDATE estoque_produtos
             SET codigo_barras=%s,
                 codigo_produto_nfe=%s,
+                descricao_sped=%s,
                 nome_produto=%s,
                 grupo_estoque=%s,
                 produto_base_nome=%s,
@@ -22637,6 +23275,7 @@ def atualizar_produto_estoque(produto_id):
         """, (
             codigo_barras,
             codigo_produto_nfe,
+            descricao_sped,
             nome_produto,
             grupo_estoque,
             produto_base_nome,
@@ -22651,6 +23290,7 @@ def atualizar_produto_estoque(produto_id):
             "id": produto_id,
             "codigo_barras": codigo_barras,
             "codigo_produto_nfe": codigo_produto_nfe,
+            "descricao_sped": descricao_sped,
             "nome_produto": nome_produto,
             "grupo_estoque": grupo_estoque,
             "produto_base_nome": produto_base_nome,
@@ -22668,7 +23308,7 @@ def atualizar_produto_estoque(produto_id):
             else []
         )
         cur.execute("""
-            SELECT id, codigo_barras, codigo_produto_nfe, nome_produto, grupo_estoque, produto_base_nome, unidade,
+            SELECT id, codigo_barras, codigo_produto_nfe, descricao_sped, nome_produto, grupo_estoque, produto_base_nome, unidade,
                    embalagem_tipo_padrao, fator_embalagem_padrao, estoque_minimo, origem_cadastro, ativo, criado_em, atualizado_em
             FROM estoque_produtos
             WHERE id=%s
@@ -28437,8 +29077,12 @@ def _vendas_importar_csv_para_cache(source_path, source_type="csv_relatorios_dir
 
     cache_id, meta = _vendas_importacao_meta(source_path, source_type)
     if mensal is not None:
-        cache_id = "sellout-mensal-continuo"
-        meta.update(id=cache_id, source_type="sellout_mensal_auto", **mensal["meta"])
+        cache_id = _as_str(mensal.get("cache_id")) or "sellout-mensal-continuo"
+        meta.update(
+            id=cache_id,
+            source_type=_as_str(mensal.get("source_type")) or "sellout_mensal_auto",
+            **mensal["meta"],
+        )
     else:
         _vendas_db_upsert_import_meta(meta)
 
@@ -28477,7 +29121,8 @@ def _vendas_importar_csv_para_cache(source_path, source_type="csv_relatorios_dir
         conn = get_conn()
         cur = conn.cursor()
         if mensal is not None:
-            cur.execute("SELECT GET_LOCK('riob_sellout_mensal', 0)")
+            lock_name = _as_str(mensal.get("lock_name")) or "riob_sellout_mensal"
+            cur.execute("SELECT GET_LOCK(%s, 0)", (lock_name,))
             if cur.fetchone()[0] != 1:
                 if mensal.get("somente_ausentes"):
                     raise RuntimeError("Outra importacao SELLOUT esta em andamento. Tente novamente.")
@@ -28630,7 +29275,9 @@ def _vendas_importar_csv_para_cache(source_path, source_type="csv_relatorios_dir
     finally:
         if mensal is not None and cur:
             try:
-                cur.execute("SELECT RELEASE_LOCK('riob_sellout_mensal')")
+                cur.execute("SELECT RELEASE_LOCK(%s)", (
+                    _as_str(mensal.get("lock_name")) or "riob_sellout_mensal",
+                ))
                 cur.fetchone()
             except Exception:
                 pass
@@ -34952,17 +35599,18 @@ def _vendas_diario_sellout_chave(source, indice):
 
 
 def _vendas_diario_status_padrao():
-    fontes = {
-        "txt": {"nome": "TXT", "caminho": VENDAS_DIARIO_TXT_DIR, "status": "nunca_executado"},
-        "pdf": {"nome": "PDF", "caminho": VENDAS_DIARIO_PDF_DIR, "status": "nunca_executado"},
-    }
+    fontes = {}
     try:
-        sources = fontes_mensais_configuradas(os.environ)
+        sources = fontes_diarias_configuradas(os.environ)
     except Exception:
         sources = []
     for indice, source in enumerate(sources):
-        chave, nome = _vendas_diario_sellout_chave(source, indice)
-        fontes[chave] = {"nome": nome, "caminho": source, "status": "nunca_executado"}
+        _base_chave, base_nome = _vendas_diario_sellout_chave(source, indice)
+        origem = base_nome.replace("SELLOUT ", "")
+        fontes[f"sellout_d_{origem.lower()}"] = {
+            "nome": f"SELLOUT diário {origem}", "caminho": source,
+            "status": "nunca_executado",
+        }
     return {"versao": 1, "origem": "", "atualizado_em": "", "fontes": fontes}
 
 
@@ -34973,7 +35621,7 @@ def _vendas_diario_status_carregar():
     fontes = dict(padrao["fontes"])
     if isinstance(data.get("fontes"), dict):
         for chave, item in data["fontes"].items():
-            if isinstance(item, dict):
+            if chave in fontes and isinstance(item, dict):
                 fontes[chave] = {**fontes.get(chave, {}), **item}
     return {**padrao, **data, "fontes": fontes}
 
@@ -34983,7 +35631,9 @@ def _vendas_diario_status_registrar(fontes, origem):
         data = _load_json_file(VENDAS_DIARIO_STATUS_FILE, {}) or {}
         atual = _vendas_diario_status_padrao()
         if isinstance(data.get("fontes"), dict):
-            atual["fontes"].update(data["fontes"])
+            for chave, item in data["fontes"].items():
+                if chave in atual["fontes"]:
+                    atual["fontes"][chave].update(item)
         atual.update({
             "versao": 1,
             "origem": _as_str(origem) or "desconhecida",
@@ -35012,27 +35662,32 @@ def _vendas_diario_status_publico():
 
 def _vendas_diario_status_iniciar(origem, incluir_sellout):
     tentativa_em = _vendas_diario_status_agora()
-    fontes = {}
-    for chave, nome, caminho in (
-        ("txt", "TXT", VENDAS_DIARIO_TXT_DIR),
-        ("pdf", "PDF", VENDAS_DIARIO_PDF_DIR),
-    ):
-        fontes[chave] = {
-            "nome": nome, "caminho": caminho, "status": "em_andamento",
-            "tentativa_em": tentativa_em, "mensagem": "Leitura da pasta em andamento.",
-        }
-    if incluir_sellout:
-        for indice, source in enumerate(fontes_mensais_configuradas(os.environ)):
-            chave, nome = _vendas_diario_sellout_chave(source, indice)
-            fontes[chave] = {
-                "nome": nome, "caminho": source, "status": "em_andamento",
-                "tentativa_em": tentativa_em, "mensagem": "Leitura da fonte em andamento.",
-            }
+    fontes = _vendas_diario_status_padrao()["fontes"]
+    for item in fontes.values():
+        item.update(status="em_andamento", tentativa_em=tentativa_em,
+                    mensagem="Leitura da fonte SELLOUT em andamento.")
     return _vendas_diario_status_registrar(fontes, origem)
 
 
 def _vendas_diario_status_tipo(tipo, caminho, arquivos, resultados, tentativa_em):
     itens = [item for item in (resultados or []) if item.get("tipo") == tipo]
+    erros_itens = []
+    for item in itens:
+        if item.get("status") != "erro":
+            continue
+        arquivo = os.path.basename(_as_str(item.get("arquivo")))
+        erro = _as_str(item.get("erro"))[:1000]
+        pagina = _as_int(item.get("pagina"), 0)
+        erro_id = hashlib.sha256(
+            f"{tipo}|{arquivo}|{pagina}|{erro}".encode("utf-8", errors="replace")
+        ).hexdigest()[:16]
+        erros_itens.append({
+            "id": erro_id,
+            "tipo": tipo,
+            "arquivo": arquivo,
+            "pagina": pagina or None,
+            "erro": erro or "Falha sem detalhe informado.",
+        })
     erros = sum(1 for item in itens if item.get("status") == "erro")
     importados = sum(1 for item in itens if item.get("status") in {"importado", "reativado"})
     sem_alteracoes = sum(1 for item in itens if item.get("status") in {"ja_importado", "sem_vendas"})
@@ -35061,7 +35716,7 @@ def _vendas_diario_status_tipo(tipo, caminho, arquivos, resultados, tentativa_em
         "tentativa_em": tentativa_em, "arquivos": arquivos,
         "importados": importados, "sem_alteracoes": sem_alteracoes,
         "erros": erros, "removidos": removidos, "falhas_limpeza": falhas_limpeza,
-        "mensagem": mensagem,
+        "mensagem": mensagem, "erros_itens": erros_itens,
     }
 
 
@@ -35093,7 +35748,7 @@ def _vendas_diario_aplicar_limpeza(path, directory, resultados):
     return resultados
 
 
-def _vendas_diario_status_sellout(resultado, erro, tentativa_em):
+def _vendas_diario_status_sellout(resultado, erro, tentativa_em, diario=False):
     resultado = resultado or {}
     fontes_resultado = {
         _as_str(item.get("nome")).upper(): item
@@ -35106,18 +35761,23 @@ def _vendas_diario_status_sellout(resultado, erro, tentativa_em):
         "erro": "erro",
     }
     fontes = {}
-    for indice, source in enumerate(fontes_mensais_configuradas(os.environ)):
-        chave, nome = _vendas_diario_sellout_chave(source, indice)
-        origem_nome = nome.replace("SELLOUT ", "").upper()
+    sources = (fontes_diarias_configuradas if diario else fontes_mensais_configuradas)(os.environ)
+    sufixo = "d" if diario else "m"
+    periodicidade = "diário" if diario else "mensal"
+    for indice, source in enumerate(sources):
+        base_chave, base_nome = _vendas_diario_sellout_chave(source, indice)
+        origem_nome = base_nome.replace("SELLOUT ", "").upper()
+        chave = f"sellout_{sufixo}_{origem_nome.lower()}"
+        nome = f"SELLOUT {periodicidade} {origem_nome}"
         detalhe = fontes_resultado.get(origem_nome, {})
         arquivo_existe = os.path.isfile(source)
         status = status_mapa.get(status_original, "erro" if erro else "desconhecido")
         if erro and not arquivo_existe:
-            mensagem = "Arquivo SELLOUT_M.CSV nao encontrado."
+            mensagem = f"Arquivo SELLOUT_{sufixo.upper()}.CSV nao encontrado."
         elif erro:
             mensagem = _as_str(erro)
         elif status == "sucesso":
-            mensagem = "Fonte lida e incorporada na base mensal unificada."
+            mensagem = f"Fonte lida e incorporada na base {periodicidade} unificada."
         elif status == "sem_alteracoes":
             mensagem = "Fonte lida; conteudo sem alteracoes."
         elif status == "desabilitado":
@@ -35138,19 +35798,10 @@ def _vendas_diario_status_sellout(resultado, erro, tentativa_em):
 
 def _vendas_diario_status_registrar_resultado(result, origem, incluir_sellout):
     tentativa_em = _vendas_diario_status_agora()
-    fontes = {
-        "txt": _vendas_diario_status_tipo(
-            "txt", VENDAS_DIARIO_TXT_DIR, _as_int((result.get("txt") or {}).get("arquivos"), 0),
-            result.get("resultados"), tentativa_em,
-        ),
-        "pdf": _vendas_diario_status_tipo(
-            "pdf", VENDAS_DIARIO_PDF_DIR, _as_int((result.get("pdf") or {}).get("arquivos"), 0),
-            result.get("resultados"), tentativa_em,
-        ),
-    }
-    if incluir_sellout:
-        sellout = result.get("sellout") or {}
-        fontes.update(_vendas_diario_status_sellout(sellout, sellout.get("erro"), tentativa_em))
+    diario = result.get("sellout_diario") or {}
+    fontes = _vendas_diario_status_sellout(
+        diario, diario.get("erro"), tentativa_em, diario=True
+    )
     return _vendas_diario_status_registrar(fontes, origem)
 
 
@@ -35239,66 +35890,22 @@ def _vendas_diario_importar_pasta(incluir_sellout=False, origem="automatico_past
             "ultima_leitura": _vendas_diario_status_publico(),
         }
     try:
-        _vendas_diario_status_iniciar(origem, incluir_sellout)
-        txt_files = discover_txt_files(VENDAS_DIARIO_TXT_DIR)
-        pdf_files = _descobrir_arquivos_por_extensao(VENDAS_DIARIO_PDF_DIR, ".pdf")
+        _vendas_diario_status_iniciar(origem, True)
         results = []
-        sellout = None
-        if incluir_sellout:
-            try:
-                sellout = _vendas_sellout_mensal_importar()
-            except Exception as exc:
-                app.logger.exception("Falha na leitura manual do SELLOUT mensal; base preservada")
-                sellout = {"status": "erro", "erro": str(exc)}
-            sellout = {**sellout, "tipo": "sellout", "arquivo": "SELLOUT_M.CSV"}
-            results.append(sellout)
-        for path in txt_files:
-            try:
-                result = _vendas_diario_importar_arquivo(path)
-                result["tipo"] = "txt"
-                results.extend(_vendas_diario_aplicar_limpeza(
-                    path, VENDAS_DIARIO_TXT_DIR, [result]
-                ))
-            except Exception as exc:
-                results.append({"arquivo": os.path.basename(path), "tipo": "txt", "status": "erro", "erro": str(exc)})
-        for path in pdf_files:
-            pdf_results = []
-            try:
-                cargas = parse_cargas_pdf(path)
-                for carga in cargas:
-                    result = _vendas_diario_importar_carga_pdf_arquivo(
-                        path, usuario="importacao_automatica", carga=carga
-                    )
-                    result["arquivo"] = os.path.basename(path)
-                    result["pagina"] = carga.get("pagina")
-                    result["tipo"] = "pdf"
-                    pdf_results.append(result)
-                if not pdf_results:
-                    raise ValueError("PDF sem cargas reconhecidas.")
-            except Exception as exc:
-                pdf_results.append({"arquivo": os.path.basename(path), "tipo": "pdf", "status": "erro", "erro": str(exc)})
-            results.extend(_vendas_diario_aplicar_limpeza(
-                path, VENDAS_DIARIO_PDF_DIR, pdf_results
-            ))
-        grouping = _vendas_diario_unificar_cards_semelhantes()
-        imported_dates = sorted({
-            _as_str(item.get("data_ref") or (item.get("carga") or {}).get("data_ref"))
-            for item in results
-            if _as_str(item.get("data_ref") or (item.get("carga") or {}).get("data_ref"))
-        })
+        try:
+            sellout_diario = _vendas_sellout_diario_importar()
+        except Exception as exc:
+            app.logger.exception("Falha na leitura do SELLOUT diario; base anterior preservada")
+            sellout_diario = {"status": "erro", "erro": str(exc)}
+        results.append({**sellout_diario, "tipo": "sellout_diario", "arquivo": "SELLOUT_D.CSV"})
         result = {
             "processando": False,
-            "diretorio": VENDAS_DIARIO_DIR,
-            "data_ref": imported_dates[-1] if imported_dates else "",
-            "arquivos": len(txt_files) + len(pdf_files) + int(incluir_sellout),
-            "txt": {"diretorio": VENDAS_DIARIO_TXT_DIR, "arquivos": len(txt_files)},
-            "pdf": {"diretorio": VENDAS_DIARIO_PDF_DIR, "arquivos": len(pdf_files)},
-            "sellout": sellout,
-            "unificacao": grouping,
+            "arquivos": len(fontes_diarias_configuradas(os.environ)),
+            "sellout_diario": sellout_diario,
             "resultados": results,
         }
         result["ultima_leitura"] = _vendas_diario_status_registrar_resultado(
-            result, origem, incluir_sellout
+            result, origem, True
         )
         return result
     finally:
@@ -35342,56 +35949,26 @@ def vendas_diario_api():
     cur = conn.cursor(dictionary=True)
     try:
         if not data_ref:
-            cur.execute("SELECT MAX(data_ref) AS data_ref FROM vendas_diario_importacoes")
+            cur.execute("SELECT MAX(data_ref) AS data_ref FROM vendas_relatorio_itens WHERE import_id=%s", ("sellout-mensal-continuo",))
             row = cur.fetchone() or {}
             data_ref = _fmt_date(row.get("data_ref"))
         cur.execute("""
-            SELECT p.id, p.data_ref, p.vendedor_codigo,
-                   (SELECT MAX(cc.nome) FROM comissao_cadastros cc
-                    WHERE LOWER(cc.funcao)='vendedor' AND cc.ativo=1
-                      AND cc.codigo=CAST(p.vendedor_codigo AS UNSIGNED)) AS vendedor_nome,
-                   p.cliente_codigo, p.cliente_nome, p.fantasia,
-                   p.cidade, p.status, p.motivo_codigo, p.motivo, p.valor_total, p.peso_bruto,
-                   COALESCE(iv.itens,0) AS itens,
-                   COALESCE(iv.valor_bonificacao,0) AS valor_bonificacao,
-                   CASE WHEN p.status='positiva'
-                        THEN p.valor_total-COALESCE(iv.valor_bonificacao,0)
-                        ELSE 0 END AS valor_liquido
-            FROM vendas_diario_pedidos p
-            LEFT JOIN (
-                SELECT pedido_id, COUNT(*) itens,
-                       SUM(CASE WHEN tabela_venda=91 THEN quantidade*valor_unitario ELSE 0 END) valor_bonificacao
-                FROM vendas_diario_itens GROUP BY pedido_id
-            ) iv ON iv.pedido_id=p.id
-            WHERE p.data_ref=%s
-              AND NOT (
-                  EXISTS (
-                      SELECT 1 FROM vendas_diario_kanban kpdf
-                      WHERE kpdf.importacao_id=p.importacao_id
-                        AND kpdf.vendedor_codigo=p.vendedor_codigo
-                        AND kpdf.origem_tipo='pdf'
-                  )
-                  AND EXISTS (
-                      SELECT 1
-                      FROM vendas_diario_pedidos ptxt
-                      JOIN vendas_diario_kanban ktxt
-                        ON ktxt.importacao_id=ptxt.importacao_id
-                       AND ktxt.vendedor_codigo=ptxt.vendedor_codigo
-                      WHERE ptxt.data_ref=p.data_ref
-                        AND ptxt.vendedor_codigo=p.vendedor_codigo
-                        AND ktxt.origem_tipo='txt'
-                        AND ktxt.status<>'excluido'
-                  )
-              )
-              AND NOT EXISTS (
-                  SELECT 1 FROM vendas_diario_kanban kf
-                  LEFT JOIN vendas_diario_kanban kp ON kp.id=kf.card_principal_id
-                  WHERE kf.importacao_id=p.importacao_id
-                    AND kf.vendedor_codigo=p.vendedor_codigo
-                    AND (kf.status='excluido' OR kp.status='excluido')
-              )
-            ORDER BY p.vendedor_codigo, p.cliente_nome
-        """, (data_ref or "1900-01-01",))
+            SELECT MIN(id) AS id, data_ref, vendedor_codigo,
+                   MAX(vendedor_nome) AS vendedor_nome,
+                   cliente_codigo, MAX(cliente) AS cliente_nome,
+                   MAX(cliente) AS fantasia, MAX(cidade) AS cidade,
+                   'positiva' AS status, '' AS motivo_codigo, '' AS motivo,
+                   COUNT(*) AS itens,
+                   COUNT(DISTINCT NULLIF(numero_nf,'')) AS pedidos,
+                   SUM(COALESCE(valor_venda,0)+COALESCE(bonificacao,0)) AS valor_total,
+                   SUM(COALESCE(bonificacao,0)) AS valor_bonificacao,
+                   SUM(COALESCE(valor_venda,0)-COALESCE(valor_devolvido,0)) AS valor_liquido,
+                   SUM(COALESCE(peso,0)) AS peso_bruto
+            FROM vendas_relatorio_itens
+            WHERE import_id=%s AND data_ref=%s
+            GROUP BY data_ref, vendedor_codigo, cliente_codigo, cliente_norm
+            ORDER BY vendedor_codigo, cliente_nome
+        """, ("sellout-mensal-continuo", data_ref or "1900-01-01"))
         orders = cur.fetchall() or []
         _vendas_diario_preencher_nomes_vendedores(cur, orders)
         clientes_map = {}
@@ -35413,7 +35990,7 @@ def vendas_diario_api():
                 row for row in orders
                 if (_as_str(row.get("cliente_codigo")) or _normalizar_chave_texto(row.get("cliente_nome") or row.get("fantasia")) or "SEM CLIENTE") == filtro_cliente
             ]
-        cur.execute("SELECT DISTINCT data_ref FROM vendas_diario_importacoes ORDER BY data_ref DESC LIMIT 90")
+        cur.execute("SELECT DISTINCT data_ref FROM vendas_relatorio_itens WHERE import_id=%s ORDER BY data_ref DESC LIMIT 90", ("sellout-mensal-continuo",))
         dates = [_fmt_date(row.get("data_ref")) for row in (cur.fetchall() or [])]
         return jsonify({
             "data_ref": data_ref,
@@ -35422,7 +35999,7 @@ def vendas_diario_api():
             "clientes_disponiveis": clientes_disponiveis,
             "pedidos": orders,
             "resumo": {
-                "pedidos": len(orders),
+                "pedidos": sum(_as_int(row.get("pedidos"), 0) for row in orders),
                 "positivos": sum(1 for row in orders if row.get("status") == "positiva"),
                 "negativos": sum(1 for row in orders if row.get("status") == "negativa"),
                 "valor_total": round(sum(_as_float(row.get("valor_total"), 0) for row in orders if row.get("status") == "positiva"), 2),
@@ -35432,10 +36009,8 @@ def vendas_diario_api():
                 "peso_bruto": round(sum(_as_float(row.get("peso_bruto"), 0) for row in orders), 3),
             },
             "importacao": {
-                "diretorio": VENDAS_DIARIO_DIR,
-                "diretorio_txt": VENDAS_DIARIO_TXT_DIR,
-                "diretorio_pdf": VENDAS_DIARIO_PDF_DIR,
-                "horario": VENDAS_DIARIO_HORA,
+                "fonte": "SELLOUT_D.CSV (IND3 + INDB)",
+                "horario": "08:00",
             },
             "ultima_leitura": _vendas_diario_status_publico(),
         })
@@ -35472,7 +36047,8 @@ def vendas_diario_relatorio_api():
         _as_str(request.args.get("cliente")), _as_str(request.args.get("vendedor")), por_dia=True))
 
 
-def _vendas_diario_consultar(data_inicio, data_fim, filtro_cliente="", filtro_vendedor="", por_dia=False):
+def _vendas_diario_consultar_legado(data_inicio, data_fim, filtro_cliente="", filtro_vendedor="", por_dia=False):
+    """Consulta preservada apenas para auditoria das antigas cargas TXT/PDF."""
     conn = get_conn()
     cur = conn.cursor(dictionary=True)
     try:
@@ -35648,6 +36224,110 @@ def _vendas_diario_consultar(data_inicio, data_fim, filtro_cliente="", filtro_ve
                     / sum(_as_float(row.get("valor_bruto"), 0) for row in sellers) * 100,
                     2,
                 ) if sum(_as_float(row.get("valor_bruto"), 0) for row in sellers) > 0 else 0.0,
+            },
+        }
+    finally:
+        cur.close()
+        conn.close()
+
+
+def _vendas_diario_consultar(data_inicio, data_fim, filtro_cliente="", filtro_vendedor="", por_dia=False):
+    """Consolida Vendas Diario exclusivamente pelo SELLOUT_D unificado."""
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    try:
+        where = ["import_id=%s"]
+        params = ["sellout-mensal-continuo"]
+        if data_inicio:
+            where.append("data_ref >= %s")
+            params.append(data_inicio)
+        if data_fim:
+            where.append("data_ref <= %s")
+            params.append(data_fim)
+        cliente_expr = "COALESCE(NULLIF(cliente_codigo,''), NULLIF(cliente_norm,''), 'SEM CLIENTE')"
+        if filtro_cliente:
+            where.append(f"{cliente_expr}=%s")
+            params.append(filtro_cliente)
+        if filtro_vendedor:
+            where.append("vendedor_codigo=%s")
+            params.append(filtro_vendedor)
+        where_sql = " AND ".join(where)
+        cur.execute(f"""
+            SELECT vendedor_codigo, {"data_ref," if por_dia else ""}
+                   MAX(vendedor_nome) AS vendedor_nome,
+                   COUNT(DISTINCT {cliente_expr}) AS clientes,
+                   COUNT(DISTINCT NULLIF(numero_nf,'')) AS positivos,
+                   0 AS negativos,
+                   SUM(COALESCE(valor_venda,0)+COALESCE(bonificacao,0)) AS valor_bruto,
+                   SUM(COALESCE(bonificacao,0)) AS valor_bonificacao,
+                   SUM(CASE WHEN COALESCE(bonificacao,0)=0 THEN COALESCE(caixa_fisica,0) ELSE 0 END) AS volume_venda,
+                   SUM(COALESCE(caixa_fisica,0)) AS volume_total,
+                   SUM(CASE WHEN COALESCE(bonificacao,0)>0 THEN COALESCE(caixa_fisica,0) ELSE 0 END) AS volume_bonificado
+            FROM vendas_relatorio_itens
+            WHERE {where_sql}
+            GROUP BY {"data_ref," if por_dia else ""} vendedor_codigo
+            ORDER BY {"data_ref DESC," if por_dia else ""} valor_bruto DESC, vendedor_codigo
+        """, tuple(params))
+        sellers = []
+        for raw in cur.fetchall() or []:
+            item = dict(raw)
+            if _vendas_vendedor_excluido(item):
+                continue
+            item["valor_bruto"] = round(_as_float(item.get("valor_bruto"), 0), 2)
+            item["valor_bonificacao"] = round(_as_float(item.get("valor_bonificacao"), 0), 2)
+            item["valor_liquido"] = round(item["valor_bruto"] - item["valor_bonificacao"], 2)
+            item["valor_total"] = item["valor_bruto"]
+            item["positivacao_percentual"] = 100.0 if _as_int(item.get("clientes"), 0) else 0.0
+            item["bonificacao_percentual"] = round(
+                item["valor_bonificacao"] / item["valor_bruto"] * 100, 2
+            ) if item["valor_bruto"] else 0.0
+            item["status"] = "com_vendas" if item["valor_bruto"] else "sem_vendas"
+            if por_dia:
+                item["data_ref"] = _fmt_date(item.get("data_ref"))
+            sellers.append(item)
+        cur.execute(f"""
+            SELECT {cliente_expr} AS chave, MAX(cliente_codigo) AS codigo,
+                   MAX(cliente) AS cliente, MAX(cliente) AS fantasia, MAX(cidade) AS cidade
+            FROM vendas_relatorio_itens WHERE {where_sql}
+            GROUP BY {cliente_expr} ORDER BY cliente
+        """, tuple(params))
+        clientes = [dict(row) for row in (cur.fetchall() or [])]
+        vendedores_disponiveis = sorted({
+            _as_str(row.get("vendedor_codigo")): {
+                "chave": _as_str(row.get("vendedor_codigo")),
+                "codigo": _as_str(row.get("vendedor_codigo")),
+                "nome": _as_str(row.get("vendedor_nome")),
+            } for row in sellers
+        }.values(), key=lambda row: (row["nome"], row["codigo"]))
+        totais_tipo = {"clt": 0.0, "autonomo": 0.0}
+        for row in sellers:
+            totais_tipo[_vendas_tipo_vendedor(row.get("vendedor_nome"), row.get("vendedor_codigo"))] += row["valor_bruto"]
+        bruto = round(sum(_as_float(row.get("valor_bruto"), 0) for row in sellers), 2)
+        bonus = round(sum(_as_float(row.get("valor_bonificacao"), 0) for row in sellers), 2)
+        return {
+            "data_ref": "", "arquivo": {"nome": "SELLOUT_D.CSV (IND3 + INDB)", "nomes": ["SELLOUT_D.CSV"]},
+            "cabecalho_resumo": [
+                {"nome": "RioB (valor total)", "valor_venda": bruto},
+                {"nome": "CLT", "valor_venda": round(totais_tipo["clt"], 2)},
+                {"nome": "Autônomos", "valor_venda": round(totais_tipo["autonomo"], 2)},
+            ],
+            "vendedores_disponiveis": vendedores_disponiveis,
+            "relatorio_tipo": "diario", "vendedores": sellers,
+            "periodo": {"data_inicio": _fmt_date(data_inicio), "data_fim": _fmt_date(data_fim)},
+            "filtros": {"cliente": filtro_cliente, "vendedor": filtro_vendedor,
+                        "data_inicio": _fmt_date(data_inicio), "data_fim": _fmt_date(data_fim)},
+            "clientes_disponiveis": clientes,
+            "resumo": {
+                "vendedores": len({_as_str(row.get("vendedor_codigo")) for row in sellers}),
+                "clientes": sum(_as_int(row.get("clientes"), 0) for row in sellers),
+                "positivos": sum(_as_int(row.get("positivos"), 0) for row in sellers),
+                "negativos": 0,
+                "volume_venda": round(sum(_as_float(row.get("volume_venda"), 0) for row in sellers), 3),
+                "volume_total": round(sum(_as_float(row.get("volume_total"), 0) for row in sellers), 3),
+                "volume_bonificado": round(sum(_as_float(row.get("volume_bonificado"), 0) for row in sellers), 3),
+                "valor_total": bruto, "valor_bruto": bruto,
+                "valor_bonificacao": bonus, "valor_liquido": round(bruto - bonus, 2),
+                "bonificacao_percentual": round(bonus / bruto * 100, 2) if bruto else 0.0,
             },
         }
     finally:
@@ -36686,19 +37366,8 @@ def vendas_diario_kanban_enviar_frete_api(card_id):
 def vendas_diario_importar_api():
     uploaded = request.files.get("arquivo")
     if uploaded and getattr(uploaded, "filename", ""):
-        filename = secure_filename(uploaded.filename)
-        if not filename.lower().endswith(".txt"):
-            return jsonify({"erro": "Envie um arquivo TXT de vendas diario."}), 400
-        target_dir = os.path.join(VENDAS_UPLOADS_DIR, "diario")
-        os.makedirs(target_dir, exist_ok=True)
-        target_path = os.path.join(target_dir, f"{uuid.uuid4().hex}_{filename}")
-        uploaded.save(target_path)
-        try:
-            result = _vendas_diario_importar_arquivo(target_path)
-            return jsonify({"processando": False, "arquivos": 1, "resultados": [result]})
-        except Exception as exc:
-            return jsonify({"erro": f"Falha ao importar TXT de vendas diario: {str(exc)}"}), 400
-    result = _vendas_diario_importar_pasta(incluir_sellout=True, origem="manual")
+        return jsonify({"erro": "Upload TXT foi desativado. Vendas Diario usa somente SELLOUT_D das bases IND3 e INDB."}), 400
+    result = _vendas_diario_importar_pasta(incluir_sellout=True, origem="manual_sellout_diario")
     if result.get("processando"):
         _vendas_diario_agendar_manual_pendente()
         result["manual_agendada"] = True
@@ -36710,6 +37379,101 @@ def vendas_diario_importar_api():
 @app.route("/api/vendas/diario/status-leitura", methods=["GET"])
 def vendas_diario_status_leitura_api():
     return jsonify(_vendas_diario_status_publico())
+
+
+def _vendas_diario_arquivo_erro(tipo, arquivo):
+    tipo = _as_str(tipo).lower()
+    arquivo = _as_str(arquivo)
+    if tipo not in {"txt", "pdf"}:
+        raise ValueError("Tipo de arquivo invalido para correcao.")
+    if not arquivo or arquivo != os.path.basename(arquivo):
+        raise ValueError("Nome de arquivo invalido para correcao.")
+    directory = VENDAS_DIARIO_TXT_DIR if tipo == "txt" else VENDAS_DIARIO_PDF_DIR
+    path = os.path.realpath(os.path.join(directory, arquivo))
+    real_directory = os.path.realpath(directory)
+    if os.path.commonpath((real_directory, path)) != real_directory:
+        raise ValueError("Arquivo fora da pasta autorizada.")
+    if not os.path.isfile(path):
+        raise FileNotFoundError("O arquivo nao esta mais na pasta de importacao.")
+    extension = ".txt" if tipo == "txt" else ".pdf"
+    if not arquivo.lower().endswith(extension):
+        raise ValueError(f"O arquivo selecionado deve ser {extension.upper()}.")
+    return path, directory
+
+
+def _vendas_diario_corrigir_arquivo(tipo, arquivo, pagina=0, vendedor_codigo=""):
+    path, directory = _vendas_diario_arquivo_erro(tipo, arquivo)
+    if not _VENDAS_DIARIO_IMPORT_LOCK.acquire(blocking=False):
+        raise RuntimeError("Ja existe uma leitura em andamento. Aguarde a conclusao e tente novamente.")
+    try:
+        resultados = []
+        if tipo == "txt":
+            result = _vendas_diario_importar_arquivo(path)
+            result.update({"arquivo": arquivo, "tipo": "txt"})
+            resultados = [result]
+        else:
+            cargas = parse_cargas_pdf(path)
+            if pagina and not any(_as_int(carga.get("pagina"), 0) == pagina for carga in cargas):
+                raise ValueError("A pagina selecionada nao corresponde a uma carga reconhecida no PDF.")
+            for carga in cargas:
+                override = vendedor_codigo if (not pagina or _as_int(carga.get("pagina"), 0) == pagina) else ""
+                result = _vendas_diario_importar_carga_pdf_arquivo(
+                    path,
+                    vendedor_codigo=override,
+                    usuario=_usuario_ator_req(),
+                    carga=carga,
+                )
+                result.update({"arquivo": arquivo, "pagina": carga.get("pagina"), "tipo": "pdf"})
+                resultados.append(result)
+        resultados = _vendas_diario_aplicar_limpeza(path, directory, resultados)
+        _vendas_diario_unificar_cards_semelhantes(usuario=_usuario_ator_req())
+        selecionado = next(
+            (item for item in resultados if not pagina or _as_int(item.get("pagina"), 0) == pagina),
+            resultados[0] if resultados else {"status": "erro", "erro": "Nenhum resultado foi produzido."},
+        )
+        return selecionado, resultados
+    finally:
+        _VENDAS_DIARIO_IMPORT_LOCK.release()
+
+
+@app.route("/api/vendas/diario/importar-erros/corrigir", methods=["POST"])
+def vendas_diario_corrigir_erro_api():
+    return jsonify({"erro": "Correcao TXT/PDF desativada. Vendas Diario usa somente SELLOUT_D."}), 410
+    # Compatibilidade de codigo historico abaixo; sem ponto de entrada ativo.
+    payload = request.get_json(silent=True) or {}
+    tipo = _as_str(payload.get("tipo")).lower()
+    arquivo = _as_str(payload.get("arquivo"))
+    pagina = _as_int(payload.get("pagina"), 0)
+    vendedor_codigo = _as_str(payload.get("vendedor_codigo"))
+    if vendedor_codigo and not vendedor_codigo.isdigit():
+        return jsonify({"erro": "Codigo do vendedor invalido."}), 400
+    try:
+        selecionado, resultados = _vendas_diario_corrigir_arquivo(
+            tipo, arquivo, pagina=pagina, vendedor_codigo=vendedor_codigo
+        )
+    except FileNotFoundError as exc:
+        return jsonify({"erro": str(exc), "ultima_leitura": _vendas_diario_status_publico()}), 404
+    except RuntimeError as exc:
+        return jsonify({"erro": str(exc), "ultima_leitura": _vendas_diario_status_publico()}), 409
+    except (ValueError, OSError) as exc:
+        # Uma nova leitura registra novamente o detalhe, mantendo o erro
+        # visivel para que ele nao se perca apos uma tentativa malsucedida.
+        leitura = _vendas_diario_importar_pasta(incluir_sellout=False, origem="correcao_erro")
+        return jsonify({
+            "erro": str(exc),
+            "ultima_leitura": leitura.get("ultima_leitura") or _vendas_diario_status_publico(),
+        }), 400
+    leitura = _vendas_diario_importar_pasta(incluir_sellout=False, origem="correcao_erro")
+    resposta = {
+        "ok": selecionado.get("status") != "erro",
+        "resultado": selecionado,
+        "resultados_arquivo": resultados,
+        "ultima_leitura": leitura.get("ultima_leitura") or _vendas_diario_status_publico(),
+    }
+    if selecionado.get("status") == "erro":
+        resposta["erro"] = selecionado.get("erro") or "O arquivo continua com erro."
+        return jsonify(resposta), 409
+    return jsonify(resposta)
 
 
 def _vendas_diario_vendedor_por_carga(carga):
@@ -36734,9 +37498,19 @@ def _vendas_diario_importar_carga_pdf_arquivo(path, vendedor_codigo="", usuario=
         if existing:
             cur.execute("SELECT * FROM vendas_diario_kanban WHERE importacao_id=%s AND origem_tipo='pdf' ORDER BY id LIMIT 1 FOR UPDATE", (existing["id"],))
             card_existente = cur.fetchone()
-            if card_existente and _as_int(card_existente.get("frete_id"), 0):
-                return {"status": "erro", "erro": "Este PDF ja esta vinculado a um frete e nao pode trocar de vendedor.", "card_id": card_existente["id"], "frete_id": card_existente["frete_id"]}
             if card_existente and _as_str(card_existente.get("status")) != "excluido":
+                vendedor_existente = _as_str(card_existente.get("vendedor_codigo"))
+                if vendedor_existente != vendedor_codigo:
+                    if _as_int(card_existente.get("frete_id"), 0):
+                        mensagem = "Este PDF ja esta vinculado a um frete e nao pode trocar de vendedor."
+                    else:
+                        mensagem = "Este PDF ja foi importado para outro vendedor. Corrija o card existente antes de reimportar."
+                    return {
+                        "status": "erro", "erro": mensagem,
+                        "card_id": card_existente["id"],
+                        "frete_id": card_existente.get("frete_id"),
+                        "vendedor_codigo": vendedor_existente,
+                    }
                 return {
                     "ok": True,
                     "status": "ja_importado", "importacao_id": existing["id"],
@@ -36809,6 +37583,8 @@ def _vendas_diario_importar_carga_pdf_arquivo(path, vendedor_codigo="", usuario=
 
 @app.route("/api/vendas/diario/importar-carga-pdf", methods=["POST"])
 def vendas_diario_importar_carga_pdf_api():
+    return jsonify({"erro": "Importacao de carga PDF desativada. Vendas Diario usa somente SELLOUT_D."}), 410
+    # Compatibilidade de codigo historico abaixo; sem ponto de entrada ativo.
     vendedor_codigo = _as_str(request.form.get("vendedor_codigo"))
     if not vendedor_codigo:
         return jsonify({"erro": "Selecione o vendedor responsavel pela carga PDF."}), 400
@@ -38522,6 +39298,401 @@ def importar_cargas_pdf():
         return jsonify({"erro": f"Falha ao importar PDF de cargas: {str(exc)}"}), 500
 
     return jsonify(resultado)
+
+
+def _autorizar_aprovacao_documentos_estoque():
+    usuario_id = _as_int(request.headers.get("X-Usuario-Id"), 0)
+    if usuario_id <= 0:
+        return jsonify({"erro": "Sessao do portal necessaria."}), 401
+    recursos = {
+        item.strip()
+        for item in _as_str(request.headers.get("X-Usuario-Recursos")).split(",")
+        if item.strip()
+    }
+    if (
+        _as_str(request.headers.get("X-Usuario-Perfil")).lower() != "admin"
+        and not recursos.intersection({"*", "estoque_documentos_aprovar"})
+    ):
+        return jsonify({"erro": "Aprovacao de documentos de estoque nao liberada para este usuario."}), 403
+    return None
+
+
+def _sincronizar_pdfs_compartilhados_estoque(usuario="desconhecido"):
+    if not os.path.isdir(VENDAS_DIARIO_PDF_DIR):
+        raise FileNotFoundError(
+            "A pasta compartilhada de PDFs esta indisponivel. Verifique a conexao com o servidor de arquivos."
+        )
+    caminhos = _descobrir_arquivos_por_extensao(VENDAS_DIARIO_PDF_DIR, ".pdf")
+    resultados = []
+    erros = []
+    for path in caminhos:
+        arquivo = os.path.basename(path)
+        try:
+            with open(path, "rb") as handle:
+                pdf_bytes = handle.read()
+            if not pdf_bytes:
+                raise RuntimeError("arquivo vazio")
+            resultado = _importar_cargas_pdf_bytes(
+                pdf_bytes,
+                source_name=arquivo,
+                usuario=usuario,
+            )
+            resultados.append({
+                "arquivo": arquivo,
+                "paginas": _as_int(resultado.get("paginas_importadas"), 0),
+                "cargas_criadas": _as_int(resultado.get("cargas_criadas"), 0),
+                "cargas_atualizadas": _as_int(resultado.get("cargas_atualizadas"), 0),
+            })
+        except Exception as exc:
+            erros.append({"arquivo": arquivo, "erro": str(exc)})
+    return {
+        "ok": not erros,
+        "pasta": VENDAS_DIARIO_PDF_DIR,
+        "arquivos_encontrados": len(caminhos),
+        "arquivos_processados": len(resultados),
+        "resultados": resultados,
+        "erros": erros,
+    }
+
+
+def _carga_pdf_aprovacao_publica(row, arquivos_compartilhados=None):
+    xml_total = _as_int(row.get("xml_total"), 0)
+    itens_total = _as_int(row.get("itens_total"), 0)
+    baixado = bool(row.get("estoque_baixado_em"))
+    rejeitado = bool(row.get("estoque_rejeitado_em"))
+    if baixado:
+        status = "baixado"
+    elif rejeitado:
+        status = "rejeitado"
+    elif xml_total:
+        status = "coberto_xml"
+    elif itens_total <= 0:
+        status = "sem_itens"
+    else:
+        status = "pendente"
+    arquivo = _as_str(row.get("arquivo_origem") or row.get("origem_csv"))
+    return {
+        "id": _as_int(row.get("id"), 0),
+        "mapa_numero": _as_str(row.get("mapa_numero")),
+        "nome": _as_str(row.get("nome")),
+        "arquivo": arquivo,
+        "data_carga": _fmt_date(row.get("data_carga")),
+        "rota": _as_str(row.get("rota")),
+        "cidade": _as_str(row.get("cidade")),
+        "veiculo_numero": _as_str(row.get("veiculo_numero")),
+        "frete_id": _as_int(row.get("frete_id"), 0) or None,
+        "frete_nome": _as_str(row.get("frete_nome")),
+        "frete_status": _as_str(row.get("frete_status")),
+        "itens_total": itens_total,
+        "quantidade_total": _as_float(row.get("quantidade_itens"), 0.0),
+        "volumes_total": _as_float(row.get("volumes_total"), 0.0),
+        "xml_total": xml_total,
+        "notas_xml": [
+            item for item in _as_str(row.get("notas_xml")).split(",") if item
+        ],
+        "status": status,
+        "estoque_baixado_em": _fmt_dt(row.get("estoque_baixado_em")),
+        "estoque_baixado_por": _as_str(row.get("estoque_baixado_por")),
+        "estoque_rejeitado_em": _fmt_dt(row.get("estoque_rejeitado_em")),
+        "estoque_rejeitado_por": _as_str(row.get("estoque_rejeitado_por")),
+        "estoque_rejeitado_motivo": _as_str(row.get("estoque_rejeitado_motivo")),
+        "origem_compartilhada": (
+            arquivo in arquivos_compartilhados
+            if arquivos_compartilhados is not None else False
+        ),
+    }
+
+
+def _listar_cargas_pdf_aprovacao(cur):
+    cur.execute(
+        """
+        SELECT
+            c.id, c.nome, c.cidade, c.rota, c.veiculo_numero,
+            c.origem_csv, c.arquivo_origem, c.mapa_numero, c.data_carga,
+            c.volumes_total, c.estoque_baixado_em, c.estoque_baixado_por,
+            c.estoque_rejeitado_em, c.estoque_rejeitado_por, c.estoque_rejeitado_motivo,
+            (SELECT MIN(f.id) FROM fretes f WHERE f.carga_id=c.id) AS frete_id,
+            (SELECT f.nome FROM fretes f WHERE f.carga_id=c.id ORDER BY f.id ASC LIMIT 1) AS frete_nome,
+            (SELECT f.status FROM fretes f WHERE f.carga_id=c.id ORDER BY f.id ASC LIMIT 1) AS frete_status,
+            (SELECT COUNT(*) FROM cargas_estoque_itens i WHERE i.carga_id=c.id) AS itens_total,
+            (SELECT COALESCE(SUM(i.quantidade_total), 0) FROM cargas_estoque_itens i WHERE i.carga_id=c.id) AS quantidade_itens,
+            (SELECT COUNT(*) FROM estoque_xml_frete_vinculos x WHERE x.carga_id=c.id) AS xml_total,
+            (SELECT GROUP_CONCAT(COALESCE(NULLIF(x.numero_nota,''), NULLIF(x.chave_nfe,''), x.nota_key) ORDER BY x.id SEPARATOR ',')
+               FROM estoque_xml_frete_vinculos x WHERE x.carga_id=c.id) AS notas_xml
+        FROM cargas c
+        WHERE c.tipo_importacao='pdf'
+        ORDER BY COALESCE(c.data_carga, DATE(c.created_at)) DESC, c.id DESC
+        LIMIT 500
+        """
+    )
+    return cur.fetchall() or []
+
+
+@app.route("/api/estoque/aprovacoes-pdf/sincronizar", methods=["POST"])
+def sincronizar_aprovacoes_pdf_estoque():
+    bloqueio = _autorizar_aprovacao_documentos_estoque()
+    if bloqueio:
+        return bloqueio
+    try:
+        resultado = _sincronizar_pdfs_compartilhados_estoque(_usuario_ator_req())
+    except FileNotFoundError as exc:
+        return jsonify({"erro": str(exc), "pasta": VENDAS_DIARIO_PDF_DIR}), 503
+    codigo = 207 if resultado.get("erros") else 200
+    return jsonify(resultado), codigo
+
+
+@app.route("/api/estoque/aprovacoes-pdf", methods=["GET"])
+def listar_aprovacoes_pdf_estoque():
+    bloqueio = _autorizar_aprovacao_documentos_estoque()
+    if bloqueio:
+        return bloqueio
+    arquivos_compartilhados = set()
+    pasta_disponivel = os.path.isdir(VENDAS_DIARIO_PDF_DIR)
+    if pasta_disponivel:
+        try:
+            arquivos_compartilhados = {
+                os.path.basename(path)
+                for path in _descobrir_arquivos_por_extensao(VENDAS_DIARIO_PDF_DIR, ".pdf")
+            }
+        except OSError:
+            pasta_disponivel = False
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    try:
+        rows = [
+            _carga_pdf_aprovacao_publica(row, arquivos_compartilhados)
+            for row in _listar_cargas_pdf_aprovacao(cur)
+        ]
+    finally:
+        cur.close()
+        conn.close()
+    return jsonify({
+        "ok": True,
+        "rows": rows,
+        "meta": {
+            "pasta": VENDAS_DIARIO_PDF_DIR,
+            "pasta_disponivel": pasta_disponivel,
+            "pendentes": sum(row.get("status") == "pendente" for row in rows),
+            "cobertos_xml": sum(row.get("status") == "coberto_xml" for row in rows),
+            "baixados": sum(row.get("status") == "baixado" for row in rows),
+            "rejeitados": sum(row.get("status") == "rejeitado" for row in rows),
+        },
+    })
+
+
+@app.route("/api/estoque/aprovacoes-pdf/<int:carga_id>", methods=["GET"])
+def detalhar_aprovacao_pdf_estoque(carga_id):
+    bloqueio = _autorizar_aprovacao_documentos_estoque()
+    if bloqueio:
+        return bloqueio
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute("SELECT * FROM cargas WHERE id=%s AND tipo_importacao='pdf' LIMIT 1", (carga_id,))
+        carga = cur.fetchone()
+        if not carga:
+            return jsonify({"erro": "PDF/carga nao encontrado"}), 404
+        itens = _listar_itens_carga_estoque(cur, carga_id)
+        xmls = _xmls_saida_confirmados_carga(cur, carga_id)
+        cur.execute("SELECT id, nome, status FROM fretes WHERE carga_id=%s ORDER BY id ASC LIMIT 1", (carga_id,))
+        frete = cur.fetchone() or {}
+    finally:
+        cur.close()
+        conn.close()
+
+    try:
+        saldos = _estoque_resumo_produtos_data().get("rows") or []
+    except Exception:
+        app.logger.exception("Falha ao calcular saldos da previa do PDF de carga")
+        saldos = []
+    itens_publicos = []
+    for item in itens:
+        quantidade = _as_float(item.get("quantidade_total"), 0.0)
+        saldo_antes = _saldo_atual_produto_estoque(
+            None,
+            codigo_barras=item.get("codigo_barras"),
+            codigo_produto_nfe=item.get("codigo_produto"),
+            nome_produto=item.get("nome_produto"),
+            linhas=saldos,
+        )
+        itens_publicos.append({
+            "id": _as_int(item.get("id"), 0),
+            "item_seq": _as_int(item.get("item_seq"), 0),
+            "grupo_produto": _as_str(item.get("grupo_produto")),
+            "codigo_produto": _as_str(item.get("codigo_produto")),
+            "codigo_barras": _as_str(item.get("codigo_barras")),
+            "nome_produto": _as_str(item.get("nome_produto")),
+            "embalagem": _as_str(item.get("embalagem")),
+            "quantidade_embalagem": _as_float(item.get("quantidade_embalagem"), 0.0),
+            "unidade_embalagem": _as_str(item.get("unidade_embalagem")),
+            "quantidade_solta": _as_float(item.get("quantidade_solta"), 0.0),
+            "unidade_solta": _as_str(item.get("unidade_solta")),
+            "fator_embalagem": _as_float(item.get("fator_embalagem"), 0.0),
+            "quantidade_total": quantidade,
+            "saldo_antes": round(saldo_antes, 3),
+            "saldo_depois": round(saldo_antes - quantidade, 3),
+        })
+    carga_publica = _carga_pdf_aprovacao_publica({
+        **carga,
+        "frete_id": frete.get("id"),
+        "frete_nome": frete.get("nome"),
+        "frete_status": frete.get("status"),
+        "itens_total": len(itens),
+        "quantidade_itens": sum(_as_float(item.get("quantidade_total"), 0.0) for item in itens),
+        "xml_total": len(xmls),
+        "notas_xml": ",".join(
+            _as_str(row.get("numero_nota") or row.get("chave_nfe") or row.get("nota_key"))
+            for row in xmls
+        ),
+    })
+    return jsonify({"ok": True, "carga": carga_publica, "itens": itens_publicos})
+
+
+def _rejeitar_carga_pdf_estoque(cur, carga_id, usuario, motivo):
+    carga_id = _as_int(carga_id, 0)
+    motivo = _as_str(motivo).strip()
+    if carga_id <= 0:
+        return {"ok": False, "motivo": "carga_invalida"}
+    if not motivo:
+        return {"ok": False, "motivo": "motivo_obrigatorio"}
+
+    cur.execute(
+        """
+        SELECT id, nome, mapa_numero, estoque_baixado_em,
+               estoque_rejeitado_em, estoque_rejeitado_por,
+               estoque_rejeitado_motivo
+        FROM cargas
+        WHERE id=%s AND tipo_importacao='pdf'
+        LIMIT 1
+        FOR UPDATE
+        """,
+        (carga_id,),
+    )
+    carga = cur.fetchone() or {}
+    if not carga:
+        return {"ok": False, "motivo": "carga_nao_encontrada"}
+    if carga.get("estoque_baixado_em"):
+        return {"ok": False, "motivo": "carga_ja_baixada", "carga_id": carga_id}
+    if carga.get("estoque_rejeitado_em"):
+        return {
+            "ok": True,
+            "ja_rejeitada": True,
+            "carga_id": carga_id,
+            "rejeitada_em": _fmt_dt(carga.get("estoque_rejeitado_em")),
+            "rejeitada_por": _as_str(carga.get("estoque_rejeitado_por")),
+            "rejeicao_motivo": _as_str(carga.get("estoque_rejeitado_motivo")),
+        }
+
+    if _xmls_saida_confirmados_carga(cur, carga_id):
+        return {"ok": False, "motivo": "coberta_por_xml", "carga_id": carga_id}
+
+    cur.execute(
+        """
+        UPDATE cargas
+        SET estoque_rejeitado_em=NOW(),
+            estoque_rejeitado_por=%s,
+            estoque_rejeitado_motivo=%s
+        WHERE id=%s
+        """,
+        (usuario or "desconhecido", motivo[:500], carga_id),
+    )
+    return {
+        "ok": True,
+        "carga_id": carga_id,
+        "nome": _as_str(carga.get("nome")),
+        "mapa_numero": _as_str(carga.get("mapa_numero")),
+        "rejeitada_por": usuario or "desconhecido",
+        "rejeicao_motivo": motivo[:500],
+    }
+
+
+@app.route("/api/estoque/aprovacoes-pdf/<int:carga_id>/rejeitar", methods=["POST"])
+def rejeitar_aprovacao_pdf_estoque(carga_id):
+    bloqueio = _autorizar_aprovacao_documentos_estoque()
+    if bloqueio:
+        return bloqueio
+    payload = request.get_json(silent=True) or {}
+    motivo = _as_str(payload.get("motivo")).strip()
+    if not motivo:
+        return jsonify({"erro": "Informe o motivo da rejeicao."}), 400
+
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    try:
+        resultado = _rejeitar_carga_pdf_estoque(
+            cur,
+            carga_id,
+            usuario=_usuario_ator_req(),
+            motivo=motivo,
+        )
+        if not resultado.get("ok"):
+            conn.rollback()
+            mensagens = {
+                "carga_nao_encontrada": "PDF/carga nao encontrado.",
+                "carga_ja_baixada": "Esta carga ja foi baixada e nao pode ser rejeitada.",
+                "coberta_por_xml": "Esta carga ja esta coberta por NF-e de saida e foi mantida como evidencia.",
+                "motivo_obrigatorio": "Informe o motivo da rejeicao.",
+            }
+            codigo = 404 if resultado.get("motivo") == "carga_nao_encontrada" else 409
+            return jsonify({
+                "erro": mensagens.get(resultado.get("motivo"), "Nao foi possivel rejeitar este PDF."),
+                **resultado,
+            }), codigo
+        conn.commit()
+        return jsonify(resultado)
+    except Exception:
+        conn.rollback()
+        app.logger.exception("Falha ao rejeitar baixa de estoque por PDF")
+        return jsonify({"erro": "Falha ao rejeitar o PDF. Nenhum saldo foi alterado."}), 500
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.route("/api/estoque/aprovacoes-pdf/<int:carga_id>/confirmar", methods=["POST"])
+def confirmar_aprovacao_pdf_estoque(carga_id):
+    bloqueio = _autorizar_aprovacao_documentos_estoque()
+    if bloqueio:
+        return bloqueio
+    usuario = _usuario_ator_req()
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    resultado = None
+    try:
+        cur.execute("SELECT id FROM cargas WHERE id=%s AND tipo_importacao='pdf' FOR UPDATE", (carga_id,))
+        if not cur.fetchone():
+            return jsonify({"erro": "PDF/carga nao encontrado"}), 404
+        resultado = _baixar_estoque_carga(cur, carga_id, usuario=usuario)
+        if not resultado.get("ok"):
+            conn.rollback()
+            mensagens = {
+                "coberta_por_xml": "Esta carga ja possui NF-e de saida contabilizada. O PDF foi mantido apenas como evidencia para evitar baixa duplicada.",
+                "carga_rejeitada": "Esta carga foi rejeitada e nao pode mais gerar baixa de estoque.",
+                "sem_itens": "O PDF nao possui itens reconhecidos para baixar.",
+                "item_sem_referencia": "O PDF possui item sem identificador persistido. Nenhum saldo foi alterado.",
+                "sem_movimentos": "Nenhum item valido do PDF gerou movimento de estoque.",
+            }
+            return jsonify({
+                "erro": mensagens.get(resultado.get("motivo"), "Nao foi possivel aprovar a baixa deste PDF."),
+                **resultado,
+            }), 409
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        app.logger.exception("Falha ao aprovar baixa de estoque por PDF")
+        return jsonify({"erro": "Falha ao aprovar o PDF. Nenhum saldo foi alterado."}), 500
+    finally:
+        cur.close()
+        conn.close()
+
+    compras_automaticas = _avaliar_estoque_minimo_produtos(
+        resultado.get("produto_ids") or [], usuario
+    ) if resultado and not resultado.get("ja_baixada") else []
+    return jsonify({
+        **(resultado or {}),
+        "compras_automaticas": compras_automaticas,
+    })
+
 
 @app.route("/api/cargas/<int:carga_id>/detalhes", methods=["GET"])
 def detalhes_carga_importada(carga_id):
@@ -40791,6 +41962,69 @@ def listar_trocas_pneu():
 
     return jsonify(out)
 
+@app.route("/api/frota_relatorio/mensal", methods=["GET"])
+def relatorio_frota_mensal():
+    try:
+        mes, _, fim = _frota_relatorio_mes_periodo(request.args.get("mes"))
+    except ValueError as exc:
+        return jsonify({"erro": str(exc)}), 400
+    veiculo_id = _as_int(request.args.get("veiculo_id"), 0)
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    try:
+        data_expr = "COALESCE(a.data_abastecimento, a.data_liberacao)"
+        where = [
+            "LOWER(COALESCE(a.status, '')) = 'abastecido'",
+            f"{data_expr} IS NOT NULL",
+            f"{data_expr} < %s",
+        ]
+        params = [fim]
+        if veiculo_id > 0:
+            where.append("a.veiculo_id = %s")
+            params.append(veiculo_id)
+        cur.execute(
+            f"""
+            SELECT
+                {data_expr} AS data_evento,
+                a.id,
+                a.veiculo_id,
+                a.km,
+                a.posto,
+                a.combustivel_tipo,
+                a.chave_acesso_nfe,
+                a.numero_nota,
+                a.emitente_nome,
+                a.quantidade_litros,
+                a.valor,
+                a.status,
+                v.nome AS veiculo_nome,
+                v.placa,
+                v.modelo
+            FROM abastecimentos a
+            LEFT JOIN veiculos v ON v.id = a.veiculo_id
+            WHERE {" AND ".join(where)}
+            ORDER BY a.veiculo_id ASC, a.km ASC, a.id ASC
+            """,
+            tuple(params),
+        )
+        rows = cur.fetchall() or []
+        cur.execute("""
+            SELECT id, nome, placa, modelo
+            FROM veiculos
+            ORDER BY nome ASC, placa ASC, id ASC
+        """)
+        veiculos = cur.fetchall() or []
+        return jsonify(_montar_frota_relatorio_mensal(
+            rows,
+            mes=mes,
+            veiculos=veiculos,
+            veiculo_id=veiculo_id,
+        ))
+    finally:
+        cur.close()
+        conn.close()
+
+
 @app.route("/api/frota_relatorio", methods=["GET"])
 def relatorio_frota_pdf():
     tipo = _as_str(request.args.get("tipo")).lower() or "resumo"
@@ -41805,31 +43039,23 @@ def _vendas_diario_scheduler_result_summary(result):
         statuses[status] = statuses.get(status, 0) + 1
     return {
         "arquivos": _as_int((result or {}).get("arquivos"), 0),
-        "txt": _as_int(((result or {}).get("txt") or {}).get("arquivos"), 0),
-        "pdf": _as_int(((result or {}).get("pdf") or {}).get("arquivos"), 0),
+        "sellout_diario": _as_int(((result or {}).get("sellout_diario") or {}).get("linhas"), 0),
         "status": statuses,
     }
 
 
 def _vendas_diario_source_snapshot():
     files = []
-    for directory, extension in (
-        (VENDAS_DIARIO_TXT_DIR, ".txt"),
-        (VENDAS_DIARIO_PDF_DIR, ".pdf"),
-    ):
-        if not directory or not os.path.isdir(directory):
-            return None
+    try:
+        sources = fontes_diarias_configuradas(os.environ)
+    except Exception:
+        return None
+    for path in sources:
         try:
-            names = sorted(
-                name for name in os.listdir(directory)
-                if name.lower().endswith(extension)
-            )
-            for name in names:
-                path = os.path.join(directory, name)
-                if not os.path.isfile(path):
-                    continue
-                stat = os.stat(path)
-                files.append((path, stat.st_size, stat.st_mtime_ns))
+            if not os.path.isfile(path):
+                return None
+            stat = os.stat(path)
+            files.append((path, stat.st_size, stat.st_mtime_ns))
         except OSError:
             return None
     return tuple(files)
@@ -41872,6 +43098,56 @@ def _iniciar_vendas_diario_scheduler():
 
 
 _iniciar_vendas_diario_scheduler()
+
+
+def _vendas_sellout_diario_importar():
+    if not _carregar_vendas_config().get("habilitado"):
+        return {"status": "desabilitado"}
+    sources = fontes_diarias_configuradas(os.environ)
+    with snapshots_estaveis(sources) as (snapshots, assinatura):
+        fontes = []
+        for item in snapshots:
+            fieldnames, rows = _vendas_relatorio_dict_rows(item["snapshot"])
+            fontes.append({
+                "nome": os.path.basename(os.path.dirname(item["source"])) or item["source"],
+                "fieldnames": fieldnames,
+                "rows": rows,
+            })
+        diario = unificar_mensais(fontes, preservar_datas=True)
+        diario.update({
+            # Mantem o identificador historico para nao duplicar a base nem
+            # perder competencias antigas ja carregadas. A origem ativa passa
+            # a ser exclusivamente o SELLOUT_D, com datas reais.
+            "cache_id": "sellout-mensal-continuo",
+            "source_type": "sellout_diario_auto",
+            "lock_name": "riob_sellout_diario",
+        })
+        diario["meta"] = {
+            "source_path": " | ".join(sources),
+            "source_name": " + ".join(
+                f"{fonte['nome']}/SELLOUT_D.CSV" for fonte in diario["fontes"]
+            ),
+            "source_signature": assinatura + "|" + _vendas_import_regras_assinatura(),
+            "source_size": sum(item["stat"].st_size for item in snapshots),
+            "source_mtime": datetime.datetime.fromtimestamp(
+                max(item["stat"].st_mtime for item in snapshots)
+            ),
+        }
+        entry = _vendas_importar_csv_para_cache(snapshots[0]["snapshot"], mensal=diario)
+    resumo = {
+        "fontes": diario["fontes"],
+        "linhas": len(diario["rows"]),
+        "duplicadas_ignoradas": diario["duplicadas_ignoradas"],
+    }
+    if entry:
+        _vendas_cache_set_active(entry["id"])
+        return {"status": "importado", **resumo}
+    entry = _vendas_db_fetch_import("sellout-mensal-continuo") or {}
+    if entry.get("source_signature") != diario["meta"]["source_signature"]:
+        return {"status": "processando", **resumo}
+    if entry.get("status") == "pronto":
+        _vendas_cache_set_active(entry["id"])
+    return {"status": "ja_importado", **resumo}
 
 
 def _vendas_sellout_mensal_importar():
@@ -41972,7 +43248,7 @@ def vendas_sellout_historico_api():
                         "resultados": resultados}), 400
 
 
-def _vendas_sellout_mensal_loop():
+def _vendas_sellout_diario_loop():
     timezone = ZoneInfo("America/Sao_Paulo")
     while True:
         target = proxima_leitura_diaria(datetime.datetime.now(timezone))
@@ -41982,32 +43258,36 @@ def _vendas_sellout_mensal_loop():
                 break
             time.sleep(min(60, remaining))
         try:
-            result = _vendas_sellout_mensal_importar()
+            result = _vendas_sellout_diario_importar()
             _vendas_diario_status_registrar(
-                _vendas_diario_status_sellout(result, "", _vendas_diario_status_agora()),
-                "automatico_sellout_08h",
+                _vendas_diario_status_sellout(
+                    result, "", _vendas_diario_status_agora(), diario=True
+                ),
+                "automatico_sellout_diario_08h",
             )
         except Exception as exc:
             try:
                 _vendas_diario_status_registrar(
-                    _vendas_diario_status_sellout({}, str(exc), _vendas_diario_status_agora()),
-                    "automatico_sellout_08h",
+                    _vendas_diario_status_sellout(
+                        {}, str(exc), _vendas_diario_status_agora(), diario=True
+                    ),
+                    "automatico_sellout_diario_08h",
                 )
             except Exception:
                 app.logger.exception("Falha ao registrar status da leitura SELLOUT")
-            app.logger.exception("SELLOUT mensal indisponivel ou invalido; base preservada. Proxima leitura automatica amanha as 08:00; leitura manual disponivel.")
+            app.logger.exception("SELLOUT diario indisponivel ou invalido; base preservada. Proxima leitura automatica amanha as 08:00; leitura manual disponivel.")
 
 
-def _iniciar_sellout_mensal_scheduler():
-    if (not _as_bool(os.environ.get("RB_SELLOUT_M_AUTO", "0"), False)
+def _iniciar_sellout_diario_scheduler():
+    if (not _as_bool(os.environ.get("RB_SELLOUT_D_AUTO", "0"), False)
             or _as_bool(os.environ.get("RENDER", "0"), False)
             or _as_bool(os.environ.get("NS_READ_ONLY", "0"), False)
             or os.environ.get("NS_DEPLOY_MODE") == "cloud-readonly"):
         return
-    threading.Thread(target=_vendas_sellout_mensal_loop, name="sellout-mensal", daemon=True).start()
+    threading.Thread(target=_vendas_sellout_diario_loop, name="sellout-diario", daemon=True).start()
 
 
-_iniciar_sellout_mensal_scheduler()
+_iniciar_sellout_diario_scheduler()
 
 if __name__ == "__main__":
     host = os.environ.get("APP_HOST", "0.0.0.0")

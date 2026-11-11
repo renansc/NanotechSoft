@@ -135,6 +135,13 @@ If you need context fast, read these files first:
   the selected truck or crew is still assigned to an active trip: their
   availability must be enforced only when the planned freight advances to the
   effective loading stage.
+- The fleet reports task includes a monthly on-screen fuel report filtered by
+  month and vehicle. Its KM/L is weighted by valid travelled kilometres and
+  the litres from the corresponding completed fuel entries. Use the last valid
+  propulsion-fuel entry before the selected month as the first baseline. ARLA
+  remains in volume and cost totals but never advances the odometer or enters
+  KM/L. Keep the existing `frota` resource and `gestaofrota:relatorios`
+  individual menu permission.
 - In freight `Ver dados/Carga`, a linked Daily Sales PDF remains the primary
   operational source even after outgoing XMLs are attached. Preserve PDF map,
   route, cities, seller, weight, deliveries, volumes, total, bonus, and product
@@ -229,6 +236,12 @@ If you need context fast, read these files first:
 - When local runtime evidence is required, the project operator has authorized
   SSH access to localhost for read-only log and service inspection. Never store
   passwords or other credentials in this repository or in documentation.
+- The Windows import server is intentionally offline outside 08:00-17:00 local
+  time. Deploys outside that window must keep Portal/RioB available. The root
+  Compose mounts the `/media` parent read-only with `rslave`, so the existing
+  `/media/serverwin` automount becomes visible inside RioB when Windows returns.
+  During the operational window, a missing CIFS mount remains a deployment
+  error; never replace it with a writable local import directory.
 - A change is not complete merely because it works in the local Docker
   environment. For every RioB change that can reach production, explicitly
   validate both environments: confirm the intended commit is on `origin/main`,
@@ -472,6 +485,14 @@ preservar qualquer arquivo com erro. SELLOUT permanece somente leitura e nunca
 deve ser removido. O acompanhamento leve usa
 `GET /api/vendas/diario/status-leitura` sob a permissao individual de importacao.
 
+Regra vigente desde 20/10/2026: Vendas Diario e todos os relatorios de vendas
+usam exclusivamente `SELLOUT_D.CSV` unificado de IND3 e INDB. Ele contem a data
+real e substitui tambem o `SELLOUT_M`; nao ler, importar, conciliar nem exibir
+novos TXT ou PDF. Preservar tabelas e cards historicos, sem usa-los nos novos
+calculos. A atualizacao manual e automatica valida as duas fontes `_D`, substitui
+atomicamente as competencias presentes e conserva competencias historicas nao
+presentes. `SELLOUT_M`, upload TXT e carga/correcao PDF estao desativados.
+
 
 ## Auditoria de navegacao e tarefas (14/09/2026)
 
@@ -489,23 +510,63 @@ modo completo redireciona para a aplicacao integrada. Ver README da raiz e
 
 ## Product formula cost
 
-`Gestao > Custo do produto` (`#custoProduto`) reuses active PET/GFA stock
-products. Recipe items must reference active stock product IDs, with manual quantities
-and automatic last supplier NF-e purchase prices. One shared syrup recipe defines its yield in litres; each finished
-product specifies a different syrup dose per 1000 litres of beverage, bottle
-volume and additional ingredients. Recalculate from the current syrup recipe;
-legacy unlinked items, missing doses/purchases and unknown package conversions remain pending. Calculate with Decimal on the server; do not infer real prices,
+`Gestao > Custo do produto` (`#custoProduto`) reuses active AGUA/PET/GFA stock
+products. Water formulas omit syrup; PET/GFA use it. Recipe items must reference active stock product IDs, with manual quantities,
+an optional provisional unit price while no usable invoice exists, and automatic last supplier NF-e purchase prices taking priority. One base syrup feeds reusable flavor recipes; each flavor records base litres, finished-beverage yield and flavor ingredients. Derive syrup cost per 1000 L as batch cost * 1000 / finished-beverage yield; never multiply by a second manual dose. PET and returnable finished products select the same flavor; bottle volume automatically determines the proportional amount, alongside package capacity, hot-water quantity/cost and presentation-specific ingredients. `Config > Rateio de custos de producao` stores shared labor, tax, energy, boiler/firewood, fuel, water and other standard costs as monthly values divided by reference volume, hourly values divided by productive capacity in L/h, R$/L or percentages of direct cost. Monthly fuel may use `mensal_horas`: divide by `horas_semanais * 52 / 12` (default 44 weekly hours) and then by productive capacity. Type `abastecimentos` automatically sums every completed fueling entry from the latest month containing data and divides it by monthly production volume; expose source month, entry count and fueled litres. Show boiler/firewood and fuel separately in the dashboard and recalculate through base, flavor, product and current overhead.
+For a finished-product formula, presentation quantities are per one finished
+bottle: normally one PET/bottle, one cap and one label. Convert that unit cost
+to 1000 L with `1000000 / volume_ml`; do not ask operators for hundreds of caps.
+Legacy unlinked items, missing yields/purchases and unknown package conversions remain pending. Calculate with Decimal on the server; do not infer real prices,
 move stock or grant access automatically. Both proxy and blueprint enforce
 `custo_produto`; optimistic revisions prevent silent overwrites. See
 `docs/CUSTO_PRODUTO.md` for API, limits and tests.
 
-`#custoProdutoDashboard` and `GET /api/custo-produto/dashboard?ano=YYYY` use the
-separate `custo_produto_dashboard` read permission. Compare current recipes with
-the last supplier purchase available at each month end (today for current month);
-never claim historical recipe snapshots. `custo_produto_compras.py` resolves
+`#custoProdutoDashboard` and `GET /api/custo-produto/dashboard` use the separate
+`custo_produto_dashboard` read permission. Show only production items with a
+saved formula. Cards show base/flavor syrups first, current overhead items next,
+then Water, PET and Returnable grouped and colored by flavor. Display direct
+cost without overhead and total with overhead per bottle/package, using current recipes/rateio and the
+latest supplier purchase available through today; do not add daily or historical
+views to this dashboard unless explicitly requested. Include per-bottle,
+per-package and per-1000-L breakdowns of PET/bottle, cap, label and the other
+presentation items. Flavor cards distinguish flavor-only cost from flavor plus
+base per litre of finished beverage; the base card is per litre of pure syrup. `custo_produto_compras.py` resolves
 confirmed stock links, typed input aliases or unambiguous exact names, excludes
 internal transfers/discarded invoices and converts compatible units. Explicit
-package capacity is required for unknown units. Client/legacy prices are ignored.
+package capacity is required for unknown units. Treat supplier `ML` as a
+thousand units only for piece descriptions such as caps, labels, preforms,
+bottles and crown caps. Client/legacy prices are ignored.
+
+For SPED items without an XML-confirmed link, prefer the explicit
+`estoque_produtos.descricao_sped` maintained in Cadastros > Produtos. Match the
+C170 description by normalized exact equality (case, accents and repeated
+spaces are ignored), require it to be unique among active products, and expose
+the linkage as `Descricao SPED informada no cadastro do produto`. Keep fuzzy
+name/signature matching only as migration fallback for legacy products without
+this field. Example: stock `Concentrado liquido para ref. framboesa` maps to
+`CONCENTRADO P/REFRI FRAMBOESA BD25 C/C`.
+
+`#relatorios:custo_produto` is the printable calculation-memory view named
+Custo produto. It must reuse the dashboard endpoint and
+`custo_produto_dashboard` permission. The PDF starts each flavor on its own
+sheet and shows base syrup, flavor ingredients, presentations, packaging and
+overhead. Every ingredient must preserve its server-calculated value and expose
+whether it came from XML/NF-e, SPED or a provisional price, including invoice
+number/date, purchase unit/value and the conversion applied. Reconcile 1,000 L,
+litre, bottle and package totals. Filters affect products only; do not fork the
+business calculation in the browser or grant formula-edit permission.
+
+For SPED-only raw materials, a manual catalog name made of one distinctive
+technical word may match a longer C170 description only when that whole word
+identifies one active product. The Rio Branco legacy unit code `22` means sack
+(`SC`). Never infer the sack capacity from C170: for example, NF 75506 exposes
+DIATOMITA in sacks but no kg-per-sack value, so costing must request the real
+kg/SC fraction before applying the fiscal price.
+Truncated label descriptions may use the unique flavor plus pitch signature
+(33.5 cm = 2 L, 23 cm = 600 ml, 16.6 cm = 200 ml). Preforms may use a unique
+color/weight band signature (14-18 g = 200 ml, 20-30 g = 600 ml, 38-50 g =
+2 L); legacy EFD unit `68` is a thousand units. Ambiguous catalog matches must
+remain pending.
 
 Custo do produto reaproveita os vinculos confirmados entre XML e estoque para
 resolver ingredientes renomeados e consultar o ultimo valor sem exigir pedido
@@ -513,14 +574,15 @@ em Compras. Codigo/fornecedor ou codigo/descricao historica devem identificar
 um unico produto. Acucar em venda a ordem entra na referencia; TO/tonelada
 converte para kg e capacidade de saco ja cadastrada e reutilizada quando a
 apresentacao confirmada corresponde. O catalogo identifica o recurso existente
-`custo_produto` como Custo do produto, xarope e precos do XML; dashboard conserva
+`custo_produto` como Custo do produto: formulas, vinculo explicito pela descricao SPED do cadastro de produto, embalagens por unidade, conversoes XML, pacotes, valores provisorios, rateios, caldeira por hora e combustivel por 44 h semanais ou abastecimentos; dashboard conserva
 `custo_produto_dashboard`. APIs e bloqueios individuais mantem a autorizacao,
 sem novas concessoes. Detalhes e limites no documento CUSTO_PRODUTO.md do RioB.
 
 Em 23/09/2026, GESTAO > Custos diarios por grupo (`#custoDiario`, recurso
 `custo_diario`) passa a informar producao real, pessoal e despesas por grupo.
 Dashboard de custo do produto mantem o recurso `custo_produto_dashboard` e
-oferece custo diario por litro, garrafa e pacote, alem da comparacao mensal.
+oferece apenas o custo padrao mais recente por garrafa e pacote. A apuracao
+diaria permanece em sua funcao propria e nao aparece nesse dashboard.
 Gastos compartilhados sao rateados pelos litros. Desperdicio vem exclusivamente
 das faltas em contagens finalizadas, agrupadas por setor/grupo de estoque;
 perdas especificas de producao ficam para uma etapa futura. As APIs
@@ -639,3 +701,47 @@ stay closed. The shared pending table records source type, filename, source
 lines and warnings. Keep the existing `frota` resource and individual
 `gestaofrota:manutencao` menu permission. See
 `docs/IMPORTACAO_TXT_MANUTENCAO.md` for formats, limits and tests.
+
+## Daily stock position report (22/10/2026)
+
+Relatorios > Posicao de estoque do dia reconstructs opening balance, daily
+entries, daily exits and closing balance from the canonical movement ledger,
+grouped by the resolved product ID and current product/group mapping. Never
+merge different registered product IDs only because their inferred names match;
+labels, ingredients and beverages may share flavor/volume words. Always use an exclusive
+next-day boundary so the selected date includes the whole day. Quantities are
+base stock units; product rows also expose package/box conversion while group
+totals remain in base units. Preserve the existing `estoque` resource and the individual
+`relatorios:estoque_posicao_dia` destination; do not grant it automatically.
+The JSON and PDF endpoints must share filters and totals. See
+`docs/RELATORIO_POSICAO_ESTOQUE_DIA.md`.
+
+## Stock document approval (22/10/2026)
+
+Estoque > Aprovar XML e PDF (`#estoque:documentos`, resource
+`estoque_documentos_aprovar`) is the explicit gate for XML entries, XML exits
+and load PDFs from `RB_VENDAS_DIARIO_PDF_DIR`. Scanning the PDF directory may
+prepare loads, freights and item conversions but must never move stock.
+Changing a freight status must also leave the load pending. Only the confirm
+endpoint records `carga_pdf_item` exits and its user/timestamp audit. Each
+movement uses `cargas_estoque_itens.id` as `referencia_id`; never reuse the load
+ID for every line because the movement ledger has a unique
+`(referencia_tipo, referencia_id)` key.
+Load the canonical balance snapshot once per approval transaction and reuse it
+for every PDF line. On an HTTP/network failure, the UI must re-read the load
+status before reporting failure because the database transaction may have
+committed after the client connection ended.
+
+Outgoing XML remains definitive. If `estoque_xml_frete_vinculos.carga_id`
+already covers a PDF load, label the PDF `coberto_xml` and reject its stock
+exit; never add XML and PDF quantities for the same load. Keep confirmation
+idempotent and show package factor, canonical units, current balance and
+projected balance before acceptance. See
+`docs/APROVACAO_DOCUMENTOS_ESTOQUE.md`.
+
+Pending PDF loads that are no longer needed may be logically rejected with a
+required reason. Rejection must preserve the PDF/load/item records, create no
+stock movement, record actor/timestamp/reason and prevent later confirmation,
+including after another shared-folder scan. Already lowered or XML-covered
+loads cannot be rejected; rejected loads remain available through the audit
+filter.

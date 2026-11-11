@@ -13,8 +13,9 @@ modulo, com colunas conforme o espaco. A busca oculta os grupos sem resultados,
 e a barra de salvar/excluir permanece acessivel durante a rolagem. Este ajuste
 de apresentacao preserva o catalogo e as regras de autorizacao descritos abaixo.
 
-O perfil Rio Branco possui 149 controles: RioB (77), Zap (16), Tecnologia (13),
-Automacao (12), Email (10), XML (6), Sistema (6), Chamados (5) e Impressoras (4).
+O perfil Rio Branco possui 161 controles: RioB (81), Zap (16), Tecnologia (13),
+Automacao (12), Email (10), SPED Fiscal (8), XML (6), Sistema (6), Chamados (5)
+e Impressoras (4).
 O [mapa completo](MAPA_ACESSOS_MENU.csv) identifica categoria, nome, destino,
 chave individual e recurso anterior. Atalhos repetidos para o mesmo destino
 compartilham um controle; as categorias aparecem juntas. Cada destino distinto
@@ -25,10 +26,13 @@ de backup** podem ser liberados separadamente. Desmarcar Instalar agentes
 bloqueia esse destino mesmo se a permissao geral `tecnologia:backup` ou `*`
 continuar marcada. A mesma regra vale para os demais itens.
 
-Monitoramento de backups apresenta estado atual, falhas de contato e destinos
-com `tecnologia:backup`, sem botoes para alterar planos. O catalogo explicita
-essas consultas no recurso existente; a API compartilhada continua validando
-acesso e bloqueios individuais. Nenhuma permissao nova e concedida.
+Monitoramento de backups apresenta estado atual, falhas de contato, destinos e
+o botao **Forçar novo backup** por plano com `tecnologia:backup`. A solicitacao
+manual continua exclusiva de administrador e e recusada pelo servidor para
+usuarios comuns, mesmo que eles possam consultar a tela. Alterar planos permanece
+na tarefa propria. O catalogo explicita a consulta e a solicitacao no recurso
+existente; a API compartilhada continua validando acesso e bloqueios individuais.
+Nenhuma permissao nova e concedida.
 
 ## Implementacao e compatibilidade
 
@@ -43,12 +47,46 @@ acesso e bloqueios individuais. Nenhuma permissao nova e concedida.
   recurso; `estoque` sozinho nao libera a nova funcao. Sessao unica, bloqueios
   individuais e modo somente leitura permanecem. Ver BAIXAS_POR_PERDA.md do RioB.
 
+- GESTAO > RioB > Custo do produto e CONFIG > RioB > Rateio de custos de
+  producao conservam o recurso `custo_produto` para editar xarope base,
+  compostos por sabor, formulas, capacidade dos pacotes, valores provisorios,
+  PET/garrafa, tampa e rotulo por unidade, agua quente e custos indiretos, inclusive caldeira/lenha por hora dividida
+  pela capacidade produtiva. O manifest o identifica como **Custo do produto:
+  formulas, referencias de preco por NF-e e SPED, vinculo explicito pela
+  descricao SPED do cadastro de produto, autocomplete de apresentacoes PET por sabor, embalagens por unidade,
+  conversoes, pacotes, valores provisorios, rateios, caldeira por hora e
+  combustivel por 44 h semanais ou abastecimentos**. As APIs GET/POST/PUT
+  `/api/custo-produto` e descendentes continuam exigindo esse recurso e a
+  escolha individual do menu; o dashboard conserva `custo_produto_dashboard`
+  e aparece no catalogo como **Consulta de custos em cards de agua, PET e
+  retornavel e relatorio PDF por sabor com formulas, XML/SPED, notas, unidades,
+  rateios e embalagens**. Mostra somente formulas de producao
+  e o custo padrao mais recente, separado sem/com rateio.
+  RELATORIOS > RioB > Custo produto reutiliza essa mesma permissao de leitura e
+  o mesmo endpoint do dashboard para exibir uma folha por sabor, com a memoria
+  detalhada, rastreabilidade XML/SPED/provisoria e PDF; nao concede
+  `custo_produto` nem autoriza gravacoes.
+  Nenhuma permissao e concedida automaticamente.
+
+- CADASTROS > RioB > Cadastrar produtos conserva o recurso `estoque` e agora
+  inclui a descricao exata do item no SPED. O campo e usado pelo custo somente
+  quando nao existe vinculo XML confirmado, exige descricao unica por produto
+  ativo e nao cria uma permissao nova nem concede acesso automaticamente.
+
 - Gestao > Tecnologia > Rede possui o recurso `tecnologia:rede` e escolha
   individual propria; `GET /apps/tecnologia/api/network` e `/network/<id>`
   respeitam essa escolha, inclusive bloqueios sobre `*`. Nao libera cadastro,
   sondas manuais ou outras telas, nem concede acessos automaticamente.
 - `menu_access.py` deriva os controles dos `menu_groups` e `config_groups` do
   perfil ativo nos manifests. `portal.app.json` inclui os itens comuns do sistema.
+- SPED Fiscal possui oito tarefas independentes (`dashboard`, `importar`,
+  `analise`, `comparativo`, `transacoes`, `tributos`, `grupos` e `config`). O
+  servidor exige sessao e contrato para servir o app; cada `?view=...` e
+  autorizado no servidor e impede abrir uma tarefa irma. O recurso `importar`
+  grava/remove a base analitica persistida; `grupos` e `config` gravam suas
+  configuracoes compartilhadas. O TXT nao e armazenado; o resumo C170 de
+  entradas so e sincronizado ao RioB quando o usuario tambem possui
+  `riob:custo_produto`.
 - Relatorios > RioB > Vendas concentra as abas de vendas. `navigation_parent`
   identifica destinos acessiveis pelas abas: nao aparecem novamente no menu
   principal, inclusive para administradores, mas conservam suas chaves e
@@ -115,7 +153,7 @@ APIs, o relacionamento com a tela no servidor. Gerar o mapa com
   liberacao isolada, URLs diretas, APIs, leitura compartilhada, persistencia e
   validacao do payload, configuracoes em lote do Zap.
 - `tests/check_individual_menu_access.py`: formulario real com dados sinteticos,
-  149 controles, busca, salvar/recarregar e fragmentos em desktop e celular.
+  161 controles, busca, salvar/recarregar e fragmentos em desktop e celular.
 - `tests/check_module_tasks.py`: telas reais e dependencias de Tecnologia com
   somente um item liberado, alem da navegacao dos tres modulos.
 

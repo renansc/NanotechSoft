@@ -141,6 +141,13 @@ let estoqueState = {
   importacoesXmlExclusaoExecutando: false,
   importacoesXmlLoteProgresso: null,
   fretesImportacaoXml: [],
+  aprovacoesPdf: [],
+  aprovacoesPdfMeta: {},
+  aprovacaoPdfAtual: null,
+  aprovacoesPdfSincronizando: false,
+  aprovacoesPdfSincronizadoSessao: false,
+  aprovacoesPdfMensagem: "",
+  importReturnView: "",
   manualPhotoUrl: "",
   manualPhotoName: "",
   cameraStream: null,
@@ -2269,7 +2276,7 @@ function openEstoqueView(ev, view = "posicao"){
   });
   if (!["contagem", "perdas"].includes(view)) {
     setEstoqueView(view);
-    carregarEstoque().catch(() => {});
+    if (view !== "documentos") carregarEstoque().catch(() => {});
   }
   _fecharSubmenuAposNavegacao(menu);
 }
@@ -2281,24 +2288,28 @@ function toggleRelatoriosSubmenu(ev){
 function openRelatoriosView(ev, view = "estoque_comprometido"){
   if (ev) { ev.preventDefault(); ev.stopPropagation(); }
   const menu = document.querySelector('.menu-item.has-submenu[data-tab="relatorios"]');
-  window.__relatoriosView = ["estoque_comprometido", "processos", "compras", "orcamentos", "contagens", "cargas_semana"].includes(view) ? view : "estoque_comprometido";
+  window.__relatoriosView = ["custo_produto", "estoque_comprometido", "estoque_posicao_dia", "processos", "compras", "orcamentos", "contagens", "cargas_semana"].includes(view) ? view : "estoque_comprometido";
   showTab("relatorios", menu);
   _fecharSubmenuAposNavegacao(menu);
 }
 
 function setRelatoriosView(view = "estoque_comprometido"){
-  const nextView = ["estoque_comprometido", "processos", "compras", "orcamentos", "contagens", "cargas_semana"].includes(view) ? view : "estoque_comprometido";
+  const nextView = ["custo_produto", "estoque_comprometido", "estoque_posicao_dia", "processos", "compras", "orcamentos", "contagens", "cargas_semana"].includes(view) ? view : "estoque_comprometido";
   window.__relatoriosView = nextView;
   document.querySelectorAll("#submenuRelatorios .submenu-item").forEach((item) => {
     item.classList.toggle("active", item.dataset.relatoriosView === nextView);
   });
   document.getElementById("relatoriosViewEstoqueComprometido")?.classList.toggle("hidden", nextView !== "estoque_comprometido");
+  document.getElementById("relatoriosViewCustoProduto")?.classList.toggle("hidden", nextView !== "custo_produto");
+  document.getElementById("relatoriosViewEstoquePosicaoDia")?.classList.toggle("hidden", nextView !== "estoque_posicao_dia");
   document.getElementById("relatoriosViewProcessos")?.classList.toggle("hidden", nextView !== "processos");
   document.getElementById("relatoriosViewCompras")?.classList.toggle("hidden", nextView !== "compras");
   document.getElementById("relatoriosViewOrcamentos")?.classList.toggle("hidden", nextView !== "orcamentos");
   document.getElementById("relatoriosViewContagens")?.classList.toggle("hidden", nextView !== "contagens");
   document.getElementById("vendasDiarioCargasSemana")?.classList.toggle("hidden", nextView !== "cargas_semana");
-  if (nextView === "cargas_semana") {
+  if (nextView === "custo_produto") {
+    carregarRelatorioRateioCustoProduto().catch((erro) => console.warn("relatorio custo produto erro:", erro));
+  } else if (nextView === "cargas_semana") {
     const semana = document.getElementById("vendasDiarioSemana");
     if (semana && !semana.value) semana.value = _semanaIsoVendasDiario();
     carregarCargasSemanaVendasDiario();
@@ -2308,6 +2319,10 @@ function setRelatoriosView(view = "estoque_comprometido"){
     carregarRelatorioOrcamentos(1);
   } else if (nextView === "estoque_comprometido") {
     carregarRelatorioEstoqueComprometido().catch((erro) => console.warn("relatorio estoque comprometido erro:", erro));
+  } else if (nextView === "estoque_posicao_dia") {
+    const data = document.getElementById("relatorioEstoquePosicaoDiaData");
+    if (data && !data.value) data.value = _dataHojeInputLocal();
+    carregarRelatorioEstoquePosicaoDia().catch((erro) => console.warn("posição de estoque do dia erro:", erro));
   } else if (nextView === "processos") {
     carregarRelatorioProcessos().catch((erro) => console.warn("relatorio processos erro:", erro));
   } else if (nextView === "compras") {
@@ -2977,6 +2992,11 @@ function setGestaoFrotaView(view){
     return;
   }
 
+  if (view === "relatorios") {
+    carregarRelatorioMensalFrota().catch(()=>{});
+    return;
+  }
+
   carregarFrotaResumo().catch(()=>{});
 }
 
@@ -3463,7 +3483,7 @@ async function carregarVendasDiario(){
   }
   if (dataInput && data.data_ref) dataInput.value = data.data_ref;
   _vendasPreencherSelectClientes(data?.clientes_disponiveis || [], data?.filtros?.cliente || clienteFiltro, "vendasDiarioCliente", "Todos os clientes");
-  if (info) info.textContent = `TXT: ${data?.importacao?.diretorio_txt || data?.importacao?.diretorio || "-"} | PDF: ${data?.importacao?.diretorio_pdf || "-"} | Importacao automatica: ${data?.importacao?.horario || "08:00"}`;
+  if (info) info.textContent = `Fonte: ${data?.importacao?.fonte || "SELLOUT_D.CSV (IND3 + INDB)"} | Atualização automática: ${data?.importacao?.horario || "08:00"}`;
   _renderStatusLeituraVendasDiario(data?.ultima_leitura);
   const resumo = data?.resumo || {};
   const cards = document.getElementById("vendasDiarioResumo");
@@ -3523,9 +3543,144 @@ function _renderStatusLeituraVendasDiario(payload){
     </article>`;
   }).join("") || '<div class="hint">Nenhuma leitura registrada.</div>';
   if (resumo) {
-    const origem = {manual:"botão Ler pastas", manual_fila:"botão Ler pastas (fila)", automatico_pastas:"agendador TXT/PDF", automatico_sellout_08h:"agendador SELLOUT das 08:00"}[payload?.origem] || payload?.origem || "sem execução";
+    const origem = {manual_sellout_diario:"botão Atualizar SELLOUT", manual_fila:"botão Atualizar SELLOUT (fila)", automatico_pastas:"agendador SELLOUT_D", automatico_sellout_diario_08h:"agendador SELLOUT_D das 08:00"}[payload?.origem] || payload?.origem || "sem execução";
     const andamento = payload?.manual_pendente ? "Leitura completa aguardando na fila · " : (payload?.em_andamento ? "Leitura em andamento · " : "");
     resumo.textContent = `${andamento}${formatarData(payload?.atualizado_em)} · ${origem}`;
+  }
+}
+
+/* Fluxos TXT/PDF foram desativados em 20/10/2026. Vendas Diario usa somente
+   SELLOUT_D das bases IND3 e INDB. As funcoes legadas abaixo permanecem sem
+   pontos de entrada durante a transicao de compatibilidade. */
+function _renderErrosVendasDiario(payload){
+  const painel = document.getElementById("vendasDiarioErrosPainel");
+  const lista = document.getElementById("vendasDiarioErrosLista");
+  const contador = document.getElementById("vendasDiarioErrosContador");
+  if (!painel || !lista) return;
+  const fontes = payload?.fontes || {};
+  const erros = [];
+  let totalInformado = 0;
+  ["txt", "pdf"].forEach((tipo) => {
+    const fonte = fontes[tipo] || {};
+    totalInformado += Number(fonte.erros || 0);
+    (Array.isArray(fonte.erros_itens) ? fonte.erros_itens : []).forEach((item) => {
+      erros.push({...item, tipo: item.tipo || tipo});
+    });
+  });
+  painel.classList.toggle("hidden", totalInformado <= 0 && !erros.length);
+  if (contador) contador.textContent = String(Math.max(totalInformado, erros.length));
+  if (!erros.length && totalInformado > 0) {
+    lista.innerHTML = `<div class="vendas-diario-erros-legado">
+      <span>Esta leitura antiga registrou a quantidade, mas ainda não guardava o detalhe por arquivo.</span>
+      <button type="button" onclick="importarVendasDiarioPasta()">Atualizar lista de erros</button>
+    </div>`;
+    return;
+  }
+  lista.innerHTML = erros.map((item) => {
+    const tipo = String(item.tipo || "").toLowerCase();
+    const pagina = Number(item.pagina || 0);
+    const attrs = `data-tipo="${_escAttr(tipo)}" data-arquivo="${_escAttr(item.arquivo || "")}" data-pagina="${pagina || ""}"`;
+    return `<article class="vendas-diario-erro-item">
+      <div class="vendas-diario-erro-identificacao">
+        <span class="vendas-diario-erro-tipo">${_escHtml(tipo.toUpperCase() || "ARQUIVO")}</span>
+        <strong>${_escHtml(item.arquivo || "Arquivo não identificado")}${pagina ? ` · página ${pagina}` : ""}</strong>
+      </div>
+      <div class="vendas-diario-erro-mensagem">${_escHtml(item.erro || "Falha sem detalhe informado.")}</div>
+      <div class="vendas-diario-erro-acoes">
+        <button type="button" ${attrs} onclick="corrigirErroVendasDiario(this).catch(error=>alert(error.message))">Tentar novamente</button>
+        ${tipo === "pdf" ? `<button type="button" class="btn-secondary" ${attrs} data-erro="${_escAttr(item.erro || "")}" onclick="abrirCorrecaoErroVendasDiario(this)">Corrigir vendedor</button>` : ""}
+      </div>
+    </article>`;
+  }).join("");
+}
+
+async function corrigirErroVendasDiario(button, vendedorCodigo=""){
+  const tipo = button?.dataset?.tipo || "";
+  const arquivo = button?.dataset?.arquivo || "";
+  const pagina = Number(button?.dataset?.pagina || 0);
+  if (!tipo || !arquivo) return;
+  const info = document.getElementById("vendasDiarioInfo");
+  const original = button.textContent;
+  button.disabled = true;
+  button.textContent = "Reimportando...";
+  if (info) info.textContent = `Reprocessando ${arquivo}...`;
+  try {
+    const resp = await apiFetch("/api/vendas/diario/importar-erros/corrigir", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({tipo, arquivo, pagina: pagina || null, vendedor_codigo: vendedorCodigo || ""}),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (data?.ultima_leitura) _renderStatusLeituraVendasDiario(data.ultima_leitura);
+    if (!resp.ok) {
+      const mensagem = data?.erro || "O arquivo continua com erro.";
+      if (info) info.textContent = mensagem;
+      throw new Error(mensagem);
+    }
+    const status = data?.resultado?.status || "importado";
+    if (info) info.textContent = status === "ja_importado"
+      ? `${arquivo} já estava importado; o alerta foi resolvido.`
+      : `${arquivo} corrigido e reimportado com segurança.`;
+    fecharCorrecaoErroVendasDiario();
+    await carregarVendasDiario();
+  } finally {
+    button.disabled = false;
+    button.textContent = original;
+  }
+}
+
+async function abrirCorrecaoErroVendasDiario(button){
+  const modal = document.getElementById("vendasDiarioErroModal");
+  const tipo = button?.dataset?.tipo || "pdf";
+  const arquivo = button?.dataset?.arquivo || "";
+  const pagina = button?.dataset?.pagina || "";
+  document.getElementById("vendasDiarioErroTipo").value = tipo;
+  document.getElementById("vendasDiarioErroArquivo").value = arquivo;
+  document.getElementById("vendasDiarioErroPagina").value = pagina;
+  document.getElementById("vendasDiarioErroArquivoInfo").textContent = `${arquivo}${pagina ? ` · página ${pagina}` : ""}`;
+  document.getElementById("vendasDiarioErroDetalhe").textContent = button?.dataset?.erro || "";
+  const mensagem = document.getElementById("vendasDiarioErroModalMensagem");
+  const select = document.getElementById("vendasDiarioErroVendedor");
+  if (mensagem) mensagem.textContent = "";
+  select.disabled = true;
+  select.innerHTML = '<option value="">Carregando vendedores...</option>';
+  _abrirPopupBloqueante(modal);
+  const resp = await apiFetch("/api/vendas/diario/vendedores");
+  const data = await resp.json().catch(() => ({}));
+  const vendedores = Array.isArray(data?.vendedores) ? data.vendedores : [];
+  select.disabled = false;
+  select.innerHTML = '<option value="">Selecione o vendedor correto</option>' + vendedores.map((item) => {
+    const label = item.nome ? `${item.codigo} - ${item.nome}` : item.codigo;
+    return `<option value="${_escAttr(item.codigo)}">${_escHtml(label)}</option>`;
+  }).join("");
+  if (!resp.ok || !vendedores.length) {
+    if (mensagem) mensagem.textContent = data?.erro || "Nenhum vendedor cadastrado foi encontrado.";
+  }
+}
+
+function fecharCorrecaoErroVendasDiario(){
+  _fecharPopupBloqueante(document.getElementById("vendasDiarioErroModal"));
+}
+
+function fecharCorrecaoErroVendasDiarioBackdrop(event){
+  if (event?.target === document.getElementById("vendasDiarioErroModal")) fecharCorrecaoErroVendasDiario();
+}
+
+async function confirmarCorrecaoErroVendasDiario(){
+  const vendedorCodigo = document.getElementById("vendasDiarioErroVendedor")?.value || "";
+  const mensagem = document.getElementById("vendasDiarioErroModalMensagem");
+  if (!vendedorCodigo) {
+    if (mensagem) mensagem.textContent = "Selecione o vendedor correto.";
+    return;
+  }
+  const button = document.getElementById("vendasDiarioErroConfirmarBtn");
+  button.dataset.tipo = document.getElementById("vendasDiarioErroTipo").value;
+  button.dataset.arquivo = document.getElementById("vendasDiarioErroArquivo").value;
+  button.dataset.pagina = document.getElementById("vendasDiarioErroPagina").value;
+  try {
+    await corrigirErroVendasDiario(button, vendedorCodigo);
+  } catch (error) {
+    if (mensagem) mensagem.textContent = error.message;
   }
 }
 
@@ -3872,15 +4027,8 @@ function selecionarArquivoVendasDiario(){
 
 async function importarVendasDiario(){
   const info = document.getElementById("vendasDiarioInfo");
-  const arquivo = document.getElementById("vendasDiarioArquivo")?.files?.[0];
-  if (info) info.textContent = arquivo ? "Importando arquivo TXT..." : "Lendo pastas TXT, PDF e SELLOUT mensal...";
-  const options = {method: "POST"};
-  if (arquivo) {
-    const form = new FormData();
-    form.append("arquivo", arquivo);
-    options.body = form;
-  }
-  const resp = await apiFetch("/api/vendas/diario/importar", options);
+  if (info) info.textContent = "Atualizando SELLOUT_D de IND3 e INDB...";
+  const resp = await apiFetch("/api/vendas/diario/importar", {method: "POST"});
   const data = await resp.json().catch(() => ({}));
   if (!resp.ok) {
     if (info) info.textContent = data?.erro || "Falha ao importar vendas diario.";
@@ -3889,41 +4037,27 @@ async function importarVendasDiario(){
   if (data?.processando) {
     _renderStatusLeituraVendasDiario(data?.ultima_leitura);
     if (info) info.textContent = data?.manual_agendada
-      ? "Ja existe uma leitura em andamento. A leitura completa de TXT, PDF, SELLOUT IND3 e INDB ficou na fila e iniciara automaticamente."
-      : "Ja existe uma leitura de pastas em andamento.";
+      ? "Ja existe uma leitura em andamento. A atualizacao do SELLOUT_D ficou na fila."
+      : "Ja existe uma leitura do SELLOUT_D em andamento.";
     acompanharStatusLeituraVendasDiario().catch(() => {});
     return;
   }
-  const imported = (data?.resultados || []).filter((item) => item.status === "importado").length;
-  const txtCount = Number(data?.txt?.arquivos || 0);
-  const pdfCount = Number(data?.pdf?.arquivos || 0);
-  const importedDate = String(data?.data_ref || "");
-  const dateInput = document.getElementById("vendasDiarioData");
-  if (dateInput && importedDate) dateInput.value = importedDate;
-  const sellout = data?.sellout;
+  const sellout = data?.sellout_diario || {};
   const selloutStatus = {
-    importado: "SELLOUT mensal atualizado.",
-    ja_importado: "SELLOUT mensal sem alteracoes.",
-    processando: "SELLOUT mensal em processamento por outra leitura; tente novamente ao terminar.",
-    desabilitado: "SELLOUT mensal desabilitado em Configurar > Vendas.",
-    erro: `Falha ao ler SELLOUT mensal: ${sellout?.erro || "consulte os logs"}. Base anterior preservada.`,
+    importado: "SELLOUT_D atualizado com datas reais.",
+    ja_importado: "SELLOUT_D sem alterações.",
+    processando: "SELLOUT_D em processamento por outra leitura.",
+    desabilitado: "Integração de vendas desabilitada em Configurar > Vendas.",
+    erro: `Falha ao ler SELLOUT_D: ${sellout?.erro || "consulte os logs"}. Base anterior preservada.`,
   };
-  const importMessage = arquivo
-    ? `${imported} arquivo(s) novo(s) importado(s).`
-    : `${imported} novo(s) importado(s). Lidos ${txtCount} TXT e ${pdfCount} PDF. ${selloutStatus[sellout?.status] || ""}`;
+  const importMessage = selloutStatus[sellout?.status] || "Leitura do SELLOUT_D concluída.";
   if (info) info.textContent = importMessage;
   _renderStatusLeituraVendasDiario(data?.ultima_leitura);
-  const input = document.getElementById("vendasDiarioArquivo");
-  if (input) input.value = "";
-  selecionarArquivoVendasDiario();
   await carregarVendasDiario();
   if (info) info.textContent = importMessage;
 }
 
 async function importarVendasDiarioPasta(){
-  const input = document.getElementById("vendasDiarioArquivo");
-  if (input) input.value = "";
-  selecionarArquivoVendasDiario();
   await importarVendasDiario();
 }
 
@@ -6313,11 +6447,11 @@ function toggleConfigSubmenu(ev){
 function openConfigView(ev, view){
   if (ev){ ev.preventDefault(); ev.stopPropagation(); }
   const menu = document.querySelector('.menu-item.has-submenu[data-tab="config"]');
-  window.__configView = (view === "orcamentos" || view === "base_vendas" || view === "backup" || view === "logs" || view === "cameras" || view === "sip" || view === "nfe" || view === "vendas") ? view : "status";
+  window.__configView = (view === "custos_producao" || view === "orcamentos" || view === "base_vendas" || view === "backup" || view === "logs" || view === "cameras" || view === "sip" || view === "nfe" || view === "vendas") ? view : "status";
   showTab("config", menu);
 
   document.querySelectorAll("#submenuConfig .submenu-item").forEach(x=>x.classList.remove("active"));
-  const map = { status: 0, logs: 1, cameras: 2, sip: 3, nfe: 4, vendas: 5, backup: 6, orcamentos: 7, base_vendas: 8 };
+  const map = { status: 0, logs: 1, cameras: 2, sip: 3, nfe: 4, vendas: 5, backup: 6, orcamentos: 7, base_vendas: 8, custos_producao: 9 };
   const target = map[window.__configView] ?? 0;
   const items = document.querySelectorAll("#submenuConfig .submenu-item");
   if (items && items[target]) items[target].classList.add("active");
@@ -7020,7 +7154,7 @@ function setConfigView(view){
   const mensagens = document.getElementById("vendasConfigMensagens");
   const mount = document.getElementById(view === "base_vendas" ? "vendasBaseMensagensMount" : "vendasConfigMensagensMount");
   if (mensagens && mount) mount.appendChild(mensagens);
-  window.__configView = (view === "orcamentos" || view === "base_vendas" || view === "backup" || view === "logs" || view === "cameras" || view === "sip" || view === "nfe" || view === "vendas") ? view : "status";
+  window.__configView = (view === "custos_producao" || view === "orcamentos" || view === "base_vendas" || view === "backup" || view === "logs" || view === "cameras" || view === "sip" || view === "nfe" || view === "vendas") ? view : "status";
   document.getElementById("configViewOrcamentos")?.classList.toggle("hidden", window.__configView !== "orcamentos");
   document.getElementById("configViewBaseVendas")?.classList.toggle("hidden", window.__configView !== "base_vendas");
   const vStatus = document.getElementById("configViewStatus");
@@ -7029,6 +7163,7 @@ function setConfigView(view){
   const vSip = document.getElementById("configViewSip");
   const vNfe = document.getElementById("configViewNfe");
   const vVendas = document.getElementById("configViewVendas");
+  const vCustosProducao = document.getElementById("configViewCustosProducao");
   document.getElementById("configViewBackup")?.classList.toggle("hidden", window.__configView !== "backup");
   if (vStatus) vStatus.classList.toggle("hidden", window.__configView !== "status");
   if (vLogs) vLogs.classList.toggle("hidden", window.__configView !== "logs");
@@ -7036,6 +7171,7 @@ function setConfigView(view){
   if (vSip) vSip.classList.toggle("hidden", window.__configView !== "sip");
   if (vNfe) vNfe.classList.toggle("hidden", window.__configView !== "nfe");
   if (vVendas) vVendas.classList.toggle("hidden", window.__configView !== "vendas");
+  if (vCustosProducao) vCustosProducao.classList.toggle("hidden", window.__configView !== "custos_producao");
 
   if (window.__configView === "status") verificarStatus().catch(()=>{});
   if (window.__configView === "logs") carregarLogsExclusoes().catch(()=>{});
@@ -7047,6 +7183,7 @@ function setConfigView(view){
   if (window.__configView === "nfe") carregarConfigNfe().catch(()=>{});
   if (["vendas", "base_vendas"].includes(window.__configView)) carregarConfigVendas().catch(()=>{});
   if (window.__configView === "orcamentos") carregarConfigOrcamentoVendas().catch(()=>{});
+  if (window.__configView === "custos_producao") carregarRateioCustoProduto().catch(()=>{});
 }
 
 
@@ -7257,7 +7394,7 @@ function showTab(tabId, el) {
     toggleChatPopup(true).catch(() => {});
   }
   if (tabId === "config") {
-    if (!window.__configView || !["status", "logs", "cameras", "sip", "nfe", "vendas", "backup", "orcamentos", "base_vendas"].includes(window.__configView)) {
+    if (!window.__configView || !["status", "logs", "cameras", "sip", "nfe", "vendas", "backup", "orcamentos", "base_vendas", "custos_producao"].includes(window.__configView)) {
       window.__configView = "status";
     }
     setConfigView(window.__configView);
@@ -7269,7 +7406,7 @@ function showTab(tabId, el) {
     setPontosVendaView(window.__pontosVendaView);
   }
   if (tabId === "estoque") {
-    if (!window.__estoqueView || !["importar_xml", "importar_xml_bipe", "importar_xml_auto", "movimentar", "posicao", "acerto", "contagem", "perdas", "rastreio"].includes(window.__estoqueView)) {
+    if (!window.__estoqueView || !["importar_xml", "importar_xml_bipe", "importar_xml_auto", "documentos", "movimentar", "posicao", "acerto", "contagem", "perdas", "rastreio"].includes(window.__estoqueView)) {
       window.__estoqueView = "posicao";
     }
     setEstoqueView(window.__estoqueView);
@@ -16744,6 +16881,136 @@ async function abrirHistoricoFrota(veiculoId) {
   `;
 }
 
+let frotaRelatorioMensalRequest = 0;
+
+function _frotaRelatorioMesAtual(){
+  const agora = new Date();
+  const mes = String(agora.getMonth() + 1).padStart(2, "0");
+  return `${agora.getFullYear()}-${mes}`;
+}
+
+function _frotaRelatorioNumero(valor, casas = 2){
+  const numero = Number(valor);
+  if (!Number.isFinite(numero)) return "-";
+  return numero.toLocaleString("pt-BR", {
+    minimumFractionDigits: casas,
+    maximumFractionDigits: casas,
+  });
+}
+
+function _frotaRelatorioDinheiro(valor){
+  const numero = Number(valor || 0);
+  return numero.toLocaleString("pt-BR", {style:"currency", currency:"BRL"});
+}
+
+function _frotaRelatorioValorOuTraco(valor, casas = 2, sufixo = ""){
+  if (valor === null || valor === undefined || valor === "") return "-";
+  return `${_frotaRelatorioNumero(valor, casas)}${sufixo}`;
+}
+
+function _renderRelatorioMensalFrota(payload = {}){
+  const resumo = payload.resumo || {};
+  const cards = document.getElementById("frotaRelMensalResumo");
+  const veiculosBody = document.getElementById("frotaRelMensalVeiculosBody");
+  const abastecimentosBody = document.getElementById("frotaRelMensalAbastecimentosBody");
+  const status = document.getElementById("frotaRelMensalStatus");
+  const select = document.getElementById("frotaRelMensalVeiculo");
+
+  if (select) {
+    const selecionado = String(payload?.filtros?.veiculo_id || select.value || "");
+    select.innerHTML = '<option value="">Todos os veiculos</option>' + (payload.veiculos || []).map((item) => {
+      const label = [item.placa, item.nome, item.modelo].filter(Boolean).join(" - ") || `Veiculo ${item.id}`;
+      return `<option value="${Number(item.id || 0)}">${_escHtml(label)}</option>`;
+    }).join("");
+    select.value = selecionado;
+  }
+
+  if (status) {
+    status.textContent = `Periodo ${payload?.periodo?.label || "-"} · ${Number(resumo.abastecimentos || 0)} abastecimento(s) concluido(s).`;
+  }
+  if (cards) {
+    const itens = [
+      ["Abastecimentos", _frotaRelatorioNumero(resumo.abastecimentos || 0, 0)],
+      ["Veiculos", _frotaRelatorioNumero(resumo.veiculos || 0, 0)],
+      ["Litros", _frotaRelatorioNumero(resumo.litros || 0, 3)],
+      ["Valor", _frotaRelatorioDinheiro(resumo.valor || 0)],
+      ["Preco medio/L", resumo.preco_medio_litro == null ? "-" : _frotaRelatorioDinheiro(resumo.preco_medio_litro)],
+      ["KM apurado", _frotaRelatorioNumero(resumo.km_rodado || 0, 0)],
+      ["Media KM/L", _frotaRelatorioValorOuTraco(resumo.media_km_l, 2)],
+    ];
+    cards.innerHTML = itens.map(([label, valor]) => `<article><span>${_escHtml(label)}</span><strong>${_escHtml(valor)}</strong></article>`).join("");
+  }
+
+  const porVeiculo = Array.isArray(payload.por_veiculo) ? payload.por_veiculo : [];
+  if (veiculosBody) {
+    veiculosBody.innerHTML = porVeiculo.length ? porVeiculo.map((item) => `<tr>
+      <td><strong>${_escHtml([item.placa, item.veiculo].filter(Boolean).join(" - ") || "-")}</strong><br><small>${_escHtml((item.combustiveis || []).join(", ") || "-")}</small></td>
+      <td>${_frotaRelatorioNumero(item.abastecimentos || 0, 0)}</td>
+      <td>${_frotaRelatorioNumero(item.litros || 0, 3)}</td>
+      <td>${_frotaRelatorioNumero(item.km_rodado || 0, 0)}</td>
+      <td>${_frotaRelatorioValorOuTraco(item.media_km_l, 2)}</td>
+      <td>${item.preco_medio_litro == null ? "-" : _frotaRelatorioDinheiro(item.preco_medio_litro)}</td>
+      <td>${_frotaRelatorioDinheiro(item.valor || 0)}</td>
+    </tr>`).join("") : '<tr><td colspan="7">Nenhum abastecimento concluido neste periodo.</td></tr>';
+  }
+
+  const abastecimentos = Array.isArray(payload.abastecimentos) ? payload.abastecimentos : [];
+  if (abastecimentosBody) {
+    abastecimentosBody.innerHTML = abastecimentos.length ? abastecimentos.map((item) => `<tr>
+      <td>${_escHtml(formatarData(item.data) || "-")}</td>
+      <td>${_escHtml(item.veiculo_label || item.veiculo || "-")}</td>
+      <td>${_escHtml(item.combustivel || "-")}</td>
+      <td>${_frotaRelatorioValorOuTraco(item.km_inicial, 0)}</td>
+      <td>${_frotaRelatorioValorOuTraco(item.km_final, 0)}</td>
+      <td>${_frotaRelatorioValorOuTraco(item.km_rodado, 0)}</td>
+      <td>${_frotaRelatorioNumero(item.litros || 0, 3)}</td>
+      <td>${_frotaRelatorioValorOuTraco(item.media_km_l, 2)}</td>
+      <td>${item.preco_litro == null ? "-" : _frotaRelatorioDinheiro(item.preco_litro)}</td>
+      <td>${_frotaRelatorioDinheiro(item.valor || 0)}</td>
+      <td>${_escHtml(item.posto || "-")}</td>
+      <td>${_escHtml(item.numero_nota || "-")}</td>
+    </tr>`).join("") : '<tr><td colspan="12">Nenhum abastecimento concluido neste periodo.</td></tr>';
+  }
+}
+
+async function carregarRelatorioMensalFrota(force = false){
+  const mesInput = document.getElementById("frotaRelMensalMes");
+  if (!mesInput) return;
+  if (!mesInput.value) mesInput.value = _frotaRelatorioMesAtual();
+  const veiculoId = (document.getElementById("frotaRelMensalVeiculo")?.value || "").trim();
+  const status = document.getElementById("frotaRelMensalStatus");
+  const requestId = ++frotaRelatorioMensalRequest;
+  if (status) status.textContent = "Carregando relatorio mensal...";
+  const params = new URLSearchParams({mes: mesInput.value});
+  if (veiculoId) params.set("veiculo_id", veiculoId);
+  if (force) params.set("_", String(Date.now()));
+  const response = await apiFetch(`/api/frota_relatorio/mensal?${params.toString()}`);
+  const payload = await response.json().catch(() => ({}));
+  if (requestId !== frotaRelatorioMensalRequest) return;
+  if (!response.ok) {
+    if (status) status.textContent = payload.erro || "Erro ao carregar o relatorio mensal da frota.";
+    throw new Error(payload.erro || "Erro ao carregar o relatorio mensal da frota.");
+  }
+  _renderRelatorioMensalFrota(payload);
+}
+
+function imprimirRelatorioMensalFrota(){
+  const mes = (document.getElementById("frotaRelMensalMes")?.value || _frotaRelatorioMesAtual()).trim();
+  const match = /^(\d{4})-(\d{2})$/.exec(mes);
+  if (!match) return alert("Informe um mes valido.");
+  const ano = Number(match[1]);
+  const numeroMes = Number(match[2]);
+  const ultimoDia = new Date(ano, numeroMes, 0).getDate();
+  const params = new URLSearchParams({
+    tipo: "abastecimentos",
+    data_inicio: `${mes}-01`,
+    data_fim: `${mes}-${String(ultimoDia).padStart(2, "0")}`,
+  });
+  const veiculoId = (document.getElementById("frotaRelMensalVeiculo")?.value || "").trim();
+  if (veiculoId) params.set("veiculo_id", veiculoId);
+  window.open(`/api/frota_relatorio?${params.toString()}`, "_blank", "noopener");
+}
+
 const RELATORIO_FRETE_TIPOS_FILTRAVEIS = new Set(["escala", "historico_fretes"]);
 const RELATORIO_ABASTECIMENTO_TIPOS_FILTRAVEIS = new Set([
   "abastecimentos",
@@ -17133,6 +17400,7 @@ function _estoqueBaseNomeInferido(item = {}){
   const grupo = _estoqueGrupoInferido(item);
   const texto = String(item.nome_produto || explicito || "").toUpperCase();
   const textoNorm = _estoqueTextoChave(texto);
+  if (explicito && !["PET", "GFA", "AGUA"].includes(grupo)) return explicito;
   if (grupo === "AGUA") {
     const gas = /\bSEM GAS\b/.test(textoNorm) ? "SEM GAS" : (/\b(?:COM GAS|C GAS)\b/.test(textoNorm) ? "COM GAS" : "");
     const volume = /\b2\s*L(?:T|ITRO|ITROS)?\b|\b2L\b/.test(textoNorm) ? "2L"
@@ -17615,6 +17883,88 @@ function abrirPdfRelatorioEstoqueComprometido(){
   window.open(`/api/estoque/relatorio-comprometido/pdf${qs ? `?${qs}` : ""}`, "_blank", "noopener");
 }
 
+function _paramsRelatorioEstoquePosicaoDia(){
+  const params = new URLSearchParams();
+  const data = document.getElementById("relatorioEstoquePosicaoDiaData")?.value || "";
+  const grupo = document.getElementById("relatorioEstoquePosicaoDiaGrupo")?.value || "";
+  if (data) params.set("data", data);
+  if (grupo) params.set("grupo_estoque", grupo);
+  return params;
+}
+
+function _estoquePosicaoDiaQtdHtml(row = {}, valor = 0){
+  const quantidade = Number(valor || 0);
+  const meta = row.pallet_meta || {};
+  const fator = Number(meta.unidades_por_volume || row.fator_embalagem_padrao || 0);
+  const embalagem = String(row.embalagem_tipo_padrao || row.unidade || "").trim().toUpperCase();
+  const grupo = String(row.grupo_estoque || "").trim().toUpperCase();
+  const rotulo = String(meta.rotulo_volume || (
+    grupo === "GFA" || embalagem.startsWith("CX") ? "caixas"
+      : ["PET", "AGUA"].includes(grupo) || ["PCT", "FD", "FARDO"].includes(embalagem) ? "pacotes"
+        : "embalagens"
+  ));
+  if (fator > 1) {
+    const sinal = quantidade < 0 ? "-" : "";
+    const absoluta = Math.abs(quantidade);
+    const volumes = Math.floor((absoluta + 1e-9) / fator);
+    const unidadesSoltas = Math.round((absoluta - (volumes * fator)) * 1000) / 1000;
+    const partes = [];
+    if (volumes > 0) partes.push(`${sinal}${_estoqueFormatQtd(volumes)} ${rotulo}`);
+    if (unidadesSoltas > 1e-9) partes.push(`${sinal}${_estoqueFormatQtd(unidadesSoltas)} un. soltas`);
+    const logistica = partes.length ? partes.join(" + ") : "0 un.";
+    return `<div class="estoque-saldo-formatado"><div class="estoque-saldo-logistica">${_escHtml(logistica)}</div><small class="estoque-saldo-unidades">Total: ${_escHtml(_estoqueFormatQtd(quantidade))} un.</small></div>`;
+  }
+  return `${_escHtml(_estoqueFormatQtd(quantidade))} un.`;
+}
+
+async function carregarRelatorioEstoquePosicaoDia(){
+  const body = document.getElementById("relatorioEstoquePosicaoDiaBody");
+  const resumoEl = document.getElementById("relatorioEstoquePosicaoDiaResumo");
+  const cards = document.getElementById("relatorioEstoquePosicaoDiaCards");
+  if (!body) return;
+  body.innerHTML = '<tr><td colspan="6">Carregando posição...</td></tr>';
+  const params = _paramsRelatorioEstoquePosicaoDia();
+  params.set("_", Date.now());
+  const resp = await apiFetch(`/api/estoque/relatorio-posicao-dia?${params.toString()}`);
+  const payload = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    const mensagem = payload?.erro || "Falha ao carregar a posição de estoque.";
+    body.innerHTML = `<tr><td colspan="6">${_escHtml(mensagem)}</td></tr>`;
+    if (resumoEl) resumoEl.textContent = mensagem;
+    return;
+  }
+  const grupos = Array.isArray(payload?.grupos) ? payload.grupos : [];
+  const resumo = payload?.resumo || {};
+  const grupoSelect = document.getElementById("relatorioEstoquePosicaoDiaGrupo");
+  if (grupoSelect) {
+    const atual = grupoSelect.value;
+    grupoSelect.innerHTML = '<option value="">Todos os grupos</option>' +
+      (Array.isArray(payload?.opcoes?.grupos) ? payload.opcoes.grupos : []).map((grupo) =>
+        `<option value="${_escHtml(grupo.codigo || "")}">${_escHtml(grupo.nome || grupo.codigo || "-")}</option>`
+      ).join("");
+    grupoSelect.value = atual;
+  }
+  if (resumoEl) resumoEl.textContent =
+    `Posição em ${_fmtDataCurtaBr(payload.data_referencia)} | ${Number(resumo.grupos || 0)} grupos | ` +
+    `${Number(resumo.produtos || 0)} produtos | ${Number(resumo.movimentacoes_dia || 0)} movimentos no dia`;
+  if (cards) cards.innerHTML = [
+    ["Saldo inicial", resumo.saldo_inicial], ["Entradas do dia", resumo.entradas_dia],
+    ["Saídas do dia", resumo.saidas_dia], ["Saldo final", resumo.saldo_final],
+  ].map(([titulo, valor]) => `<div class="vendas-resumo-card"><span>${_escHtml(titulo)}</span><strong>${_estoqueFormatQtd(valor || 0)}</strong></div>`).join("");
+  const linhas = [];
+  grupos.forEach((grupo) => {
+    linhas.push(`<tr class="relatorio-estoque-grupo-total"><td><strong>${_escHtml(grupo.nome || grupo.codigo || "-")} (${Number(grupo.produtos || 0)} produtos)</strong></td><td></td><td><strong>${_estoqueFormatQtd(grupo.saldo_inicial || 0)}</strong></td><td><strong>${_estoqueFormatQtd(grupo.entradas_dia || 0)}</strong></td><td><strong>${_estoqueFormatQtd(grupo.saidas_dia || 0)}</strong></td><td><strong>${_estoqueFormatQtd(grupo.saldo_final || 0)}</strong></td></tr>`);
+    (Array.isArray(grupo.itens) ? grupo.itens : []).forEach((row) => linhas.push(`<tr><td>${_escHtml(row.produto || "-")}</td><td>${_escHtml(row.codigo || "-")}</td><td>${_estoquePosicaoDiaQtdHtml(row, row.saldo_inicial)}</td><td>${_estoquePosicaoDiaQtdHtml(row, row.entradas_dia)}</td><td>${_estoquePosicaoDiaQtdHtml(row, row.saidas_dia)}</td><td>${_estoquePosicaoDiaQtdHtml(row, row.saldo_final)}</td></tr>`));
+  });
+  body.innerHTML = linhas.length ? linhas.join("") : '<tr><td colspan="6">Nenhum saldo ou movimento encontrado para os filtros.</td></tr>';
+}
+
+function abrirPdfRelatorioEstoquePosicaoDia(){
+  const params = _paramsRelatorioEstoquePosicaoDia();
+  const qs = params.toString();
+  window.open(`/api/estoque/relatorio-posicao-dia/pdf${qs ? `?${qs}` : ""}`, "_blank", "noopener");
+}
+
 function _estoqueResumoFluxo(item){
   const origem = (item?.origem_setor || "").trim();
   const destino = (item?.destino_setor || "").trim();
@@ -17675,6 +18025,7 @@ function _estoqueProdutoCadastroNormalizado(item = {}){
     id: Number(item.id || 0) || 0,
     codigo_barras: _digitsOnly(item.codigo_barras || ""),
     codigo_produto_nfe: String(item.codigo_produto_nfe || "").trim(),
+    descricao_sped: String(item.descricao_sped || "").trim(),
     codigos_nfe_entrada: Array.isArray(item.codigos_nfe_entrada) ? item.codigos_nfe_entrada : [],
     codigos_sellout: Array.isArray(item.codigos_sellout) ? item.codigos_sellout : [],
     codigos_nfe_saida: Array.isArray(item.codigos_nfe_saida) ? item.codigos_nfe_saida : [],
@@ -18056,7 +18407,7 @@ function renderEstoqueImportPreview(){
   const confirmarBtn = document.getElementById("estoqueImportConfirmBtn");
   if (!layer || !card || !fonte || !status || !body) return;
 
-  const importView = ["importar_xml_bipe", "importar_xml_auto"].includes(estoqueState.view);
+  const importView = ["importar_xml_bipe", "importar_xml_auto", "documentos"].includes(estoqueState.view);
   if (!importView) {
     layer.classList.add("hidden");
     layer.classList.remove("is-modal");
@@ -18080,7 +18431,7 @@ function renderEstoqueImportPreview(){
   }
 
   const draftAutomatico = draft.source_type === "importar_xml";
-  const draftPertenceView = estoqueState.view === "importar_xml_auto"
+  const draftPertenceView = ["importar_xml_auto", "documentos"].includes(estoqueState.view)
     ? draftAutomatico
     : !draftAutomatico;
   if (!draftPertenceView) {
@@ -18091,7 +18442,7 @@ function renderEstoqueImportPreview(){
   }
 
   estoqueState.importDraft = draft;
-  const modalAuto = estoqueState.view === "importar_xml_auto";
+  const modalAuto = ["importar_xml_auto", "documentos"].includes(estoqueState.view);
   layer.classList.remove("hidden");
   layer.classList.toggle("is-modal", modalAuto);
   layer.setAttribute("aria-modal", modalAuto ? "true" : "false");
@@ -18707,6 +19058,262 @@ async function excluirSelecionadasXmlEstoque(){
   );
 }
 
+function _statusAprovacaoPdfLabel(status){
+  return {
+    pendente: "Aguardando aceite",
+    coberto_xml: "Coberto por XML — sem nova baixa",
+    baixado: "Baixa aceita",
+    rejeitado: "Rejeitado — fora da fila",
+    sem_itens: "Sem itens reconhecidos",
+  }[String(status || "")] || "Pendente";
+}
+
+function _filtrarAprovacoesPdfEstoque(){
+  const busca = (document.getElementById("estoquePdfAprovacoesBusca")?.value || "").trim().toLocaleLowerCase("pt-BR");
+  const status = document.getElementById("estoquePdfAprovacoesStatus")?.value || "";
+  return (estoqueState.aprovacoesPdf || []).filter((row) => {
+    if (status && row.status !== status) return false;
+    if (!busca) return true;
+    const texto = [
+      row.mapa_numero, row.arquivo, row.nome, row.rota, row.cidade,
+      row.veiculo_numero, row.frete_nome, ...(row.notas_xml || []),
+    ].join(" ").toLocaleLowerCase("pt-BR");
+    return texto.includes(busca);
+  });
+}
+
+function renderAprovacoesPdfEstoque(){
+  const body = document.getElementById("estoquePdfAprovacoesBody");
+  const resumo = document.getElementById("estoquePdfAprovacoesResumo");
+  if (!body || !resumo) return;
+  const rows = _filtrarAprovacoesPdfEstoque();
+  const meta = estoqueState.aprovacoesPdfMeta || {};
+  const pasta = meta.pasta_disponivel === false ? "Pasta compartilhada indisponível. " : "";
+  const mensagem = estoqueState.aprovacoesPdfMensagem ? `${estoqueState.aprovacoesPdfMensagem} ` : "";
+  resumo.textContent = `${mensagem}${pasta}${meta.pendentes || 0} PDF(s) aguardando aceite; ${meta.cobertos_xml || 0} coberto(s) por XML; ${meta.baixados || 0} já baixado(s); ${meta.rejeitados || 0} rejeitado(s).`;
+  body.innerHTML = rows.length ? rows.map((row) => {
+    const statusClass = `is-${_escAttr(row.status || "pendente")}`;
+    const podeRejeitar = ["pendente", "sem_itens"].includes(row.status);
+    const notasXml = Array.isArray(row.notas_xml) && row.notas_xml.length
+      ? `<div class="hint">NF-e: ${_escHtml(row.notas_xml.join(", "))}</div>`
+      : "";
+    const frete = row.frete_id
+      ? `#${Number(row.frete_id)}${row.frete_nome ? ` — ${_escHtml(row.frete_nome)}` : ""}`
+      : "-";
+    return `
+      <tr>
+        <td>${_escHtml(_fmtDataCurtaBr(row.data_carga) || "-")}</td>
+        <td><strong>${_escHtml(row.mapa_numero ? `Mapa ${row.mapa_numero}` : row.nome || "-")}</strong><div class="hint">${_escHtml(row.arquivo || "-")}</div></td>
+        <td>${_escHtml(row.rota || row.cidade || "-")}<div class="hint">Caminhão ${_escHtml(row.veiculo_numero || "-")}</div></td>
+        <td>${frete}<div class="hint">${_escHtml(row.frete_status || "-")}</div></td>
+        <td>${_escHtml(String(row.itens_total || 0))}</td>
+        <td>${_escHtml(_fmtNumeroCarga(row.quantidade_total, 3))}</td>
+        <td><span class="estoque-documento-status ${statusClass}">${_escHtml(_statusAprovacaoPdfLabel(row.status))}</span>${notasXml}</td>
+        <td><div class="estoque-inline-actions"><button type="button" onclick="abrirAprovacaoPdfEstoque(${Number(row.id)})">${row.status === "pendente" ? "Revisar e aceitar" : "Ver detalhes"}</button>${podeRejeitar ? `<button type="button" class="btn-danger" onclick="rejeitarAprovacaoPdfEstoque(${Number(row.id)})">Rejeitar</button>` : ""}</div></td>
+      </tr>`;
+  }).join("") : `<tr><td colspan="8">Nenhum PDF encontrado para este filtro.</td></tr>`;
+}
+
+async function carregarAprovacoesPdfEstoque(){
+  const body = document.getElementById("estoquePdfAprovacoesBody");
+  if (body) body.innerHTML = `<tr><td colspan="8">Carregando PDFs...</td></tr>`;
+  const resp = await apiFetch("/api/estoque/aprovacoes-pdf");
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    if (body) body.innerHTML = `<tr><td colspan="8">${_escHtml(data?.erro || "Falha ao carregar os PDFs.")}</td></tr>`;
+    return;
+  }
+  estoqueState.aprovacoesPdf = Array.isArray(data?.rows) ? data.rows : [];
+  estoqueState.aprovacoesPdfMeta = data?.meta || {};
+  renderAprovacoesPdfEstoque();
+}
+
+async function sincronizarAprovacoesPdfEstoque(opcoes = {}){
+  if (estoqueState.aprovacoesPdfSincronizando) return;
+  estoqueState.aprovacoesPdfSincronizando = true;
+  const botao = document.getElementById("estoquePdfSincronizarBtn");
+  if (botao) { botao.disabled = true; botao.textContent = "Lendo PDFs..."; }
+  estoqueState.aprovacoesPdfMensagem = "Lendo a pasta compartilhada...";
+  renderAprovacoesPdfEstoque();
+  try {
+    const resp = await apiFetch("/api/estoque/aprovacoes-pdf/sincronizar", { method: "POST" });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data?.erro || "Falha ao ler a pasta compartilhada.");
+    const erros = Array.isArray(data?.erros) ? data.erros.length : 0;
+    estoqueState.aprovacoesPdfMensagem = `${data?.arquivos_processados || 0} arquivo(s) lido(s)${erros ? `; ${erros} com erro.` : "."}`;
+  } catch (err) {
+    estoqueState.aprovacoesPdfMensagem = err?.message || "Pasta compartilhada indisponível.";
+    if (!opcoes.silencioso) alert(estoqueState.aprovacoesPdfMensagem);
+  } finally {
+    estoqueState.aprovacoesPdfSincronizando = false;
+    estoqueState.aprovacoesPdfSincronizadoSessao = true;
+    if (botao) { botao.disabled = false; botao.textContent = "Ler pasta compartilhada"; }
+    await carregarAprovacoesPdfEstoque().catch(() => {});
+  }
+}
+
+async function inicializarAprovacoesPdfEstoque(){
+  await carregarAprovacoesPdfEstoque().catch(() => {});
+  if (!estoqueState.aprovacoesPdfSincronizadoSessao) {
+    await sincronizarAprovacoesPdfEstoque({ silencioso: true });
+  }
+}
+
+async function abrirAprovacaoPdfEstoque(cargaId){
+  if (!(Number(cargaId) > 0)) return;
+  const modal = document.getElementById("estoquePdfAprovacaoModal");
+  const itensBody = document.getElementById("estoquePdfAprovacaoItens");
+  const info = document.getElementById("estoquePdfAprovacaoInfo");
+  const alerta = document.getElementById("estoquePdfAprovacaoAlerta");
+  if (!modal || !itensBody) return;
+  estoqueState.aprovacaoPdfAtual = null;
+  modal.classList.remove("hidden");
+  itensBody.innerHTML = `<tr><td colspan="8">Carregando itens do PDF...</td></tr>`;
+  if (info) info.textContent = "Carregando documento...";
+  const resp = await apiFetch(`/api/estoque/aprovacoes-pdf/${Number(cargaId)}`);
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    itensBody.innerHTML = `<tr><td colspan="8">${_escHtml(data?.erro || "Falha ao abrir o PDF.")}</td></tr>`;
+    return;
+  }
+  estoqueState.aprovacaoPdfAtual = data;
+  const carga = data?.carga || {};
+  const itens = Array.isArray(data?.itens) ? data.itens : [];
+  if (info) info.textContent = `Mapa ${carga.mapa_numero || "-"} | ${carga.arquivo || "-"} | ${carga.rota || carga.cidade || "-"} | ${itens.length} item(ns)`;
+  const coberto = carga.status === "coberto_xml";
+  const baixado = carga.status === "baixado";
+  const rejeitado = carga.status === "rejeitado";
+  if (alerta) {
+    alerta.textContent = coberto
+      ? `Este PDF não pode gerar outra baixa: a carga já está coberta pela(s) NF-e ${Array.isArray(carga.notas_xml) ? carga.notas_xml.join(", ") : "vinculada(s)"}.`
+      : baixado
+      ? `Baixa já aceita em ${_fmtDateBr(carga.estoque_baixado_em)} por ${carga.estoque_baixado_por || "usuário não identificado"}.`
+      : rejeitado
+      ? `Carga rejeitada em ${_fmtDateBr(carga.estoque_rejeitado_em)} por ${carga.estoque_rejeitado_por || "usuário não identificado"}. Motivo: ${carga.estoque_rejeitado_motivo || "não informado"}. Nenhum estoque foi movimentado pela rejeição.`
+      : "Confira a conversão em unidades e o saldo projetado. Nenhuma baixa foi feita até este momento.";
+  }
+  itensBody.innerHTML = itens.length ? itens.map((item) => {
+    const saldoDepois = Number(item.saldo_depois || 0);
+    const embalagem = [
+      `${_fmtNumeroCarga(item.quantidade_embalagem, 3)} ${item.unidade_embalagem || item.embalagem || ""}`,
+      Number(item.quantidade_solta || 0) ? `+ ${_fmtNumeroCarga(item.quantidade_solta, 3)} ${item.unidade_solta || ""}` : "",
+    ].filter(Boolean).join(" ");
+    return `<tr>
+      <td>${_escHtml(String(item.item_seq || "-"))}</td>
+      <td>${_escHtml(item.codigo_produto || item.codigo_barras || "-")}</td>
+      <td>${_escHtml(item.nome_produto || "-")}</td>
+      <td>${_escHtml(embalagem || "-")}</td>
+      <td>${_escHtml(_fmtNumeroCarga(item.fator_embalagem, 3))}</td>
+      <td><strong>${_escHtml(_fmtNumeroCarga(item.quantidade_total, 3))}</strong></td>
+      <td>${_escHtml(_fmtNumeroCarga(item.saldo_antes, 3))}</td>
+      <td class="${saldoDepois < 0 ? "estoque-saldo-negativo" : ""}">${_escHtml(_fmtNumeroCarga(saldoDepois, 3))}</td>
+    </tr>`;
+  }).join("") : `<tr><td colspan="8">Nenhum item reconhecido neste PDF.</td></tr>`;
+  const confirmar = document.getElementById("estoquePdfConfirmarBtn");
+  if (confirmar) confirmar.classList.toggle("hidden", carga.status !== "pendente" || !itens.length);
+  const rejeitar = document.getElementById("estoquePdfRejeitarBtn");
+  if (rejeitar) rejeitar.classList.toggle("hidden", !["pendente", "sem_itens"].includes(carga.status));
+}
+
+function fecharAprovacaoPdfEstoque(){
+  document.getElementById("estoquePdfAprovacaoModal")?.classList.add("hidden");
+  estoqueState.aprovacaoPdfAtual = null;
+}
+
+async function _verificarBaixaPdfDepoisDeFalha(cargaId, tentativas = 5){
+  for (let tentativa = 0; tentativa < tentativas; tentativa += 1) {
+    if (tentativa > 0) {
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+    }
+    try {
+      const resp = await apiFetch("/api/estoque/aprovacoes-pdf");
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) continue;
+      const rows = Array.isArray(data?.rows) ? data.rows : [];
+      estoqueState.aprovacoesPdf = rows;
+      estoqueState.aprovacoesPdfMeta = data?.meta || {};
+      const carga = rows.find((row) => Number(row.id) === Number(cargaId));
+      if (carga?.status === "baixado") return carga;
+    } catch (_) {
+      // A conexao pode continuar indisponivel enquanto o servidor conclui a transacao.
+    }
+  }
+  return null;
+}
+
+async function confirmarAprovacaoPdfEstoque(){
+  const carga = estoqueState.aprovacaoPdfAtual?.carga || {};
+  const itens = estoqueState.aprovacaoPdfAtual?.itens || [];
+  if (!(Number(carga.id) > 0) || carga.status !== "pendente") return;
+  const negativos = itens.filter((item) => Number(item.saldo_depois || 0) < 0).length;
+  const avisoNegativo = negativos ? `\nAtenção: ${negativos} item(ns) ficará(ão) com saldo negativo.` : "";
+  if (!confirm(`Aceitar a baixa do PDF do mapa ${carga.mapa_numero || carga.id}?\nSerão criadas ${itens.length} saída(s) de estoque somente agora.${avisoNegativo}`)) return;
+  const botao = document.getElementById("estoquePdfConfirmarBtn");
+  if (botao) { botao.disabled = true; botao.textContent = "Baixando..."; }
+  try {
+    const resp = await apiFetch(`/api/estoque/aprovacoes-pdf/${Number(carga.id)}/confirmar`, { method: "POST" });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      const erro = new Error(data?.erro || "Falha ao aceitar a baixa do PDF.");
+      erro.status = resp.status;
+      throw erro;
+    }
+    alert(data?.ja_baixada ? "Este PDF já havia sido baixado." : `Baixa aceita: ${data?.itens_baixados || 0} item(ns) movimentado(s).`);
+    fecharAprovacaoPdfEstoque();
+    await carregarAprovacoesPdfEstoque();
+  } catch (err) {
+    const confirmarDepoisDaFalha = !Number(err?.status) || Number(err.status) >= 500;
+    const cargaConfirmada = confirmarDepoisDaFalha
+      ? await _verificarBaixaPdfDepoisDeFalha(carga.id)
+      : null;
+    if (cargaConfirmada) {
+      alert("A baixa foi concluída no servidor. A conexão encerrou antes da resposta, mas o estoque foi atualizado corretamente.");
+      fecharAprovacaoPdfEstoque();
+      renderAprovacoesPdfEstoque();
+      return;
+    }
+    alert(err?.message || "Falha ao aceitar a baixa do PDF.");
+  } finally {
+    if (botao) { botao.disabled = false; botao.textContent = "Aceitar e baixar do estoque"; }
+  }
+}
+
+async function rejeitarAprovacaoPdfEstoque(cargaId = null){
+  const id = Number(cargaId || estoqueState.aprovacaoPdfAtual?.carga?.id || 0);
+  const carga = estoqueState.aprovacaoPdfAtual?.carga?.id === id
+    ? estoqueState.aprovacaoPdfAtual.carga
+    : (estoqueState.aprovacoesPdf || []).find((row) => Number(row.id) === id) || {};
+  if (!(id > 0) || !["pendente", "sem_itens"].includes(carga.status)) return;
+  const motivoPadrao = "Carga anterior ao acerto de estoque; baixa não é mais necessária.";
+  const motivoInformado = prompt("Informe o motivo da rejeição desta carga:", motivoPadrao);
+  if (motivoInformado === null) return;
+  const motivo = motivoInformado.trim();
+  if (!motivo) {
+    alert("Informe um motivo para rejeitar a carga.");
+    return;
+  }
+  if (!confirm(`Rejeitar a carga do mapa ${carga.mapa_numero || id}?\nEla sairá da fila de aceite. Nenhum estoque será movimentado e o PDF original será preservado.`)) return;
+
+  const botao = document.getElementById("estoquePdfRejeitarBtn");
+  if (botao) { botao.disabled = true; botao.textContent = "Rejeitando..."; }
+  try {
+    const resp = await apiFetch(`/api/estoque/aprovacoes-pdf/${id}/rejeitar`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ motivo }),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data?.erro || "Falha ao rejeitar a carga do PDF.");
+    alert(data?.ja_rejeitada ? "Esta carga já havia sido rejeitada." : "Carga rejeitada e retirada da fila de aceite.");
+    if (Number(estoqueState.aprovacaoPdfAtual?.carga?.id) === id) fecharAprovacaoPdfEstoque();
+    await carregarAprovacoesPdfEstoque();
+  } catch (err) {
+    alert(err?.message || "Falha ao rejeitar a carga do PDF.");
+  } finally {
+    if (botao) { botao.disabled = false; botao.textContent = "Rejeitar carga"; }
+  }
+}
+
 async function carregarImportacoesXmlEstoque(){
   const body = document.getElementById("estoqueXmlPendentesBody");
   if (body) body.innerHTML = `<tr><td colspan="9">Carregando importacoes XML...</td></tr>`;
@@ -18769,6 +19376,7 @@ async function direcionarSelecionadasXmlManutencao(){
     }
     estoqueState.importDraft = null;
     estoqueState.importDraftDirty = false;
+    estoqueState.importReturnView = "";
     renderEstoqueImportPreview();
   }
 
@@ -18824,6 +19432,7 @@ async function direcionarSelecionadasXmlManutencao(){
     estoqueState.importacoesXmlSelecionadas = chaves.filter((chave) => !chavesDirecionadas.has(String(chave)));
     estoqueState.importDraft = null;
     estoqueState.importDraftDirty = false;
+    estoqueState.importReturnView = "";
     renderEstoqueImportPreview();
     await carregarImportacoesXmlEstoque();
     try { await carregarPreLancamentosManutencaoXml?.(); } catch {}
@@ -19201,6 +19810,7 @@ async function abrirImportacaoXmlEstoque(notaKey){
   }
   const resumo = document.getElementById("estoqueXmlPendentesResumo");
   if (resumo) resumo.textContent = "Abrindo importacao XML para revisao...";
+  estoqueState.importReturnView = estoqueState.view === "documentos" ? "documentos" : "importar_xml_auto";
   try { await ensureProdutosEstoqueCache(); } catch {}
   const resp = await apiFetch(`/api/estoque/importacoes-xml/detalhe?chave=${encodeURIComponent(notaKey)}`);
   const data = await resp.json().catch(() => ({}));
@@ -19218,7 +19828,11 @@ async function abrirImportacaoXmlEstoque(notaKey){
     }
   }
   estoqueState.importDraftDirty = false;
-  setEstoqueView("importar_xml_auto");
+  if (estoqueState.importReturnView === "documentos") {
+    setEstoqueView("documentos");
+  } else {
+    setEstoqueView("importar_xml_auto");
+  }
   renderEstoqueImportPreview();
   window.setTimeout(() => document.getElementById("estoquePreviewNumeroNota")?.focus(), 0);
   renderImportacoesXmlEstoque();
@@ -19395,8 +20009,10 @@ async function confirmarImportacaoNfeEstoque(){
       return;
     }
 
+    const viewRetornoXml = estoqueState.importReturnView || "posicao";
     estoqueState.importDraft = null;
     estoqueState.importDraftDirty = false;
+    estoqueState.importReturnView = "";
     renderEstoqueImportPreview();
     const statusLancar = document.getElementById("estoqueNfeImportStatus");
     if (statusLancar) {
@@ -19405,9 +20021,18 @@ async function confirmarImportacaoNfeEstoque(){
         : (dataXml?.retirada_cliente ? " Transporte registrado como realizado pelo cliente, sem frete da empresa." : "");
       statusLancar.textContent = `${tipoLabel} confirmada: ${dataXml.movimentos_criados || 0} movimento(s) contabilizado(s), sem duplicar os dados do XML.${freteInfo}`;
     }
-    await carregarEstoque();
-    await ensureProdutosEstoqueCache(true).catch(() => {});
-    setEstoqueView("posicao");
+    if (viewRetornoXml === "documentos") {
+      await Promise.all([
+        carregarImportacoesXmlEstoque().catch(() => {}),
+        carregarAprovacoesPdfEstoque().catch(() => {}),
+        ensureProdutosEstoqueCache(true).catch(() => {}),
+      ]);
+      setEstoqueView("documentos");
+    } else {
+      await carregarEstoque();
+      await ensureProdutosEstoqueCache(true).catch(() => {});
+      setEstoqueView("posicao");
+    }
     if (window.__dashView === "estoque") await renderDashboardEstoque();
     return;
   }
@@ -19493,6 +20118,8 @@ function setEstoqueView(view){
     ? "rastreio"
     : requestedView === "movimentar"
     ? "movimentar"
+    : requestedView === "documentos"
+    ? "documentos"
     : requestedView === "importar_xml_auto"
     ? "importar_xml_auto"
     : "importar_xml_bipe";
@@ -19504,18 +20131,22 @@ function setEstoqueView(view){
   const viewAcerto = document.getElementById("estoqueViewAcerto");
   const viewRastreio = document.getElementById("estoqueViewRastreio");
   const importacoesBox = document.getElementById("estoqueImportacoesXmlBox");
+  const aprovacoesPdfBox = document.getElementById("estoqueAprovacoesPdfBox");
   const movimentoManualBox = document.getElementById("estoqueMovimentoManualBox");
   const nfeManualBox = document.getElementById("estoqueNfeManualBox");
   const menuAcerto = document.getElementById("estoqueMenuAcerto");
   const titulo = document.getElementById("estoqueTitulo");
 
-  if (viewLancar) viewLancar.classList.toggle("hidden", !["importar_xml_bipe", "importar_xml_auto", "movimentar"].includes(nextView));
+  const viewLancarAtiva = ["importar_xml_bipe", "importar_xml_auto", "movimentar"].includes(nextView)
+    || nextView === "documentos";
+  if (viewLancar) viewLancar.classList.toggle("hidden", !viewLancarAtiva);
   if (viewConferir) viewConferir.classList.toggle("hidden", nextView !== "posicao");
   document.getElementById("estoqueViewContagem")?.classList.toggle("hidden", nextView !== "contagem");
   document.getElementById("estoqueViewPerdas")?.classList.toggle("hidden", nextView !== "perdas");
   if (viewAcerto) viewAcerto.classList.toggle("hidden", nextView !== "acerto");
   if (viewRastreio) viewRastreio.classList.toggle("hidden", nextView !== "rastreio");
-  if (importacoesBox) importacoesBox.classList.toggle("hidden", nextView !== "importar_xml_auto");
+  if (importacoesBox) importacoesBox.classList.toggle("hidden", !["importar_xml_auto", "documentos"].includes(nextView));
+  if (aprovacoesPdfBox) aprovacoesPdfBox.classList.toggle("hidden", nextView !== "documentos");
   if (movimentoManualBox) movimentoManualBox.classList.toggle("hidden", nextView !== "movimentar");
   if (nfeManualBox) nfeManualBox.classList.toggle("hidden", nextView !== "importar_xml_bipe");
   if (menuAcerto) menuAcerto.classList.toggle("hidden", !admin);
@@ -19523,6 +20154,7 @@ function setEstoqueView(view){
     const titulos = {
       importar_xml_bipe: "Compras / Importar XML (Bipe)",
       importar_xml_auto: "Compras / Importar XML Auto",
+      documentos: "Estoque / Aprovar XML e PDF",
       movimentar: "Estoque / Movimentar",
       posicao: "Estoque / Posicao atual",
       contagem: "Estoque / Contagem",
@@ -19561,6 +20193,9 @@ function setEstoqueView(view){
     prepararRastreioLotesOperacionais().catch((e) => {
       console.warn("lotes operacionais erro:", e);
     });
+  } else if (nextView === "documentos") {
+    carregarImportacoesXmlEstoque().catch((e) => console.warn("fila XML erro:", e));
+    inicializarAprovacoesPdfEstoque().catch((e) => console.warn("fila PDF erro:", e));
   }
 }
 
@@ -19594,6 +20229,7 @@ function limparProdutoEstoqueCadastro(fecharFormulario = true){
   const ids = [
     "estoqueCadastroCodigoBarras",
     "estoqueCadastroCodigoNfe",
+    "estoqueCadastroDescricaoSped",
     "estoqueCadastroCodigosNfeEntrada",
     "estoqueCadastroCodigosSellout",
     "estoqueCadastroCodigosNfeSaida",
@@ -19798,6 +20434,7 @@ function renderProdutosEstoqueCadastro(){
       item.produto_base_nome,
       item.codigo_barras,
       item.codigo_produto_nfe,
+      item.descricao_sped,
       item.grupo_estoque,
       _estoqueGrupoLabel(item.grupo_estoque),
       item.embalagem_tipo_padrao,
@@ -19814,6 +20451,7 @@ function renderProdutosEstoqueCadastro(){
     <tr class="estoque-cadastro-row${Number(estoqueState.cadastroProdutoEditId || 0) === Number(item.id || 0) ? " is-editing" : ""}">
       <td>${_escHtml(_estoqueGrupoLabel(item.grupo_estoque))}</td>
       <td>${_escHtml(item.nome_produto || "-")}${item.cadastro_explicitado ? "" : ' <span class="estoque-pack-hint">confirmar</span>'}</td>
+      <td>${_escHtml(item.descricao_sped || "-")}</td>
       <td>${_escHtml(item.produto_base_nome || "-")}</td>
       <td>${_escHtml(item.codigo_barras || item.codigo_produto_nfe || "-")}${[
         item.codigos_nfe_entrada?.length ? `NF-e ent.: ${item.codigos_nfe_entrada.join(", ")}` : "",
@@ -19830,7 +20468,7 @@ function renderProdutosEstoqueCadastro(){
         <button type="button" onclick="excluirProdutoEstoqueCadastro(${Number(item.id || 0)})">Excluir</button>
       </td>
     </tr>
-  `, 9) : `<tr><td colspan="9">${todos.length ? "Nenhum produto encontrado com os filtros informados." : "Nenhum produto cadastrado."}</td></tr>`;
+  `, 10) : `<tr><td colspan="10">${todos.length ? "Nenhum produto encontrado com os filtros informados." : "Nenhum produto cadastrado."}</td></tr>`;
 }
 
 async function carregarProdutosEstoqueCadastro(){
@@ -19839,7 +20477,7 @@ async function carregarProdutosEstoqueCadastro(){
   try {
     await ensureProdutosEstoqueCache();
   } catch (err) {
-    body.innerHTML = `<tr><td colspan="9">Falha ao carregar cadastros.</td></tr>`;
+    body.innerHTML = `<tr><td colspan="10">Falha ao carregar cadastros.</td></tr>`;
     return;
   }
   renderProdutosEstoqueCadastro();
@@ -19870,19 +20508,27 @@ function _estoqueCodigoNormalizadoComparacao(valor = ""){
 }
 
 function _saldoProdutoCadastroAtual(item = {}){
+  const produtoId = Number(item.id || item.produto_id || 0);
   const codigoBarras = _digitsOnly(item.codigo_barras || "");
   const codigoNfe = _estoqueCodigoNormalizadoComparacao(item.codigo_produto_nfe || "");
   const baseKey = _estoqueProdutoBaseKey(item);
   const nome = String(item.produto_base_nome || item.nome_produto || "").trim().toUpperCase();
+  const grupo = _estoqueGrupoNormalizado(item.grupo_estoque || item.grupo || "");
   const rows = Array.isArray(estoqueState.posicaoRows) ? estoqueState.posicaoRows : [];
+  const porId = produtoId > 0
+    ? rows.find((row) => Number(row.produto_id || row.id || 0) === produtoId)
+    : null;
+  if (porId) return Number(porId.quantidade_atual || 0) || 0;
   const encontrado = rows.find((row) => {
+    const rowGrupo = _estoqueGrupoNormalizado(row.grupo_estoque || row.grupo || "");
+    if (grupo && rowGrupo && rowGrupo !== grupo) return false;
     const rowCodigoBarras = _digitsOnly(row.codigo_barras || "");
     const rowCodigoNfe = _estoqueCodigoNormalizadoComparacao(row.codigo_produto_nfe || "");
     const rowNome = String(row.produto_base_nome || row.nome_produto || "").trim().toUpperCase();
     const rowBaseKey = _estoqueProdutoBaseKey(row);
-    if (baseKey && rowBaseKey === baseKey) return true;
     return (codigoBarras && rowCodigoBarras === codigoBarras)
       || (codigoNfe && rowCodigoNfe === codigoNfe)
+      || (baseKey && rowBaseKey === baseKey)
       || (nome && rowNome === nome);
   });
   return Number(encontrado?.quantidade_atual || 0) || 0;
@@ -20113,6 +20759,7 @@ function editarProdutoEstoqueCadastro(id){
   const map = {
     estoqueCadastroCodigoBarras: item.codigo_barras || "",
     estoqueCadastroCodigoNfe: item.codigo_produto_nfe || "",
+    estoqueCadastroDescricaoSped: item.descricao_sped || "",
     estoqueCadastroCodigosNfeEntrada: (item.codigos_nfe_entrada || []).join(", "),
     estoqueCadastroCodigosSellout: (item.codigos_sellout || []).join(", "),
     estoqueCadastroCodigosNfeSaida: (item.codigos_nfe_saida || []).join(", "),
@@ -20150,6 +20797,7 @@ async function salvarProdutoEstoqueCadastro(){
   const payload = {
     codigo_barras: _digitsOnly(document.getElementById("estoqueCadastroCodigoBarras")?.value || ""),
     codigo_produto_nfe: (document.getElementById("estoqueCadastroCodigoNfe")?.value || "").trim(),
+    descricao_sped: (document.getElementById("estoqueCadastroDescricaoSped")?.value || "").trim(),
     nome_produto: (document.getElementById("estoqueCadastroNomeProduto")?.value || "").trim(),
     grupo_estoque: (document.getElementById("estoqueCadastroGrupo")?.value || "").trim(),
     produto_base_nome: (document.getElementById("estoqueCadastroBaseNome")?.value || "").trim(),

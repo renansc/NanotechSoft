@@ -98,6 +98,7 @@
       <div class="submenu" id="submenuEstoque">
         <div class="submenu-item active" data-estoque-view="posicao" onclick="openEstoqueView(event,'posicao')">Posicao atual</div>
         <div class="submenu-item" data-estoque-view="movimentar" onclick="openEstoqueView(event,'movimentar')">Movimentar estoque</div>
+        <div class="submenu-item" data-estoque-view="documentos" onclick="openEstoqueView(event,'documentos')">Aprovar XML e PDF</div>
         <div class="submenu-item" data-estoque-view="rastreio" onclick="openEstoqueView(event,'rastreio')">Rastreio de lotes</div>
         <div class="submenu-item" data-estoque-view="contagem" onclick="openEstoqueView(event,'contagem')">Contagem</div>
         <div class="submenu-item" data-estoque-view="perdas" onclick="openEstoqueView(event,'perdas')">Baixas por perda</div>
@@ -119,8 +120,10 @@
     <div class="menu-item has-submenu" data-tab="relatorios" onclick="toggleRelatoriosSubmenu(event)">
       Relatórios <span class="submenu-caret">&#9662;</span>
       <div class="submenu" id="submenuRelatorios">
+        <div class="submenu-item" data-relatorios-view="custo_produto" onclick="openRelatoriosView(event,'custo_produto')">Custo produto</div>
         <div class="submenu-item" data-relatorios-view="orcamentos" onclick="openRelatoriosView(event,'orcamentos')">Orcamentos gerados</div>
         <div class="submenu-item" data-relatorios-view="contagens" onclick="openRelatoriosView(event,'contagens')">Contagens, desperdicio e sobras</div>
+        <div class="submenu-item" data-relatorios-view="estoque_posicao_dia" onclick="openRelatoriosView(event,'estoque_posicao_dia')">Posição de estoque do dia</div>
         <div class="submenu-item active" data-relatorios-view="estoque_comprometido" onclick="openRelatoriosView(event,'estoque_comprometido')">Estoque comprometido</div>
         <div class="submenu-item" data-relatorios-view="processos" onclick="openRelatoriosView(event,'processos')">Processos internos</div>
         <div class="submenu-item" data-relatorios-view="compras" onclick="openRelatoriosView(event,'compras')">Compras</div>
@@ -132,7 +135,7 @@
     <div class="menu-item has-submenu" data-tab="vendas" onclick="toggleVendasSubmenu(event)">Vendas <span class="submenu-caret">&#9662;</span><div class="submenu" id="submenuVendas"><div class="submenu-item active" data-vendas-view="relatorio" onclick="openVendasView(event,'relatorio')">Relatório</div><div class="submenu-item" data-vendas-view="orcamento" onclick="openVendasView(event,'orcamento')">Orçamento</div><div class="submenu-item" data-vendas-view="pontosvenda" onclick="openVendasView(event,'pontosvenda')">Pontos de Venda</div></div></div>
     <div class="menu-item has-submenu" data-tab="monitor" onclick="toggleMonitorSubmenu(event)">Monitor <span class="submenu-caret">&#9662;</span><div class="submenu" id="submenuMonitor"><div class="submenu-item active" data-monitor-view="esxi" onclick="openMonitorView(event,'esxi')">ESXi</div><div class="submenu-item" data-monitor-view="cameras" onclick="openMonitorView(event,'cameras')">Cameras</div><div class="submenu-item" data-monitor-view="automacao" onclick="openMonitorView(event,'automacao')">Automacao</div><div class="submenu-item" data-monitor-view="gestor_emails" onclick="openMonitorView(event,'gestor_emails')">Gestor de E-mails</div><div class="submenu-item" data-monitor-view="comunicacao" onclick="openMonitorComunicacao(event)">Comunicacao</div></div></div>
     <div class="menu-item" onclick="showTab('agentia',this); iniciarAgentIa()">Agent IA</div>
-    <div class="menu-item has-submenu" data-tab="config" onclick="toggleConfigSubmenu(event)">Config <span class="submenu-caret">&#9662;</span><div class="submenu" id="submenuConfig"><div class="submenu-item active" onclick="openConfigView(event,'status')">Status</div><div class="submenu-item" onclick="openConfigView(event,'logs')">Logs</div><div class="submenu-item" onclick="openConfigView(event,'cameras')">Cameras</div><div class="submenu-item" onclick="openConfigView(event,'sip')">SIP</div><div class="submenu-item" onclick="openConfigView(event,'nfe')">NF-e</div><div class="submenu-item" onclick="openConfigView(event,'vendas')">Vendas</div><div class="submenu-item" onclick="openConfigView(event,'backup')">Backup</div><div class="submenu-item" onclick="openConfigView(event,'orcamentos')">Parametros de orcamentos</div><div class="submenu-item" onclick="openConfigView(event,'base_vendas')">Base mensal de vendas</div><div class="submenu-item" onclick="openDocsPortal(event)">Docs</div></div></div>
+    <div class="menu-item has-submenu" data-tab="config" onclick="toggleConfigSubmenu(event)">Config <span class="submenu-caret">&#9662;</span><div class="submenu" id="submenuConfig"><div class="submenu-item active" onclick="openConfigView(event,'status')">Status</div><div class="submenu-item" onclick="openConfigView(event,'logs')">Logs</div><div class="submenu-item" onclick="openConfigView(event,'cameras')">Cameras</div><div class="submenu-item" onclick="openConfigView(event,'sip')">SIP</div><div class="submenu-item" onclick="openConfigView(event,'nfe')">NF-e</div><div class="submenu-item" onclick="openConfigView(event,'vendas')">Vendas</div><div class="submenu-item" onclick="openConfigView(event,'backup')">Backup</div><div class="submenu-item" onclick="openConfigView(event,'orcamentos')">Parametros de orcamentos</div><div class="submenu-item" onclick="openConfigView(event,'base_vendas')">Base mensal de vendas</div><div class="submenu-item" onclick="openConfigView(event,'custos_producao')">Rateio de custos</div><div class="submenu-item" onclick="openDocsPortal(event)">Docs</div></div></div>
   </nav>
 
   <!-- =====================================================
@@ -480,24 +483,6 @@
     </div>
   </div>
 
-  <div id="vendasDiarioPdfModal" class="vendas-diario-modal hidden" role="dialog" aria-modal="true" onclick="fecharImportacaoCargaPdfBackdrop(event)">
-    <div class="vendas-diario-modal-content" onclick="event.stopPropagation()">
-      <span class="close" onclick="cancelarImportacaoCargaPdfVendasDiario()">&times;</span>
-      <h3>Importar carga PDF</h3>
-      <div id="vendasDiarioPdfArquivoNome" class="hint">Nenhum PDF selecionado.</div>
-      <div class="vendas-diario-modal-grid">
-        <label class="vendas-diario-modal-full">Vendedor responsável
-          <select id="vendasDiarioCargaPdfVendedor"><option value="">Carregando vendedores...</option></select>
-        </label>
-      </div>
-      <div id="vendasDiarioPdfErro" class="hint"></div>
-      <div class="vendas-toolbar vendas-diario-modal-actions">
-        <button type="button" onclick="importarCargaPdfVendasDiario()">Confirmar importação</button>
-        <button type="button" class="btn-secondary" onclick="cancelarImportacaoCargaPdfVendasDiario()">Cancelar</button>
-      </div>
-    </div>
-  </div>
-
   <!-- =====================================================
        (MENU) FRETES / KANBAN
   ====================================================== -->
@@ -645,46 +630,38 @@
 
   <section id="custoProdutoDashboard" class="section">
     <h2>Dashboard de custo do produto</h2>
-    <label>Consulta<select id="custoDashboardVisao" onchange="abrirVisaoCustoDashboard()"><option value="diario">Custo do dia por grupo</option><option value="mensal">Evolução mensal da fórmula</option></select></label>
-    <div id="custoDashboardDiario">
-      <div class="gestao-form-grid">
-        <label>Data<input type="date" id="custoDiaDashData" onchange="carregarDashboardCustoDia()"></label>
-        <label>Grupo<select id="custoDiaDashGrupo" onchange="renderDashboardCustoDia()"><option value="">Todos os grupos</option></select></label>
-        <label>Exibir componentes em<select id="custoDiaDashUnidade" onchange="renderDashboardCustoDia()"><option value="embalagens">R$ por embalagem (garrafa)</option><option value="pacotes">R$ por pacote / caixa</option><option value="litros">R$ por litro</option><option value="total">R$ total do dia</option></select></label>
-      </div>
-      <button type="button" onclick="carregarDashboardCustoDia()">Atualizar dia</button>
-      <p id="custoDiaDashStatus" role="status"></p><div id="custoDiaDashResultado"></div>
-    </div>
-    <div id="custoDashboardMensal" class="hidden">
-    <p>Fórmula atual com a última compra de fornecedor disponível até cada mês. Inclui a dose de xarope de cada produto. Este comparativo mostra a evolução dos preços, não as receitas históricas de produção.</p>
-    <div class="gestao-form-grid">
-      <label>Ano<select id="custoDashboardAno" onchange="carregarDashboardCustoProduto()"></select></label>
-      <label>Linha<select id="custoDashboardGrupo" onchange="renderDashboardCustoProduto()"><option value="">Todas</option><option value="PET">PET</option><option value="GFA">Retornável</option></select></label>
-      <label>Produto<select id="custoDashboardProduto" onchange="renderDashboardCustoProduto()"><option value="">Todos os produtos</option></select></label>
-    </div>
+    <p>Somente itens com fórmula de produção cadastrada. Os valores usam a fórmula atual, a última compra disponível e o rateio configurado.</p>
     <button type="button" onclick="carregarDashboardCustoProduto()">Atualizar custos</button>
     <p id="custoDashboardStatus" role="status"></p>
     <p id="custoDashboardResumo"></p>
-    <div id="custoDashboardGrafico"></div>
-    <div style="overflow-x:auto"><table><thead id="custoDashboardHead"></thead><tbody id="custoDashboardBody"></tbody></table></div>
-    </div>
+    <h3>Xarope base e sabores</h3>
+    <div id="custoDashboardTopo" class="custo-dashboard-grid"></div>
+    <h3>Rateio de custos</h3>
+    <div id="custoDashboardRateio" class="custo-dashboard-grid"></div>
+    <div id="custoDashboardProdutos"></div>
   </section>
 
   <section id="custoProduto" class="section">
     <h2>Custo do produto</h2>
-    <p>Cadastre a fórmula de cada sabor e apresentação das linhas PET e retornável para produzir <strong>1.000 litros</strong>.</p>
-    <p class="hint">A estimativa considera somente os itens informados, sem perdas. Embalagem, mão de obra, energia e impostos só entram se cadastrados como itens. Quantidade e preço devem usar a mesma unidade (ex.: kg e R$/kg).</p>
+    <p>Cadastre o xarope base, crie a receita de cada sabor e informe quantos litros de bebida pronta o lote produz. O mesmo sabor atende PET e retornável; o sistema distribui automaticamente o custo do lote por 1.000 L e pelo volume de cada embalagem. Quando uma apresentação PET do sabor já estiver completa, as demais podem ser autocompletadas com o mesmo líquido e com preforma/rótulo compatíveis com o volume.</p>
+    <p class="hint">Cadastre tampa, rótulo, PET/garrafa e demais itens da apresentação na fórmula. Mão de obra, impostos, energia, água e outros custos compartilhados ficam em Config &gt; Rateio de custos.</p>
     <div id="custoProdutoLista">
       <button type="button" onclick="editarCustoProduto('xarope')">Cadastrar / editar base de xarope</button>
+      <button type="button" onclick="editarCustoProduto('composto-novo')">Criar xarope composto por sabor</button>
       <p id="custoProdutoBaseResumo" role="status"></p>
+      <div class="table-responsive" style="overflow-x:auto"><table>
+        <thead><tr><th>Receita do sabor</th><th>Base usada no lote</th><th>Bebida produzida</th><th>Base proporcional / 1.000 L</th><th>Custo dos xaropes / litro de bebida</th><th>Situação</th><th>Ação</th></tr></thead>
+        <tbody id="custoProdutoCompostosBody"></tbody>
+      </table></div>
       <div class="gestao-form-grid">
         <label>Buscar produto ou sabor<input id="custoProdutoBusca" type="search" oninput="renderCustoProduto()"></label>
-        <label>Linha<select id="custoProdutoGrupo" onchange="renderCustoProduto()"><option value="">Todas</option><option value="PET">PET</option><option value="GFA">Retornável</option></select></label>
+        <label>Linha<select id="custoProdutoGrupo" onchange="renderCustoProduto()"><option value="">Todas</option><option value="AGUA">Água</option><option value="PET">PET</option><option value="GFA">Retornável</option></select></label>
+        <label>Itens fora da produção<span><input id="custoProdutoMostrarExcluidos" type="checkbox" onchange="renderCustoProduto()"> Mostrar itens removidos</span></label>
       </div>
       <button type="button" onclick="carregarCustoProduto()">Atualizar</button>
       <p id="custoProdutoStatus" role="status" aria-live="polite"></p>
       <div class="table-responsive" style="overflow-x:auto"><table>
-        <thead><tr><th>Produto / sabor</th><th>Linha</th><th>Volume da garrafa</th><th>Custo / 1.000 L</th><th>Custo / garrafa</th><th>Fórmula</th><th>Ação</th></tr></thead>
+        <thead><tr><th>Produto / sabor</th><th>Linha</th><th>Xarope composto</th><th>Volume da garrafa</th><th>Sem rateio / garrafa</th><th>Com rateio / garrafa</th><th>Unidades / pacote</th><th>Sem rateio / pacote</th><th>Com rateio / pacote</th><th>Fórmula</th><th>Ação</th></tr></thead>
         <tbody id="custoProdutoBody"></tbody>
       </table></div>
     </div>
@@ -693,18 +670,30 @@
       <p id="custoProdutoAtualizacao" class="hint"></p>
       <fieldset id="custoProdutoCampos" style="border:0;padding:0;min-width:0" oninput="atualizarCalculoCustoProduto()">
         <div id="custoProdutoDadosXarope" class="hidden">
-          <label>Rendimento desta receita de xarope (litros)<input id="custoProdutoRendimento" type="number" min="0.001" max="1000000" step="0.001" required disabled></label>
-          <p>Informe os ingredientes para esse rendimento. O custo por litro será usado em todos os produtos, conforme a quantidade de xarope de cada um.</p>
+          <label>Rendimento desta receita de xarope base (litros)<input id="custoProdutoRendimento" type="number" min="0.001" max="1000000" step="0.001" required disabled></label>
+          <p>Informe somente os ingredientes do xarope base. Ele será usado na composição dos xaropes de cada sabor.</p>
+        </div>
+        <div id="custoProdutoDadosComposto" class="hidden">
+          <label>Nome / sabor do xarope composto<input id="custoProdutoCompostoNome" maxlength="180" required disabled placeholder="Ex.: Limão"></label>
+          <label>Xarope base usado para preparar este lote composto (litros)<input id="custoProdutoCompostoBaseLitros" type="number" min="0.001" max="1000000" step="0.001" required disabled></label>
+          <label>Rendimento deste lote em bebida pronta (litros)<input id="custoProdutoCompostoRendimento" type="number" min="0.001" max="1000000" step="0.001" required disabled></label>
+          <label>Xarope base proporcional por 1.000 litros de bebida<input id="custoProdutoCompostoDose" type="number" step="0.001" readonly disabled></label>
+          <p class="hint">A proporção é automática. Exemplo: 500 L de xarope base em um lote que rende 3.750 L de bebida equivalem a 133,333 L de base por 1.000 L. O custo de todos os ingredientes do lote também é multiplicado por 1.000 ÷ 3.750.</p>
+          <p>Adicione abaixo o concentrado, aroma e os demais ingredientes do sabor. Não repita os ingredientes do xarope base.</p>
         </div>
         <div id="custoProdutoDadosGarrafa">
-        <label>Xarope usado por 1.000 litros de bebida (litros)<input id="custoProdutoDose" type="number" min="0.001" max="1000000" step="0.001" required></label>
+        <label id="custoProdutoCompostoLabel">Xarope composto do sabor<select id="custoProdutoCompostoSelect" required onchange="atualizarCalculoCustoProduto()"><option value="">Selecione o xarope composto</option></select></label>
+        <label id="custoProdutoDoseLabel">Xarope base proporcional por 1.000 litros (calculado pelo rendimento)<input id="custoProdutoDose" type="number" step="0.001" readonly></label>
         <label>Volume de uma garrafa (ml)<input id="custoProdutoVolume" type="number" min="0.001" max="1000000" step="0.001" required></label>
-        <p class="hint">Confira o volume sugerido pelo nome do produto. O custo por unidade corresponde a uma garrafa, não a uma caixa ou fardo.</p>
+        <label>Garrafas por pacote / caixa<input id="custoProdutoUnidadesPacote" type="number" min="1" max="1000000" step="1" required></label>
+        <label>Água quente por 1.000 litros de bebida (litros)<input id="custoProdutoAguaQuenteLitros" type="number" min="0.001" max="1000000" step="0.001" placeholder="Opcional"></label>
+        <label>Valor da água quente por litro (R$)<input id="custoProdutoAguaQuenteValor" type="number" min="0.000001" max="999999999.999999" step="0.000001" placeholder="Opcional"></label>
+        <p class="hint"><strong>As quantidades abaixo são de uma única garrafa pronta, não de 1.000 L.</strong> Normalmente informe 1 PET/garrafa, 1 tampa e 1 rótulo. Para uma garrafa de 2 L, o sistema multiplica sozinho por 500 garrafas para obter 1.000 L e também multiplica pelas unidades do pacote.</p>
         </div>
         <h4 id="custoProdutoItensTitulo"></h4>
-        <p>Selecione os itens do cadastro. O preço vem do último XML de entrada vinculado ao produto. As conversões conhecidas do estoque são aproveitadas; para outras embalagens, informe quantos kg, litros ou unidades há na embalagem comprada.</p>
+        <p>Selecione os itens do cadastro. O preço vem da última referência fiscal de entrada vinculada ao produto por NF-e ou SPED. Quando aparecer “Sem compra fiscal de fornecedor vinculada”, digite diretamente no campo “Preço usado”; o valor será guardado como provisório na mesma unidade do item. A referência fiscal válida terá prioridade automaticamente. As conversões conhecidas do estoque são aproveitadas; para outras embalagens, informe quantos kg, litros ou unidades há na embalagem comprada.</p>
         <div class="table-responsive" style="overflow-x:auto"><table>
-          <thead><tr><th>Produto cadastrado</th><th>Unidade</th><th id="custoProdutoQuantidadeTitulo">Quantidade / 1.000 L de bebida</th><th>Quantidade por embalagem de compra</th><th>Última compra · R$ / unidade do item</th><th>Custo do item</th><th>Ação</th></tr></thead>
+          <thead><tr><th>Produto cadastrado</th><th>Unidade</th><th id="custoProdutoQuantidadeTitulo">Quantidade / garrafa</th><th>Quantidade por embalagem de compra</th><th>Valor provisório · R$ / unidade do item</th><th>Preço usado · R$ / unidade do item</th><th>Custo por garrafa</th><th>Ação</th></tr></thead>
           <tbody id="custoProdutoItens"></tbody>
         </table></div>
         <button type="button" onclick="adicionarItemCustoProduto()">Adicionar item</button>
@@ -813,10 +802,39 @@
     </div>
 
     <div id="estoqueViewLancar">
+    <div class="boxFrota hidden" id="estoqueAprovacoesPdfBox">
+      <div class="estoque-import-header">
+        <div>
+          <h3>PDFs da pasta compartilhada — aguardando aceite</h3>
+          <div id="estoquePdfAprovacoesResumo" class="hint">Carregando cargas encontradas nos PDFs...</div>
+        </div>
+        <div class="estoque-xml-toolbar-row">
+          <input type="search" id="estoquePdfAprovacoesBusca" placeholder="Buscar mapa, arquivo, rota ou caminhão" oninput="renderAprovacoesPdfEstoque()">
+          <select id="estoquePdfAprovacoesStatus" onchange="renderAprovacoesPdfEstoque()">
+            <option value="pendente">Aguardando aceite</option>
+            <option value="">Todos os documentos</option>
+            <option value="coberto_xml">Cobertos por XML</option>
+            <option value="baixado">Já baixados</option>
+            <option value="rejeitado">Rejeitados</option>
+            <option value="sem_itens">Sem itens reconhecidos</option>
+          </select>
+          <button type="button" id="estoquePdfSincronizarBtn" onclick="sincronizarAprovacoesPdfEstoque()">Ler pasta compartilhada</button>
+          <button type="button" class="btn-secondary" onclick="carregarAprovacoesPdfEstoque()">Atualizar lista</button>
+        </div>
+      </div>
+      <div class="tableWrap">
+        <table>
+          <thead><tr><th>Data</th><th>Mapa / arquivo</th><th>Rota / caminhão</th><th>Frete</th><th>Itens</th><th>Total unidades</th><th>Situação</th><th>Ação</th></tr></thead>
+          <tbody id="estoquePdfAprovacoesBody"><tr><td colspan="8">Carregando PDFs...</td></tr></tbody>
+        </table>
+      </div>
+      <small class="hint">O PDF é apenas preparado ao ler a pasta. A saída do estoque acontece somente depois de revisar os itens e aceitar. Rejeitar retira cargas antigas da fila sem movimentar estoque nem apagar o documento de origem. Se houver NF-e de saída já contabilizada para a mesma carga, o PDF fica como evidência e sua baixa é bloqueada.</small>
+    </div>
+
     <div class="boxFrota" id="estoqueImportacoesXmlBox">
       <div class="estoque-import-header">
         <div>
-          <h3>Importar XML Auto — aguardando confirmacao</h3>
+          <h3>XML de entrada e saída — aguardando aceite</h3>
           <div id="estoqueXmlPendentesResumo" class="hint">Carregando entradas e saidas reconhecidas pelo Importar XML...</div>
         </div>
         <div class="estoque-xml-toolbar-row estoque-xml-filter-row" aria-label="Filtros da importacao XML automatica">
@@ -901,6 +919,27 @@
         </table>
       </div>
       <small class="hint">Selecione quantas notas precisar. O sistema divide automaticamente a importacao em lotes de ate 500 NF-e. O saldo de cada nota e contabilizado apenas na confirmacao, sem duplicar itens ja lancados.</small>
+    </div>
+
+    <div id="estoquePdfAprovacaoModal" class="gestao-modal hidden" role="dialog" aria-modal="true" aria-labelledby="estoquePdfAprovacaoTitulo">
+      <div class="gestao-modal-card estoque-pdf-aprovacao-card">
+        <div class="estoque-import-header">
+          <div><h3 id="estoquePdfAprovacaoTitulo">Revisar baixa do PDF</h3><div id="estoquePdfAprovacaoInfo" class="hint"></div></div>
+          <button type="button" class="btn-secondary" onclick="fecharAprovacaoPdfEstoque()">Fechar</button>
+        </div>
+        <div id="estoquePdfAprovacaoAlerta" class="hint"></div>
+        <div class="tableWrap estoque-pdf-itens-wrap">
+          <table>
+            <thead><tr><th>Seq.</th><th>Código</th><th>Produto</th><th>Embalagens</th><th>Fator</th><th>Baixa em unidades</th><th>Saldo antes</th><th>Saldo depois</th></tr></thead>
+            <tbody id="estoquePdfAprovacaoItens"><tr><td colspan="8">Selecione um PDF para revisar.</td></tr></tbody>
+          </table>
+        </div>
+        <div class="estoque-inline-actions">
+          <button type="button" id="estoquePdfConfirmarBtn" onclick="confirmarAprovacaoPdfEstoque()">Aceitar e baixar do estoque</button>
+          <button type="button" id="estoquePdfRejeitarBtn" class="btn-danger" onclick="rejeitarAprovacaoPdfEstoque()">Rejeitar carga</button>
+          <button type="button" class="btn-secondary" onclick="fecharAprovacaoPdfEstoque()">Cancelar</button>
+        </div>
+      </div>
     </div>
 
     <div class="frotaGrid">
@@ -1217,6 +1256,7 @@
             <input type="text" id="estoqueCadastroCodigoBarras" placeholder="Codigo de barras">
             <input type="text" id="estoqueCadastroCodigoNfe" placeholder="Codigo principal/legado">
             <input type="text" id="estoqueCadastroNomeProduto" placeholder="Nome do produto">
+            <input type="text" id="estoqueCadastroDescricaoSped" maxlength="255" placeholder="Descricao exata no SPED (quando diferente)">
             <select id="estoqueCadastroGrupo">
               <option value="">Grupo do estoque</option>
             </select>
@@ -1234,7 +1274,7 @@
             <input type="number" id="estoqueCadastroAjusteQuantidade" step="0.001" placeholder="Ajuste de estoque (+/-)">
             <input type="text" id="estoqueCadastroAjusteMotivo" placeholder="Motivo (ex.: Estoque inicial 22/08/2026)">
           </div>
-          <div class="hint">Estoque minimo maior que zero abre uma solicitacao no Kanban de compras quando o saldo atinge o limite. Produtos acabados continuam no planejamento de producao. Administrador: preencha o saldo fisico ou o ajuste (+/-) para salvar o cadastro e o acerto na mesma acao.</div>
+          <div class="hint">Descricao no SPED: copie o nome do item exatamente como aparece no arquivo fiscal. Ela sera usada para localizar compras quando nao houver amarracao confirmada pelo XML e nao pode ser repetida em outro produto ativo. Estoque minimo maior que zero abre uma solicitacao no Kanban de compras quando o saldo atinge o limite.</div>
           <div class="estoque-inline-actions">
             <button type="button" onclick="salvarProdutoEstoqueCadastro()">Salvar Cadastro e Acerto</button>
             <button type="button" id="estoqueCadastroSaldoAtualBtn" class="hidden" onclick="definirSaldoAtualProdutoEstoqueCadastro()">Definir Saldo Fisico</button>
@@ -1252,7 +1292,7 @@
             <button type="button" onclick="novoProdutoEstoqueCadastro()">Novo Produto</button>
           </div>
           <div class="estoque-cadastro-filtros">
-            <input type="search" id="estoqueCadastroBusca" placeholder="Buscar por produto, base, codigo ou embalagem" oninput="renderProdutosEstoqueCadastro()">
+            <input type="search" id="estoqueCadastroBusca" placeholder="Buscar por produto, SPED, base, codigo ou embalagem" oninput="renderProdutosEstoqueCadastro()">
             <select id="estoqueCadastroFiltroGrupo" onchange="renderProdutosEstoqueCadastro()">
               <option value="">Todos os grupos</option>
             </select>
@@ -1265,6 +1305,7 @@
                 <tr>
                   <th>Grupo</th>
                   <th>Produto</th>
+                  <th>Descricao SPED</th>
                   <th>Base</th>
                   <th>Codigo</th>
                   <th>Saldo Atual</th>
@@ -1275,7 +1316,7 @@
                 </tr>
               </thead>
               <tbody id="estoqueCadastroProdutosBody">
-                <tr><td colspan="9">Carregando cadastros...</td></tr>
+                <tr><td colspan="10">Carregando cadastros...</td></tr>
               </tbody>
             </table>
           </div>
@@ -1536,6 +1577,27 @@
        (MENU) RELATORIOS
   ====================================================== -->
   <section id="relatorios" class="section">
+    <div id="relatoriosViewCustoProduto" class="relatorios-view hidden">
+      <div class="boxFrota">
+        <div class="vendas-box-head">
+          <div>
+            <h2>Custo produto</h2>
+            <div id="relatorioCustoProdutoStatus" class="hint">Carregando a memória de cálculo atual...</div>
+          </div>
+          <div class="vendas-toolbar">
+            <button type="button" onclick="carregarRelatorioRateioCustoProduto()">Atualizar</button>
+            <button type="button" class="btn-secondary" onclick="imprimirRelatorioRateioCustoProduto()">Gerar / imprimir PDF</button>
+          </div>
+        </div>
+        <div class="estoque-filtros" aria-label="Filtros do relatório de custo do produto">
+          <label>Linha<select id="relatorioCustoProdutoGrupo" onchange="renderRelatorioRateioCustoProduto()"><option value="">Todas</option><option value="AGUA">Água</option><option value="PET">PET</option><option value="GFA">Retornável</option></select></label>
+          <label>Produto ou sabor<input id="relatorioCustoProdutoBusca" type="search" placeholder="Ex.: Abacaxi 2 L" oninput="renderRelatorioRateioCustoProduto()"></label>
+        </div>
+      </div>
+      <div id="relatorioCustoProdutoConteudo" class="custo-relatorio">
+        <div class="boxFrota hint">A memória de cálculo será exibida aqui.</div>
+      </div>
+    </div>
       <section id="vendasDiarioCargasSemana" class="vendas-diario-cargas-semana hidden">
         <div class="vendas-box-head">
           <div>
@@ -1618,6 +1680,37 @@
             <tbody id="relatorioEstoqueComprometidoBody"></tbody>
           </table>
         </div>
+      </div>
+    </div>
+
+    <div id="relatoriosViewEstoquePosicaoDia" class="relatorios-view hidden">
+      <div class="boxFrota">
+        <div class="vendas-box-head">
+          <div>
+            <h2>Posição de Estoque do Dia por Grupo</h2>
+            <div id="relatorioEstoquePosicaoDiaResumo" class="hint">Selecione a data para consultar a posição.</div>
+          </div>
+          <button type="button" onclick="abrirPdfRelatorioEstoquePosicaoDia()">Abrir PDF / Imprimir</button>
+        </div>
+        <div class="estoque-filtros" aria-label="Filtros da posição de estoque do dia">
+          <label>Data
+            <input type="date" id="relatorioEstoquePosicaoDiaData">
+          </label>
+          <label>Grupo de estoque
+            <select id="relatorioEstoquePosicaoDiaGrupo">
+              <option value="">Todos os grupos</option>
+            </select>
+          </label>
+          <button type="button" onclick="carregarRelatorioEstoquePosicaoDia()">Consultar</button>
+        </div>
+        <div id="relatorioEstoquePosicaoDiaCards" class="vendas-resumo-cards"></div>
+        <div class="tableWrap">
+          <table class="dash-table">
+            <thead><tr><th>Grupo / Produto</th><th>Código</th><th>Saldo inicial</th><th>Entradas do dia</th><th>Saídas do dia</th><th>Saldo final</th></tr></thead>
+            <tbody id="relatorioEstoquePosicaoDiaBody"><tr><td colspan="6">Selecione uma data.</td></tr></tbody>
+          </table>
+        </div>
+        <small class="hint">A posição considera todos os movimentos registrados até o fim da data selecionada. Produtos com embalagem configurada mostram pacotes/caixas e o total em unidades-base; os totais dos grupos permanecem em unidades-base.</small>
       </div>
     </div>
 
@@ -2341,6 +2434,48 @@
 
     <div id="gestaoViewRelatorios" class="dash-view hidden">
       <h3>Relatorios</h3>
+      <div class="boxFrota frota-relatorio-mensal">
+        <div class="frota-relatorio-mensal-head">
+          <div>
+            <h4>Medias e abastecimentos do mes</h4>
+            <p class="relatorio-frete-hint">Consulte litros, valores, quilometragem e media ponderada de KM/L por veiculo. ARLA entra nos custos, mas nao no calculo de KM/L.</p>
+          </div>
+          <div class="frota-relatorio-mensal-filtros">
+            <label class="relatorio-frete-field">
+              <span>Mes</span>
+              <input type="month" id="frotaRelMensalMes" onchange="carregarRelatorioMensalFrota()">
+            </label>
+            <label class="relatorio-frete-field">
+              <span>Veiculo</span>
+              <select id="frotaRelMensalVeiculo" onchange="carregarRelatorioMensalFrota()">
+                <option value="">Todos os veiculos</option>
+              </select>
+            </label>
+            <button type="button" onclick="carregarRelatorioMensalFrota(true)">Atualizar</button>
+            <button type="button" class="btn-secondary" onclick="imprimirRelatorioMensalFrota()">Imprimir PDF</button>
+          </div>
+        </div>
+        <div id="frotaRelMensalStatus" class="hint" aria-live="polite">Selecione o mes para consultar.</div>
+        <div id="frotaRelMensalResumo" class="frota-relatorio-mensal-cards"></div>
+        <div class="frota-relatorio-mensal-tabela">
+          <h4>Resumo por veiculo</h4>
+          <div class="tableWrap">
+            <table>
+              <thead><tr><th>Veiculo</th><th>Abastecimentos</th><th>Litros</th><th>KM apurado</th><th>Media KM/L</th><th>Preco medio/L</th><th>Valor</th></tr></thead>
+              <tbody id="frotaRelMensalVeiculosBody"><tr><td colspan="7">Carregando...</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="frota-relatorio-mensal-tabela">
+          <h4>Abastecimentos do mes</h4>
+          <div class="tableWrap">
+            <table>
+              <thead><tr><th>Data</th><th>Veiculo</th><th>Combustivel</th><th>KM inicial</th><th>KM final</th><th>KM rodado</th><th>Litros</th><th>Media KM/L</th><th>R$/L</th><th>Valor</th><th>Posto</th><th>NF-e</th></tr></thead>
+              <tbody id="frotaRelMensalAbastecimentosBody"><tr><td colspan="12">Carregando...</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
       <div class="boxFrota relatorio-frete-box" style="max-width:560px;">
         <h4>Filtros de Fretes</h4>
         <p class="relatorio-frete-hint">Aplicado aos relatorios Escala de Fretes e Historico de Fretes.</p>
@@ -3055,31 +3190,15 @@
           </div>
         </div>
         <div class="vendas-diario-import-box">
-          <input class="hidden" type="file" id="vendasDiarioArquivo" accept=".txt,text/plain" onchange="selecionarArquivoVendasDiario()">
-          <button type="button" onclick="document.getElementById('vendasDiarioArquivo').click()">Selecionar TXT do PC</button>
-          <span id="vendasDiarioArquivoNome" class="hint">Nenhum arquivo selecionado.</span>
-          <button type="button" id="vendasDiarioImportarBtn" onclick="importarVendasDiario()" disabled>Importar arquivo</button>
-          <input class="hidden" type="file" id="vendasDiarioCargaPdf" accept=".pdf,application/pdf" onchange="prepararImportacaoCargaPdfVendasDiario()">
-          <button type="button" onclick="document.getElementById('vendasDiarioCargaPdf').click()">Importar carga PDF</button>
-          <button type="button" id="vendasDiarioLerPastasBtn" onclick="importarVendasDiarioPasta()" title="Ler TXT, PDF e SELLOUT mensal agora, a qualquer horario">Ler pastas automaticamente</button>
-          <span class="hint">SELLOUT mensal: leitura diaria as 08:00 ou por este botao, a qualquer horario.</span>
+          <button type="button" id="vendasDiarioLerPastasBtn" onclick="importarVendasDiarioPasta()" title="Ler SELLOUT_D das bases IND3 e INDB agora">Atualizar pelo SELLOUT diário</button>
+          <span class="hint">Fonte única: SELLOUT_D.CSV de IND3 e INDB, com datas reais. Leitura automática às 08:00.</span>
         </div>
         <div class="vendas-diario-leitura" aria-live="polite">
           <div class="vendas-diario-leitura-head">
-            <strong>Última leitura das pastas</strong>
+            <strong>Última leitura do SELLOUT_D</strong>
             <span id="vendasDiarioLeituraResumo" class="hint">Ainda não consultada.</span>
           </div>
           <div id="vendasDiarioLeituraStatus" class="vendas-diario-leitura-grid"></div>
-        </div>
-        <div class="vendas-diario-import-box vendas-diario-import-box--referencias">
-          <strong>Rotina de importação:</strong>
-          <input class="hidden" type="file" id="vendasDiarioSellout" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onchange="importarSelloutVendasDiario()">
-          <button type="button" onclick="document.getElementById('vendasDiarioSellout').click()">1. Importar SELLOUT final</button>
-          <input class="hidden" type="file" id="vendasDiarioClientes" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onchange="importarReferenciaVendasDiario('clientes')">
-          <button type="button" class="btn-secondary" onclick="document.getElementById('vendasDiarioClientes').click()">2. Importar cadastro de clientes</button>
-          <input class="hidden" type="file" id="vendasDiarioRotas" accept=".pdf,application/pdf" onchange="importarReferenciaVendasDiario('rotas')">
-          <button type="button" class="btn-secondary" onclick="document.getElementById('vendasDiarioRotas').click()">3. Importar tabela de rotas</button>
-          <span id="vendasDiarioReferenciasInfo" class="hint">Cadastros de apoio ainda não consultados.</span>
         </div>
         <div id="vendasDiarioResumo" class="vendas-resumo-cards vendas-resumo-cards--wide"></div>
       </div>
@@ -3095,10 +3214,10 @@
   </section>
 
   <section id="vendasDiarioWorkflow" class="section">
-    <h2>Workflow / Vendas Diário</h2>
+    <h2>Workflow / Vendas Diário — histórico</h2>
     <div class="boxFrota">
       <div class="vendas-box-head">
-        <div><h3>Conciliação em três estados</h3><div id="vendasDiarioKanbanInfo" class="hint">O SELLOUT é a confirmação final e mantém visíveis as alterações ocorridas entre TXT e PDF.</div></div>
+        <div><h3>Cards anteriores à migração</h3><div id="vendasDiarioKanbanInfo" class="hint">Consulta histórica dos cards já gravados. Desde 20/10/2026, novas vendas vêm somente do SELLOUT_D e não geram conciliação TXT/PDF.</div></div>
         <div class="vendas-toolbar">
           <button type="button" class="btn-secondary" onclick="abrirCargasSemanaVendasDiario()">Listar cargas da semana</button>
           <button type="button" onclick="carregarKanbanVendasDiario()">Atualizar Kanban</button>
@@ -3107,9 +3226,9 @@
       <div id="vendasDiarioConciliacaoResumo" class="vendas-resumo-cards"></div>
 
       <div class="vendas-diario-kanban">
-        <section class="vendas-diario-kanban-col"><h4>1. Venda TXT recebida</h4><div id="vendasDiarioKanbanImportado"></div></section>
-        <section class="vendas-diario-kanban-col"><h4>2. Carga PDF formada</h4><div id="vendasDiarioKanbanEstoque"></div></section>
-        <section class="vendas-diario-kanban-col"><h4>3. SELLOUT confirmado</h4><div id="vendasDiarioKanbanConferido"></div></section>
+        <section class="vendas-diario-kanban-col"><h4>1. TXT histórico</h4><div id="vendasDiarioKanbanImportado"></div></section>
+        <section class="vendas-diario-kanban-col"><h4>2. PDF histórico</h4><div id="vendasDiarioKanbanEstoque"></div></section>
+        <section class="vendas-diario-kanban-col"><h4>3. SELLOUT histórico</h4><div id="vendasDiarioKanbanConferido"></div></section>
       </div>
     </div>
   </section>
@@ -3474,6 +3593,25 @@
 
 
 
+    </div>
+    <div id="configViewCustosProducao" class="hidden">
+      <h3>Rateio de custos de produção</h3>
+      <p>Estes valores entram no custo padrão de todos os produtos. Custos mensais são divididos pelo volume mensal de referência. O combustível pode vir automaticamente de todos os abastecimentos concluídos no mês mais recente com lançamentos. Custos horários, como lenha da caldeira, são divididos pela capacidade produtiva em litros por hora. Custos por litro e percentuais são aplicados diretamente. Não repita aqui despesas lançadas na apuração diária quando estiver analisando o custo real do dia.</p>
+      <form onsubmit="salvarRateioCustoProduto(event)">
+        <fieldset id="custoRateioCampos" disabled style="border:0;padding:0;min-width:0">
+          <label>Volume mensal de referência da fábrica (litros)<input id="custoRateioVolume" type="number" min="0.001" max="1000000" step="0.001" placeholder="Necessário para valores mensais"></label>
+          <label>Capacidade produtiva da fábrica (litros por hora)<input id="custoRateioCapacidadeHora" type="number" min="0.001" max="1000000" step="0.001" placeholder="Necessária para custos por hora"></label>
+          <label>Horas trabalhadas por semana<input id="custoRateioHorasSemanais" type="number" min="0.001" max="168" step="0.001" value="44" required></label>
+          <div style="overflow-x:auto"><table>
+            <thead><tr><th>Categoria</th><th>Descrição</th><th>Forma de rateio</th><th>Valor</th><th>Ação</th></tr></thead>
+            <tbody id="custoRateioItens"></tbody>
+          </table></div>
+          <button type="button" onclick="adicionarRateioCustoProduto()">Adicionar custo</button>
+          <button type="submit">Salvar rateio</button>
+        </fieldset>
+      </form>
+      <p class="hint">Para usar os valores já registrados, adicione uma linha Combustível e escolha “Abastecimentos lançados ÷ volume produzido”. O sistema soma todos os abastecimentos concluídos do mês mais recente com dados e divide pelo volume mensal de produção; valor, quantidade de registros e período ficam visíveis no card. Para um valor mensal informado manualmente, use “Valor mensal ÷ horas trabalhadas ÷ capacidade”. Com 44 h/semana, o sistema calcula 190,667 h/mês. Para lenha já conhecida em R$/h, use Caldeira / lenha e “Valor por hora”.</p>
+      <p id="custoRateioStatus" role="status" aria-live="polite"></p>
     </div>
   </section>
 

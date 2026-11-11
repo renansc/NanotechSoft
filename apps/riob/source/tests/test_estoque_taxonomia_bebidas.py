@@ -40,6 +40,29 @@ class EstoqueTaxonomiaBebidasTests(unittest.TestCase):
             ),
         )
 
+    def test_insumo_com_sabor_e_volume_preserva_nome_explicito(self):
+        meta = server._estoque_produto_meta({
+            "id": 72,
+            "nome_produto": "ROTULOS BOOP(LARANJA RIO BRANCO 2L",
+            "produto_base_nome": "ROTULOS BOOP LARANJA RIO BRANCO 2L",
+            "grupo_estoque": "OUTROS",
+            "fator_embalagem_padrao": 1,
+        })
+        self.assertEqual("ROTULOS BOOP LARANJA RIO BRANCO 2L", meta["produto_base_nome"])
+        self.assertEqual(
+            "OUTROS:ROTULOS BOOP LARANJA RIO BRANCO 2L",
+            meta["produto_base_key"],
+        )
+
+    def test_tela_de_acerto_prioriza_produto_id_e_restringe_grupo(self):
+        script = (Path(__file__).resolve().parents[1] / "script.js").read_text(encoding="utf-8")
+        inicio = script.index("function _saldoProdutoCadastroAtual")
+        fim = script.index("function renderProdutosLancamentoEstoqueSelect", inicio)
+        funcao = script[inicio:fim]
+        self.assertIn("row.produto_id", funcao)
+        self.assertIn("rowGrupo !== grupo", funcao)
+        self.assertLess(funcao.index("if (porId)"), funcao.index("const encontrado"))
+
     def test_agua_bonita_no_fornecedor_nao_vira_agua_mineral(self):
         saco = "SACO PP BIG BAG 4 ALCAS 1200 KG AGUA BONITA UN"
         acucar = "ACUCAR CRISTAL A GRANEL AGUA BONITA GRANEL"
@@ -309,6 +332,27 @@ class EstoqueTaxonomiaBebidasTests(unittest.TestCase):
         self.assertIn('_abrirFormularioProdutoEstoqueCadastro("editar")', script)
         self.assertIn("function renderProdutosEstoqueCadastro()", script)
         self.assertIn("conteudo.includes(busca)", script)
+
+    def test_cadastro_de_produto_expoe_descricao_sped_e_rejeita_duplicidade(self):
+        raiz = Path(__file__).resolve().parents[1]
+        html = (raiz / "RioBranco.html").read_text(encoding="utf-8")
+        script = (raiz / "script.js").read_text(encoding="utf-8")
+        fonte = Path(server.__file__).read_text(encoding="utf-8")
+        self.assertIn('id="estoqueCadastroDescricaoSped"', html)
+        self.assertIn('descricao_sped: (document.getElementById("estoqueCadastroDescricaoSped")', script)
+        self.assertIn('"descricao_sped": _as_str(row.get("descricao_sped"))', fonte)
+
+        class Cursor:
+            def execute(self, sql, params):
+                self.params = params
+
+            def fetchall(self):
+                return [{"id": 20, "descricao_sped": "CONCENTRADO P/REFRI FRAMBOESA BD25 C/C"}]
+
+        with self.assertRaisesRegex(ValueError, "descricao SPED ja esta vinculada"):
+            server._validar_descricao_sped_unica(
+                Cursor(), "concentrado p/refri framboesa bd25 c/c", produto_id=10
+            )
 
     def test_produtos_e_grupos_de_estoque_ficam_em_cadastros_com_atalhos(self):
         raiz = Path(__file__).resolve().parents[1]

@@ -370,6 +370,12 @@ button:hover{ background:#e68900; }
   cursor:pointer;
 }
 
+.btn-danger{
+  background:var(--danger, #c62828);
+  color:#fff;
+}
+.btn-danger:hover{ filter:brightness(.88); }
+
 /* Form card genérico */
 .form-card{
   background:white;
@@ -1048,6 +1054,68 @@ button:hover{ background:#e68900; }
   margin:2px 0 0;
 }
 
+.frota-relatorio-mensal{
+  display:grid;
+  gap:16px;
+  margin-bottom:16px;
+}
+
+.frota-relatorio-mensal-head{
+  display:flex;
+  align-items:flex-end;
+  justify-content:space-between;
+  gap:16px;
+  flex-wrap:wrap;
+}
+
+.frota-relatorio-mensal-head h4,
+.frota-relatorio-mensal-tabela h4{
+  margin:0 0 6px;
+}
+
+.frota-relatorio-mensal-filtros{
+  display:grid;
+  grid-template-columns:minmax(150px, 190px) minmax(220px, 320px) auto auto;
+  align-items:end;
+  gap:10px;
+}
+
+.frota-relatorio-mensal-filtros button{
+  min-height:42px;
+  white-space:nowrap;
+}
+
+.frota-relatorio-mensal-cards{
+  display:grid;
+  grid-template-columns:repeat(auto-fit, minmax(130px, 1fr));
+  gap:10px;
+}
+
+.frota-relatorio-mensal-cards article{
+  display:grid;
+  gap:5px;
+  min-width:0;
+  padding:12px;
+  border:1px solid #e2e8f0;
+  border-radius:10px;
+  background:#f8fafc;
+}
+
+.frota-relatorio-mensal-cards span{
+  color:#64748b;
+  font-size:12px;
+}
+
+.frota-relatorio-mensal-cards strong{
+  color:#0f172a;
+  font-size:17px;
+  overflow-wrap:anywhere;
+}
+
+.frota-relatorio-mensal-tabela{
+  min-width:0;
+}
+
 .novo-frete-grid{
   display:grid;
   grid-template-columns:repeat(3, 1fr);
@@ -1282,6 +1350,11 @@ button:hover{ background:#e68900; }
   color:#0f172a;
 }
 
+.relatorio-estoque-grupo-total td{
+  background:#fff7ed;
+  border-top:2px solid #f59e0b;
+}
+
 .vendas-orcamento-form,
 .vendas-orcamento-config{
   margin-bottom:16px;
@@ -1470,6 +1543,20 @@ button:hover{ background:#e68900; }
 .vendas-diario-leitura-item--sem_arquivos,.vendas-diario-leitura-item--nunca_executado,.vendas-diario-leitura-item--desabilitado{border-left-color:#64748b}
 @media(max-width:1000px){.vendas-diario-leitura-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:600px){.vendas-diario-leitura-grid{grid-template-columns:1fr}}
+.vendas-diario-erros{margin:12px 0 14px;padding:14px;border:1px solid #fecaca;border-radius:10px;background:#fff7f7}
+.vendas-diario-erros-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:10px}
+.vendas-diario-erros-contador{display:inline-flex;align-items:center;justify-content:center;min-width:30px;height:30px;padding:0 9px;border-radius:999px;background:#dc2626;color:#fff;font-weight:800}
+.vendas-diario-erros-lista{display:grid;gap:9px}
+.vendas-diario-erro-item{display:grid;grid-template-columns:minmax(180px,.8fr) minmax(260px,1.7fr) auto;align-items:center;gap:12px;padding:11px;border:1px solid #fecaca;border-left:4px solid #dc2626;border-radius:8px;background:#fff}
+.vendas-diario-erro-identificacao{display:grid;gap:5px;min-width:0}.vendas-diario-erro-identificacao strong{overflow-wrap:anywhere}
+.vendas-diario-erro-tipo{width:max-content;padding:2px 7px;border-radius:999px;background:#fee2e2;color:#991b1b;font-size:.68rem;font-weight:800}
+.vendas-diario-erro-mensagem{color:#7f1d1d;font-size:.8rem;line-height:1.4;overflow-wrap:anywhere}
+.vendas-diario-erro-acoes{display:flex;gap:7px;flex-wrap:wrap;justify-content:flex-end}.vendas-diario-erro-acoes button{white-space:nowrap}
+.vendas-diario-erros-legado{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px;border-radius:8px;background:#fff;color:#7f1d1d}
+.vendas-diario-modal-content--compact{width:min(620px,94vw)}
+.vendas-diario-erro-modal-detalhe{margin-top:10px;padding:10px;border-left:4px solid #dc2626;border-radius:6px;background:#fef2f2;color:#7f1d1d;font-size:.84rem;overflow-wrap:anywhere}
+@media(max-width:850px){.vendas-diario-erro-item{grid-template-columns:1fr}.vendas-diario-erro-acoes{justify-content:flex-start}}
+@media(max-width:600px){.vendas-diario-erros-legado{align-items:stretch;flex-direction:column}}
 .vendas-diario-cargas-semana{margin:14px 0 18px;padding:14px;border:1px solid #bfdbfe;border-radius:12px;background:#f8fbff}
 .vendas-diario-cargas-semana h3{margin:0 0 4px}
 .vendas-diario-cargas-semana-tabela{margin-top:12px;max-height:560px;overflow:auto;border:1px solid #dbeafe;border-radius:9px;background:#fff}
@@ -3898,11 +3985,15 @@ body.estoque-import-modal-open{
   }
   .relatorio-frete-grid,
   .relatorio-frete-status-list,
+  .frota-relatorio-mensal-filtros,
   .vendas-filtros-grid,
   .vendas-resumo-cards,
   .vendas-orcamento-dados,
   .vendas-orcamento-parametros{
     grid-template-columns:1fr;
+  }
+  .frota-relatorio-mensal-cards{
+    grid-template-columns:repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -5543,3 +5634,392 @@ body.tv-mode #chatWidget{
 #vendasAnualRankBody tr[data-anual-cliente]{ cursor:pointer; }
 #vendasAnualRankBody tr[data-anual-cliente]:hover{ background:var(--hover-bg, #e8f0fc); }
 #vendasAnualDialog h3{ overflow-wrap:anywhere; }
+.estoque-documento-status {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0.2rem 0.55rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  background: #fff3cd;
+  color: #6b5100;
+}
+
+.estoque-documento-status.is-coberto_xml {
+  background: #e8eef7;
+  color: #294664;
+}
+
+.estoque-documento-status.is-baixado {
+  background: #d9f2e3;
+  color: #175c35;
+}
+
+.estoque-documento-status.is-rejeitado {
+  background: #f3d8dc;
+  color: #7b1f2d;
+}
+
+.estoque-documento-status.is-sem_itens {
+  background: #f7e0e0;
+  color: #7d2424;
+}
+
+.estoque-pdf-aprovacao-card {
+  width: min(1180px, calc(100vw - 2rem));
+  max-height: calc(100vh - 2rem);
+  overflow: auto;
+}
+
+.estoque-pdf-itens-wrap {
+  max-height: 55vh;
+  overflow: auto;
+}
+
+.estoque-saldo-negativo {
+  color: #b42318;
+  font-weight: 700;
+  background: #fff0ee;
+}
+
+.custo-dashboard-grid {
+  display:grid;
+  grid-template-columns:repeat(auto-fit, minmax(245px, 1fr));
+  gap:14px;
+  margin:10px 0 22px;
+}
+
+.custo-dashboard-card {
+  min-width:0;
+  border:1px solid color-mix(in srgb, var(--custo-accent) 32%, #dbe4ea);
+  border-top:5px solid var(--custo-accent);
+  border-radius:14px;
+  padding:15px;
+  background:linear-gradient(145deg, var(--custo-soft), #fff 58%);
+  box-shadow:0 5px 16px rgba(15, 23, 42, .07);
+}
+
+.custo-dashboard-card-head h4,
+.custo-dashboard-sabor > h4 {
+  margin:0;
+  color:var(--custo-ink);
+}
+
+.custo-dashboard-card-head p {
+  margin:4px 0 0;
+  color:#526273;
+  font-size:12px;
+}
+
+.custo-dashboard-card-body {
+  display:grid;
+  gap:10px;
+  margin-top:14px;
+}
+
+.custo-dashboard-valor {
+  display:flex;
+  align-items:flex-end;
+  justify-content:space-between;
+  gap:12px;
+}
+
+.custo-dashboard-valor span,
+.custo-dashboard-mini span {
+  color:#526273;
+  font-size:12px;
+}
+
+.custo-dashboard-valor strong {
+  color:#172033;
+  font-size:18px;
+  text-align:right;
+}
+
+.custo-dashboard-mini {
+  display:flex;
+  flex-wrap:wrap;
+  gap:7px 14px;
+  padding-top:9px;
+  border-top:1px solid color-mix(in srgb, var(--custo-accent) 18%, #e2e8f0);
+}
+
+.custo-dashboard-mini strong {
+  color:#243244;
+}
+
+.custo-dashboard-meta,
+.custo-dashboard-alerta {
+  margin:0;
+  font-size:12px;
+}
+
+.custo-dashboard-embalagem {
+  padding-top:9px;
+  border-top:1px solid color-mix(in srgb, var(--custo-accent) 18%, #e2e8f0);
+}
+
+.custo-dashboard-embalagem > span {
+  color:#526273;
+  font-size:12px;
+  font-weight:700;
+}
+
+.custo-dashboard-embalagem ul {
+  display:grid;
+  gap:5px;
+  margin:7px 0 0;
+  padding:0;
+  list-style:none;
+}
+
+.custo-dashboard-embalagem li {
+  display:flex;
+  justify-content:space-between;
+  gap:10px;
+  font-size:12px;
+  color:#334155;
+}
+
+.custo-dashboard-meta { color:#526273; }
+
+.custo-dashboard-alerta {
+  padding:8px 10px;
+  border-radius:8px;
+  background:#fff7ed;
+  color:#9a3412;
+}
+
+.custo-dashboard-grupo {
+  margin-top:28px;
+}
+
+.custo-dashboard-grupo > h3 {
+  margin-bottom:14px;
+  padding-bottom:7px;
+  border-bottom:2px solid #e2e8f0;
+}
+
+.custo-dashboard-sabor {
+  margin:16px 0 24px;
+}
+
+.custo-dashboard-sabor > h4 {
+  padding-left:10px;
+  border-left:5px solid var(--custo-accent);
+}
+
+.custo-dashboard-vazio {
+  grid-column:1 / -1;
+  margin:8px 0 20px;
+  padding:14px;
+  border:1px dashed #94a3b8;
+  border-radius:10px;
+  color:#526273;
+  background:#f8fafc;
+}
+
+@media(max-width:600px) {
+  .custo-dashboard-grid { grid-template-columns:1fr; }
+  .custo-dashboard-valor { align-items:flex-start; flex-direction:column; gap:3px; }
+  .custo-dashboard-valor strong { text-align:left; }
+}
+
+.custo-relatorio {
+  display:grid;
+  gap:16px;
+  margin-top:16px;
+}
+
+.custo-relatorio-cabecalho h2,
+.custo-relatorio-secao > h3 {
+  margin-top:0;
+}
+
+.custo-relatorio-cabecalho p {
+  margin:6px 0;
+}
+
+.custo-relatorio-folha {
+  border-top:5px solid var(--custo-accent, #64748b);
+  background:linear-gradient(180deg, var(--custo-soft, #f8fafc), #fff 180px);
+}
+
+.custo-relatorio-folha-head {
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:16px;
+  padding-bottom:10px;
+  border-bottom:2px solid var(--custo-accent, #64748b);
+}
+
+.custo-relatorio-folha-head span,
+.custo-relatorio-folha-head small {
+  display:block;
+  color:#526273;
+}
+
+.custo-relatorio-folha-head h3 {
+  margin:2px 0 0;
+  color:var(--custo-ink, #172033);
+}
+
+.custo-relatorio-folha-head > div:last-child {
+  text-align:right;
+}
+
+.custo-relatorio-bloco {
+  margin-top:14px;
+}
+
+.custo-relatorio-bloco > h4 {
+  margin:0 0 7px;
+  color:var(--custo-ink, #172033);
+}
+
+.custo-relatorio-grade {
+  display:grid;
+  grid-template-columns:repeat(auto-fit, minmax(320px, 1fr));
+  gap:12px;
+  margin-top:12px;
+}
+
+.custo-relatorio-base,
+.custo-relatorio-xarope,
+.custo-relatorio-produto {
+  border:1px solid color-mix(in srgb, var(--custo-accent, #64748b) 30%, #dbe4ea);
+  border-left:5px solid var(--custo-accent, #b45309);
+  border-radius:10px;
+  padding:14px;
+  background:linear-gradient(145deg, var(--custo-soft, #fef3c7), #fff 45%);
+}
+
+.custo-relatorio-base h4,
+.custo-relatorio-xarope h4,
+.custo-relatorio-produto h4,
+.custo-relatorio-produto h5 {
+  margin:0 0 9px;
+  color:var(--custo-ink, #172033);
+}
+
+.custo-relatorio-xarope p,
+.custo-relatorio-produto p {
+  overflow-wrap:anywhere;
+}
+
+.custo-relatorio-xarope dl {
+  display:grid;
+  grid-template-columns:repeat(2, minmax(0, 1fr));
+  gap:6px 12px;
+  margin:10px 0;
+}
+
+.custo-relatorio-xarope dl div {
+  padding-bottom:5px;
+  border-bottom:1px solid #dbe4ea;
+}
+
+.custo-relatorio-xarope dt {
+  color:#526273;
+  font-size:12px;
+}
+
+.custo-relatorio-xarope dd {
+  margin:2px 0 0;
+  font-weight:700;
+}
+
+.custo-relatorio-produtos {
+  display:grid;
+  gap:15px;
+  margin-top:12px;
+}
+
+.custo-relatorio-produto-head {
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:16px;
+}
+
+.custo-relatorio-produto-head p {
+  margin:0;
+  color:#526273;
+}
+
+.custo-relatorio-produto-head > strong {
+  color:var(--custo-ink, #172033);
+  font-size:18px;
+  white-space:nowrap;
+}
+
+.custo-relatorio-resumo {
+  display:grid;
+  grid-template-columns:repeat(6, minmax(130px, 1fr));
+  gap:8px;
+  margin:14px 0;
+}
+
+.custo-relatorio-resumo span {
+  min-width:0;
+  padding:9px;
+  border:1px solid #dbe4ea;
+  border-radius:8px;
+  color:#526273;
+  font-size:11px;
+  background:rgba(255,255,255,.78);
+}
+
+.custo-relatorio-resumo strong {
+  display:block;
+  margin-top:4px;
+  color:#172033;
+  font-size:13px;
+  overflow-wrap:anywhere;
+}
+
+.custo-relatorio-formula {
+  padding:9px 11px;
+  border-radius:8px;
+  background:#f8fafc;
+  color:#334155;
+}
+
+.custo-relatorio-tabela {
+  width:100%;
+  overflow:auto;
+}
+
+.custo-relatorio-tabela table {
+  width:100%;
+  border-collapse:collapse;
+}
+
+.custo-relatorio-tabela th,
+.custo-relatorio-tabela td {
+  padding:7px 8px;
+  border-bottom:1px solid #dbe4ea;
+  text-align:left;
+  vertical-align:top;
+}
+
+.custo-relatorio-tabela th {
+  color:#334155;
+  background:#f1f5f9;
+  white-space:nowrap;
+}
+
+@media(max-width:900px) {
+  .custo-relatorio-resumo { grid-template-columns:repeat(2, minmax(0, 1fr)); }
+}
+
+@media(max-width:600px) {
+  .custo-relatorio-grade,
+  .custo-relatorio-xarope dl,
+  .custo-relatorio-resumo { grid-template-columns:1fr; }
+  .custo-relatorio-produto-head { flex-direction:column; }
+  .custo-relatorio-produto-head > strong { white-space:normal; }
+  .custo-relatorio-folha-head { flex-direction:column; }
+  .custo-relatorio-folha-head > div:last-child { text-align:left; }
+}
