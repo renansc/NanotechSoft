@@ -32,6 +32,12 @@ navegador. Cadastros que representam o mesmo produto canonico nao podem ser
 contados duas vezes na mesma finalizacao. Rascunhos continuam na pagina e podem
 ser exportados em CSV; somente contagens confirmadas alimentam os contadores.
 
+Na tela de Acerto e na preparacao da contagem, o saldo atual e associado primeiro
+ao `produto_id` do cadastro. As aproximacoes por codigo ou nome sao apenas
+compatibilidade para registros legados e ficam restritas ao mesmo grupo. Assim,
+uma bebida PET nunca reutiliza o saldo do retornavel, e insumos como rotulos de
+Guarana, Laranja ou Cola 2L nao reutilizam o saldo da bebida de mesmo sabor.
+
 ESTOQUE > Baixas por perda registra perdas justificadas antes da contagem.
 A contagem usa o saldo ja descontado; nao repete essa baixa. Uma conferencia
 aberta antes da perda retorna conflito e deve ser refeita. Nao registrar nova

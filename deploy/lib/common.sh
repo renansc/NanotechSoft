@@ -304,10 +304,10 @@ ensure_riob_import_sources() {
       printf '%s' "$compose_json" | "$py" -c '
 import json, sys
 config = json.load(sys.stdin)
-targets = {"/imports/vendas-diario/txt", "/imports/vendas-diario/pdf", "/imports/sellout"}
-for volume in config.get("services", {}).get("riob-app", {}).get("volumes", []):
-    if isinstance(volume, dict) and volume.get("type") == "bind" and volume.get("target") in targets:
-        print(volume.get("source") or "")
+labels = config.get("services", {}).get("riob-app", {}).get("labels", {})
+for key in sorted(labels):
+    if key.startswith("com.nanotechsoft.import-source."):
+        print(labels[key] or "")
 '
     )
   fi
@@ -322,13 +322,17 @@ for volume in config.get("services", {}).get("riob-app", {}).get("volumes", []):
   log "validando pastas de importacao do RioB antes de operar os containers..."
   for source in "${sources[@]}"; do
     if [[ ! -d "$source" ]]; then
+      if [[ "$source" == /media/serverwin/* ]]; then
+        log "AVISO: servidor Windows indisponivel para $source; o deploy continuara e o compartilhamento reaparecera pelo automount"
+        continue
+      fi
       die "pasta de importacao indisponivel: $source. Verifique o compartilhamento do host antes de reiniciar o RioB."
     fi
     if [[ "$source" == /media/serverwin/* ]] && command -v findmnt >/dev/null 2>&1; then
       local source_fstype
       source_fstype="$(findmnt -rn -T "$source" -o FSTYPE 2>/dev/null | tail -n 1)"
       if [[ "$source_fstype" != "cifs" ]]; then
-        die "pasta de importacao sem o compartilhamento CIFS ativo: $source. O deploy foi interrompido para nao montar uma pasta local vazia no RioB."
+        log "AVISO: compartilhamento CIFS inativo para $source; o deploy continuara sem criar pasta substituta e o automount restabelecera a origem oficial"
       fi
     fi
   done
@@ -627,6 +631,7 @@ financeiro_views = set(getattr(portal, "FINANCEIRO_VIEWS", (
     "pagar",
     "receber",
     "config",
+    "contabilidade",
 ))) if portal else {
     "dashboard",
     "lancamentos",
@@ -639,6 +644,7 @@ financeiro_views = set(getattr(portal, "FINANCEIRO_VIEWS", (
     "pagar",
     "receber",
     "config",
+    "contabilidade",
 }
 
 for manifest in sorted((root / "apps").glob("*/app.json")):

@@ -7,6 +7,10 @@ import re
 SEPARATOR_RE = re.compile(r"^\s*-=-=", re.MULTILINE)
 PAGE_DATE_RE = re.compile(r"BEBIDAS WHITE RIVER LTDA\s+(\d{2}/\d{2}/\d{2})")
 SELLER_RE = re.compile(r"CONFERENCIA DE PEDIDOS\s+VENDEDOR\s+(\d+)")
+WCE_SELLER_RE = re.compile(
+    r"IMPORTACAO DE DADOS POCKET PC\s*-\s*WCE\s+VENDEDOR:\s*(\d+)",
+    re.IGNORECASE,
+)
 CLIENT_RE = re.compile(r"^\s*(\d+)\s+(.+?)\s{2,}(.+?)\s{2,}(.+?)\s*=>.*?<=", re.MULTILINE)
 NEGATIVE_RE = re.compile(r"Venda Neg\. Motivo\s*:\s*(\d+)\s*=\s*([^\r\n]+)", re.IGNORECASE)
 ITEM_RE = re.compile(
@@ -16,6 +20,16 @@ ITEM_RE = re.compile(
 )
 ORDER_TOTAL_RE = re.compile(r"TOTAL DO PEDIDO\s+([\d.,]+)")
 WEIGHT_RE = re.compile(r"PESO BRUTO TOTAL\s+([\d.,]+)Kg", re.IGNORECASE)
+WCE_CLIENT_RE = re.compile(r"^\s*(\d{4,5})\s+.*?Fone\s*:", re.IGNORECASE)
+WCE_ITEM_RE = re.compile(
+    r"^\s*(\d{4,5})\s+(\d{1,2})\s+(\d+)\s+(\d+(?:[.,]\d+)?)\s+"
+    r"([A-Z]{2})\s+(.+?)(?:\s+(\d+[.,]\d{2}))?\s*$"
+)
+WCE_OPERATION_RE = re.compile(
+    r"Valor Operacao\.:\s*([\d.,]+)\s*>>\s*Tabela\s*:\s*(\d+)",
+    re.IGNORECASE,
+)
+WCE_WEIGHT_RE = re.compile(r"Peso Bruto:\s*([\d.,]+)", re.IGNORECASE)
 
 
 def volume_item_sql(alias="i"):
@@ -88,11 +102,112 @@ def read_report(path):
     return raw.decode("utf-8", errors="replace"), hashlib.sha256(raw).hexdigest()
 
 
+def _wce_client_fields(line):
+    """Le os campos fixos do cliente no relatorio legado Pocket PC/WCE."""
+    padded = str(line or "").rstrip("\r\n").ljust(116)
+    return {
+        "cliente_codigo": padded[4:9].strip(),
+        "cliente_nome": padded[10:40].strip(),
+        "fantasia": padded[40:66].strip(),
+        "cidade": padded[82:115].strip(),
+    }
+
+
+def _wce_item(column):
+    match = WCE_ITEM_RE.match(column or "")
+    if not match:
+        return None
+    return {
+        "produto_codigo": match.group(1),
+        "tabela": int(match.group(2)),
+        "via": int(match.group(3)),
+        "quantidade": _decimal(match.group(4)),
+        "unidade": match.group(5),
+        "descricao": re.sub(r"\s+", " ", match.group(6)).strip(),
+        "valor_unitario": _decimal(match.group(7)),
+    }
+
+
+def _parse_wce_report(text, source_name, report_date):
+    lines = str(text or "").splitlines()
+    orders = []
+    current_seller = ""
+    index = 0
+    while index < len(lines):
+        seller = WCE_SELLER_RE.search(lines[index])
+        if seller:
+            current_seller = seller.group(1)
+            index += 1
+            continue
+        if not WCE_CLIENT_RE.match(lines[index]):
+            index += 1
+            continue
+
+        client = _wce_client_fields(lines[index])
+        block = []
+        index += 1
+        while index < len(lines):
+            if WCE_CLIENT_RE.match(lines[index]) or WCE_SELLER_RE.search(lines[index]):
+                break
+            block.append(lines[index])
+            index += 1
+
+        items = []
+        for line in block:
+            # O formulario WCE possui duas colunas de itens, iniciadas nas
+            # posicoes 0 e 68. Campos de preco podem ficar em branco.
+            for column in (line[:68], line[68:]):
+                item = _wce_item(column)
+                if item:
+                    items.append(item)
+
+        operations = [
+            (_decimal(match.group(1)), int(match.group(2)))
+            for line in block for match in WCE_OPERATION_RE.finditer(line)
+        ]
+        # A bonificacao (tabela 91) pode vir sem preco por item. Distribuir o
+        # total informado preserva o valor exato usado pelos totalizadores.
+        for table in {table for _value, table in operations}:
+            table_total = sum(value for value, op_table in operations if op_table == table)
+            table_items = [item for item in items if item["tabela"] == table]
+            known_total = sum(
+                item["quantidade"] * item["valor_unitario"]
+                for item in table_items if item["valor_unitario"] > 0
+            )
+            missing = [item for item in table_items if item["valor_unitario"] <= 0]
+            missing_quantity = sum(item["quantidade"] for item in missing)
+            if missing and missing_quantity > 0 and table_total > known_total:
+                implied_price = (table_total - known_total) / missing_quantity
+                for item in missing:
+                    item["valor_unitario"] = implied_price
+
+        block_text = "\n".join(block)
+        weight = WCE_WEIGHT_RE.search(block_text)
+        negative = NEGATIVE_RE.search(block_text)
+        total = sum(value for value, _table in operations)
+        orders.append({
+            "data_ref": report_date.isoformat(),
+            "vendedor_codigo": current_seller,
+            **client,
+            "status": "negativa" if negative else "positiva",
+            "motivo_codigo": negative.group(1) if negative else "",
+            "motivo": negative.group(2).strip() if negative else "",
+            "valor_total": total,
+            "peso_bruto": _decimal(weight.group(1)) if weight else 0.0,
+            "items": items,
+        })
+    if not orders:
+        raise ValueError("Nenhum pedido WCE foi reconhecido no arquivo.")
+    return {"data_ref": report_date.isoformat(), "source_name": source_name, "orders": orders}
+
+
 def parse_report(text, source_name=""):
     date_match = PAGE_DATE_RE.search(text or "")
     if not date_match:
         raise ValueError("Data do relatorio nao encontrada no cabecalho.")
     report_date = datetime.datetime.strptime(date_match.group(1), "%d/%m/%y").date()
+    if WCE_SELLER_RE.search(text):
+        return _parse_wce_report(text, source_name, report_date)
     pages = list(SELLER_RE.finditer(text))
     sellers = []
     for index, match in enumerate(pages):

@@ -144,8 +144,12 @@
     $("#kpiUpload").textContent = state.speed?.uploadMbps == null ? "—" : `${number(state.speed.uploadMbps)} Mbps`;
     $("#linkDownload").textContent = $("#kpiDownload").textContent;
     $("#linkUpload").textContent = `Upload: ${$("#kpiUpload").textContent}`;
+    $("#linkSpeedMeasuredAt").textContent = state.speed?.checkedAt
+      ? `Teste: ${dateTime(state.speed.checkedAt)}` : "Nenhum teste registrado";
     const internet = active.find((device) => device.tipo === "INTERNET");
     $("#linkConnection").textContent = internet?.ultimaMetrica?.status || "Aguardando coleta";
+    $("#linkConnectionAt").textContent = internet?.ultimaMetrica?.checkedAt
+      ? `Verificação: ${dateTime(internet.ultimaMetrica.checkedAt)}` : "última verificação do link";
   }
 
   function renderDiagnosis() {
@@ -209,6 +213,12 @@
       internetUsage.textContent = usage.internet?.available
         ? `${number(usage.internet.downloadMbps, 2)} ↓ / ${number(usage.internet.uploadMbps, 2)} ↑ Mbps`
         : "Não configurado";
+      const measuredTimes = (usage.internet?.interfaces || [])
+        .map((item) => item.measuredAt).filter(Boolean)
+        .sort((left, right) => new Date(right) - new Date(left));
+      $("#linkInternetUsageAt").textContent = usage.internet?.available
+        ? `WAN/uplink · coleta: ${dateTime(measuredTimes[0])}`
+        : "Selecione a interface WAN/uplink";
     }
     if (internalUsage) {
       internalUsage.textContent = usage.internal?.available
@@ -224,9 +234,18 @@
         ? `${number(usage.unattributed?.downloadMbps, 2)} ↓ / ${number(usage.unattributed?.uploadMbps, 2)} ↑ Mbps`
         : "—";
     }
+    const contractedDownload = Number(usage.downloadCapacityMbps || 0);
+    const contractedUpload = Number(usage.uploadCapacityMbps || 0);
+    $("#linkContractedDownload").textContent = contractedDownload > 0
+      ? `${number(contractedDownload)} Mbps ↓` : "Não informado";
+    $("#linkContractedUpload").textContent = contractedUpload > 0
+      ? `${number(contractedUpload)} Mbps ↑` : "Informe em Configuração";
+    $("#linkInstantUsagePct").textContent = usage.usagePct == null
+      ? "—" : `${number(usage.usagePct)}%`;
+    $("#linkInstantUsageDirection").textContent = usage.usagePct == null
+      ? "depende do link contratado"
+      : `maior ocupação no ${usage.direction === "upload" ? "upload" : "download"}`;
     if (diagnosis) {
-      const contractedDownload = Number(usage.downloadCapacityMbps || 0);
-      const contractedUpload = Number(usage.uploadCapacityMbps || 0);
       const deliveredDownloadPct = contractedDownload > 0 && state.speed?.downloadMbps != null
         ? Number(state.speed.downloadMbps) / contractedDownload * 100 : null;
       const deliveredUploadPct = contractedUpload > 0 && state.speed?.uploadMbps != null
@@ -629,6 +648,11 @@
   const backupWeekdayLabel = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"];
   const backupStatusClass = (value) => ({ ONLINE: "online", SUCCESS: "online", WARNING: "degradado", RUNNING: "degradado", OFFLINE: "offline", FAILED: "offline", WAITING: "pending", DISABLED: "pending", SKIPPED: "pending" })[value] || "pending";
   const backupBadge = (value, labels = backupHealthLabel) => `<span class="status ${backupStatusClass(value)}">${esc(labels[value] || value || "Aguardando")}</span>`;
+  const backupForceButton = (job) => {
+    const disabled = job.forcePending || !job.active;
+    const label = job.forcePending ? "Backup solicitado" : job.active ? "Forçar novo backup" : "Plano inativo";
+    return `<button class="smallButton" data-backup-run="${job.id}" type="button" ${disabled ? "disabled" : ""}>${label}</button>`;
+  };
 
   function backupWindowSummary(windows) {
     const entries = Object.entries(windows || {}).sort(([left], [right]) => Number(left) - Number(right));
@@ -665,7 +689,8 @@
       <td>${backupBadge(job.health)}<br><small>${esc(job.healthMessage || "")}</small></td>
       <td>${job.lastSeenAt ? esc(dateTime(job.lastSeenAt)) : "Nenhum contato"}</td>
       <td><span class="backupPath">${esc(job.destinationPath)}</span></td>
-    </tr>`).join("") || '<tr><td colspan="4">Nenhum plano configurado.</td></tr>';
+      <td>${backupForceButton(job)}</td>
+    </tr>`).join("") || '<tr><td colspan="5">Nenhum plano configurado.</td></tr>';
     $("#backupKpiActive").textContent = active.length;
     $("#backupKpiWarning").textContent = warning.length;
     $("#backupKpiLastSuccess").textContent = successes.length ? dateTime(successes[0].completedAt) : "—";
@@ -675,7 +700,7 @@
       <td><span class="backupPath">${esc(job.destinationPath)}</span>${job.cloudSyncPath ? `<br><small class="muted">Nuvem: ${esc(job.cloudSyncPath)}</small>` : ""}</td>
       <td>${backupBadge(job.health)}<br><small class="muted">${job.lastSeenAt ? `Contato: ${esc(dateTime(job.lastSeenAt))}` : esc(job.agentId)}</small>${job.forcePending ? `<br><small class="muted">Execução forçada solicitada em ${esc(dateTime(job.forceRequestedAt))}</small>` : ""}</td>
       <td>${job.lastRun ? `${backupBadge(job.lastRun.status, backupRunLabel)}<br><small class="muted">${esc(dateTime(job.lastRun.completedAt))} · ${esc(bytes(job.lastRun.sizeBytes))}</small>` : '<span class="muted">Nenhuma execução</span>'}</td>
-      <td><div class="tableActions"><button class="smallButton" data-backup-run="${job.id}" type="button" ${job.forcePending ? "disabled" : ""}>${job.forcePending ? "Solicitado" : "Forçar backup"}</button><button class="smallButton" data-backup-edit="${job.id}" type="button">Editar</button><button class="smallButton" data-backup-token="${job.id}" type="button">Novo JSON</button><button class="smallButton danger" data-backup-delete="${job.id}" type="button">Excluir</button></div></td>
+      <td><div class="tableActions">${backupForceButton(job)}<button class="smallButton" data-backup-edit="${job.id}" type="button">Editar</button><button class="smallButton" data-backup-token="${job.id}" type="button">Novo JSON</button><button class="smallButton danger" data-backup-delete="${job.id}" type="button">Excluir</button></div></td>
     </tr>`).join("") || '<tr><td colspan="6" class="muted">Nenhum plano de backup configurado.</td></tr>';
     $("#backupRunsTable").innerHTML = state.backupRuns.map((run) => `<tr>
       <td>${esc(dateTime(run.completedAt || run.startedAt))}</td><td><strong>${esc(run.jobName)}</strong><br><small class="muted">${esc(run.machine)}</small></td>
@@ -1427,6 +1452,10 @@
     if (edit) return openBackup(state.backups.find((job) => job.id === Number(edit.dataset.backupEdit)));
     if (rotate) return rotateBackupToken(Number(rotate.dataset.backupToken));
     if (remove) return deleteBackup(Number(remove.dataset.backupDelete));
+  });
+  $("#backupHealthTable").addEventListener("click", (event) => {
+    const run = event.target.closest("[data-backup-run]");
+    if (run) forceBackup(Number(run.dataset.backupRun));
   });
   window.addEventListener("hashchange", () => setView(location.hash.slice(1) || "dashboard", false));
   window.addEventListener("keydown", (event) => { if (event.key === "Escape") { closeDevice(); closeDeviceDetails(); closeBackup(); } });

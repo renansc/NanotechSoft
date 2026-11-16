@@ -87,10 +87,19 @@ def apurar(data, products, base):
                 pending.append('Formula sem custo completo na data selecionada.')
             else:
                 # Preserva a precisao dos itens, sem multiplicar um preco exibido arredondado.
-                syrup = sum((Decimal(i['quantidade'])*Decimal(i['preco_unitario']) for i in base['itens']),Decimal(0))
+                syrup_ref = p.get('xarope_composto') or base
+                syrup = (Decimal(str(syrup_ref['custo_lote_exato']))
+                         if syrup_ref.get('custo_lote_exato') is not None
+                         else sum((Decimal(i['quantidade'])*Decimal(i['preco_unitario'])
+                                   for i in syrup_ref['itens']),Decimal(0)))
                 extras = sum((Decimal(i['quantidade'])*Decimal(i['preco_unitario']) for i in p['itens']),Decimal(0))
-                batch = syrup / Decimal(str(base['rendimento_litros'])) * Decimal(str(p['xarope_litros'])) + extras
-                parts['formula'] = batch * litres / 1000
+                hot_water = (Decimal(str(p.get('agua_quente_litros') or 0))
+                             * Decimal(str(p.get('agua_quente_valor_litro') or 0)))
+                liquido_1000 = (syrup * Decimal(1000) / Decimal(str(syrup_ref['rendimento_litros']))
+                                + hot_water)
+                # Tampa, PET/garrafa, rotulo e demais itens da apresentacao sao
+                # quantidades por embalagem pronta, nao por 1.000 L.
+                parts['formula'] = liquido_1000 * litres / 1000 + extras * bottles
             rows.append({**entry,'nome_produto':p['nome_produto'],'grupo':p['grupo_estoque'].strip().upper(),
                          'litros':litres,'embalagens':bottles,'pacotes':bottles/Decimal(entry['por_pacote']),
                          'componentes':parts,'pendencias':pending,'referencia_formula':p})
@@ -219,7 +228,8 @@ def register_custo_diario(app, services):
             if not request.path.endswith('/dashboard'):
                 result['catalogo']=snapshot['produtos']
                 for p in result['catalogo']:
-                    p['por_pacote_sugerido']=services.get('pacote',lambda p:None)(p)
+                    p['por_pacote_sugerido']=(p.get('unidades_pacote')
+                                               or services.get('pacote',lambda p:None)(p))
             return jsonify(result)
         finally:cur.close();conn.close()
 

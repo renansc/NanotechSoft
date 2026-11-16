@@ -89,10 +89,104 @@
   "config_groups": {
     "financeiro": [
       {
+        "nome": "Plano de contas e amarrações",
+        "url": "/apps/financeiro?view=contabilidade",
+        "recurso": "contabilidade"
+      },
+      {
         "nome": "Financeiro - Config",
         "url": "/apps/financeiro?view=config",
         "recurso": "config"
       }
     ]
+  },
+  "menu_profiles": {
+    "rio-branco": {
+      "menu_groups": {
+        "dashboards": [
+          {
+            "nome": "Dashboard Financeiro",
+            "url": "/apps/financeiro?view=dashboard",
+            "recurso": "dashboard"
+          }
+        ],
+        "workflow": [
+          {
+            "nome": "Kanban Financeiro",
+            "url": "/workflow/financeiro",
+            "recurso": "conciliacao"
+          },
+          {
+            "nome": "Conciliação Financeiro",
+            "url": "/apps/financeiro?view=conciliacao",
+            "recurso": "conciliacao"
+          }
+        ],
+        "gestao": [
+          {
+            "nome": "Compras",
+            "url": "/apps/financeiro?view=compras",
+            "recurso": "compras"
+          },
+          {
+            "nome": "Contas",
+            "url": "/apps/financeiro?view=contas",
+            "recurso": "contas"
+          },
+          {
+            "nome": "Contas a Pagar",
+            "url": "/apps/financeiro?view=pagar",
+            "recurso": "pagar"
+          },
+          {
+            "nome": "Contas a Receber",
+            "url": "/apps/financeiro?view=receber",
+            "recurso": "receber"
+          }
+        ],
+        "cadastros": [
+          {
+            "nome": "Favorecidos de pagamento",
+            "url": "/apps/financeiro?view=cadastros",
+            "grupo": "Financeiro",
+            "recurso": "cadastros"
+          },
+          {
+            "nome": "Financeiro Categorias",
+            "url": "/apps/financeiro?view=categorias",
+            "grupo": "Financeiro",
+            "recurso": "categorias"
+          }
+        ],
+        "relatorios": [
+          {
+            "nome": "Lançamentos Financeiro",
+            "url": "/apps/financeiro?view=lancamentos",
+            "recurso": "lancamentos"
+          }
+        ],
+        "import_export": [
+          {
+            "nome": "Importar Extrato",
+            "url": "/apps/financeiro?view=importar",
+            "recurso": "importar"
+          }
+        ]
+      },
+      "config_groups": {
+        "financeiro": [
+          {
+            "nome": "Plano de contas e amarrações",
+            "url": "/apps/financeiro?view=contabilidade",
+            "recurso": "contabilidade"
+          },
+          {
+            "nome": "Financeiro - Config",
+            "url": "/apps/financeiro?view=config",
+            "recurso": "config"
+          }
+        ]
+      }
+    }
   }
 }

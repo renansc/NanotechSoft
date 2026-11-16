@@ -1,0 +1,71 @@
+{
+  "app_key": "sped",
+  "nome": "SPED Fiscal",
+  "descricao": "Analise persistida e multianual de arquivos EFD ICMS/IPI.",
+  "url": "/apps/sped?view=dashboard",
+  "standalone_url": "/apps/sped?view=dashboard",
+  "icone": "file-text",
+  "ordem": 45,
+  "ativo": true,
+  "origem": "nanotech",
+  "source_dir": "apps/sped/source",
+  "temas": ["rio_branco", "autoblue", "fin-blue", "pontobege", "zapgreen", "pacsred"],
+  "menu_groups": {
+    "dashboards": [
+      {"nome": "Painel SPED Fiscal", "url": "/apps/sped?view=dashboard", "recurso": "dashboard"}
+    ],
+    "cadastros": [
+      {"nome": "Agrupador de produtos SPED", "url": "/apps/sped?view=groups", "recurso": "grupos"}
+    ],
+    "relatorios": [
+      {"nome": "Analise detalhada SPED", "url": "/apps/sped?view=details", "recurso": "analise"},
+      {"nome": "Comparativo anual SPED", "url": "/apps/sped?view=compare", "recurso": "comparativo"},
+      {"nome": "Clientes e transacoes SPED", "url": "/apps/sped?view=sales", "recurso": "transacoes"},
+      {"nome": "Tributos SPED", "url": "/apps/sped?view=taxpanel", "recurso": "tributos"}
+    ],
+    "import_export": [
+      {"nome": "Importar e gerenciar SPED", "url": "/apps/sped?view=imports", "recurso": "importar"}
+    ]
+  },
+  "config_groups": {
+    "sped": [
+      {"nome": "SPED Fiscal - Regimes tributarios", "url": "/apps/sped?view=settings", "recurso": "config"}
+    ]
+  },
+  "menu_profiles": {
+    "rio-branco": {
+      "menu_groups": {
+        "dashboards": [
+          {"nome": "Painel SPED Fiscal", "url": "/apps/sped?view=dashboard", "recurso": "dashboard"}
+        ],
+        "cadastros": [
+          {"nome": "Agrupador de produtos SPED", "url": "/apps/sped?view=groups", "recurso": "grupos"}
+        ],
+        "relatorios": [
+          {"nome": "Analise detalhada SPED", "url": "/apps/sped?view=details", "recurso": "analise"},
+          {"nome": "Comparativo anual SPED", "url": "/apps/sped?view=compare", "recurso": "comparativo"},
+          {"nome": "Clientes e transacoes SPED", "url": "/apps/sped?view=sales", "recurso": "transacoes"},
+          {"nome": "Tributos SPED", "url": "/apps/sped?view=taxpanel", "recurso": "tributos"}
+        ],
+        "import_export": [
+          {"nome": "Importar e gerenciar SPED", "url": "/apps/sped?view=imports", "recurso": "importar"}
+        ]
+      },
+      "config_groups": {
+        "sped": [
+          {"nome": "SPED Fiscal - Regimes tributarios", "url": "/apps/sped?view=settings", "recurso": "config"}
+        ]
+      }
+    }
+  },
+  "access_resources": [
+    {"recurso": "dashboard", "nome": "Painel multianual do SPED"},
+    {"recurso": "importar", "nome": "Importar TXT e gerenciar a base persistida"},
+    {"recurso": "analise", "nome": "Analise detalhada dos registros fiscais"},
+    {"recurso": "comparativo", "nome": "Comparativo anual"},
+    {"recurso": "transacoes", "nome": "Clientes, compras e transacoes fiscais: seletores combinaveis de produto, cliente/fornecedor e documento"},
+    {"recurso": "tributos", "nome": "Acompanhamento preliminar de tributos"},
+    {"recurso": "grupos", "nome": "Agrupador persistido de produtos e despesas"},
+    {"recurso": "config", "nome": "Regimes tributarios persistidos por exercicio"}
+  ]
+}

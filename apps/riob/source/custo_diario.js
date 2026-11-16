@@ -73,44 +73,7 @@ async function salvarCustoDia(event){
 }
 
 async function abrirVisaoCustoDashboard(){
-  const mode=document.getElementById('custoDashboardVisao').value;
-  document.getElementById('custoDashboardMensal').classList.toggle('hidden',mode!=='mensal');
-  document.getElementById('custoDashboardDiario').classList.toggle('hidden',mode!=='diario');
-  if(mode==='mensal')return carregarDashboardCustoProduto();
-  return carregarDashboardCustoDia();
-}
-let custoDiaDashboard=null;
-async function carregarDashboardCustoDia(){
-  const date=document.getElementById('custoDiaDashData');if(!date.value)date.value=custoDiaHoje();
-  const status=document.getElementById('custoDiaDashStatus');status.textContent='Consultando custo do dia…';
-  const requested=date.value;
-  try{
-    const response=await apiFetch('/api/custo-diario/dashboard?data='+requested);const data=await response.json();
-    if(date.value!==requested)return;
-    if(!response.ok)throw new Error(data.erro || 'Não foi possível consultar o dia.');
-    custoDiaDashboard=data;
-    const groups=document.getElementById('custoDiaDashGrupo'),previous=groups.value;
-    groups.innerHTML='<option value="">Todos os grupos</option>'+(data.resultado?.grupos || []).map(g=>`<option value="${gestaoEsc(g.grupo)}">${g.grupo==='GFA'?'Retornável':gestaoEsc(g.grupo)}</option>`).join('');groups.value=previous;
-    renderDashboardCustoDia();
-    status.textContent=data.revisao?`Apuração salva em ${data.atualizado_em} por ${data.atualizado_por}. Média por grupo; confira cada apresentação abaixo.`:'Dia sem produção e gastos salvos. As contagens disponíveis aparecem abaixo. Cadastre a produção e os gastos em Gestão > Custos diários por grupo.';
-  }catch(error){custoDiaDashboard=null;renderDashboardCustoDia();status.textContent=error.message;}
-}
-function renderDashboardCustoDia(){
-  const box=document.getElementById('custoDiaDashResultado');const result=custoDiaDashboard?.resultado;
-  if(!result){box.innerHTML='';return;}
-  const group=document.getElementById('custoDiaDashGrupo').value,unit=document.getElementById('custoDiaDashUnidade').value;
-  const groups=result.grupos.filter(g=>!group || g.grupo===group),products=result.produtos.filter(p=>!group || p.grupo===group);
-  const per=row=>unit==='total'?{...row.componentes,total:row.total}:row.por_unidade[unit];
-  box.innerHTML=`<p>${gestaoEsc(result.metodologia)}</p>
-    <div class="table-responsive" style="overflow-x:auto"><table><thead><tr><th>Grupo</th><th>Litros</th><th>Embalagens</th><th>Pacotes equivalentes</th>${Object.values(custoDiaCategorias).map(s=>`<th>${s}</th>`).join('')}<th>Total</th></tr></thead><tbody>${groups.map(g=>`<tr><td>${gestaoEsc(g.grupo)}</td><td>${gestaoNumero(g.litros)}</td><td>${gestaoNumero(g.embalagens)}</td><td>${gestaoNumero(g.pacotes)}</td>${Object.keys(custoDiaCategorias).map(k=>`<td>${custoDiaValor(per(g)[k])}</td>`).join('')}<td>${custoDiaValor(per(g).total)}</td></tr>`).join('') || '<tr><td colspan="12">Sem produção informada.</td></tr>'}</tbody></table></div>
-    <h3>Custo por produto e apresentação</h3><div class="table-responsive" style="overflow-x:auto"><table><thead><tr><th>Produto</th><th>ml / embalagem</th><th>Embalagens / pacote</th><th>Custo / litro</th><th>Custo / embalagem</th><th>Custo / pacote</th><th>Total do dia</th><th>Pendências</th></tr></thead><tbody>${products.map(p=>`<tr><td>${gestaoEsc(p.nome_produto)}</td><td>${gestaoNumero(p.volume_ml)}</td><td>${gestaoNumero(p.por_pacote)}</td><td>${custoDiaValor(p.por_unidade.litros.total)}</td><td>${custoDiaValor(p.por_unidade.embalagens.total)}</td><td>${custoDiaValor(p.por_unidade.pacotes.total)}</td><td>${custoDiaValor(p.total)}</td><td>${gestaoEsc(p.pendencias.join(' '))}</td></tr>`).join('')}</tbody></table></div>
-    <h3>Desperdício por setor${group?' — '+gestaoEsc(group):''}</h3>${desperdicioCustoDia(group)}
-    ${result.nao_rateado.length?'<h3>Gastos sem produção para ratear</h3><p>'+result.nao_rateado.map(e=>`${gestaoEsc(e.grupo || 'Compartilhado')} · ${gestaoEsc(e.setor)} · ${gestaoEsc(e.descricao)}: ${custoDiaValor(e.valor)}`).join('<br>')+'</p>':''}`;
-}
-function desperdicioCustoDia(group){
-  const losses=custoDiaDashboard.resultado.perdas.filter(p=>!group || !p.grupo || p.grupo===group);
-  const sums={};for(const p of losses){const key=JSON.stringify([p.setor,p.unidade]);const row=sums[key] ||= {setor:p.setor,unidade:p.unidade,quantidade:0,valor:0};row.quantidade+=Number(p.quantidade);row.valor=row.valor===null || p.valor===null ? null : row.valor+Number(p.valor);}
-  return '<p>Perdas compartilhadas aparecem por inteiro nesta conferência; o rateio financeiro está no custo do grupo.</p><table><thead><tr><th>Setor</th><th>Quantidade</th><th>Unidade</th><th>Valor perdido</th></tr></thead><tbody>'+Object.values(sums).map(p=>`<tr><td>${gestaoEsc(p.setor)}</td><td>${gestaoNumero(p.quantidade)}</td><td>${gestaoEsc(p.unidade)}</td><td>${custoDiaValor(p.valor)}</td></tr>`).join('')+'</tbody></table>';
+  return carregarDashboardCustoProduto();
 }
 
 function contagensCustoDia(losses){

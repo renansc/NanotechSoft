@@ -7,6 +7,8 @@ PROJECT_DIR = Path(__file__).resolve().parents[1]
 
 EXPECTED_APPS = [
     ("riob", "RioB"),
+    ("financeiro", "Financeiro"),
+    ("sped", "SPED Fiscal"),
     ("automacao", "Automacao"),
     ("zap", "Zap"),
     ("riob-chat", "Chat"),
@@ -59,7 +61,7 @@ class RioBrancoPortalTests(unittest.TestCase):
 
         self.assertEqual(EXPECTED_APPS, [(item["app_key"], item["nome"]) for item in ordered])
         self.assertEqual(sorted(item["ordem"] for item in ordered), [item["ordem"] for item in ordered])
-        self.assertEqual(11, len(ordered))
+        self.assertEqual(13, len(ordered))
 
     def test_desktop_portal_grid_has_five_columns(self):
         css = (PROJECT_DIR / "static/style.css").read_text(encoding="utf-8")

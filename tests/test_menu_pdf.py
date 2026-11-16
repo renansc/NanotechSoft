@@ -27,6 +27,9 @@ class MenuPdfTests(unittest.TestCase):
         self.assertIn("estoque_contagem", catalog["riob"])
         self.assertIn("vendas_orcamentos_relatorio", catalog["riob"])
         self.assertIn("backup", catalog["riob-email"])
+        self.assertIn("dashboard", catalog["financeiro"])
+        self.assertIn("pagar", catalog["financeiro"])
+        self.assertIn("receber", catalog["financeiro"])
         self.assertIn("estoque_contagem_finalizar", catalog["riob"])
         self.assertIn("estoque_contagem_relatorio", catalog["riob"])
 
@@ -41,6 +44,8 @@ class MenuPdfTests(unittest.TestCase):
         self.assertIn("/riob/backup", html)
         self.assertIn("/riob/historico", html)
         self.assertIn("/riob/recuperar", html)
+        self.assertIn("/apps/financeiro?view=dashboard", html)
+        self.assertIn("/apps/financeiro?view=pagar", html)
         self.assertNotIn("module-riob-chat", html)
         for section in menu["primary"]:
             self.assertTrue(all(g["nome"] and g["entries"] for g in section["groups"]))
@@ -183,11 +188,29 @@ class MenuPdfTests(unittest.TestCase):
                 self.assertIsNone(result) if allowed else self.assertEqual(403, result[1])
 
     def test_disabled_modules_block_admin_and_embedded_alias(self):
-        paths = [f"/apps/{key}/" for key in ("financeiro", "nanoponto", "nanostore", "riob-cameras", "riob-esxi")]
-        paths += ["/apps/riob/monitor/cameras/", "/apps/riob/monitor/esxi/api/status", "/api/finance/attachments"]
+        paths = [f"/apps/{key}/" for key in ("nanoponto", "nanostore", "riob-cameras", "riob-esxi")]
+        paths += ["/apps/riob/monitor/cameras/", "/apps/riob/monitor/esxi/api/status"]
         for path in paths:
             with self.subTest(path=path), portal.app.test_request_context(path), mock.patch.object(portal, "allowed_app_keys", return_value=self.keys), mock.patch.object(portal, "current_user_or_logout", return_value={"id": 1, "perfil": "admin"}):
                 self.assertEqual(404, portal.enforce_app_permission()[1])
+
+    def test_financeiro_is_enabled_but_keeps_individual_permissions(self):
+        admin = {"id": 1, "perfil": "admin"}
+        user = {"id": 42, "perfil": "usuario"}
+        with portal.app.test_request_context("/apps/financeiro?view=pagar"), mock.patch.object(portal, "allowed_app_keys", return_value=self.keys), mock.patch.object(portal, "current_user_or_logout", return_value=admin):
+            self.assertIsNone(portal.enforce_app_permission())
+        with portal.app.test_request_context("/apps/financeiro?view=dashboard"), mock.patch.object(portal, "allowed_app_keys", return_value=self.keys), mock.patch.object(portal, "current_user_or_logout", return_value=user), mock.patch.object(portal, "get_user_permissions", return_value={"financeiro": {"dashboard"}}):
+            self.assertIsNone(portal.enforce_app_permission())
+        with portal.app.test_request_context("/apps/financeiro?view=pagar"), mock.patch.object(portal, "allowed_app_keys", return_value=self.keys), mock.patch.object(portal, "current_user_or_logout", return_value=user), mock.patch.object(portal, "get_user_permissions", return_value={"financeiro": {"dashboard"}}):
+            self.assertEqual(403, portal.enforce_app_permission()[1])
+        with portal.app.test_request_context("/apps/financeiro?view=dashboard"), mock.patch.object(portal, "allowed_app_keys", return_value=self.keys), mock.patch.object(portal, "current_user_or_logout", return_value=user), mock.patch.object(portal, "get_user_permissions", return_value={}):
+            self.assertEqual(403, portal.enforce_app_permission()[1])
+
+        with mock.patch.object(portal, "get_user_permissions", return_value={"financeiro": {"dashboard"}}):
+            menu = portal.menu_sections(self.apps, user)
+        links = {entry["url"] for section in menu["primary"] for group in section["groups"] for entry in group["entries"]}
+        self.assertIn("/apps/financeiro?view=dashboard", links)
+        self.assertNotIn("/apps/financeiro?view=pagar", links)
 
     def test_catalog_preserves_all_previous_resources(self):
         with mock.patch.object(portal, "list_apps", return_value=self.apps):

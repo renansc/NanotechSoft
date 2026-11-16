@@ -21,6 +21,8 @@ riob,Cadastro,Fornecedores e compras RioB,/apps/riob#cadastros:compras_fornecedo
 riob,Cadastro,Cargas RioB,/apps/riob#gestaofrota:cargas,menu:1b53a20822248f3f5ade1c2e,cargas,individual
 riob,Cadastro,Escala RioB,/apps/riob#gestaofrota:escala,menu:90c1e424d054e0fe7294534a,escala,individual
 riob,Cadastro,Pontos de venda,/apps/riob#vendas:pontosvenda,menu:bbb08e534e7a7fc48f4eb251,pontos_venda,individual
+riob,Relatorios,Custo produto,/apps/riob#relatorios:custo_produto,menu:86161645e5ff2d54c938b669,custo_produto_dashboard,individual
+riob,Relatorios,Posicao de estoque do dia por grupo,/apps/riob#relatorios:estoque_posicao_dia,menu:da12f8c4e8905e429deec504,estoque,individual
 riob,Relatorios,Vendas,/apps/riob#vendas:relatorio,menu:faab8ba794e431d6b9d7a752,vendas,individual
 riob,Relatorios,Vendas Diario,/apps/riob#vendas:relatorio_diario,menu:ee04e4282a1d09d637fa2598,vendas,individual
 riob,Relatorios,Orcamentos gerados,/apps/riob#relatorios:orcamentos,menu:bc150f32f7524519e0442dac,vendas_orcamentos_relatorio,individual
@@ -46,6 +48,7 @@ riob,Dados,Base mensal de vendas,/apps/riob#config:base_vendas,menu:cfb366187677
 riob,Dados,Totais de PDVs por vendedor,/apps/riob#vendas:pdvs_totais,menu:26f55f44c4bf314d1248ef11,vendas_pdvs,individual
 riob,Estoque,Posicao,/apps/riob#estoque:posicao,menu:156e24bfcca09fa65d2ac76f,estoque,individual
 riob,Estoque,Movimentar,/apps/riob#estoque:movimentar,menu:f720d235fdc106ee4f77b724,estoque,individual
+riob,Estoque,Aprovar XML e PDF,/apps/riob#estoque:documentos,menu:f2fcf0528a4ecdb2d85f5792,estoque_documentos_aprovar,individual
 riob,Estoque,Rastreio,/apps/riob#estoque:rastreio,menu:20f1c2c271cf9f27e7e4c67b,estoque,individual
 riob,Estoque,Acerto,/apps/riob#estoque:acerto,menu:386b37f5413833d0db350562,estoque,individual
 riob,Estoque,Contagem,/apps/riob#estoque:contagem,menu:5a6ac949f446fdcf96a985bd,estoque_contagem,individual
@@ -73,9 +76,18 @@ riob,Configurar,Logs,/apps/riob#config:logs,menu:5ff6d351e82be58d23bf9eb0,config
 riob,Configurar,Status,/apps/riob#config:status,menu:878fba509566ba6c3f519b8b,config,individual
 riob,Configurar,SIP RioB,/apps/riob#config:sip,menu:f6d3f9959f8110d4ffc088da,config,individual
 riob,Configurar,Vendas RioB,/apps/riob#config:vendas,menu:32ae10236c327175f8a57ff9,config,individual
+riob,Configurar,Rateio de custos de producao,/apps/riob#config:custos_producao,menu:c7a165c9f596a67687c2f9de,custo_produto,individual
 riob,Configurar,Backup do RioB,/apps/riob#config:backup,menu:0882d4bad04e34071aed6638,config,individual
 riob,Configurar,NF-e / Receita,/apps/riob#config:nfe,menu:70aae0b62d33937d6554f11a,config,individual
 riob,Configurar,Parametros de orcamentos,/apps/riob#config:orcamentos,menu:7be8e9d3d22fa5a6d6f6e64a,config,individual
+sped,Dashboard,Painel SPED Fiscal,/apps/sped?view=dashboard,menu:c58d6477a390c2ab3bd9f0c2,dashboard,individual
+sped,Cadastro,Agrupador de produtos SPED,/apps/sped?view=groups,menu:0d0caf8fe1c2ea99194f9906,grupos,individual
+sped,Relatorios,Analise detalhada SPED,/apps/sped?view=details,menu:05b336bf9de88be6000a7a36,analise,individual
+sped,Relatorios,Comparativo anual SPED,/apps/sped?view=compare,menu:18e07a7a9f9aceff72200265,comparativo,individual
+sped,Relatorios,Clientes e transacoes SPED,/apps/sped?view=sales,menu:7cdc2841283d9cde3ea04345,transacoes,individual
+sped,Relatorios,Tributos SPED,/apps/sped?view=taxpanel,menu:a3361b812374aefc5594f865,tributos,individual
+sped,Dados,Importar e gerenciar SPED,/apps/sped?view=imports,menu:d459170960227a6a32b5b480,importar,individual
+sped,Configurar,SPED Fiscal - Regimes tributarios,/apps/sped?view=settings,menu:5c963249c0faf97fdd3281ed,config,individual
 riob-email,Dashboard,Painel de e-mails,/apps/riob-email/riob/?painel=resumo,menu:f2f65336d510df5320ac6360,operacao,individual
 riob-email,Cadastro,Fornecedores,/apps/riob-email/riob/fornecedores,menu:fe8f0f42e196dc717d19aba0,operacao,individual
 riob-email,Monitor,Status de e-mails,/apps/riob-email/riob/?painel=status,menu:d7407f00bc36e7a0e79b3fbb,operacao,individual
@@ -121,7 +133,7 @@ tecnologia,Relatorios,Ocupacao do link,/apps/tecnologia#ocupacao-link,menu:9df30
 tecnologia,Gestao,Rede,/apps/tecnologia#rede,menu:957d6b6e12622777f7c441cb,rede,individual
 tecnologia,Documentos,Agentes e protocolos,/apps/tecnologia#protocolos,menu:991740f5bf2559f553b15e38,equipamentos,individual
 tecnologia,Monitor,Monitoramento de link,/apps/tecnologia#monitor-link,menu:06c3d54a1cbae7ce200b7a08,dashboard,individual
-tecnologia,Configurar,Configuracao e alertas,/apps/tecnologia#config,menu:f8f3b5a58fc5a821a2ed0634,config,individual
+tecnologia,Configurar,Configuracao do link e alertas,/apps/tecnologia#config,menu:f8f3b5a58fc5a821a2ed0634,config,individual
 impressoras,Workflow,Fila segura,/apps/impressoras#fila,menu:0202ee896e192458d5db5d50,fila,individual
 impressoras,Monitor,Estado das impressoras,/apps/impressoras#monitor,menu:81d0ab3b6e0019d636a9a185,monitor,individual
 impressoras,Relatorios,Historico de impressoes,/apps/impressoras#historico,menu:cb58f3ff1ea8b29403d4bb95,historico,individual

@@ -569,6 +569,29 @@ textarea{
 .table td.right, .table th.right{ text-align:right; }
 .table tr:hover td{ background: rgba(15,23,48,.35); }
 
+.accountingHero{ margin-bottom:14px; }
+.accountingKpis{ grid-template-columns:repeat(4,minmax(0,1fr)); }
+.accountingPlanCard,.accountingBindingsCard{ margin-top:14px; }
+.accountingPlanTable{ min-width:900px; }
+.accountingBindingsTable{ min-width:1050px; }
+.accountingBindingsTable th:first-child,
+.accountingBindingsTable td:first-child{ width:42px; text-align:center; }
+.accountingBindingsTable select{ min-width:300px; width:100%; }
+.accountingBulk{ align-items:center; margin-top:12px; }
+.accountingBulk select{ min-width:310px; }
+.accountingAccountName{ overflow-wrap:anywhere; }
+.accountingDescription{ margin-top:4px; padding-left:18px; }
+.accountingAudit{ margin-top:5px; white-space:nowrap; }
+.accountingInactive{ opacity:.62; }
+.checkLine{ flex-direction:row !important; align-items:center; gap:8px; }
+.checkLine input{ width:auto; }
+
+@media(max-width:760px){
+  .accountingKpis{ grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .accountingBulk{ align-items:stretch; flex-direction:column; }
+  .accountingBulk select{ min-width:0; width:100%; }
+}
+
 .modal{
   position: fixed;
   inset: 0;

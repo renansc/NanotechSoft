@@ -101,11 +101,26 @@ def parse_cargas_pdf(path):
         # cargas. Ela nao representa um mapa e nao deve invalidar o PDF inteiro.
         if not text.strip():
             continue
+        # Uma carga pode continuar na pagina seguinte apenas com produtos ou
+        # com o resumo de cidades, sem repetir data, mapa e rota. Agrupar essas
+        # folhas ao mapa anterior impede que a continuacao seja tratada como
+        # um PDF invalido.
+        if re.search(r"\bMapa:\s*\d+", text, re.IGNORECASE):
+            pages.append({"pagina": index, "textos": [text]})
+        elif pages:
+            pages[-1]["textos"].append(text)
+    cargas = []
+    for group in pages:
+        index = group["pagina"]
         signature_source = raw if page_count == 1 else raw + f"#page:{index}".encode("ascii")
-        pages.append(_parse_carga_text(text, hashlib.sha256(signature_source).hexdigest(), index))
-    if not pages:
+        cargas.append(_parse_carga_text(
+            "\n".join(group["textos"]),
+            hashlib.sha256(signature_source).hexdigest(),
+            index,
+        ))
+    if not cargas:
         raise ValueError("O PDF nao possui paginas de carga.")
-    return pages
+    return cargas
 
 
 def parse_carga_pdf(path):

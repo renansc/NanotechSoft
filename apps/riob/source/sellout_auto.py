@@ -78,7 +78,29 @@ def fontes_mensais_configuradas(environ):
     return fontes_unicas
 
 
-def unificar_mensais(fontes):
+def fontes_diarias_configuradas(environ):
+    """Retorna as fontes SELLOUT_D com data real, uma para cada distribuidora."""
+    multiplas = str(environ.get('RB_SELLOUT_D_ARQUIVOS') or '').strip()
+    if multiplas:
+        fontes = [item.strip() for item in multiplas.split(os.pathsep) if item.strip()]
+    else:
+        unica = str(environ.get('RB_SELLOUT_D_ARQUIVO') or '').strip()
+        fontes = [unica] if unica else [
+            '/imports/sellout/IND3/SELLOUT_D.CSV',
+            '/imports/sellout/INDB/SELLOUT_D.CSV',
+        ]
+    resultado, vistos = [], set()
+    for fonte in fontes:
+        real = os.path.realpath(fonte)
+        if real not in vistos:
+            vistos.add(real)
+            resultado.append(fonte)
+    if not resultado:
+        raise ValueError('Nenhuma fonte SELLOUT diaria configurada.')
+    return resultado
+
+
+def unificar_mensais(fontes, preservar_datas=False):
     """Valida e une bases completas, removendo duplicatas somente entre origens."""
     if not fontes:
         raise ValueError('Nenhuma fonte SELLOUT mensal informada.')
@@ -94,7 +116,9 @@ def unificar_mensais(fontes):
             fieldnames_referencia = fieldnames
         elif fieldnames != fieldnames_referencia:
             raise ValueError(f'Cabecalho SELLOUT divergente na fonte {nome}.')
-        mensal = preparar_mensal(fieldnames, fonte.get('rows') or [])
+        mensal = preparar_mensal(
+            fieldnames, fonte.get('rows') or [], preservar_datas=preservar_datas
+        )
         fingerprints_fonte = set()
         linhas_fonte = 0
         linhas_incluidas = 0

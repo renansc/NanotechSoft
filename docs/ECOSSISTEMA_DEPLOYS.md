@@ -19,7 +19,7 @@ PACS evoluindo separadamente.
 
 | Deploy | Componente | Política |
 | --- | --- | --- |
-| Rio Branco | Portal, perfil `rio-branco` | somente módulos contratados |
+| Rio Branco | Portal, perfil `rio-branco` | módulos contratados, incluindo SPED Fiscal local no navegador |
 | Nanotech | Portal, perfil `nanotech` | todos os apps publicados e PACS externo |
 | Laboratório | PACS | somente a stack do `RisPacsFull` |
 | Senhor | Portal, perfil `senhor` | NanoStore; atualizar somente após 18h |

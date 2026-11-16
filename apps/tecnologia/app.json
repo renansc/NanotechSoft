@@ -95,7 +95,7 @@
         "recurso": "equipamentos"
       },
       {
-        "nome": "Tecnologia - Alertas",
+        "nome": "Tecnologia - Link e alertas",
         "url": "/apps/tecnologia#config",
         "recurso": "config"
       },
@@ -195,7 +195,7 @@
       "config_groups": {
         "config": [
           {
-            "nome": "Configuracao e alertas",
+            "nome": "Configuracao do link e alertas",
             "url": "/apps/tecnologia#config",
             "recurso": "config"
           },
@@ -236,11 +236,11 @@
     },
     {
       "recurso": "config",
-      "nome": "Configuracao e alertas"
+      "nome": "Configuracao do link contratado e alertas"
     },
     {
       "recurso": "backup",
-      "nome": "Backups: estado atual, falhas de contato, planos, execucoes e agentes"
+      "nome": "Backups: estado atual, falhas de contato, planos, execucoes, agentes e solicitacao manual"
     }
   ]
 }

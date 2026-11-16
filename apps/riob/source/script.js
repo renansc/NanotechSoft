@@ -2993,6 +2993,7 @@ function setGestaoFrotaView(view){
   }
 
   if (view === "relatorios") {
+    carregarRelatorioConsumoRodagem().catch(()=>{});
     carregarRelatorioMensalFrota().catch(()=>{});
     return;
   }
@@ -7306,6 +7307,7 @@ async function renderDashboardFrota(){
     const media = (d.media_km !== null && d.media_km !== undefined)
       ? Number(d.media_km).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
       : "-";
+    const kmTotalRodado = Number(d.km_total_rodado || 0).toLocaleString("pt-BR", { maximumFractionDigits: 0 });
     const faltaManut = (d.falta_manut_km !== null && d.falta_manut_km !== undefined) ? Number(d.falta_manut_km) : 0;
     const faltaOleo  = (d.falta_oleo_km !== null && d.falta_oleo_km !== undefined) ? Number(d.falta_oleo_km) : 0;
 
@@ -7323,6 +7325,7 @@ async function renderDashboardFrota(){
         <td>${_escHtml(motorista)}</td>
         <td>${_escHtml(frete)}</td>
         <td>${_escHtml(status)}</td>
+        <td>${_escHtml(kmTotalRodado)} km</td>
         <td>${_escHtml(String(media))}</td>
         <td>${_escHtml(faltaManut.toString())} km</td>
         <td>${_escHtml(faltaOleo.toString())} km</td>
@@ -16881,6 +16884,7 @@ async function abrirHistoricoFrota(veiculoId) {
   `;
 }
 
+let frotaConsumoRodagemRequest = 0;
 let frotaRelatorioMensalRequest = 0;
 
 function _frotaRelatorioMesAtual(){
@@ -16906,6 +16910,106 @@ function _frotaRelatorioDinheiro(valor){
 function _frotaRelatorioValorOuTraco(valor, casas = 2, sufixo = ""){
   if (valor === null || valor === undefined || valor === "") return "-";
   return `${_frotaRelatorioNumero(valor, casas)}${sufixo}`;
+}
+
+function _frotaConsumoPeriodoPadrao(){
+  const agora = new Date();
+  const ano = agora.getFullYear();
+  const mes = String(agora.getMonth() + 1).padStart(2, "0");
+  const dia = String(agora.getDate()).padStart(2, "0");
+  return {inicio: `${ano}-${mes}-01`, fim: `${ano}-${mes}-${dia}`};
+}
+
+function _frotaConsumoFiltros(){
+  const padrao = _frotaConsumoPeriodoPadrao();
+  const inicioInput = document.getElementById("frotaConsumoDataInicio");
+  const fimInput = document.getElementById("frotaConsumoDataFim");
+  if (inicioInput && !inicioInput.value) inicioInput.value = padrao.inicio;
+  if (fimInput && !fimInput.value) fimInput.value = padrao.fim;
+  return {
+    dataInicio: (inicioInput?.value || padrao.inicio).trim(),
+    dataFim: (fimInput?.value || padrao.fim).trim(),
+    veiculoId: (document.getElementById("frotaConsumoVeiculo")?.value || "").trim(),
+  };
+}
+
+function _renderRelatorioConsumoRodagem(payload = {}){
+  const resumo = payload.resumo || {};
+  const status = document.getElementById("frotaConsumoStatus");
+  const cards = document.getElementById("frotaConsumoResumo");
+  const body = document.getElementById("frotaConsumoBody");
+  const select = document.getElementById("frotaConsumoVeiculo");
+
+  if (select) {
+    const selecionado = String(payload?.filtros?.veiculo_id || select.value || "");
+    select.innerHTML = '<option value="">Todos os veiculos</option>' + (payload.veiculos || []).map((item) => {
+      const label = [item.placa, item.nome, item.modelo].filter(Boolean).join(" - ") || `Veiculo ${item.id}`;
+      return `<option value="${Number(item.id || 0)}">${_escHtml(label)}</option>`;
+    }).join("");
+    select.value = selecionado;
+  }
+  if (status) {
+    status.textContent = `Periodo ${payload?.periodo?.label || "-"} · ${Number(resumo.abastecimentos || 0)} abastecimento(s) de Diesel S500, Diesel S10 ou ARLA.`;
+  }
+  if (cards) {
+    const itens = [
+      ["Veiculos", _frotaRelatorioNumero(resumo.veiculos || 0, 0)],
+      ["KM total rodado", `${_frotaRelatorioNumero(resumo.km_total_rodado || 0, 0)} km`],
+      ["Diesel S500", `${_frotaRelatorioNumero(resumo.litros_diesel_s500 || 0, 3)} L`],
+      ["Diesel S10", `${_frotaRelatorioNumero(resumo.litros_diesel_s10 || 0, 3)} L`],
+      ["ARLA", `${_frotaRelatorioNumero(resumo.litros_arla || 0, 3)} L`],
+      ["Litros totais usados", `${_frotaRelatorioNumero(resumo.litros_totais_usados || 0, 3)} L`],
+      ["Media geral", _frotaRelatorioValorOuTraco(resumo.media_geral_km_l, 2, " km/L")],
+    ];
+    cards.innerHTML = itens.map(([label, valor]) => `<article><span>${_escHtml(label)}</span><strong>${_escHtml(valor)}</strong></article>`).join("");
+  }
+  const itens = Array.isArray(payload.itens) ? payload.itens : [];
+  if (body) {
+    body.innerHTML = itens.length ? itens.map((item) => `<tr>
+      <td><strong>${_escHtml([item.placa, item.veiculo].filter(Boolean).join(" - ") || "-")}</strong><br><small>${_escHtml(item.modelo || "")}</small></td>
+      <td>${_frotaRelatorioNumero(item.km_total_rodado || 0, 0)} km</td>
+      <td>${_frotaRelatorioNumero(item.litros_diesel_s500 || 0, 3)} L</td>
+      <td>${_frotaRelatorioNumero(item.litros_diesel_s10 || 0, 3)} L</td>
+      <td>${_frotaRelatorioNumero(item.litros_arla || 0, 3)} L</td>
+      <td>${_frotaRelatorioNumero(item.litros_totais_usados || 0, 3)} L</td>
+      <td>${_frotaRelatorioValorOuTraco(item.media_geral_km_l, 2, " km/L")}</td>
+    </tr>`).join("") : '<tr><td colspan="7">Nenhum abastecimento de Diesel S500, Diesel S10 ou ARLA concluido neste periodo.</td></tr>';
+  }
+}
+
+async function carregarRelatorioConsumoRodagem(force = false){
+  if (!document.getElementById("frotaConsumoDataInicio")) return;
+  const filtros = _frotaConsumoFiltros();
+  const status = document.getElementById("frotaConsumoStatus");
+  if (filtros.dataInicio > filtros.dataFim) {
+    if (status) status.textContent = "A data inicial nao pode ser posterior a data final.";
+    return;
+  }
+  const requestId = ++frotaConsumoRodagemRequest;
+  if (status) status.textContent = "Carregando consumo e rodagem...";
+  const params = new URLSearchParams({data_inicio: filtros.dataInicio, data_fim: filtros.dataFim});
+  if (filtros.veiculoId) params.set("veiculo_id", filtros.veiculoId);
+  if (force) params.set("_", String(Date.now()));
+  const response = await apiFetch(`/api/frota_relatorio/consumo-rodagem?${params.toString()}`);
+  const payload = await response.json().catch(() => ({}));
+  if (requestId !== frotaConsumoRodagemRequest) return;
+  if (!response.ok) {
+    if (status) status.textContent = payload.erro || "Erro ao carregar consumo e rodagem.";
+    throw new Error(payload.erro || "Erro ao carregar consumo e rodagem.");
+  }
+  _renderRelatorioConsumoRodagem(payload);
+}
+
+function imprimirRelatorioConsumoRodagem(){
+  const filtros = _frotaConsumoFiltros();
+  if (filtros.dataInicio > filtros.dataFim) return alert("A data inicial nao pode ser posterior a data final.");
+  const params = new URLSearchParams({
+    data_inicio: filtros.dataInicio,
+    data_fim: filtros.dataFim,
+    formato: "pdf",
+  });
+  if (filtros.veiculoId) params.set("veiculo_id", filtros.veiculoId);
+  window.open(`/api/frota_relatorio/consumo-rodagem?${params.toString()}`, "_blank", "noopener");
 }
 
 function _renderRelatorioMensalFrota(payload = {}){

@@ -142,6 +142,14 @@ If you need context fast, read these files first:
   remains in volume and cost totals but never advances the odometer or enters
   KM/L. Keep the existing `frota` resource and `gestaofrota:relatorios`
   individual menu permission.
+- The same fleet reports task includes a consumption-and-distance report with
+  inclusive start/end dates, optional vehicle, and PDF. It includes only
+  Diesel S500, Diesel S10, and ARLA vehicles, separates those three volumes,
+  and shows their general totals in the screen and PDF header. ARLA is included
+  in total volume but excluded from distance and weighted overall KM/L. The fleet
+  dashboard uses the whole history to show that total distance beside the same
+  weighted overall average. Reuse `frota` and the existing individual report
+  permission; do not grant access automatically.
 - In freight `Ver dados/Carga`, a linked Daily Sales PDF remains the primary
   operational source even after outgoing XMLs are attached. Preserve PDF map,
   route, cities, seller, weight, deliveries, volumes, total, bonus, and product
@@ -236,12 +244,13 @@ If you need context fast, read these files first:
 - When local runtime evidence is required, the project operator has authorized
   SSH access to localhost for read-only log and service inspection. Never store
   passwords or other credentials in this repository or in documentation.
-- The Windows import server is intentionally offline outside 08:00-17:00 local
-  time. Deploys outside that window must keep Portal/RioB available. The root
-  Compose mounts the `/media` parent read-only with `rslave`, so the existing
-  `/media/serverwin` automount becomes visible inside RioB when Windows returns.
-  During the operational window, a missing CIFS mount remains a deployment
-  error; never replace it with a writable local import directory.
+- The Windows import server may be offline at any time and must never block
+  `up.sh`, `update.sh`, or Git validation. Missing official paths below
+  `/media/serverwin` produce an operational warning only. The root Compose
+  mounts the `/media` parent read-only with `rslave`, so the existing automount
+  becomes visible inside RioB when Windows returns. Never replace it with a
+  writable local import directory; custom paths outside `/media/serverwin`
+  remain mandatory and still block deployment when missing.
 - A change is not complete merely because it works in the local Docker
   environment. For every RioB change that can reach production, explicitly
   validate both environments: confirm the intended commit is on `origin/main`,

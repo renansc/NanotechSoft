@@ -79,8 +79,7 @@ class VendasDiarioPastasTest(unittest.TestCase):
     def test_scheduler_log_summary_does_not_repeat_every_file(self):
         result = {
             "arquivos": 3,
-            "txt": {"arquivos": 1},
-            "pdf": {"arquivos": 2},
+            "sellout_diario": {"linhas": 1130},
             "resultados": [
                 {"status": "importado"},
                 {"status": "ja_importado"},
@@ -89,23 +88,20 @@ class VendasDiarioPastasTest(unittest.TestCase):
         }
 
         self.assertEqual(
-            {"arquivos": 3, "txt": 1, "pdf": 2, "status": {"importado": 1, "ja_importado": 2}},
+            {"arquivos": 3, "sellout_diario": 1130, "status": {"importado": 1, "ja_importado": 2}},
             server._vendas_diario_scheduler_result_summary(result),
         )
 
     def test_scheduler_snapshot_changes_only_when_source_file_changes(self):
         with tempfile.TemporaryDirectory() as root:
-            txt_dir = Path(root) / "txt"
-            pdf_dir = Path(root) / "pdf"
-            txt_dir.mkdir()
-            pdf_dir.mkdir()
-            txt_path = txt_dir / "vendas.txt"
-            txt_path.write_text("primeira versao", encoding="utf-8")
-            with mock.patch.object(server, "VENDAS_DIARIO_TXT_DIR", os.fspath(txt_dir)), \
-                    mock.patch.object(server, "VENDAS_DIARIO_PDF_DIR", os.fspath(pdf_dir)):
+            ind3 = Path(root) / "IND3_SELLOUT_D.CSV"
+            indb = Path(root) / "INDB_SELLOUT_D.CSV"
+            ind3.write_text("primeira versao", encoding="utf-8")
+            indb.write_text("outra base", encoding="utf-8")
+            with mock.patch.object(server, "fontes_diarias_configuradas", return_value=[os.fspath(ind3), os.fspath(indb)]):
                 first = server._vendas_diario_source_snapshot()
                 self.assertEqual(first, server._vendas_diario_source_snapshot())
-                txt_path.write_text("segunda versao maior", encoding="utf-8")
+                ind3.write_text("segunda versao maior", encoding="utf-8")
                 self.assertNotEqual(first, server._vendas_diario_source_snapshot())
 
     def test_infers_seller_from_map_prefix(self):
@@ -124,60 +120,54 @@ class VendasDiarioPastasTest(unittest.TestCase):
         self.assertFalse(server._vendas_diario_cards_compativeis(astorga, other_date))
         self.assertFalse(server._vendas_diario_cards_compativeis({**astorga, "veiculo_id": 1}, other_vehicle))
 
-    def test_automatic_import_reads_txt_and_pdf_directories(self):
-        with tempfile.TemporaryDirectory() as root:
-            txt_dir = Path(root) / "CargasTxt"
-            pdf_dir = Path(root) / "VendasDiarioPdfs"
-            txt_dir.mkdir()
-            pdf_dir.mkdir()
-            txt_path = txt_dir / "vendas.txt"
-            pdf_path = pdf_dir / "carga.pdf"
-            txt_path.write_text("relatorio", encoding="utf-8")
-            pdf_path.write_bytes(b"%PDF-test")
+    def test_automatic_import_reads_only_sellout_daily_sources(self):
+        daily = {"status": "importado", "linhas": 6500,
+                 "fontes": [{"nome": "IND3", "linhas": 790}, {"nome": "INDB", "linhas": 5710}]}
+        with mock.patch.object(server, "fontes_diarias_configuradas", return_value=["IND3/D", "INDB/D"]), \
+                mock.patch.object(server, "_vendas_sellout_diario_importar", return_value=daily) as importer:
+            result = server._vendas_diario_importar_pasta()
+        self.assertFalse(result["processando"])
+        self.assertEqual(2, result["arquivos"])
+        self.assertEqual(["sellout_diario"], [item["tipo"] for item in result["resultados"]])
+        importer.assert_called_once_with()
 
-            with mock.patch.object(server, "VENDAS_DIARIO_TXT_DIR", os.fspath(txt_dir)), \
-                    mock.patch.object(server, "VENDAS_DIARIO_PDF_DIR", os.fspath(pdf_dir)), \
-                    mock.patch.object(server, "_vendas_diario_importar_arquivo", return_value={"status": "importado", "data_ref": "2026-08-04"}) as txt_import, \
-                    mock.patch.object(server, "parse_cargas_pdf", return_value=[{"pagina": 1, "mapa": "060401"}]), \
-                    mock.patch.object(server, "_vendas_diario_importar_carga_pdf_arquivo", return_value={"status": "importado"}) as pdf_import, \
-                    mock.patch.object(server, "_vendas_diario_unificar_cards_semelhantes", return_value={"grupos": 1, "cards_unificados": 1}):
-                result = server._vendas_diario_importar_pasta()
+    def test_sellout_daily_error_preserves_previous_base(self):
+        with mock.patch.object(server, "fontes_diarias_configuradas", return_value=["IND3/D", "INDB/D"]), \
+                mock.patch.object(server, "_vendas_sellout_diario_importar", side_effect=ValueError("SELLOUT_D invalido")):
+            result = server._vendas_diario_importar_pasta()
+        self.assertEqual("erro", result["resultados"][0]["status"])
+        self.assertIn("SELLOUT_D invalido", result["sellout_diario"]["erro"])
 
-            self.assertFalse(result["processando"])
-            self.assertEqual(2, result["arquivos"])
-            self.assertEqual(1, result["txt"]["arquivos"])
-            self.assertEqual(1, result["pdf"]["arquivos"])
-            self.assertEqual("2026-08-04", result["data_ref"])
-            self.assertEqual(["txt", "pdf"], [item["tipo"] for item in result["resultados"]])
-            self.assertEqual("sucesso", result["ultima_leitura"]["fontes"]["txt"]["status"])
-            self.assertEqual("sucesso", result["ultima_leitura"]["fontes"]["pdf"]["status"])
-            self.assertEqual("automatico_pastas", result["ultima_leitura"]["origem"])
-            txt_import.assert_called_once_with(os.fspath(txt_path))
-            pdf_import.assert_called_once_with(
-                os.fspath(pdf_path), usuario="importacao_automatica", carga={"pagina": 1, "mapa": "060401"}
+    def test_linked_pdf_for_same_seller_is_idempotent_not_error(self):
+        conn = mock.MagicMock()
+        cursor = conn.cursor.return_value
+        cursor.fetchone.side_effect = [
+            {"id": 17},
+            {"id": 31, "status": "enviado_frete", "frete_id": 8, "vendedor_codigo": "15"},
+        ]
+        carga = {"assinatura": "abc", "mapa": "151501"}
+        with mock.patch.object(server, "get_conn", return_value=conn):
+            result = server._vendas_diario_importar_carga_pdf_arquivo(
+                "/tmp/carga.pdf", vendedor_codigo="15", carga=carga
             )
+        self.assertEqual("ja_importado", result["status"])
+        self.assertEqual(2, cursor.fetchone.call_count)
 
-    def test_error_in_one_directory_does_not_block_the_other(self):
-        with tempfile.TemporaryDirectory() as root:
-            txt_dir = Path(root) / "CargasTxt"
-            pdf_dir = Path(root) / "VendasDiarioPdfs"
-            txt_dir.mkdir()
-            pdf_dir.mkdir()
-            (txt_dir / "vendas.txt").write_text("relatorio", encoding="utf-8")
-            (pdf_dir / "carga.pdf").write_bytes(b"%PDF-test")
-
-            with mock.patch.object(server, "VENDAS_DIARIO_TXT_DIR", os.fspath(txt_dir)), \
-                    mock.patch.object(server, "VENDAS_DIARIO_PDF_DIR", os.fspath(pdf_dir)), \
-                    mock.patch.object(server, "_vendas_diario_importar_arquivo", side_effect=ValueError("TXT invalido")), \
-                    mock.patch.object(server, "parse_cargas_pdf", return_value=[{"pagina": 1, "mapa": "060401"}]), \
-                    mock.patch.object(server, "_vendas_diario_importar_carga_pdf_arquivo", return_value={"status": "importado"}), \
-                    mock.patch.object(server, "_vendas_diario_unificar_cards_semelhantes", return_value={"grupos": 1, "cards_unificados": 1}):
-                result = server._vendas_diario_importar_pasta()
-
-            self.assertEqual("erro", result["resultados"][0]["status"])
-            self.assertEqual("importado", result["resultados"][1]["status"])
-            self.assertEqual("erro", result["ultima_leitura"]["fontes"]["txt"]["status"])
-            self.assertEqual("sucesso", result["ultima_leitura"]["fontes"]["pdf"]["status"])
+    def test_linked_pdf_rejects_different_seller_with_visible_conflict(self):
+        conn = mock.MagicMock()
+        cursor = conn.cursor.return_value
+        cursor.fetchone.side_effect = [
+            {"id": 17},
+            {"id": 31, "status": "enviado_frete", "frete_id": 8, "vendedor_codigo": "15"},
+        ]
+        carga = {"assinatura": "abc", "mapa": "151501"}
+        with mock.patch.object(server, "get_conn", return_value=conn):
+            result = server._vendas_diario_importar_carga_pdf_arquivo(
+                "/tmp/carga.pdf", vendedor_codigo="16", carga=carga
+            )
+        self.assertEqual("erro", result["status"])
+        self.assertIn("vinculado a um frete", result["erro"])
+        self.assertEqual("15", result["vendedor_codigo"])
 
     def test_manual_status_persists_each_sellout_source(self):
         with tempfile.TemporaryDirectory() as root:
@@ -193,33 +183,27 @@ class VendasDiarioPastasTest(unittest.TestCase):
                 ],
             }
             sources = [
-                os.path.join(root, "IND3", "SELLOUT_M.CSV"),
-                os.path.join(root, "INDB", "SELLOUT_M.CSV"),
+                os.path.join(root, "IND3", "SELLOUT_D.CSV"),
+                os.path.join(root, "INDB", "SELLOUT_D.CSV"),
             ]
             for source in sources:
                 Path(source).parent.mkdir()
                 Path(source).write_text("csv", encoding="utf-8")
-            with mock.patch.object(server, "VENDAS_DIARIO_TXT_DIR", os.fspath(txt_dir)), \
-                    mock.patch.object(server, "VENDAS_DIARIO_PDF_DIR", os.fspath(pdf_dir)), \
-                    mock.patch.object(server, "fontes_mensais_configuradas", return_value=sources), \
-                    mock.patch.object(server, "_vendas_sellout_mensal_importar", return_value=sellout), \
-                    mock.patch.object(server, "_vendas_diario_unificar_cards_semelhantes", return_value={}):
+            with mock.patch.object(server, "fontes_diarias_configuradas", return_value=sources), \
+                    mock.patch.object(server, "_vendas_sellout_diario_importar", return_value=sellout):
                 result = server._vendas_diario_importar_pasta(incluir_sellout=True, origem="manual")
                 persisted = server._vendas_diario_status_publico()
             self.assertEqual("manual", result["ultima_leitura"]["origem"])
-            self.assertEqual("sem_arquivos", persisted["fontes"]["txt"]["status"])
-            self.assertEqual("sem_arquivos", persisted["fontes"]["pdf"]["status"])
-            self.assertEqual("sem_alteracoes", persisted["fontes"]["sellout_ind3"]["status"])
-            self.assertEqual(201, persisted["fontes"]["sellout_ind3"]["linhas"])
-            self.assertEqual(929, persisted["fontes"]["sellout_indb"]["linhas"])
+            self.assertEqual("sem_alteracoes", persisted["fontes"]["sellout_d_ind3"]["status"])
+            self.assertEqual(201, persisted["fontes"]["sellout_d_ind3"]["linhas"])
+            self.assertEqual(929, persisted["fontes"]["sellout_d_indb"]["linhas"])
             self.assertFalse(persisted["em_andamento"])
 
     def test_status_em_andamento_vira_interrompido_sem_lock(self):
         server._vendas_diario_status_iniciar("manual", incluir_sellout=True)
         status = server._vendas_diario_status_publico()
         self.assertFalse(status["em_andamento"])
-        self.assertEqual("interrompido", status["fontes"]["txt"]["status"])
-        self.assertEqual("interrompido", status["fontes"]["sellout_ind3"]["status"])
+        self.assertEqual("interrompido", status["fontes"]["sellout_d_ind3"]["status"])
 
 
 if __name__ == "__main__":

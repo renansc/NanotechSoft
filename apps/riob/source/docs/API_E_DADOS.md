@@ -118,6 +118,7 @@ Observacao critica:
 - `GET /api/dashboard_frota`
 - `GET /api/frota_resumo`
 - `GET /api/frota_historico/<veiculo_id>`
+- `GET /api/frota_relatorio/consumo-rodagem`
 - `GET /api/frota_relatorio/mensal`
 - `GET /api/frota_relatorio`
 - `GET /api/relatorio`
@@ -1083,6 +1084,7 @@ Marcar uma compra como recebida nao lanca estoque automaticamente.
 - `GET /api/frota_resumo`
 - `GET /api/dashboard_frota`
 - `GET /api/frota_historico/<veiculo_id>`
+- `GET /api/frota_relatorio/consumo-rodagem`
 - `GET /api/frota_relatorio/mensal`
 - `GET /api/frota_relatorio`
 
@@ -1196,6 +1198,30 @@ base, quando existente. ARLA aparece nos litros e custos, mas nao movimenta o
 odometro nem participa da media de KM/L. A tela usa o recurso existente `frota`
 e o destino individual `gestaofrota:relatorios`; nenhuma permissao nova e
 concedida.
+
+### `GET /api/frota_relatorio/consumo-rodagem`
+
+Retorna o relatorio de consumo e rodagem por veiculo. Aceita os filtros
+inclusivos `data_inicio=AAAA-MM-DD`, `data_fim=AAAA-MM-DD` e `veiculo_id`.
+Quando o periodo e omitido, usa o primeiro dia do mes corrente ate hoje.
+`formato=pdf` abre a mesma apuracao em PDF.
+
+O relatorio inclui somente veiculos e abastecimentos de Diesel S500, Diesel S10
+e ARLA; gasolina, etanol e veiculos flex ficam fora inclusive das opcoes do
+filtro. Cada linha informa veiculo, KM total rodado, litros separados de S500,
+S10 e ARLA, litros totais dos tres produtos e media geral ponderada de KM/L. O
+cabecalho da tela e do PDF repete os totais gerais do conjunto filtrado.
+
+A apuracao carrega o ultimo abastecimento diesel anterior ao inicio como base,
+soma somente diferencas positivas de odometro e calcula `KM validos / litros de
+S500 e S10 dos respectivos abastecimentos`. ARLA integra os litros totais, mas
+nao avanca o odometro nem entra na media.
+
+O dashboard de frota aplica a mesma regra ao historico completo e exibe, para
+cada veiculo, `km_total_rodado` junto de `media_km`, que passa a representar a
+media geral ponderada. O acesso permanece no recurso `frota` e no destino
+individual `gestaofrota:relatorios`; nenhuma permissao e concedida
+automaticamente.
 
 ### `GET /api/frota_relatorio`
 

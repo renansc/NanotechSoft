@@ -39,6 +39,11 @@ services:
   riob-app:
     container_name: riobranco-app
     image: riob-app:latest
+    labels:
+      com.nanotechsoft.import-source.sellout-ind3: ${RB_SELLOUT_D_HOST_DIR_IND3:-/media/serverwin/IND3/AnalyticsCTA/Dados}
+      com.nanotechsoft.import-source.sellout-indb: ${RB_SELLOUT_D_HOST_DIR_INDB:-/media/serverwin/INDB/AnalyticsCTA/Dados}
+      com.nanotechsoft.import-source.vendas-pdf: ${RB_VENDAS_DIARIO_PDF_HOST_DIR:-/media/serverwin/CARGAS/VendasDiarioPdfs}
+      com.nanotechsoft.import-source.vendas-txt: ${RB_VENDAS_DIARIO_TXT_HOST_DIR:-/media/serverwin/CARGAS/CargasTxt}
     build:
       context: ./apps/riob/source
       dockerfile: Dockerfile
@@ -104,11 +109,11 @@ services:
       RB_EMAIL_AUTO_IMPORT: ${RB_EMAIL_AUTO_IMPORT:-1}
       RB_EMAIL_AUTO_INTERVAL_MINUTES: ${RB_EMAIL_AUTO_INTERVAL_MINUTES:-5}
       RB_EMAIL_TIMEZONE: ${RB_EMAIL_TIMEZONE:-America/Sao_Paulo}
-      RB_SELLOUT_M_AUTO: ${RB_SELLOUT_M_AUTO:-1}
-      RB_SELLOUT_M_ARQUIVOS: /imports/sellout/IND3/SELLOUT_M.CSV:/imports/sellout/INDB/SELLOUT_M.CSV
-      RB_VENDAS_DIARIO_DIR: /imports/vendas-diario
-      RB_VENDAS_DIARIO_TXT_DIR: /imports/vendas-diario/txt
-      RB_VENDAS_DIARIO_PDF_DIR: /imports/vendas-diario/pdf
+      RB_SELLOUT_D_AUTO: ${RB_SELLOUT_D_AUTO:-1}
+      RB_SELLOUT_D_ARQUIVOS: /host-imports/serverwin/IND3/AnalyticsCTA/Dados/SELLOUT_D.CSV:/host-imports/serverwin/INDB/AnalyticsCTA/Dados/SELLOUT_D.CSV
+      RB_VENDAS_DIARIO_DIR: /host-imports/serverwin/CARGAS
+      RB_VENDAS_DIARIO_TXT_DIR: /host-imports/serverwin/CARGAS/CargasTxt
+      RB_VENDAS_DIARIO_PDF_DIR: /host-imports/serverwin/CARGAS/VendasDiarioPdfs
       RB_VENDAS_DIARIO_HORA: ${RB_VENDAS_DIARIO_HORA:-08:00}
       RB_VENDAS_DIARIO_JANELA_INICIO: ${RB_VENDAS_DIARIO_JANELA_INICIO:-07:10}
       RB_VENDAS_DIARIO_JANELA_FIM: ${RB_VENDAS_DIARIO_JANELA_FIM:-17:00}
@@ -127,10 +132,15 @@ services:
       - ./apps/riob/source/certs:/app/certs:ro
       - ./apps/riob/source/ImportarXml:/legacy/ImportarXml:ro
       - ./apps/riob/source/GestorEmails:/legacy/GestorEmails:ro
-      - ${RB_SELLOUT_M_HOST_DIR_IND3:-/media/serverwin/IND3/AnalyticsCTA/Dados}:/imports/sellout/IND3:ro
-      - ${RB_SELLOUT_M_HOST_DIR_INDB:-/media/serverwin/INDB/AnalyticsCTA/Dados}:/imports/sellout/INDB:ro
-      - ${RB_VENDAS_DIARIO_TXT_HOST_DIR:-/media/serverwin/CARGAS/CargasTxt}:/imports/vendas-diario/txt:rw
-      - ${RB_VENDAS_DIARIO_PDF_HOST_DIR:-/media/serverwin/CARGAS/VendasDiarioPdfs}:/imports/vendas-diario/pdf:rw
+      # O pai do automount permanece montavel mesmo quando o Windows esta
+      # desligado. rslave propaga o CIFS ao container assim que o host voltar.
+      - type: bind
+        source: ${RB_IMPORTS_HOST_PARENT:-/media}
+        target: /host-imports
+        read_only: true
+        bind:
+          propagation: rslave
+          create_host_path: false
 
   riob-proxy:
     image: nginx:1.27-alpine

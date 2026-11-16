@@ -98,7 +98,14 @@ O recurso mantem agenda e periodicidade de visitas, vendedor, cliente e rota.
 - `PUT /api/vendas/diario/kanban/<id>/status`: move o card entre `importado`, `conferir_estoque` e `conferido`; nenhum desses status altera o estoque automaticamente.
 - `PUT /api/vendas/diario/kanban/<id>` e `DELETE /api/vendas/diario/kanban/<id>`: salvam o rascunho editavel ou ocultam o card ainda nao vinculado.
 - `POST /api/vendas/diario/kanban/<id>/enviar-frete`: valida cidade, caminhao, motorista e entregador, cria um frete `liberado` no Kanban RioB e vincula o card de origem em uma unica transacao. O envio nao baixa estoque.
-- `POST /api/vendas/diario/importar-carga-pdf`: importa o PDF de Carga do Caminhao, reconhece mapa, rota, cidades, peso, entregas, volumes, valores e produtos e cria um card de carga elegivel ao mesmo fluxo de frete.
+- `POST /api/vendas/diario/importar`: atualiza exclusivamente `SELLOUT_D.CSV`
+  de IND3 e INDB. A resposta usa `sellout_diario`; upload TXT e SELLOUT_M nao
+  sao aceitos.
+- `GET /api/vendas/diario/status-leitura`: retorna o estado persistente das duas
+  fontes SELLOUT_D.
+- `POST /api/vendas/diario/importar-carga-pdf` e
+  `POST /api/vendas/diario/importar-erros/corrigir`: contratos legados
+  desativados, retornam 410.
 - `POST /api/vendas/cache/importar`: na tela de importacao diaria, recebe tambem o
   SELLOUT final em CSV ou XLSX. Alem das metricas de vendas, a persistencia
   conserva cliente, rota, mapa, endereco, cidade, motorista e ajudantes para a
@@ -110,10 +117,9 @@ O recurso mantem agenda e periodicidade de visitas, vendedor, cliente e rota.
 - `GET /api/vendas/diario/referencias`: informa as quantidades e os ultimos
   arquivos de clientes e rotas importados.
 - O campo de cidade do popup diario usa obrigatoriamente `comissao_cidades.id`, sincronizado com as cidades e rotas do Kanban RioB. O texto original do TXT/PDF e apenas referencia e nunca e enviado diretamente ao frete.
-- `POST /api/vendas/diario/importar`: pelo botao Ler pastas automaticamente, varre TXT/PDF e le o SELLOUT mensal a qualquer horario; aceita tambem um TXT individual no campo multipart `arquivo`, sem disparar SELLOUT. Recurso preservado: `vendas`. A resposta inclui `sellout.status` e eventual erro, independente dos resultados TXT/PDF. SELLOUT automatico roda somente as 08:00 (America/Sao_Paulo), separado da janela TXT/PDF abaixo.
-- O compartilhamento SMB deve estar efetivamente montado no host e ser exposto
-  ao container em `/imports/vendas-diario`; a existencia de uma pasta local
-  vazia no mesmo caminho nao e considerada uma fonte valida pelo deploy.
+- O compartilhamento SMB expoe as pastas de IND3 e INDB em
+  `/imports/sellout`; somente `SELLOUT_D.CSV` e monitorado. Recurso preservado:
+  `vendas`.
 - A rotina automatica roda imediatamente quando o app inicia dentro da janela
   configurada e repete a varredura idempotente a cada 15 minutos entre 07:10 e
   17:00 por padrao. A janela e controlada por
@@ -121,8 +127,8 @@ O recurso mantem agenda e periodicidade de visitas, vendedor, cliente e rota.
   `RB_VENDAS_DIARIO_INTERVALO_MINUTOS`; `RB_VENDAS_DIARIO_HORA` permanece como
   fallback compativel para o inicio da janela. O container RioB usa
   `TZ=America/Sao_Paulo` para interpretar essa janela no horario da operacao.
-  Entre as passagens, um snapshot de nome, tamanho e modificacao evita reler os
-  PDFs antigos quando nenhuma fonte mudou.
+  Entre as passagens, um snapshot de caminho, tamanho e modificacao evita reler
+  os dois SELLOUT_D quando nenhuma fonte mudou.
 
 - `GET /api/vendas/relatorio/preco-medio/pdf`
 - `GET /api/vendas/relatorio?tipo_relatorio=percentual_vendas_anual`: compara o volume em hectolitros do ano mais recente com o anterior, ate o ultimo mes disponivel, e aceita filtros `vendedor` e `cliente`.

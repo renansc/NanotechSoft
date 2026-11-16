@@ -273,7 +273,7 @@
         "nome": "Relatorios de Frota RioB",
         "url": "/apps/riob#gestaofrota:relatorios",
         "recurso": "frota",
-        "recurso_nome": "Frota: relatorio mensal de medias KM/L, abastecimentos e PDFs operacionais"
+        "recurso_nome": "Frota: dashboard com KM total e media geral, relatorio por periodo restrito a Diesel S500, Diesel S10 e ARLA com totais gerais e PDF, abastecimentos e PDFs operacionais"
       },
       {
         "nome": "Vendas",
@@ -660,7 +660,7 @@
             "nome": "Frota",
             "url": "/apps/riob#gestaofrota:relatorios",
             "recurso": "frota",
-            "recurso_nome": "Frota: relatorio mensal de medias KM/L, abastecimentos e PDFs operacionais"
+            "recurso_nome": "Frota: dashboard com KM total e media geral, relatorio por periodo restrito a Diesel S500, Diesel S10 e ARLA com totais gerais e PDF, abastecimentos e PDFs operacionais"
           },
           {
             "nome": "Contagens, desperdicio e sobras",

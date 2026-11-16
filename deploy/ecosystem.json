@@ -20,6 +20,8 @@
       "profile": "rio-branco",
       "requiredModules": [
         "riob",
+        "financeiro",
+        "sped",
         "automacao",
         "zap",
         "riob-chat",
@@ -40,6 +42,7 @@
       "requiredModules": [
         "riob",
         "financeiro",
+        "sped",
         "nanoponto",
         "nanostore",
         "automacao",

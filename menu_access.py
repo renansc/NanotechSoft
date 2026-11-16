@@ -126,6 +126,7 @@ def api_destinations(app, path, method, query=None):
             'dashboard_processos': ['dashboard:processos'], 'dashboard_compras': ['dashboard:compras'],
             'dashboard': ['dashboard'],
             'dashboard_vendas': ['dashboard:vendas_anual','dashboard:bonificacoes','dashboard:variacao_preco','dashboard:grupos_embalagem'],
+            'estoque/relatorio-posicao-dia': ['relatorios:estoque_posicao_dia'],
             'estoque/relatorio-comprometido': ['relatorios:estoque_comprometido'],
             'estoque/contagens/relatorio': ['relatorios:contagens'], 'estoque/contagens': ['estoque:contagem'],
             'estoque/perdas': ['estoque:perdas'],
@@ -135,7 +136,8 @@ def api_destinations(app, path, method, query=None):
             'estoque/rastreabilidade': ['estoque:rastreio'],
             'estoque/movimentar': ['estoque:movimentar'], 'estoque/rastreio': ['estoque:rastreio'],
             'estoque/acerto': ['estoque:acerto'],
-            'estoque/importacoes-xml': ['estoque:importar_xml_auto'],
+            'estoque/aprovacoes-pdf': ['estoque:documentos'],
+            'estoque/importacoes-xml': ['estoque:importar_xml_auto','estoque:documentos'],
             'estoque/nfe': ['estoque:importar_xml_bipe','estoque:importar_xml_auto'],
             'estoque/conferencias': ['estoque:importar_xml_bipe','estoque:importar_xml_auto'],
             'vendas/orcamentos/config': ['config:orcamentos'],
@@ -144,6 +146,7 @@ def api_destinations(app, path, method, query=None):
             'vendas/config': ['config:vendas'], 'vendas/cache': ['config:base_vendas'],
             'vendas/sellout': ['workflow:vendas_diario_importar'],
             'vendas/diario/status-leitura': ['workflow:vendas_diario_importar'],
+            'vendas/diario/importar-erros': ['workflow:vendas_diario_importar'],
             'vendas/diario/importar': ['workflow:vendas_diario_importar'],
             'vendas/diario/cargas-semana': ['relatorios:cargas_semana'],
             'vendas/diario/relatorio': ['vendas:relatorio_diario'],
@@ -178,7 +181,7 @@ def api_destinations(app, path, method, query=None):
                 views = list(routes[prefix])
                 if read and prefix in {'estoque/produtos', 'estoque/posicao', 'estoque/grupos'}:
                     views += ['estoque:contagem','estoque:posicao','estoque:movimentar','estoque:rastreio','estoque:acerto',
-                              'estoque:importar_xml_bipe','estoque:importar_xml_auto','vendas:orcamento','compras:previsao','cadastros:estoque_produtos','dashboard:estoque']
+                              'estoque:importar_xml_bipe','estoque:importar_xml_auto','estoque:documentos','vendas:orcamento','compras:previsao','cadastros:estoque_produtos','dashboard:estoque']
                 dependencies = {
                     'vendas/orcamentos/config': ['vendas:orcamento'],
                     'vendas/config': ['vendas:orcamento','vendas:relatorio','vendas:relatorio_anual','dashboard:vendas_anual'],
@@ -241,6 +244,11 @@ def api_destinations(app, path, method, query=None):
         elif p.startswith('tickets'): views = ['chamados', 'historico', 'agenda'] if read else ['chamados', 'historico']
         else: return []
         return ['/apps/chamados?view=' + view for view in views]
+    if app == 'financeiro':
+        p = path.removeprefix('/apps/financeiro/api/')
+        if p == 'accounting' or p.startswith('accounting/'):
+            return ['/apps/financeiro?view=contabilidade']
+        return []
     if app == 'automacao':
         p = path.removeprefix('/apps/automacao').replace('/original', '', 1)
         if p.startswith(('/motor/', '/api/leitura', '/api/ultima')): suffixes = ['/motores']

@@ -9,7 +9,7 @@ import menu_access as access
 
 USER = {'id': 42, 'perfil': 'usuario'}
 ROOT = Path(__file__).resolve().parents[1]
-KEYS = ['riob','automacao','tecnologia','impressoras','chamados','riob-email','riob-xml','zap']
+KEYS = ['riob','sped','automacao','tecnologia','impressoras','chamados','riob-email','riob-xml','zap']
 
 
 class IndividualMenuTests(unittest.TestCase):

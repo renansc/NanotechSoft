@@ -14,14 +14,14 @@ SOURCES = ['app.py', 'apps/riob/source/server.py', 'apps/riob/source/legacy_serv
            'apps/riob/source/gestao_processos_compras.py', 'apps/riob/source/estoque_contagem.py',
            'apps/automacao/source/app.py', 'apps/impressoras/source/backend.py',
            'apps/zap/source/app/routes.py']
-ACTIVE = ['riob', 'riob-email', 'riob-xml', 'automacao', 'chamados', 'tecnologia', 'impressoras', 'zap']
+ACTIVE = ['riob', 'sped', 'riob-email', 'riob-xml', 'automacao', 'chamados', 'tecnologia', 'impressoras', 'zap']
 
 
 def menu_entries():
     rows=[]
     for key in ACTIVE:
         manifest=json.loads((ROOT/'apps'/key/'app.json').read_text())
-        profile=manifest['menu_profiles']['rio-branco']
+        profile=(manifest.get('menu_profiles') or {}).get('rio-branco', manifest)
         for kind in ('menu_groups','config_groups'):
             for group, entries in profile[kind].items():
                 rows.extend(dict(app=key,grupo=group,nome=e['nome'],url=e['url'],recurso=e.get('recurso','*')) for e in entries)

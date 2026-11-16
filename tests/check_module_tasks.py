@@ -173,7 +173,7 @@ with sync_playwright() as p, mock.patch.object(portal,'configured_client_id',ret
                 assert not page.locator('#alertConfigForm').is_visible()
             elif url=='#backup-planos':
                 page.locator('#backupTable').get_by_text('Plano teste').wait_for()
-                page.get_by_role('button',name='Forçar backup',exact=True).wait_for()
+                page.get_by_role('button',name='Forçar novo backup',exact=True).wait_for()
                 page.get_by_role('button',name='Editar',exact=True).click()
                 assert page.locator('#backupName').input_value()=='Plano teste'
                 page.locator('#cancelBackup').click()

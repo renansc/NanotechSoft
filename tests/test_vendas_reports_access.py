@@ -18,9 +18,10 @@ class VendasReportsAccessTest(unittest.TestCase):
                 if item['url'] == '/apps/riob#workflow:vendas_diario_importar'
             )
             for path in ['/apps/riob/api/vendas/diario/importar',
+                         '/apps/riob/api/vendas/diario/importar-erros/corrigir',
                          '/apps/riob/api/vendas/diario/status-leitura']:
                 for grants, status in [({'vendas'}, 200), ({'estoque'}, 403), ({entry['key']}, 200)]:
-                    method = 'POST' if path.endswith('/importar') else 'GET'
+                    method = 'GET' if path.endswith('/status-leitura') else 'POST'
                     with self.subTest(profile=profile, path=path, grants=grants), \
                          portal.app.test_request_context(path, method=method), \
                          mock.patch.object(portal, 'configured_client_id', return_value=profile), \

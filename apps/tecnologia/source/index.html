@@ -237,10 +237,26 @@
 
         <form class="panel" id="alertConfigForm">
           <div class="panelHead">
-            <div><span class="eyebrow">Por ambiente</span><h2>O que será notificado</h2></div>
+            <div><span class="eyebrow">Por ambiente</span><h2>Configuração do link e alertas</h2></div>
             <button class="btn primary" id="saveAlertConfig" type="submit">Salvar configuração</button>
           </div>
-          <p class="configIntro">Cada instalação mantém esta escolha no próprio banco. Desative todos os itens de internet nos ambientes onde o link não precisa ser acompanhado.</p>
+          <p class="configIntro">Informe os dados contratados neste ambiente para comparar o teste de velocidade e o consumo instantâneo com a capacidade real do link.</p>
+
+          <section class="linkConfigBox" aria-labelledby="contractedLinkTitle">
+            <div class="configSectionHead">
+              <h3 id="contractedLinkTitle">Dados do link contratado</h3>
+              <p>Use as velocidades nominais do plano da operadora. Esses valores não são resultados de teste.</p>
+            </div>
+            <div class="formGrid">
+              <label>Download contratado (Mbps)<input id="linkDownloadCapacity" type="number" min="0" max="1000000" step="0.1" required></label>
+              <label>Upload contratado (Mbps)<input id="linkUploadCapacity" type="number" min="0" max="1000000" step="0.1" required></label>
+            </div>
+          </section>
+
+          <div class="configSectionHead">
+            <h3>O que será notificado</h3>
+            <p>Cada instalação mantém estas escolhas no próprio banco.</p>
+          </div>
           <div class="notificationGrid">
             <label class="notificationOption"><input id="notifyInternetDown" type="checkbox"><span><strong>Queda da internet</strong><small>O destino externo deixou de responder.</small></span></label>
             <label class="notificationOption"><input id="notifyLinkSlow" type="checkbox"><span><strong>Link abaixo do mínimo</strong><small>O teste periódico mediu download ou upload abaixo do cadastro.</small></span></label>
@@ -252,13 +268,9 @@
             <label class="notificationOption"><input id="notifyDeviceNetwork" type="checkbox"><span><strong>Interface de rede</strong><small>Interface do equipamento perto da própria capacidade.</small></span></label>
           </div>
 
-          <div class="linkConfigBox">
-            <div class="formGrid">
-              <label>Capacidade contratada de download (Mbps)<input id="linkDownloadCapacity" type="number" min="0" max="1000000" step="0.1" required></label>
-              <label>Capacidade contratada de upload (Mbps)<input id="linkUploadCapacity" type="number" min="0" max="1000000" step="0.1" required></label>
-              <label>Notificar ao atingir (%)<input id="linkUsageThreshold" type="number" min="1" max="100" step="0.1" required></label>
-              <label class="notificationOption compact"><input id="includeConsumers" type="checkbox"><span><strong>Incluir maiores consumidores</strong><small>Lista até cinco equipamentos monitorados no e-mail.</small></span></label>
-            </div>
+          <div class="formGrid alertRuleGrid">
+            <label>Notificar ocupação ao atingir (%)<input id="linkUsageThreshold" type="number" min="1" max="100" step="0.1" required></label>
+            <label class="notificationOption compact"><input id="includeConsumers" type="checkbox"><span><strong>Incluir maiores consumidores</strong><small>Lista até cinco equipamentos monitorados no e-mail.</small></span></label>
           </div>
           <p class="scopeWarning">Esta ocupação é uma estimativa: soma o tráfego das máquinas com exporter ou SNMP e pode incluir tráfego interno da rede. Identificação exata do consumo da internet por IP exige NetFlow, sFlow, IPFIX ou API do roteador.</p>
         </form>
@@ -270,10 +282,20 @@
           <h2>Monitoramento de link</h2>
           <button class="btn" id="refreshLinkMonitor" type="button">Atualizar monitoramento</button>
         </div>
-        <div class="kpiGrid">
-          <article class="kpi"><span>Internet</span><strong id="linkConnection">—</strong><small>última verificação do link</small></article>
-          <article class="kpi speed"><span>Velocidade disponível</span><strong id="linkDownload">—</strong><small id="linkUpload">—</small></article>
-          <article class="kpi speed"><span>Consumo de Internet</span><strong id="linkInternetUsage">—</strong><small>WAN/uplink; inclui celulares</small></article>
+        <section class="linkComparison" aria-labelledby="linkComparisonTitle">
+          <div class="linkComparisonHead">
+            <div><span class="eyebrow">Comparação direta</span><h3 id="linkComparisonTitle">Velocidade e consumo do link</h3></div>
+            <p>O teste de velocidade e a coleta de consumo têm horários independentes; confira a data exibida em cada cartão.</p>
+          </div>
+          <div class="kpiGrid linkComparisonGrid">
+            <article class="kpi"><span>Link contratado</span><strong id="linkContractedDownload">—</strong><small id="linkContractedUpload">Informe em Configuração</small></article>
+            <article class="kpi speed"><span>Último teste de velocidade</span><strong id="linkDownload">—</strong><small id="linkUpload">—</small><small id="linkSpeedMeasuredAt" class="kpiMeasuredAt">Nenhum teste registrado</small></article>
+            <article class="kpi speed"><span>Consumo instantâneo</span><strong id="linkInternetUsage">—</strong><small id="linkInternetUsageAt">WAN/uplink; inclui celulares</small></article>
+            <article class="kpi"><span>Ocupação instantânea</span><strong id="linkInstantUsagePct">—</strong><small id="linkInstantUsageDirection">depende do link contratado</small></article>
+          </div>
+        </section>
+        <div class="kpiGrid linkContextGrid">
+          <article class="kpi"><span>Internet</span><strong id="linkConnection">—</strong><small id="linkConnectionAt">última verificação do link</small></article>
           <article class="kpi"><span>Tráfego LAN/Wi-Fi</span><strong id="linkInternalUsage">—</strong><small>inclui Internet e tráfego interno</small></article>
           <article class="kpi warning"><span>Internet não atribuída</span><strong id="linkUnattributedUsage">—</strong><small>celulares e outros sem agente; estimativa</small></article>
         </div>
@@ -306,8 +328,8 @@
         <section class="panel" data-backup-sections="visao">
           <div class="panelHead"><h2>Estado atual dos backups</h2></div>
           <div class="tableWrap"><table>
-            <thead><tr><th>Plano</th><th>Estado atual</th><th>Último contato</th><th>Destino</th></tr></thead>
-            <tbody id="backupHealthTable"><tr><td colspan="4">Consultando agentes...</td></tr></tbody>
+            <thead><tr><th>Plano</th><th>Estado atual</th><th>Último contato</th><th>Destino</th><th>Ação</th></tr></thead>
+            <tbody id="backupHealthTable"><tr><td colspan="5">Consultando agentes...</td></tr></tbody>
           </table></div>
         </section>
 

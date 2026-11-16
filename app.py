@@ -187,6 +187,7 @@ NANOSTORE_DIR = Path(os.environ.get("NANOSTORE_APP_DIR", str(app_source_dir("nan
 GPSMUSICAL_DIR = Path(os.environ.get("GPSMUSICAL_APP_DIR", str(app_source_dir("gpsmusical"))))
 BPA_DIR = Path(os.environ.get("BPA_APP_DIR", str(app_source_dir("bpa"))))
 TATOO_DIR = Path(os.environ.get("TATOO_APP_DIR", str(app_source_dir("tatoo"))))
+SPED_DIR = Path(os.environ.get("SPED_APP_DIR", str(app_source_dir("sped"))))
 TECNOLOGIA_DIR = Path(os.environ.get("TECNOLOGIA_APP_DIR", str(app_source_dir("tecnologia"))))
 IMPRESSORAS_DIR = Path(os.environ.get("IMPRESSORAS_APP_DIR", str(app_source_dir("impressoras"))))
 CHAMADOS_DIR = Path(os.environ.get("CHAMADOS_APP_DIR", str(app_source_dir("chamados"))))
@@ -218,6 +219,7 @@ FINANCEIRO_VIEWS = {
     "pagar",
     "receber",
     "config",
+    "contabilidade",
 }
 FINANCEIRO_ACTIVE_PAGES = {
     "dashboard": "dashboards",
@@ -231,6 +233,7 @@ FINANCEIRO_ACTIVE_PAGES = {
     "lancamentos": "relatorios",
     "importar": "import_export",
     "config": "config",
+    "contabilidade": "config",
 }
 AUTOMACAO_PORT = int(os.environ.get("AUTOMACAO_PORT", "8890"))
 AUTOMACAO_BASE_URL = f"http://127.0.0.1:{AUTOMACAO_PORT}"
@@ -1388,6 +1391,13 @@ body[class*="theme-"] .sidebar a:hover,
 body[class*="theme-"] button:hover {{
   background: var(--accent-dark);
 }}
+body[class*="theme-"] button.btn-danger {{
+  background: var(--danger);
+}}
+body[class*="theme-"] button.btn-danger:hover {{
+  background: var(--danger);
+  filter: brightness(.88);
+}}
 body[class*="theme-"] .sidebar .menu-section,
 body[class*="theme-"] .muted,
 body[class*="theme-"] .subtitle,
@@ -1957,7 +1967,17 @@ def enforce_app_permission():
                 if required_email not in recursos:
                     return jsonify({"erro": "recurso nao liberado para este usuario"}), 403
             view = request.args.get("view")
-            if view and view not in recursos:
+            required_view = ({
+                "dashboard": "dashboard",
+                "imports": "importar",
+                "details": "analise",
+                "compare": "comparativo",
+                "sales": "transacoes",
+                "taxpanel": "tributos",
+                "groups": "grupos",
+                "settings": "config",
+            }.get(view, view) if app_key == "sped" else view)
+            if required_view and required_view not in recursos:
                 return jsonify({"erro": "funcao nao liberada para este usuario"}), 403
             if app_key == "riob":
                 relative = path.removeprefix("/apps/riob/")
@@ -1988,6 +2008,8 @@ def enforce_app_permission():
                         required = "estoque_contagem_relatorio" if api_path.startswith("estoque/contagens/relatorio") else "estoque_contagem_finalizar"
                     if api_path == "estoque/perdas" or api_path.startswith("estoque/perdas/"):
                         required = "estoque_perdas"
+                    if api_path == "estoque/aprovacoes-pdf" or api_path.startswith("estoque/aprovacoes-pdf/"):
+                        required = "estoque_documentos_aprovar"
                     if ("/config" in api_path or api_path.startswith("vendas/cache") or api_path.startswith("vendas/sellout")) and request.method not in {"GET", "HEAD"}:
                         required = "config"
                     read_dependencies = {
@@ -1997,6 +2019,8 @@ def enforce_app_permission():
                         "colaboradores": {"frota", "fretes", "escala", "cargas", "comissao"},
                     }
                     dependency = request.method in {"GET", "HEAD"} and bool(recursos & read_dependencies.get(api_path, set()))
+                    if api_path == "estoque/importacoes-xml" or api_path.startswith("estoque/importacoes-xml/"):
+                        dependency = dependency or "estoque_documentos_aprovar" in recursos
                     if request.method in {"GET", "HEAD"} and re.fullmatch(r"vendas/orcamentos/\d+/pdf", api_path):
                         dependency = dependency or "vendas_orcamentos_relatorio" in recursos
                     if not common and not dependency and required not in recursos:
@@ -2195,7 +2219,7 @@ def menu_sections(apps, usuario=None):
                  ("cadastros", "CADASTRO"), ("relatorios", "RELATORIOS"), ("import_export", "DADOS"),
                  ("estoque", "ESTOQUE"), ("monitor", "MONITOR"), ("config", "CONFIGURAR"),
                  ("docs", "DOCUMENTOS")]
-        modules = ["riob", "riob-email", "riob-xml", "automacao", "chamados", "tecnologia", "impressoras", "zap"]
+        modules = ["riob", "financeiro", "sped", "riob-email", "riob-xml", "automacao", "chamados", "tecnologia", "impressoras", "zap"]
         sections["primary"] = []
         for key, label in order:
             grouped = []
@@ -5199,6 +5223,7 @@ STATIC_APP_DIRS = {
     "gpsmusical": GPSMUSICAL_DIR,
     "bpa": BPA_DIR,
     "tatoo": TATOO_DIR,
+    "sped": SPED_DIR,
     "tecnologia": TECNOLOGIA_DIR,
     "impressoras": IMPRESSORAS_DIR,
     "chamados": CHAMADOS_DIR,
@@ -5208,6 +5233,7 @@ STATIC_APP_INDEX = {
     "gpsmusical": "index.html",
     "bpa": "index.html",
     "tatoo": "index.html",
+    "sped": "index.html",
     "tecnologia": "index.html",
     "impressoras": "index.html",
     "chamados": "index.html",
@@ -5217,6 +5243,7 @@ STATIC_APP_NAMES = {
     "gpsmusical": "GPS Musical",
     "bpa": "BPA",
     "tatoo": "Tatoo",
+    "sped": "SPED Fiscal",
     "tecnologia": "Tecnologia",
     "impressoras": "Impressoras",
     "chamados": "Chamados",
@@ -5228,6 +5255,17 @@ def static_app_active_page(app_key, subpath):
         return "dashboards"
     if app_key in {"bpa", "tatoo"}:
         return "cadastros"
+    if app_key == "sped":
+        view = str(request.args.get("view") or "dashboard") if has_request_context() else "dashboard"
+        return {
+            "groups": "cadastros",
+            "details": "relatorios",
+            "compare": "relatorios",
+            "sales": "relatorios",
+            "taxpanel": "relatorios",
+            "imports": "import_export",
+            "settings": "config",
+        }.get(view, "dashboards")
     if app_key == "tecnologia":
         return "dashboards"
     if app_key == "impressoras":
@@ -5321,20 +5359,65 @@ def rewrite_static_app_html(text, app_key, integrated=True):
     return apply_standalone_theme(text)
 
 
+def scope_sped_css(css_text):
+    """Confina o CSS legado ao conteudo importado, sem afetar o shell."""
+    def scoped_selector(selector):
+        selector = selector.strip()
+        if selector in {":root", "body"}:
+            return ".static-sped"
+        if selector.startswith("body"):
+            return ".static-sped" + selector[4:]
+        return ".static-sped " + selector
+
+    def replace(match):
+        boundary, spacing, selectors = match.groups()
+        scoped = ",".join(scoped_selector(item) for item in selectors.split(","))
+        return boundary + spacing + scoped + "{"
+
+    return re.sub(r"(^|[{}])(\s*)([^@{}][^{}]*?)\{", replace, css_text)
+
+
 def extract_static_app_integrated(html_text, app_key, subpath=""):
     # Estes modulos usam as variaveis do tema do shell. Injetar o tema
     # standalone aqui reaplicava CSS global aos botoes e ao cabecalho.
     text = (rewrite_static_app_paths(html_text, app_key, integrated=True)
             if app_key in {"tecnologia", "impressoras", "chamados"}
             else rewrite_static_app_html(html_text, app_key, integrated=True))
+    if app_key == "sped":
+        text = re.sub(r"<header>.*?</header>", "", text, count=1, flags=re.I | re.S)
+        text = re.sub(r'<nav class="nav">.*?</nav>', "", text, count=1, flags=re.I | re.S)
     link_tags = "\n".join(re.findall(r'<link[^>]+rel=["\']stylesheet["\'][^>]*>', text, flags=re.I))
-    style_tags = "\n".join(re.findall(r"<style[^>]*>.*?</style>", text, flags=re.I | re.S))
+    styles = re.findall(r"<style[^>]*>(.*?)</style>", text, flags=re.I | re.S)
+    if app_key == "sped":
+        styles = [scope_sped_css(style) for style in styles]
+    style_tags = "\n".join(f"<style>{style}</style>" for style in styles)
     body_match = re.search(r"<body([^>]*)>(.*?)</body>", text, flags=re.I | re.S)
     body_attrs = body_match.group(1) if body_match else ""
     body = body_match.group(2) if body_match else text
+    theme_overrides = "" if app_key != "sped" else """
+<style>
+.static-sped { color: inherit; background: transparent; }
+.static-sped main { width: 100%; max-width: none; margin: 0; padding: 0; }
+.static-sped .panel, .static-sped .card, .static-sped .group-modal-box {
+  color: inherit; background: var(--surface); border-color: var(--line);
+}
+.static-sped input, .static-sped select {
+  color: inherit; background: var(--surface); border-color: var(--line);
+}
+.static-sped button { background: var(--accent); }
+.static-sped button:hover, .static-sped button.active { background: var(--accent-dark); }
+.static-sped button.secondary { color: inherit; background: var(--accent-soft); }
+.static-sped button.danger { background: var(--danger); color: #fff; }
+.static-sped .progress > div { background: var(--accent); }
+.static-sped small, .static-sped .muted, .static-sped .hint, .static-sped label { color: var(--muted); }
+.static-sped th, .static-sped .nfe-link { color: var(--accent-dark); }
+.static-sped th, .static-sped td { border-color: var(--line); }
+</style>
+"""
     content = f"""
 {link_tags}
 {style_tags}
+{theme_overrides}
 <div class="static-imported-app static-{html_lib.escape(app_key)}" {body_attrs}>
   {body}
 </div>
@@ -5456,6 +5539,182 @@ def tatoo_original_static(subpath):
 @login_required
 def tatoo_static(subpath):
     return static_app_response("tatoo", subpath)
+
+
+@app.route("/apps/sped")
+@login_required
+def sped_static_root():
+    return static_app_response("sped")
+
+
+def sped_api_access(usuario, *resources):
+    if user_is_admin(usuario):
+        return True
+    grants = get_user_permissions(usuario).get("sped", set())
+    return "*" in grants or bool(set(resources).intersection(grants))
+
+
+def validate_sped_base(payload):
+    if not isinstance(payload, dict):
+        raise ValueError("Base SPED invalida.")
+    period = str(payload.get("period") or "")
+    tax_id = re.sub(r"\D", "", str(payload.get("companyTaxId") or ""))
+    if not re.fullmatch(r"\d{4}-\d{2}", period) or not 8 <= len(tax_id) <= 20:
+        raise ValueError("Empresa ou periodo do SPED invalido.")
+    list_keys = ("docs", "tax", "products", "apuration", "inventory", "production", "inputs", "saleItems")
+    if any(not isinstance(payload.get(key), list) for key in list_keys):
+        raise ValueError("Base SPED incompleta.")
+    if any(len(payload[key]) > 100000 for key in list_keys):
+        raise ValueError("Base SPED excede o limite de registros por bloco.")
+    serialized = json.dumps(payload, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+    if len(serialized.encode("utf-8")) > 64 * 1024 * 1024:
+        raise ValueError("Base SPED excede 64 MB apos o processamento.")
+    return tax_id, period, str(payload.get("company") or "")[:255], str(payload.get("name") or "")[:255], serialized
+
+
+def validate_sped_groups(value):
+    if not isinstance(value, dict) or len(value) > 500:
+        raise ValueError("Agrupamentos SPED invalidos.")
+    result = {}
+    total = 0
+    for raw_name, raw_items in value.items():
+        name = str(raw_name).strip()
+        if not name or len(name) > 180 or not isinstance(raw_items, list):
+            raise ValueError("Agrupamento SPED invalido.")
+        items = []
+        for raw_item in raw_items:
+            item = str(raw_item).strip()
+            if not item or len(item) > 255:
+                raise ValueError("Produto de agrupamento SPED invalido.")
+            if item not in items:
+                items.append(item)
+        total += len(items)
+        if total > 20000:
+            raise ValueError("Agrupamentos SPED excedem 20.000 associacoes.")
+        result[name] = items
+    return result
+
+
+def validate_sped_settings(value):
+    if not isinstance(value, dict) or len(value) > 150:
+        raise ValueError("Regimes tributarios SPED invalidos.")
+    result = {}
+    allowed_regimes = {"", "real", "presumido", "simples", "outro"}
+    allowed_pis = {"", "nao_cumulativo", "cumulativo", "simples", "misto"}
+    for year, entry in value.items():
+        if not re.fullmatch(r"20\d{2}", str(year)) or not isinstance(entry, dict):
+            raise ValueError("Exercicio tributario SPED invalido.")
+        regime, pis = str(entry.get("regime") or ""), str(entry.get("pis") or "")
+        if regime not in allowed_regimes or pis not in allowed_pis:
+            raise ValueError("Configuracao tributaria SPED invalida.")
+        result[str(year)] = {"regime": regime, "pis": pis}
+    return result
+
+
+@app.route("/apps/sped/api/base", methods=["GET", "POST", "DELETE"])
+@login_required
+def sped_api_base():
+    usuario = current_user_or_logout()
+    if request.method == "GET":
+        if not sped_api_access(usuario, "dashboard", "importar", "analise", "comparativo", "transacoes", "tributos", "grupos", "config"):
+            return jsonify({"erro": "recurso nao liberado para este usuario"}), 403
+        conn = get_auth_conn(); cur = conn.cursor(dictionary=True)
+        try:
+            cur.execute("SELECT base_json FROM sped_bases ORDER BY periodo,empresa_cnpj")
+            bases_json = ",".join(row["base_json"] for row in cur.fetchall())
+            cur.execute("SELECT grupos_json,regimes_json FROM sped_configuracoes WHERE id=1")
+            settings = cur.fetchone() or {}
+            payload = ('{"format":"sped-multianual-v3","data":[' + bases_json
+                       + '],"productGroups":' + (settings.get("grupos_json") or "{}")
+                       + ',"settings":' + (settings.get("regimes_json") or "{}") + '}')
+            return Response(payload, content_type="application/json; charset=utf-8")
+        finally:
+            cur.close(); conn.close()
+    if not sped_api_access(usuario, "importar"):
+        return jsonify({"erro": "importacao SPED nao liberada para este usuario"}), 403
+    conn = get_auth_conn(); cur = conn.cursor()
+    try:
+        if request.method == "DELETE":
+            tax_id = re.sub(r"\D", "", request.args.get("empresa_cnpj", ""))
+            period = request.args.get("periodo", "")
+            if tax_id or period:
+                if not tax_id or not re.fullmatch(r"\d{4}-\d{2}", period):
+                    return jsonify({"erro": "Empresa ou periodo do SPED invalido."}), 400
+                cur.execute("DELETE FROM sped_bases WHERE empresa_cnpj=%s AND periodo=%s", (tax_id, period))
+            else:
+                cur.execute("DELETE FROM sped_bases")
+            removed = cur.rowcount
+            conn.commit()
+            return jsonify(ok=True, removidos=max(0, int(removed or 0)))
+        tax_id, period, company, filename, serialized = validate_sped_base(request.get_json(silent=True))
+        cur.execute("""INSERT INTO sped_bases
+            (empresa_cnpj,periodo,empresa,arquivo,base_json,importado_por_id)
+            VALUES (%s,%s,%s,%s,%s,%s)
+            ON DUPLICATE KEY UPDATE empresa=VALUES(empresa),arquivo=VALUES(arquivo),
+            base_json=VALUES(base_json),importado_por_id=VALUES(importado_por_id),atualizado_em=CURRENT_TIMESTAMP""",
+            (tax_id, period, company, filename, serialized, usuario.get("id")))
+        conn.commit()
+        return jsonify(ok=True, periodo=period, empresa_cnpj=tax_id)
+    except ValueError as exc:
+        conn.rollback()
+        return jsonify({"erro": str(exc)}), 400
+    except Exception:
+        conn.rollback()
+        app.logger.exception("Falha ao persistir base SPED")
+        return jsonify({"erro": "Nao foi possivel persistir a base SPED."}), 500
+    finally:
+        cur.close(); conn.close()
+
+
+@app.put("/apps/sped/api/configuracoes")
+@login_required
+def sped_api_configuracoes():
+    usuario = current_user_or_logout()
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"erro": "Configuracao SPED invalida."}), 400
+    try:
+        groups = validate_sped_groups(payload["productGroups"]) if "productGroups" in payload else None
+        settings = validate_sped_settings(payload["settings"]) if "settings" in payload else None
+    except ValueError as exc:
+        return jsonify({"erro": str(exc)}), 400
+    if groups is None and settings is None:
+        return jsonify({"erro": "Nenhuma configuracao SPED informada."}), 400
+    if groups is not None and not sped_api_access(usuario, "grupos"):
+        return jsonify({"erro": "agrupamentos SPED nao liberados para este usuario"}), 403
+    if settings is not None and not sped_api_access(usuario, "config"):
+        return jsonify({"erro": "regimes SPED nao liberados para este usuario"}), 403
+    conn = get_auth_conn(); cur = conn.cursor(dictionary=True)
+    try:
+        cur.execute("SELECT grupos_json,regimes_json FROM sped_configuracoes WHERE id=1")
+        current = cur.fetchone() or {"grupos_json": "{}", "regimes_json": "{}"}
+        groups_json = json.dumps(groups, ensure_ascii=False) if groups is not None else current["grupos_json"]
+        settings_json = json.dumps(settings, ensure_ascii=False) if settings is not None else current["regimes_json"]
+        cur.execute("""INSERT INTO sped_configuracoes (id,grupos_json,regimes_json,atualizado_por_id)
+            VALUES (1,%s,%s,%s) ON DUPLICATE KEY UPDATE grupos_json=VALUES(grupos_json),
+            regimes_json=VALUES(regimes_json),atualizado_por_id=VALUES(atualizado_por_id),atualizado_em=CURRENT_TIMESTAMP""",
+            (groups_json, settings_json, usuario.get("id")))
+        conn.commit()
+        return jsonify(ok=True)
+    except Exception:
+        conn.rollback()
+        app.logger.exception("Falha ao persistir configuracoes SPED")
+        return jsonify({"erro": "Nao foi possivel persistir as configuracoes SPED."}), 500
+    finally:
+        cur.close(); conn.close()
+
+
+@app.route("/apps/sped/original", defaults={"subpath": ""})
+@app.route("/apps/sped/original/<path:subpath>")
+@login_required
+def sped_original_static(subpath):
+    return integrated_app_redirect("sped", subpath)
+
+
+@app.route("/apps/sped/<path:subpath>")
+@login_required
+def sped_static(subpath):
+    return static_app_response("sped", subpath)
 
 
 # ---------------------------------------------------------------------------
@@ -9633,6 +9892,369 @@ def tecnologia_static(subpath):
 # ---------------------------------------------------------------------------
 # Integracao do app Financeiro
 # ---------------------------------------------------------------------------
+ACCOUNTING_CLASSIFICATIONS = {
+    "ATIVO": "Ativo",
+    "PASSIVO": "Passivo",
+    "PATRIMONIO_LIQUIDO": "Patrimônio líquido",
+    "RECEITA": "Receita",
+    "CUSTO": "Custo",
+    "DESPESA": "Despesa",
+    "COMPENSACAO": "Compensação",
+}
+ACCOUNTING_NATURES = {"DEVEDORA": "Devedora", "CREDORA": "Credora"}
+ACCOUNTING_ENTITY_LABELS = {
+    ("financeiro", "conta"): "Conta financeira",
+    ("financeiro", "categoria"): "Categoria financeira",
+    ("financeiro", "favorecido"): "Favorecido",
+    ("riob", "estoque_grupo"): "Grupo de estoque",
+    ("riob", "estoque_produto"): "Produto de estoque",
+    ("riob", "fornecedor"): "Fornecedor",
+}
+
+
+def accounting_text(value, limit):
+    return str(value or "").strip()[:limit]
+
+
+def accounting_plan_rows():
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    cur.execute(
+        """
+        SELECT p.*, u.nome AS atualizado_por_nome
+        FROM contabil_plano_contas p
+        LEFT JOIN usuarios u ON u.id=p.atualizado_por_id
+        ORDER BY p.codigo, p.nome, p.id
+        """
+    )
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    by_id = {str(row["id"]): row for row in rows}
+
+    def level(row):
+        current = row
+        seen = set()
+        result = 1
+        while current.get("conta_pai_id") and current["conta_pai_id"] not in seen:
+            seen.add(current["conta_pai_id"])
+            current = by_id.get(str(current["conta_pai_id"])) or {}
+            if not current:
+                break
+            result += 1
+        return result
+
+    return [{
+        "id": str(row["id"]),
+        "code": row.get("codigo") or "",
+        "name": row.get("nome") or "",
+        "classification": row.get("classificacao") or "",
+        "nature": row.get("natureza") or "",
+        "parentId": str(row.get("conta_pai_id") or ""),
+        "analytical": bool(row.get("analitica")),
+        "active": bool(row.get("ativo")),
+        "description": row.get("descricao") or "",
+        "level": level(row),
+        "updatedBy": row.get("atualizado_por_nome") or "",
+        "updatedAt": row.get("atualizado_em").isoformat() if row.get("atualizado_em") else "",
+    } for row in rows]
+
+
+def accounting_registry_catalog():
+    state = get_finance_state()
+    rows = []
+    warnings = []
+
+    def add(app_key, entity_type, entity_id, name, detail=""):
+        entity_id = accounting_text(entity_id, 120)
+        if not entity_id:
+            return
+        rows.append({
+            "appKey": app_key,
+            "entityType": entity_type,
+            "entityTypeLabel": ACCOUNTING_ENTITY_LABELS[(app_key, entity_type)],
+            "entityId": entity_id,
+            "name": accounting_text(name, 255) or f"Cadastro {entity_id}",
+            "detail": accounting_text(detail, 255),
+        })
+
+    for item in state.get("contas", []):
+        add("financeiro", "conta", item.get("id"), item.get("nome"), item.get("moeda") or "BRL")
+    for item in state.get("categorias", []):
+        add("financeiro", "categoria", item.get("id"), item.get("nome"), item.get("tipo"))
+    for item in state.get("favorecidos", []):
+        add("financeiro", "favorecido", item.get("id"), item.get("nome"), item.get("bankName"))
+
+    schema = accounting_text(os.environ.get("RIOB_DB_NAME") or "riobranco", 160)
+    if not re.fullmatch(r"[A-Za-z0-9_]+", schema):
+        warnings.append("O banco do Estoque não está configurado com um nome válido.")
+        return rows, warnings
+
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    queries = (
+        (
+            "estoque_grupo",
+            f"SELECT id, nome, codigo AS detalhe FROM `{schema}`.estoque_grupos WHERE ativo=1 ORDER BY ordem, nome",
+        ),
+        (
+            "estoque_produto",
+            f"SELECT id, nome_produto AS nome, CONCAT(COALESCE(grupo_estoque,''), CASE WHEN COALESCE(unidade,'')='' THEN '' ELSE CONCAT(' · ', unidade) END) AS detalhe FROM `{schema}`.estoque_produtos WHERE ativo=1 ORDER BY nome_produto, id",
+        ),
+        (
+            "fornecedor",
+            f"SELECT id, nome, COALESCE(cnpj, categoria, '') AS detalhe FROM `{schema}`.gestor_email_fornecedores WHERE COALESCE(ativo,1)=1 ORDER BY nome, id",
+        ),
+    )
+    for entity_type, sql in queries:
+        try:
+            cur.execute(sql)
+            for item in cur.fetchall():
+                add("riob", entity_type, item.get("id"), item.get("nome"), item.get("detalhe"))
+        except mysql.connector.Error:
+            warnings.append(f"Não foi possível carregar {ACCOUNTING_ENTITY_LABELS[('riob', entity_type)].lower()} do Estoque.")
+    cur.close()
+    conn.close()
+    rows.sort(key=lambda item: (item["appKey"], item["entityTypeLabel"], item["name"].casefold(), item["entityId"]))
+    return rows, warnings
+
+
+def accounting_snapshot():
+    accounts = accounting_plan_rows()
+    registries, warnings = accounting_registry_catalog()
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    cur.execute(
+        """
+        SELECT v.app_key, v.entidade_tipo, v.entidade_id, v.conta_contabil_id,
+               u.nome AS atualizado_por_nome, v.atualizado_em
+        FROM contabil_vinculos v
+        LEFT JOIN usuarios u ON u.id=v.atualizado_por_id
+        """
+    )
+    bindings = {
+        (row["app_key"], row["entidade_tipo"], str(row["entidade_id"])): row
+        for row in cur.fetchall()
+    }
+    cur.close()
+    conn.close()
+    linked = 0
+    for item in registries:
+        binding = bindings.get((item["appKey"], item["entityType"], item["entityId"]))
+        item["accountId"] = str(binding.get("conta_contabil_id") or "") if binding else ""
+        item["updatedBy"] = binding.get("atualizado_por_nome") or "" if binding else ""
+        item["updatedAt"] = binding["atualizado_em"].isoformat() if binding and binding.get("atualizado_em") else ""
+        if item["accountId"]:
+            linked += 1
+    return {
+        "accounts": accounts,
+        "registries": registries,
+        "summary": {"total": len(registries), "linked": linked, "pending": len(registries) - linked},
+        "warnings": warnings,
+        "classifications": [{"value": key, "label": value} for key, value in ACCOUNTING_CLASSIFICATIONS.items()],
+        "natures": [{"value": key, "label": value} for key, value in ACCOUNTING_NATURES.items()],
+    }
+
+
+def normalize_accounting_account(data):
+    result = {
+        "code": accounting_text(data.get("code"), 60),
+        "name": accounting_text(data.get("name"), 180),
+        "classification": accounting_text(data.get("classification"), 30).upper(),
+        "nature": accounting_text(data.get("nature"), 10).upper(),
+        "parentId": accounting_text(data.get("parentId"), 40),
+        "analytical": bool(data.get("analytical", True)),
+        "active": bool(data.get("active", True)),
+        "description": accounting_text(data.get("description"), 500),
+    }
+    if not result["code"] or not result["name"]:
+        raise ValueError("Informe o código e o nome da conta contábil.")
+    if result["classification"] not in ACCOUNTING_CLASSIFICATIONS:
+        raise ValueError("Classificação contábil inválida.")
+    if result["nature"] not in ACCOUNTING_NATURES:
+        raise ValueError("Natureza contábil inválida.")
+    return result
+
+
+def validate_accounting_parent(accounts, account_id, parent_id):
+    if not parent_id:
+        return
+    by_id = {item["id"]: item for item in accounts}
+    if parent_id not in by_id:
+        raise ValueError("A conta pai selecionada não existe.")
+    if account_id and parent_id == account_id:
+        raise ValueError("Uma conta não pode ser pai dela mesma.")
+    current = by_id.get(parent_id)
+    seen = set()
+    while current and current.get("parentId") and current["id"] not in seen:
+        seen.add(current["id"])
+        if current["parentId"] == account_id:
+            raise ValueError("A conta pai criaria um ciclo no plano de contas.")
+        current = by_id.get(current["parentId"])
+
+
+def accounting_access_allowed(usuario):
+    return "*" in allowed_resources_for_app(usuario, "financeiro") or "contabilidade" in allowed_resources_for_app(usuario, "financeiro")
+
+
+@app.route("/apps/financeiro/api/accounting", methods=["GET"])
+@login_required
+def financeiro_accounting_api():
+    usuario = current_user_or_logout()
+    if not app_visible_to_user({"app_key": "financeiro"}, usuario) or not accounting_access_allowed(usuario):
+        return jsonify({"error": "Acesso ao plano de contas não liberado."}), 403
+    return jsonify({"ok": True, **accounting_snapshot()})
+
+
+@app.route("/apps/financeiro/api/accounting/accounts", methods=["POST"])
+@login_required
+def financeiro_accounting_accounts_api():
+    usuario = current_user_or_logout()
+    if not app_visible_to_user({"app_key": "financeiro"}, usuario) or not accounting_access_allowed(usuario):
+        return jsonify({"error": "Acesso ao plano de contas não liberado."}), 403
+    try:
+        data = normalize_accounting_account(request.get_json(silent=True) or {})
+        validate_accounting_parent(accounting_plan_rows(), "", data["parentId"])
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    account_id = "pc_" + secrets.token_hex(16)
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            INSERT INTO contabil_plano_contas
+                (id, codigo, nome, classificacao, natureza, conta_pai_id, analitica,
+                 ativo, descricao, criado_por_id, atualizado_por_id)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            """,
+            (account_id, data["code"], data["name"], data["classification"], data["nature"],
+             data["parentId"] or None, int(data["analytical"]), int(data["active"]),
+             data["description"], int(usuario["id"]), int(usuario["id"])),
+        )
+        conn.commit()
+    except mysql.connector.IntegrityError:
+        conn.rollback()
+        return jsonify({"error": "Já existe uma conta com este código."}), 409
+    finally:
+        cur.close()
+        conn.close()
+    return jsonify({"ok": True, "accountId": account_id, **accounting_snapshot()}), 201
+
+
+@app.route("/apps/financeiro/api/accounting/accounts/<account_id>", methods=["PUT", "DELETE"])
+@login_required
+def financeiro_accounting_account_api(account_id):
+    usuario = current_user_or_logout()
+    if not app_visible_to_user({"app_key": "financeiro"}, usuario) or not accounting_access_allowed(usuario):
+        return jsonify({"error": "Acesso ao plano de contas não liberado."}), 403
+    account_id = accounting_text(account_id, 40)
+    accounts = accounting_plan_rows()
+    if not any(item["id"] == account_id for item in accounts):
+        return jsonify({"error": "Conta contábil não encontrada."}), 404
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    if request.method == "DELETE":
+        cur.execute("SELECT COUNT(*) AS total FROM contabil_plano_contas WHERE conta_pai_id=%s", (account_id,))
+        children = int((cur.fetchone() or {}).get("total") or 0)
+        cur.execute("SELECT COUNT(*) AS total FROM contabil_vinculos WHERE conta_contabil_id=%s", (account_id,))
+        bindings = int((cur.fetchone() or {}).get("total") or 0)
+        if children or bindings:
+            cur.close()
+            conn.close()
+            return jsonify({"error": "A conta possui contas filhas ou cadastros vinculados. Inative-a ou remova os vínculos primeiro."}), 409
+        cur.execute("DELETE FROM contabil_plano_contas WHERE id=%s", (account_id,))
+        conn.commit()
+        cur.close()
+        conn.close()
+        return jsonify({"ok": True, **accounting_snapshot()})
+    try:
+        data = normalize_accounting_account(request.get_json(silent=True) or {})
+        validate_accounting_parent(accounts, account_id, data["parentId"])
+        cur.execute(
+            """
+            UPDATE contabil_plano_contas
+            SET codigo=%s, nome=%s, classificacao=%s, natureza=%s, conta_pai_id=%s,
+                analitica=%s, ativo=%s, descricao=%s, atualizado_por_id=%s
+            WHERE id=%s
+            """,
+            (data["code"], data["name"], data["classification"], data["nature"],
+             data["parentId"] or None, int(data["analytical"]), int(data["active"]),
+             data["description"], int(usuario["id"]), account_id),
+        )
+        conn.commit()
+    except ValueError as exc:
+        conn.rollback()
+        return jsonify({"error": str(exc)}), 400
+    except mysql.connector.IntegrityError:
+        conn.rollback()
+        return jsonify({"error": "Já existe uma conta com este código."}), 409
+    finally:
+        cur.close()
+        conn.close()
+    return jsonify({"ok": True, **accounting_snapshot()})
+
+
+@app.route("/apps/financeiro/api/accounting/bindings", methods=["PUT"])
+@login_required
+def financeiro_accounting_bindings_api():
+    usuario = current_user_or_logout()
+    if not app_visible_to_user({"app_key": "financeiro"}, usuario) or not accounting_access_allowed(usuario):
+        return jsonify({"error": "Acesso ao plano de contas não liberado."}), 403
+    payload = request.get_json(silent=True) or {}
+    requested = payload.get("bindings")
+    if not isinstance(requested, list):
+        requested = [payload]
+    if not requested or len(requested) > 1000:
+        return jsonify({"error": "Envie de 1 a 1000 vínculos por vez."}), 400
+    registries, _warnings = accounting_registry_catalog()
+    registry_keys = {(item["appKey"], item["entityType"], item["entityId"]) for item in registries}
+    accounts = {item["id"]: item for item in accounting_plan_rows()}
+    normalized = []
+    for item in requested:
+        key = (
+            accounting_text(item.get("appKey"), 40),
+            accounting_text(item.get("entityType"), 60),
+            accounting_text(item.get("entityId"), 120),
+        )
+        account_id = accounting_text(item.get("accountId"), 40)
+        if key not in registry_keys:
+            return jsonify({"error": "Um dos cadastros selecionados não existe mais."}), 409
+        if account_id:
+            account = accounts.get(account_id)
+            if not account or not account["active"] or not account["analytical"]:
+                return jsonify({"error": "Selecione uma conta analítica e ativa para o vínculo."}), 400
+        normalized.append((*key, account_id))
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        for app_key, entity_type, entity_id, account_id in normalized:
+            if not account_id:
+                cur.execute(
+                    "DELETE FROM contabil_vinculos WHERE app_key=%s AND entidade_tipo=%s AND entidade_id=%s",
+                    (app_key, entity_type, entity_id),
+                )
+                continue
+            cur.execute(
+                """
+                INSERT INTO contabil_vinculos
+                    (app_key, entidade_tipo, entidade_id, conta_contabil_id, atualizado_por_id)
+                VALUES (%s,%s,%s,%s,%s)
+                ON DUPLICATE KEY UPDATE conta_contabil_id=VALUES(conta_contabil_id),
+                    atualizado_por_id=VALUES(atualizado_por_id)
+                """,
+                (app_key, entity_type, entity_id, account_id, int(usuario["id"])),
+            )
+        conn.commit()
+    except mysql.connector.Error:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        conn.close()
+    return jsonify({"ok": True, **accounting_snapshot()})
+
+
 def default_finance_state():
     return {
         "contas": [

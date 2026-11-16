@@ -43,9 +43,9 @@ class CustoDiarioTests(unittest.TestCase):
         self.assertEqual(1.38,rows[1]['por_unidade']['embalagens']['total'])
         self.assertEqual(8.28,rows[1]['por_unidade']['pacotes']['total'])
         self.assertEqual(.69,rows[1]['por_unidade']['litros']['total'])
-        # 1000 retornaveis de 600 ml: formula 624 + pessoal 60 = 684.
-        self.assertEqual(684,rows[2]['total'])
-        self.assertEqual(1374,response.json['resultado']['resumo']['total'])
+        # 1000 retornaveis de 600 ml: mesma dose do sabor, formula 324 + pessoal 60 = 384.
+        self.assertEqual(384,rows[2]['total'])
+        self.assertEqual(1074,response.json['resultado']['resumo']['total'])
 
     def test_finalized_shortfalls_only_and_dynamic_counts_without_double_stock_post(self):
         self.save()
@@ -68,6 +68,25 @@ class CustoDiarioTests(unittest.TestCase):
         data=self.payload();data['revisao']=1
         updated=self.save(data)
         self.assertGreater(updated.json['resultado']['resumo']['total'],before['resumo']['total'])
+
+    def test_hot_water_from_product_formula_is_included_in_daily_cost(self):
+        payload=produto_tests.formula(revision=1)
+        payload.update(agua_quente_litros='100',agua_quente_valor_litro='.5')
+        self.assertEqual(200,self.fixture.save(payload=payload).status_code)
+        response=self.save()
+        rows={r['produto_id']:r for r in response.json['resultado']['produtos']}
+        self.assertEqual(590,rows[1]['componentes']['formula'])
+
+    def test_standard_overhead_is_not_counted_twice_in_daily_actual_cost(self):
+        rateio={'revisao':0,'volume_mensal_litros':'10000','itens':[
+            {'categoria':'mao_obra','descricao':'Folha padrao','tipo':'mensal','valor':'3000'}]}
+        self.assertEqual(200,self.client.put('/api/custo-produto/rateio',headers=self.fixture.headers,json=rateio).status_code)
+        standard=next(p for p in self.fixture.data()['produtos'] if p['produto_id']==1)
+        self.assertAlmostEqual(1.68,standard['calculo']['custo_unidade'],places=5)
+        daily=self.save().json['resultado']
+        row=next(p for p in daily['produtos'] if p['produto_id']==1)
+        self.assertEqual(540,row['componentes']['formula'])
+        self.assertEqual(690,row['total'])
 
     def test_shortfall_without_price_keeps_total_pending(self):
         self.sql("INSERT INTO estoque_contagens VALUES(1,'finalizada','2026-09-22 09:00:00'); INSERT INTO estoque_contagem_resultados VALUES(1,1,9,'Aroma',2);")

@@ -48,6 +48,10 @@ atalhos web externos, sem proxy, banco compartilhado ou copia de dados.
 
 Cada app deve ter todo o seu codigo dentro desta arvore `apps/`, normalmente em `apps/<app>/source`. Evite apontar `source_dir` para caminhos absolutos do servidor, como `/srv/...`, porque esta plataforma deve ser autocontida.
 
+O analisador SPED segue essa regra em `apps/sped/source`. Os TXT, backups JSON,
+arquivos compactados e certificados que originaram a ferramenta permanecem fora
+do repositorio; somente o codigo autocontido e publicado.
+
 ## Metodologia de integracao
 
 - `url` e sempre a entrada integrada ao portal, usando somente o menu principal.

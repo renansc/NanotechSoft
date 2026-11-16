@@ -29,6 +29,11 @@ let financeStateRevision = "";
 let financeSyncInFlight = false;
 let financeSyncPending = false;
 let financeSyncTimer = null;
+let accountingData = { accounts: [], registries: [], summary: { total: 0, linked: 0, pending: 0 }, warnings: [], classifications: [], natures: [] };
+let accountingLoaded = false;
+let accountingLoading = false;
+let accountingEditAccountId = "";
+const accountingSelected = new Set();
 const FINANCE_SYNC_INTERVAL_MS = 3000;
 const financeSyncChannel = typeof BroadcastChannel === "function"
   ? new BroadcastChannel("nanotechsoft-financeiro-state")
@@ -1019,6 +1024,7 @@ function setView(name){
   $$(".view").forEach(v => v.classList.add("hidden"));
   $("#view-"+name).classList.remove("hidden");
   renderAll();
+  if(name === "contabilidade") loadAccountingData();
 }
 
 function financeInitialView(){
@@ -1267,6 +1273,7 @@ function renderAll(){
   renderCompras();
   renderAPAR();
   renderConfig();
+  renderAccounting();
 }
 
 /* ---------- Selects (preserva seleção) ---------- */
@@ -6191,6 +6198,278 @@ $("#listaAnexos").addEventListener("click", async (e)=>{
       renderAnexos();
     }
   }
+});
+
+/* ---------- Plano de contas e amarracoes ---------- */
+function accountingKey(item){
+  return [item.appKey, item.entityType, item.entityId].map(value => encodeURIComponent(String(value || ""))).join("|");
+}
+
+function accountingItemByKey(key){
+  return accountingData.registries.find(item => accountingKey(item) === key) || null;
+}
+
+function accountingClassificationLabel(value){
+  return accountingData.classifications.find(item => item.value === value)?.label || value || "-";
+}
+
+function accountingNatureLabel(value){
+  return accountingData.natures.find(item => item.value === value)?.label || value || "-";
+}
+
+function accountingAvailableAccounts(){
+  return accountingData.accounts.filter(item => item.active && item.analytical);
+}
+
+function accountingAccountOptions(selectedId="", includeEmpty=true){
+  const options = includeEmpty ? [`<option value="">Sem vínculo contábil</option>`] : [];
+  for(const account of accountingAvailableAccounts()){
+    options.push(`<option value="${escapeHtml(account.id)}" ${account.id === selectedId ? "selected" : ""}>${escapeHtml(account.code)} · ${escapeHtml(account.name)}</option>`);
+  }
+  return options.join("");
+}
+
+function filteredAccountingRegistries(){
+  const moduleFilter = $("#contabilFiltroModulo")?.value || "ALL";
+  const statusFilter = $("#contabilFiltroStatus")?.value || "PENDING";
+  const search = String($("#contabilBuscaCadastro")?.value || "").trim().toLocaleLowerCase("pt-BR");
+  return accountingData.registries.filter(item => {
+    if(moduleFilter !== "ALL" && item.appKey !== moduleFilter) return false;
+    if(statusFilter === "PENDING" && item.accountId) return false;
+    if(statusFilter === "LINKED" && !item.accountId) return false;
+    if(search && ![item.name, item.detail, item.entityTypeLabel].some(value => String(value || "").toLocaleLowerCase("pt-BR").includes(search))) return false;
+    return true;
+  });
+}
+
+function renderAccountingPlan(){
+  const table = $("#tbPlanoContas");
+  if(!table) return;
+  const search = String($("#contabilBuscaConta")?.value || "").trim().toLocaleLowerCase("pt-BR");
+  const accounts = accountingData.accounts.filter(item => !search || `${item.code} ${item.name} ${item.description}`.toLocaleLowerCase("pt-BR").includes(search));
+  table.innerHTML = accounts.map(account => `
+    <tr class="${account.active ? "" : "accountingInactive"}">
+      <td><div class="accountingAccountName" style="padding-left:${Math.max(0, Number(account.level || 1) - 1) * 18}px"><b>${escapeHtml(account.code)}</b> · ${escapeHtml(account.name)}</div>${account.description ? `<div class="muted accountingDescription">${escapeHtml(account.description)}</div>` : ""}</td>
+      <td>${escapeHtml(accountingClassificationLabel(account.classification))}</td>
+      <td>${escapeHtml(accountingNatureLabel(account.nature))}</td>
+      <td><span class="badge ${account.analytical ? "ok" : ""}">${account.analytical ? "Analítica" : "Sintética"}</span></td>
+      <td><span class="badge ${account.active ? "ok" : "bad"}">${account.active ? "Ativa" : "Inativa"}</span></td>
+      <td class="right"><button class="btn" data-accounting-action="edit" data-account-id="${escapeHtml(account.id)}">Editar</button> <button class="btn danger" data-accounting-action="delete" data-account-id="${escapeHtml(account.id)}">Excluir</button></td>
+    </tr>
+  `).join("") || `<tr><td colspan="6" class="muted">${accountingLoading ? "Carregando plano de contas..." : "Nenhuma conta contábil cadastrada."}</td></tr>`;
+}
+
+function renderAccountingBindings(){
+  const table = $("#tbVinculosContabeis");
+  if(!table) return;
+  const visible = filteredAccountingRegistries();
+  table.innerHTML = visible.map(item => {
+    const key = accountingKey(item);
+    const moduleLabel = item.appKey === "financeiro" ? "Financeiro" : "Estoque / Compras";
+    return `
+      <tr>
+        <td><input type="checkbox" data-accounting-select="${escapeHtml(key)}" ${accountingSelected.has(key) ? "checked" : ""} aria-label="Selecionar ${escapeHtml(item.name)}"></td>
+        <td><span class="badge">${moduleLabel}</span></td>
+        <td><b>${escapeHtml(item.name)}</b><div class="muted">${escapeHtml(item.entityTypeLabel)}${item.detail ? ` · ${escapeHtml(item.detail)}` : ""}</div></td>
+        <td><select data-accounting-binding="${escapeHtml(key)}" ${accountingAvailableAccounts().length ? "" : "disabled"}>${accountingAccountOptions(item.accountId)}</select></td>
+        <td><span class="badge ${item.accountId ? "ok" : "warn"}">${item.accountId ? "Vinculado" : "Pendente"}</span>${item.updatedBy ? `<div class="muted accountingAudit">por ${escapeHtml(item.updatedBy)}</div>` : ""}</td>
+      </tr>`;
+  }).join("") || `<tr><td colspan="5" class="muted">${accountingLoading ? "Carregando cadastros..." : "Nenhum cadastro encontrado para os filtros informados."}</td></tr>`;
+  const selectedVisible = visible.filter(item => accountingSelected.has(accountingKey(item))).length;
+  if($("#contabilSelecionarTodos")){
+    $("#contabilSelecionarTodos").checked = visible.length > 0 && selectedVisible === visible.length;
+    $("#contabilSelecionarTodos").indeterminate = selectedVisible > 0 && selectedVisible < visible.length;
+  }
+  if($("#contabilSelecionados")) $("#contabilSelecionados").textContent = `${accountingSelected.size} selecionado(s)`;
+}
+
+function renderAccounting(){
+  if(!$("#view-contabilidade")) return;
+  const summary = accountingData.summary || {};
+  $("#contabilTotalContas").textContent = String(accountingData.accounts.length || 0);
+  $("#contabilTotalCadastros").textContent = String(summary.total || 0);
+  $("#contabilTotalVinculados").textContent = String(summary.linked || 0);
+  $("#contabilTotalPendentes").textContent = String(summary.pending || 0);
+  const warningBox = $("#contabilAvisos");
+  if(warningBox){
+    warningBox.classList.toggle("hidden", !accountingData.warnings?.length);
+    warningBox.textContent = (accountingData.warnings || []).join(" ");
+  }
+  renderAccountingPlan();
+  renderAccountingBindings();
+  const bulk = $("#contabilContaLote");
+  if(bulk){
+    const current = bulk.value;
+    bulk.innerHTML = `<option value="">Escolha a conta para aplicar em lote</option>${accountingAccountOptions(current, false)}`;
+    if(Array.from(bulk.options).some(option => option.value === current)) bulk.value = current;
+  }
+}
+
+function applyAccountingPayload(payload){
+  accountingData = {
+    accounts: Array.isArray(payload?.accounts) ? payload.accounts : [],
+    registries: Array.isArray(payload?.registries) ? payload.registries : [],
+    summary: payload?.summary || { total: 0, linked: 0, pending: 0 },
+    warnings: Array.isArray(payload?.warnings) ? payload.warnings : [],
+    classifications: Array.isArray(payload?.classifications) ? payload.classifications : [],
+    natures: Array.isArray(payload?.natures) ? payload.natures : []
+  };
+  const validKeys = new Set(accountingData.registries.map(accountingKey));
+  for(const key of accountingSelected){
+    if(!validKeys.has(key)) accountingSelected.delete(key);
+  }
+  accountingLoaded = true;
+  renderAccounting();
+}
+
+async function loadAccountingData({force=false}={}){
+  if(accountingLoading || (accountingLoaded && !force)) return;
+  accountingLoading = true;
+  renderAccounting();
+  try{
+    applyAccountingPayload(await requestJson("/apps/financeiro/api/accounting"));
+  }catch(err){
+    alert(err?.message || "Não foi possível carregar o plano de contas.");
+  }finally{
+    accountingLoading = false;
+    renderAccounting();
+  }
+}
+
+function openAccountingAccountModal(accountId=""){
+  accountingEditAccountId = accountId;
+  const account = accountId ? accountingData.accounts.find(item => item.id === accountId) : null;
+  $("#modalContaContabilTitle").textContent = account ? "Editar conta contábil" : "Nova conta contábil";
+  $("#contabilCodigo").value = account?.code || "";
+  $("#contabilNome").value = account?.name || "";
+  $("#contabilClassificacao").innerHTML = accountingData.classifications.map(item => `<option value="${escapeHtml(item.value)}">${escapeHtml(item.label)}</option>`).join("");
+  $("#contabilNatureza").innerHTML = accountingData.natures.map(item => `<option value="${escapeHtml(item.value)}">${escapeHtml(item.label)}</option>`).join("");
+  $("#contabilClassificacao").value = account?.classification || "ATIVO";
+  $("#contabilNatureza").value = account?.nature || "DEVEDORA";
+  $("#contabilContaPai").innerHTML = `<option value="">Sem conta pai</option>${accountingData.accounts.filter(item => item.id !== accountId).map(item => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.code)} · ${escapeHtml(item.name)}</option>`).join("")}`;
+  $("#contabilContaPai").value = account?.parentId || "";
+  $("#contabilDescricao").value = account?.description || "";
+  $("#contabilAnalitica").checked = account ? !!account.analytical : true;
+  $("#contabilAtiva").checked = account ? !!account.active : true;
+  $("#modalContaContabil").classList.remove("hidden");
+  $("#contabilCodigo").focus();
+}
+
+function closeAccountingAccountModal(){
+  $("#modalContaContabil")?.classList.add("hidden");
+  accountingEditAccountId = "";
+}
+
+async function saveAccountingAccount(button){
+  const payload = {
+    code: $("#contabilCodigo").value.trim(),
+    name: $("#contabilNome").value.trim(),
+    classification: $("#contabilClassificacao").value,
+    nature: $("#contabilNatureza").value,
+    parentId: $("#contabilContaPai").value,
+    description: $("#contabilDescricao").value.trim(),
+    analytical: $("#contabilAnalitica").checked,
+    active: $("#contabilAtiva").checked
+  };
+  if(!payload.code || !payload.name) return alert("Informe o código e o nome da conta contábil.");
+  const oldText = button.textContent;
+  button.disabled = true;
+  button.textContent = "Salvando...";
+  try{
+    const url = accountingEditAccountId ? `/apps/financeiro/api/accounting/accounts/${encodeURIComponent(accountingEditAccountId)}` : "/apps/financeiro/api/accounting/accounts";
+    const result = await requestJson(url, { method: accountingEditAccountId ? "PUT" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+    applyAccountingPayload(result);
+    closeAccountingAccountModal();
+  }catch(err){
+    alert(err?.message || "Não foi possível salvar a conta contábil.");
+  }finally{
+    button.disabled = false;
+    button.textContent = oldText;
+  }
+}
+
+async function deleteAccountingAccount(accountId, button){
+  const account = accountingData.accounts.find(item => item.id === accountId);
+  if(!account || !confirm(`Excluir a conta ${account.code} · ${account.name}?`)) return;
+  const oldText = button.textContent;
+  button.disabled = true;
+  button.textContent = "Excluindo...";
+  try{
+    applyAccountingPayload(await requestJson(`/apps/financeiro/api/accounting/accounts/${encodeURIComponent(accountId)}`, { method: "DELETE" }));
+  }catch(err){
+    alert(err?.message || "Não foi possível excluir a conta contábil.");
+  }finally{
+    button.disabled = false;
+    button.textContent = oldText;
+  }
+}
+
+async function saveAccountingBindings(bindings, button=null){
+  if(!bindings.length) return;
+  const oldText = button?.textContent || "";
+  if(button){ button.disabled = true; button.textContent = "Aplicando..."; }
+  try{
+    applyAccountingPayload(await requestJson("/apps/financeiro/api/accounting/bindings", {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ bindings })
+    }));
+  }catch(err){
+    alert(err?.message || "Não foi possível salvar a amarração contábil.");
+    await loadAccountingData({force:true});
+  }finally{
+    if(button){ button.disabled = false; button.textContent = oldText; }
+  }
+}
+
+$("#btnAtualizarContabilidade")?.addEventListener("click", () => loadAccountingData({force:true}));
+$("#btnNovaContaContabil")?.addEventListener("click", () => openAccountingAccountModal());
+$("#btnFecharContaContabil")?.addEventListener("click", closeAccountingAccountModal);
+$("#btnCancelarContaContabil")?.addEventListener("click", closeAccountingAccountModal);
+$("#modalContaContabil")?.addEventListener("click", event => { if(event.target.id === "modalContaContabil") closeAccountingAccountModal(); });
+$("#btnSalvarContaContabil")?.addEventListener("click", event => saveAccountingAccount(event.currentTarget));
+$("#contabilBuscaConta")?.addEventListener("input", renderAccountingPlan);
+$("#contabilBuscaCadastro")?.addEventListener("input", renderAccountingBindings);
+$("#contabilFiltroModulo")?.addEventListener("change", renderAccountingBindings);
+$("#contabilFiltroStatus")?.addEventListener("change", renderAccountingBindings);
+
+$("#tbPlanoContas")?.addEventListener("click", event => {
+  const button = event.target.closest("button[data-accounting-action]");
+  if(!button) return;
+  if(button.dataset.accountingAction === "edit") openAccountingAccountModal(button.dataset.accountId);
+  if(button.dataset.accountingAction === "delete") deleteAccountingAccount(button.dataset.accountId, button);
+});
+
+$("#tbVinculosContabeis")?.addEventListener("change", event => {
+  const select = event.target.closest("select[data-accounting-binding]");
+  if(select){
+    const item = accountingItemByKey(select.dataset.accountingBinding);
+    if(item) saveAccountingBindings([{ appKey: item.appKey, entityType: item.entityType, entityId: item.entityId, accountId: select.value }]);
+    return;
+  }
+  const checkbox = event.target.closest("input[data-accounting-select]");
+  if(!checkbox) return;
+  if(checkbox.checked) accountingSelected.add(checkbox.dataset.accountingSelect);
+  else accountingSelected.delete(checkbox.dataset.accountingSelect);
+  renderAccountingBindings();
+});
+
+$("#contabilSelecionarTodos")?.addEventListener("change", event => {
+  for(const item of filteredAccountingRegistries()){
+    const key = accountingKey(item);
+    if(event.currentTarget.checked) accountingSelected.add(key);
+    else accountingSelected.delete(key);
+  }
+  renderAccountingBindings();
+});
+
+$("#btnAplicarContaLote")?.addEventListener("click", event => {
+  const accountId = $("#contabilContaLote").value;
+  if(!accountId) return alert("Escolha a conta contábil para aplicar.");
+  const bindings = Array.from(accountingSelected).map(accountingItemByKey).filter(Boolean).map(item => ({
+    appKey: item.appKey, entityType: item.entityType, entityId: item.entityId, accountId
+  }));
+  if(!bindings.length) return alert("Selecione ao menos um cadastro.");
+  accountingSelected.clear();
+  saveAccountingBindings(bindings, event.currentTarget);
 });
 
 /* ---------- Config ---------- */

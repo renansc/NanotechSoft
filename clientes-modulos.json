@@ -5,12 +5,22 @@
       "nome": "Rio Branco",
       "status": "ativo",
       "databaseKey": "riobranco",
-      "observacao": "Menu por tarefa conforme menu.pdf. Financeiro, Ponto, Store, Cameras e ESXi desativados neste deploy; comunicacao permanece no popup.",
+      "observacao": "Menu por tarefa conforme menu.pdf. Financeiro habilitado neste deploy; Ponto, Store, Cameras e ESXi permanecem desativados; comunicacao permanece no popup.",
       "allModules": false,
       "modules": [
         {
           "slug": "riob",
           "nome": "RioB",
+          "status": "contratado"
+        },
+        {
+          "slug": "financeiro",
+          "nome": "Financeiro",
+          "status": "contratado"
+        },
+        {
+          "slug": "sped",
+          "nome": "SPED Fiscal",
           "status": "contratado"
         },
         {

@@ -48,6 +48,28 @@ CREATE TABLE IF NOT EXISTS usuario_app_permissoes (
     FOREIGN KEY (usuario_id) REFERENCES usuarios(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS sped_bases (
+    empresa_cnpj VARCHAR(20) NOT NULL,
+    periodo CHAR(7) NOT NULL,
+    empresa VARCHAR(255) NOT NULL DEFAULT '',
+    arquivo VARCHAR(255) NOT NULL DEFAULT '',
+    base_json LONGTEXT NOT NULL,
+    importado_por_id INT NULL,
+    atualizado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (empresa_cnpj, periodo),
+    INDEX idx_sped_bases_periodo (periodo),
+    FOREIGN KEY (importado_por_id) REFERENCES usuarios(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS sped_configuracoes (
+    id TINYINT PRIMARY KEY DEFAULT 1,
+    grupos_json LONGTEXT NOT NULL,
+    regimes_json LONGTEXT NOT NULL,
+    atualizado_por_id INT NULL,
+    atualizado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (atualizado_por_id) REFERENCES usuarios(id) ON DELETE SET NULL
+);
+
 CREATE TABLE IF NOT EXISTS impressoras_trabalhos (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     cups_job_id INT NOT NULL,
@@ -109,6 +131,49 @@ CREATE TABLE IF NOT EXISTS financeiro_config (
     id INT PRIMARY KEY DEFAULT 1,
     payload JSON NOT NULL,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS contabil_plano_contas (
+    id VARCHAR(40) PRIMARY KEY,
+    codigo VARCHAR(60) NOT NULL,
+    nome VARCHAR(180) NOT NULL,
+    classificacao VARCHAR(30) NOT NULL,
+    natureza VARCHAR(10) NOT NULL,
+    conta_pai_id VARCHAR(40) NULL,
+    analitica TINYINT(1) NOT NULL DEFAULT 1,
+    ativo TINYINT(1) NOT NULL DEFAULT 1,
+    descricao VARCHAR(500) NOT NULL DEFAULT '',
+    criado_por_id INT NULL,
+    atualizado_por_id INT NULL,
+    criado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    atualizado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_contabil_plano_codigo (codigo),
+    INDEX idx_contabil_plano_pai (conta_pai_id),
+    INDEX idx_contabil_plano_ativo_codigo (ativo, codigo),
+    CONSTRAINT fk_contabil_plano_pai FOREIGN KEY (conta_pai_id)
+        REFERENCES contabil_plano_contas(id) ON UPDATE CASCADE ON DELETE RESTRICT,
+    CONSTRAINT fk_contabil_plano_criado_por FOREIGN KEY (criado_por_id)
+        REFERENCES usuarios(id) ON UPDATE CASCADE ON DELETE SET NULL,
+    CONSTRAINT fk_contabil_plano_atualizado_por FOREIGN KEY (atualizado_por_id)
+        REFERENCES usuarios(id) ON UPDATE CASCADE ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS contabil_vinculos (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    app_key VARCHAR(40) NOT NULL,
+    entidade_tipo VARCHAR(60) NOT NULL,
+    entidade_id VARCHAR(120) NOT NULL,
+    conta_contabil_id VARCHAR(40) NOT NULL,
+    atualizado_por_id INT NULL,
+    criado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    atualizado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_contabil_vinculo_entidade (app_key, entidade_tipo, entidade_id),
+    INDEX idx_contabil_vinculo_conta (conta_contabil_id),
+    INDEX idx_contabil_vinculo_tipo (app_key, entidade_tipo),
+    CONSTRAINT fk_contabil_vinculo_conta FOREIGN KEY (conta_contabil_id)
+        REFERENCES contabil_plano_contas(id) ON UPDATE CASCADE ON DELETE RESTRICT,
+    CONSTRAINT fk_contabil_vinculo_usuario FOREIGN KEY (atualizado_por_id)
+        REFERENCES usuarios(id) ON UPDATE CASCADE ON DELETE SET NULL
 );
 
 CREATE TABLE IF NOT EXISTS tecnologia_dispositivos (

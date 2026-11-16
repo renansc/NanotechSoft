@@ -705,6 +705,23 @@ Depois feche e abra novamente o navegador e acesse:
 https://192.168.200.254
 ```
 
+O servidor Windows de importacoes pode ficar indisponivel em qualquer horario e
+nao deve impedir Portal/RioB de iniciar ou atualizar. `up.sh`, `update.sh` e a
+validacao do Git registram um aviso e continuam. O Compose monta `/media` em
+modo somente leitura com propagacao `rslave`; quando o Windows volta, o
+automount CIFS em `/media/serverwin` aparece no container sem recria-lo.
+
+Configuracao do pai compartilhado:
+
+```env
+RB_IMPORTS_HOST_PARENT=/media
+```
+
+Nao aponte os caminhos de importacao para uma pasta local vazia. Isso ocultaria
+a falha do compartilhamento e poderia separar as importacoes de sua fonte
+oficial. Caminhos customizados fora de `/media/serverwin` continuam obrigatorios
+no momento do deploy.
+
 ### 15.2 `Cliente web: SIP desconectado do servidor`
 
 Causas comuns:

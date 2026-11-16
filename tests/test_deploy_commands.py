@@ -34,12 +34,21 @@ if args[0] == 'inspect':
 elif 'ps' in args and '-q' in args and os.environ.get('FAKE_CLIENT'):
     print('existing-portal')
 elif 'config' in args and '--format' in args:
-    print(json.dumps({'services': {'riob-app': {'volumes': [{'type':'bind','source':os.environ['IMPORT_DIR'],'target':'/imports/vendas-diario/txt'}]}}}))
+    print(json.dumps({'services': {'riob-app': {'labels': {'com.nanotechsoft.import-source.test':os.environ['IMPORT_DIR']}}}}))
 ''')
         docker.chmod(0o755)
         curl = self.bin / 'curl'
         curl.write_text('#!/bin/sh\nexit 0\n')
         curl.chmod(0o755)
+        date = self.bin / 'date'
+        date.write_text('''#!/bin/sh
+if [ "$1" = "+%H:%M" ] && [ -n "$FAKE_TIME" ]; then
+    printf '%s\\n' "$FAKE_TIME"
+else
+    exec /usr/bin/date "$@"
+fi
+''')
+        date.chmod(0o755)
         self.env = {key: value for key, value in os.environ.items() if not key.startswith(('NANOTECH_', 'CLIENTE_', 'NS_', 'RENDER', 'COMPOSE_'))}
         self.env.update(PATH=str(self.bin)+os.pathsep+os.environ['PATH'], COMMAND_LOG=str(self.log), IMPORT_DIR=str(source))
 
@@ -109,6 +118,30 @@ elif 'config' in args and '--format' in args:
         result = self.run_script('down.sh', NANOTECH_ENV_FILE='missing.env')
         self.assertNotEqual(0, result.returncode)
         self.assertEqual([], self.commands())
+
+    def test_windows_outage_never_blocks_riob_startup(self):
+        unavailable = '/media/serverwin/offline-test'
+        result = self.run_script(
+            'up.sh',
+            FAKE_CLIENT='rio-branco',
+            FAKE_TIME='09:00',
+            IMPORT_DIR=unavailable,
+        )
+
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertIn('AVISO: servidor Windows indisponivel', result.stdout)
+        self.assertTrue(any('riob-app' in command and 'up' in command for command in self.commands()))
+
+    def test_missing_custom_import_source_still_blocks_startup(self):
+        result = self.run_script(
+            'up.sh',
+            FAKE_CLIENT='rio-branco',
+            IMPORT_DIR='/custom/import-source-does-not-exist',
+        )
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn('pasta de importacao indisponivel', result.stdout + result.stderr)
+        self.assertFalse(any('riob-app' in command and 'up' in command for command in self.commands()))
 
     def test_git_safe_only_directory_blocks_nested_runtime_and_preserves_scope(self):
         def git(*args):

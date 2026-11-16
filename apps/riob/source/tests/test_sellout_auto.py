@@ -11,6 +11,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 from sellout_auto import (
+    fontes_diarias_configuradas,
     fontes_mensais_configuradas,
     particionar_historico,
     preparar_mensal,
@@ -103,6 +104,10 @@ class SelloutMensalTest(unittest.TestCase):
                     pass
 
     def test_configuracao_prefere_duas_fontes_e_preserva_variavel_antiga(self):
+        self.assertEqual(
+            ['/imports/sellout/IND3/SELLOUT_D.CSV', '/imports/sellout/INDB/SELLOUT_D.CSV'],
+            fontes_diarias_configuradas({}),
+        )
         self.assertEqual(
             ['/imports/sellout/IND3/SELLOUT_M.CSV', '/imports/sellout/INDB/SELLOUT_M.CSV'],
             fontes_mensais_configuradas({}),
@@ -341,50 +346,45 @@ class AgendaELeituraManualTest(unittest.TestCase):
                 importer.assert_not_called()
             else:
                 raise StopLoop()
-        env = self.functions(['_vendas_sellout_mensal_loop'], dict(datetime=clock, ZoneInfo=ZoneInfo,
+        env = self.functions(['_vendas_sellout_diario_loop'], dict(datetime=clock, ZoneInfo=ZoneInfo,
             proxima_leitura_diaria=proxima_leitura_diaria, time=SimpleNamespace(sleep=sleep),
-            _vendas_sellout_mensal_importar=importer, app=mock.Mock()))
+            _vendas_sellout_diario_importar=importer,
+            _vendas_diario_status_registrar=mock.Mock(),
+            _vendas_diario_status_sellout=mock.Mock(return_value={}),
+            _vendas_diario_status_agora=mock.Mock(return_value='agora'), app=mock.Mock()))
         with self.assertRaises(StopLoop):
-            env['_vendas_sellout_mensal_loop']()
+            env['_vendas_sellout_diario_loop']()
         importer.assert_called_once_with()
 
     def folder_env(self):
         return self.functions(['_vendas_diario_importar_pasta'], dict(
-            _VENDAS_DIARIO_IMPORT_LOCK=threading.Lock(), VENDAS_DIARIO_TXT_DIR='txt',
-            VENDAS_DIARIO_PDF_DIR='pdf', VENDAS_DIARIO_DIR='pastas', os=os,
-            discover_txt_files=lambda _: ['vendas.txt'],
-            _descobrir_arquivos_por_extensao=lambda *args: ['carga.pdf'],
-            _vendas_diario_importar_arquivo=mock.Mock(return_value={'status':'importado'}),
-            parse_cargas_pdf=lambda _: [{'pagina':1}],
-            _vendas_diario_importar_carga_pdf_arquivo=mock.Mock(return_value={'status':'importado'}),
-            _vendas_diario_aplicar_limpeza=lambda path, directory, results: results,
-            _vendas_diario_unificar_cards_semelhantes=lambda: {},
+            _VENDAS_DIARIO_IMPORT_LOCK=threading.Lock(), os=os,
+            fontes_diarias_configuradas=lambda _: ['IND3/SELLOUT_D.CSV', 'INDB/SELLOUT_D.CSV'],
             _vendas_diario_status_publico=lambda: {},
             _vendas_diario_status_iniciar=lambda *args: {},
             _vendas_diario_status_registrar_resultado=lambda *args: {},
-            _vendas_sellout_mensal_importar=mock.Mock(return_value={'status':'ja_importado'}),
+            _vendas_sellout_diario_importar=mock.Mock(return_value={'status':'ja_importado'}),
             _as_str=lambda value: str(value or ''), app=mock.Mock()))
 
-    def test_varredura_periodica_txt_pdf_nao_dispara_sellout(self):
+    def test_varredura_periodica_usa_somente_sellout_diario(self):
         env = self.folder_env()
         result = env['_vendas_diario_importar_pasta']()
-        env['_vendas_sellout_mensal_importar'].assert_not_called()
+        env['_vendas_sellout_diario_importar'].assert_called_once_with()
         self.assertEqual(2, result['arquivos'])
 
-    def test_leitura_manual_inclui_sellout_sem_depender_da_janela(self):
+    def test_leitura_manual_inclui_sellout_diario_sem_depender_da_janela(self):
         env = self.folder_env()
         result = env['_vendas_diario_importar_pasta'](incluir_sellout=True)
-        env['_vendas_sellout_mensal_importar'].assert_called_once_with()
-        self.assertEqual(3, result['arquivos'])
-        self.assertEqual('ja_importado', result['sellout']['status'])
-        self.assertEqual({'txt','pdf','sellout'}, {item['tipo'] for item in result['resultados']})
+        env['_vendas_sellout_diario_importar'].assert_called_once_with()
+        self.assertEqual(2, result['arquivos'])
+        self.assertEqual('ja_importado', result['sellout_diario']['status'])
+        self.assertEqual({'sellout_diario'}, {item['tipo'] for item in result['resultados']})
 
-    def test_falha_do_sellout_nao_interrompe_txt_pdf(self):
+    def test_falha_do_sellout_diario_preserva_lock_e_status(self):
         env = self.folder_env()
-        env['_vendas_sellout_mensal_importar'].side_effect = OSError('Arquivo indisponivel')
+        env['_vendas_sellout_diario_importar'].side_effect = OSError('Arquivo indisponivel')
         result = env['_vendas_diario_importar_pasta'](incluir_sellout=True)
-        self.assertEqual('erro', result['sellout']['status'])
-        self.assertEqual(2, sum(item['status']=='importado' for item in result['resultados']))
+        self.assertEqual('erro', result['sellout_diario']['status'])
         self.assertFalse(env['_VENDAS_DIARIO_IMPORT_LOCK'].locked())
 
     def test_rota_do_botao_inclui_sellout(self):
@@ -393,7 +393,7 @@ class AgendaELeituraManualTest(unittest.TestCase):
             request=SimpleNamespace(files={}), jsonify=lambda result: result,
             _vendas_diario_importar_pasta=importer))
         self.assertEqual(({'processando':False},200), env['vendas_diario_importar_api']())
-        importer.assert_called_once_with(incluir_sellout=True, origem='manual')
+        importer.assert_called_once_with(incluir_sellout=True, origem='manual_sellout_diario')
 
     def test_retorno_mensal_distingue_atualizacao_repeticao_e_concorrencia(self):
         entry = {'id':'sellout-mensal-continuo', 'rows_importadas':10, 'status':'pronto', 'source_signature':'hash|regras'}

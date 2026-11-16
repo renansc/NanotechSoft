@@ -20,12 +20,24 @@ Novas concessoes em Config > Usuarios e acessos: RioB `estoque_contagem` e `vend
 
 O servidor permite a `estoque_contagem` somente as dependencias de leitura `estoque/produtos` e `estoque/posicao`; nao concede ajustes. O relatorio e protegido por `vendas_orcamentos_relatorio`, que tambem permite consultar o PDF individual, sem autorizar edicao. Backup exige `backup` no modulo Email, inclusive no caminho embarcado do RioB; um usuario apenas de backup nao pode importar, recuperar ou configurar contas. Os recursos dos manifests originais permanecem no catalogo mesmo quando o perfil omite seus atalhos.
 
-Financeiro, Ponto, Store, Cameras e ESXi ficam fora do contrato `rio-branco`, do fallback local `apps_liberados.txt` e da lista requerida desse cliente em `deploy/ecosystem.json`. URLs desses modulos sao bloqueadas ate para administrador, incluindo os caminhos embarcados de Cameras e ESXi. Codigo, dados e contratos de outros clientes sao preservados.
+Desde 20/10/2026, Financeiro faz parte do contrato `rio-branco`, do fallback local `apps_liberados.txt` e da lista requerida desse cliente em `deploy/ecosystem.json`. Seus recursos existentes aparecem em Config > Usuarios e acessos e nenhuma concessao individual e criada automaticamente. Ponto, Store, Cameras e ESXi continuam fora do contrato e bloqueados ate para administrador, incluindo os caminhos embarcados de Cameras e ESXi. Codigo, dados e contratos de outros clientes sao preservados.
 
 ## Correspondencias finais
 
 | Menu | Modulo | Funcao | Destino | Recurso |
 | --- | --- | --- | --- | --- |
+| DASHBOARD | financeiro | Dashboard Financeiro | `/apps/financeiro?view=dashboard` | `dashboard` |
+| WORKFLOW | financeiro | Kanban Financeiro | `/workflow/financeiro` | `conciliacao` |
+| WORKFLOW | financeiro | Conciliacao Financeiro | `/apps/financeiro?view=conciliacao` | `conciliacao` |
+| GESTAO | financeiro | Compras | `/apps/financeiro?view=compras` | `compras` |
+| GESTAO | financeiro | Contas | `/apps/financeiro?view=contas` | `contas` |
+| GESTAO | financeiro | Contas a Pagar | `/apps/financeiro?view=pagar` | `pagar` |
+| GESTAO | financeiro | Contas a Receber | `/apps/financeiro?view=receber` | `receber` |
+| CADASTRO | financeiro | Favorecidos de pagamento | `/apps/financeiro?view=cadastros` | `cadastros` |
+| CADASTRO | financeiro | Categorias | `/apps/financeiro?view=categorias` | `categorias` |
+| RELATORIOS | financeiro | Lancamentos | `/apps/financeiro?view=lancamentos` | `lancamentos` |
+| DADOS | financeiro | Importar Extrato | `/apps/financeiro?view=importar` | `importar` |
+| CONFIGURAR | financeiro | Financeiro - Config | `/apps/financeiro?view=config` | `config` |
 | GESTAO | tecnologia | Rede | `/apps/tecnologia#rede` | `rede` |
 | DASHBOARD | riob | RioB - Fretes | `/apps/riob#dashboard` | `dashboard` |
 | DASHBOARD | riob | Frota | `/apps/riob#dashboard:frota` | `frota` |
@@ -265,11 +277,12 @@ individuais. Nenhuma permissao existente e ampliada. Detalhes em
 
 Em 22/09/2026, DASHBOARD > RioB > Custo do produto ganhou o destino
 `/apps/riob#custoProdutoDashboard`, com recurso `riob:custo_produto_dashboard`.
-A consulta atual/mensal possui autorizacao independente da edicao, no manifest
-base, perfil Rio Branco, catalogo de usuarios, proxy e API. O custo usa a ultima
-NF-e de fornecedor; a comparacao mensal reprecifica a formula atual ate cada
-mes, sem representar receitas historicas. GESTAO mantem cadastro de xarope e
-doses diferentes por produto com `custo_produto`. Nenhuma permissao e ampliada.
+A consulta do custo atualizado possui autorizacao independente da edicao, no
+manifest base, perfil Rio Branco, catalogo de usuarios, proxy e API. O custo
+usa a ultima referencia fiscal de fornecedor disponivel em NF-e ou SPED; no
+mesmo dia, a NF-e confirmada tem prioridade. GESTAO mantem xarope base, receitas
+por sabor compartilhadas entre PET/retornavel e rendimento de bebida definido no sabor, com custo por 1000 L derivado, usando
+`custo_produto`. Nenhuma permissao e ampliada.
 
 Custo do produto reaproveita os vinculos confirmados entre XML e estoque para
 resolver ingredientes renomeados e consultar o ultimo valor sem exigir pedido
@@ -277,14 +290,53 @@ em Compras. Codigo/fornecedor ou codigo/descricao historica devem identificar
 um unico produto. Acucar em venda a ordem entra na referencia; TO/tonelada
 converte para kg e capacidade de saco ja cadastrada e reutilizada quando a
 apresentacao confirmada corresponde. O catalogo identifica o recurso existente
-`custo_produto` como Custo do produto, xarope e precos do XML; dashboard conserva
+`custo_produto` como Custo do produto: formulas, referencias de preco por NF-e e
+SPED, autocomplete de apresentacoes PET por sabor, embalagens por unidade, conversoes, pacotes, valores provisorios, rateios,
+caldeira por hora e combustivel por 44 h semanais ou abastecimentos; dashboard conserva
 `custo_produto_dashboard`. APIs e bloqueios individuais mantem a autorizacao,
 sem novas concessoes. Detalhes e limites no documento CUSTO_PRODUTO.md do RioB.
+
+Em 29/10/2026, CONFIG > RioB > Rateio de custos de producao passou a usar o
+mesmo recurso `custo_produto`. Valores mensais, por litro ou percentuais de mao
+de obra, impostos, energia, agua e outros entram no custo padrao. A formula do
+produto guarda garrafas por pacote. DASHBOARD > RioB > Custo do produto abre os
+componentes por unidade e pacote. A apuracao diaria continua separada e nao
+recebe o rateio padrao automaticamente, evitando dupla
+contagem. O catalogo de usuarios e os dois perfis do manifest foram atualizados
+sem conceder acesso novo.
+
+Em 30/10/2026, o mesmo rateio passou a aceitar a categoria Caldeira/lenha e a
+base R$/hora. A capacidade produtiva em litros por hora converte esse consumo
+para R$/litro, que e distribuido por garrafa e pacote no dashboard. O recurso e
+as permissoes existentes foram preservados, sem concessao automatica.
+
+Ainda em 30/10/2026, o dashboard de custo do produto foi simplificado para
+mostrar somente o valor padrao mais recente, calculado com a formula, o rateio e
+a ultima compra disponiveis. Foram retirados da tela o custo por dia, o seletor
+de ano, o grafico e a serie mensal. A apuracao diaria permanece em GESTAO >
+Custos diarios por grupo, sem alterar permissoes.
+
+O mesmo dashboard exibe somente itens com formula de producao. Cards superiores
+mostram xarope base, compostos por sabor e itens do rateio; abaixo, Agua, PET e
+Retornavel ficam agrupados por sabor e cor. Cada apresentacao separa custo direto
+sem rateio e total com rateio por unidade e pacote. Agua aceita formula sem
+xarope. Cada card detalha PET/garrafa, tampa, rotulo e outros itens por unidade.
+O catalogo nomeia `custo_produto_dashboard` como **Dashboard de custos em cards:
+agua, PET, retornavel, sabores, xaropes, rateios e embalagens**; a autorizacao
+independente permanece inalterada.
+
+RELATORIOS > RioB > Custo produto abre
+`/apps/riob#relatorios:custo_produto` com o mesmo recurso
+`custo_produto_dashboard`. A tela registra os calculos usados nos cards e gera
+uma folha por sabor, com rateios, xarope base/composto, apresentacoes,
+embalagens e a origem XML/SPED/provisoria de cada valor, incluindo nota, unidade
+e conversao. Fecha 1.000 L, litro, unidade e pacote, pode ser impressa/salva em
+PDF e nao concede acesso de edicao.
 
 Em 23/09/2026, GESTAO > Custos diarios por grupo (`#custoDiario`, recurso
 `custo_diario`) passa a informar producao real, pessoal e despesas por grupo.
 Dashboard de custo do produto mantem o recurso `custo_produto_dashboard` e
-oferece custo diario por litro, garrafa e pacote, alem da comparacao mensal.
+oferece somente o custo padrao mais recente por garrafa e pacote.
 Gastos compartilhados sao rateados pelos litros. Desperdicio vem exclusivamente
 das faltas em contagens finalizadas, agrupadas por setor/grupo de estoque;
 perdas especificas de producao ficam para uma etapa futura. As APIs

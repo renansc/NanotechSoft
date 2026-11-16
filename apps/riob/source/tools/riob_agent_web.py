@@ -4539,7 +4539,7 @@ READ_ONLY_MODULES = [
         "label": "dashboard da frota",
         "keywords": ["dashboard da frota", "dashboard frota", "painel da frota", "painel frota", "gestao de frota", "gestão de frota"],
         "path": "/api/dashboard_frota",
-        "fields": ["veiculo_nome", "placa", "frete_status", "falta_manut_km", "falta_oleo_km", "alerta"],
+        "fields": ["veiculo_nome", "placa", "frete_status", "km_total_rodado", "media_km", "falta_manut_km", "falta_oleo_km", "alerta"],
     },
     {
         "name": "frota_resumo",

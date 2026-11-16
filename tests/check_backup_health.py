@@ -44,6 +44,7 @@ with sync_playwright() as p:
         expect(page.locator("#backupHealthTable")).to_contain_text("Erro: agente sem contato")
         expect(page.locator("#backupHealthTable")).to_contain_text("Backup <teste>")
         expect(page.locator("#backupHealthTable")).to_contain_text("/media/discoExterno/Backups")
+        expect(page.locator("#backupHealthTable").get_by_role("button", name="Forçar novo backup")).to_be_visible()
         expect(page.locator("#backupRunsTable")).to_contain_text("Sucesso antigo")
         expect(page.locator("#newBackup")).not_to_be_visible()
         mode = "FAIL_FETCH"

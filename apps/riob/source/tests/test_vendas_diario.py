@@ -79,6 +79,40 @@ class VendasDiarioParserTest(unittest.TestCase):
         self.assertEqual("negativa", parsed["orders"][1]["status"])
         self.assertEqual("ESTOCADO", parsed["orders"][1]["motivo"])
 
+    def test_parses_pocket_pc_wce_and_preserves_operation_and_bonus_totals(self):
+        client = (
+            "    15457 "
+            f"{'ILDETE MARQUES FRANCA':<30}{'MERCEARIA ILDETE':<26}"
+            f"{'CENTRO':<16}{'BARBOSA FERRAZ':<33}Fone : (44)9999.0000"
+        )
+        first = "    7000   1   1      2,00 PT GUARANA RIO BRANCO PET 6X2      26,15"
+        bonus = "    5900  91   1      1,00 PT AGUA 510ML S/GAS CRISTAL PREM"
+        text = "\n".join([
+            "    BEBIDAS WHITE RIVER LTDA                                   15/10/26  10 00     1",
+            "                        IMPORTACAO DE DADOS POCKET PC - WCE     VENDEDOR:  15  MARCOS LEANDRO",
+            client,
+            f"{first:<68}{bonus}",
+            "    Valor Operacao.:    249,40 >> Tabela : 1 - A VISTA",
+            "    Valor Operacao.:     13,80 >> Tabela :91 - BONIFICACAO",
+            "    Valor do Pedido:         0,00       Volumes:   10,00    Peso Bruto:  162,00",
+        ])
+
+        parsed = parse_report(text, "wce.txt")
+
+        self.assertEqual("2026-10-15", parsed["data_ref"])
+        self.assertEqual(1, len(parsed["orders"]))
+        order = parsed["orders"][0]
+        self.assertEqual("15", order["vendedor_codigo"])
+        self.assertEqual("15457", order["cliente_codigo"])
+        self.assertEqual("BARBOSA FERRAZ", order["cidade"])
+        self.assertEqual(2, len(order["items"]))
+        self.assertAlmostEqual(263.20, order["valor_total"])
+        self.assertAlmostEqual(162.0, order["peso_bruto"])
+        self.assertAlmostEqual(
+            13.80,
+            sum(item["quantidade"] * item["valor_unitario"] for item in order["items"] if item["tabela"] == 91),
+        )
+
     def test_attached_model_is_supported_when_available(self):
         path = "/home/renan/Downloads/10190016.txt"
         if not os.path.exists(path):
@@ -111,7 +145,7 @@ class VendasDiarioNavigationTest(unittest.TestCase):
         )
         self.assertIn('<section id="vendasDiarioWorkflow" class="section">', self.page)
 
-        relatorio = self.page.split('<section id="vendas" class="section">', 1)[1]
+        relatorio = self.page.split('<section id="vendas"', 1)[1]
         relatorio = relatorio.split('<section id="vendasDiarioImportarWorkflow"', 1)[0]
         self.assertNotIn('id="vendasViewDiario"', relatorio)
         self.assertNotIn('Selecionar TXT do PC', relatorio)
@@ -119,26 +153,24 @@ class VendasDiarioNavigationTest(unittest.TestCase):
 
         importacao = self.page.split('<section id="vendasDiarioImportarWorkflow"', 1)[1]
         importacao = importacao.split('<section id="vendasDiarioWorkflow"', 1)[0]
-        self.assertIn('Selecionar TXT do PC', importacao)
-        self.assertIn('Ler pastas automaticamente', importacao)
+        self.assertNotIn('Selecionar TXT do PC', importacao)
+        self.assertNotIn('Importar carga PDF', importacao)
+        self.assertIn('Atualizar pelo SELLOUT diário', importacao)
         self.assertIn('id="vendasDiarioBody"', importacao)
         self.assertNotIn('id="vendasDiarioKanbanImportado"', importacao)
 
         kanban = self.page.split('<section id="vendasDiarioWorkflow"', 1)[1]
         kanban = kanban.split('<!-- =====================================================', 1)[0]
         self.assertIn('id="vendasDiarioKanbanImportado"', kanban)
-        self.assertIn("1. Venda TXT recebida", kanban)
-        self.assertIn("2. Carga PDF formada", kanban)
-        self.assertIn("3. SELLOUT confirmado", kanban)
+        self.assertIn("1. TXT histórico", kanban)
+        self.assertIn("2. PDF histórico", kanban)
+        self.assertIn("3. SELLOUT histórico", kanban)
         self.assertIn("Listar cargas da semana", kanban)
         self.assertIn('type="week" id="vendasDiarioSemana"', self.page)
         self.assertNotIn('type="week" id="vendasDiarioSemana"', kanban)
         self.assertIn('id="vendasDiarioCargasSemanaBody"', self.page)
-        self.assertIn('id="vendasDiarioSellout"', importacao)
         self.assertIn('id="vendasDiarioLeituraStatus"', importacao)
         self.assertIn('id="vendasDiarioLerPastasBtn"', importacao)
-        self.assertIn('id="vendasDiarioClientes"', importacao)
-        self.assertIn('id="vendasDiarioRotas"', importacao)
         self.assertIn("Import / Importar SELLOUT", importacao)
         self.assertNotIn('Selecionar TXT do PC', kanban)
         self.assertNotIn('id="vendasDiarioBody"', kanban)

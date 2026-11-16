@@ -38,20 +38,27 @@ class EcosystemDeployTests(unittest.TestCase):
         deployments = {item["id"]: item for item in ecosystem["deployments"]}
 
         self.assertIn("pacs", deployments["render"]["requiredModules"])
+        self.assertIn("financeiro", deployments["rio-branco"]["requiredModules"])
         self.assertTrue(
             {"pacs", "tatoo", "bpa", "gpsmusical"}.isdisjoint(
                 deployments["rio-branco"]["requiredModules"]
             )
         )
 
-    def test_riob_deploy_rejects_empty_local_directory_when_cifs_is_missing(self):
+    def test_riob_deploy_never_depends_on_windows_server_availability(self):
         common = (PROJECT_DIR / "deploy/lib/common.sh").read_text(encoding="utf-8")
 
         self.assertIn('source_fstype="$(findmnt -rn -T "$source" -o FSTYPE', common)
         self.assertIn('source_fstype" != "cifs"', common)
+        self.assertIn("AVISO: servidor Windows indisponivel", common)
+        self.assertIn("o deploy continuara", common)
+        self.assertNotIn("riob_import_host_window_open", common)
         self.assertTrue((PROJECT_DIR / "deploy/systemd/media-serverwin.mount.d/retry.conf").is_file())
         self.assertTrue((PROJECT_DIR / "deploy/systemd/media-serverwin.automount.d/retry.conf").is_file())
         compose = (PROJECT_DIR / "docker-compose.yml").read_text(encoding="utf-8")
+        self.assertIn("source: ${RB_IMPORTS_HOST_PARENT:-/media}", compose)
+        self.assertIn("propagation: rslave", compose)
+        self.assertIn("target: /host-imports", compose)
         self.assertIn("TZ: ${TZ:-America/Sao_Paulo}", compose)
         self.assertIn(
             "name: ${NOTECHSOFT_MYSQL_VOLUME_NAME:-nanotechsoft_notechsoft_mysql}",

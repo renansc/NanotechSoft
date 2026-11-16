@@ -12951,7 +12951,7 @@ def _draw_report_footer(canvas_obj, doc_obj, sistema="Sistema RioBranco"):
     canvas_obj.drawRightString(doc_obj.pagesize[0] - doc_obj.rightMargin, y, f"Pagina {doc_obj.page}")
     canvas_obj.restoreState()
 
-def _build_frota_report_pdf(titulo, headers, rows, slug, filtros=None):
+def _build_frota_report_pdf(titulo, headers, rows, slug, filtros=None, totais=None):
     stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     arquivo = os.path.join("/tmp", f"frota_{slug}_{stamp}.pdf")
     doc = SimpleDocTemplate(
@@ -12978,6 +12978,30 @@ def _build_frota_report_pdf(titulo, headers, rows, slug, filtros=None):
     ]
     if filtros:
         elementos.append(Paragraph(_pdf_escape("Filtros: " + " | ".join(filtros)), styles["Normal"]))
+    if totais:
+        total_rows = [[
+            Paragraph(
+                f"<b>{_pdf_escape(label)}</b><br/>{_pdf_escape(valor)}",
+                body_style,
+            )
+            for label, valor in totais
+        ]]
+        tabela_totais = Table(
+            total_rows,
+            colWidths=[doc.width / max(len(totais), 1)] * len(totais),
+        )
+        tabela_totais.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#fff7ed")),
+            ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#f59e0b")),
+            ("INNERGRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#fed7aa")),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 5),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+            ("TOPPADDING", (0, 0), (-1, -1), 6),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ]))
+        elementos.extend([Spacer(1, 7), tabela_totais])
     elementos.append(Spacer(1, 10))
 
     table_rows = [[Paragraph(f"<b>{_pdf_escape(h)}</b>", body_style) for h in headers]]
@@ -13673,6 +13697,135 @@ def _frota_relatorio_data_evento(row):
     if isinstance(value, datetime.date):
         return value
     return _as_date(value)
+
+
+def _frota_consumo_periodo(data_inicio="", data_fim=""):
+    hoje = datetime.date.today()
+
+    def parse_data(value, padrao):
+        raw = _as_str(value)
+        if not raw:
+            return padrao
+        parsed = _as_date(raw)
+        if parsed is None:
+            raise ValueError("Data inválida. Use o formato AAAA-MM-DD.")
+        return parsed
+
+    inicio = parse_data(data_inicio, hoje.replace(day=1))
+    fim = parse_data(data_fim, hoje)
+    if inicio > fim:
+        raise ValueError("A data inicial não pode ser posterior à data final.")
+    return inicio, fim
+
+
+def _montar_frota_consumo_rodagem(rows, data_inicio="", data_fim="", veiculos=None, veiculo_id=0):
+    """Resume S500, S10 e ARLA, preservando a leitura diesel anterior ao período."""
+    inicio, fim = _frota_consumo_periodo(data_inicio, data_fim)
+    veiculo_id = _as_int(veiculo_id, 0)
+    limite_fim = fim + datetime.timedelta(days=1)
+    historico = [
+        dict(row)
+        for row in (rows or [])
+        if (not veiculo_id or _as_int(row.get("veiculo_id"), 0) == veiculo_id)
+        and (_frota_relatorio_data_evento(row) or limite_fim) < limite_fim
+        and _normalizar_combustivel_tipo(row.get("combustivel_tipo")) in (
+            "diesel_500", "diesel_s10", "arla"
+        )
+    ]
+    metricas = _calcular_metricas_abastecimentos(historico)
+    selecionados = [
+        row for row in historico
+        if (_frota_relatorio_data_evento(row) is not None)
+        and inicio <= _frota_relatorio_data_evento(row) <= fim
+        and _as_str(row.get("status")).lower() == "abastecido"
+        and _normalizar_combustivel_tipo(row.get("combustivel_tipo")) in (
+            "diesel_500", "diesel_s10", "arla"
+        )
+    ]
+
+    por_veiculo = {}
+    for row in selecionados:
+        vid = _as_int(row.get("veiculo_id"), 0)
+        litros = _as_float(row.get("quantidade_litros"), 0.0)
+        combustivel = _normalizar_combustivel_tipo(row.get("combustivel_tipo"))
+        metrica = metricas.get(_as_int(row.get("id"), 0)) or {}
+        entry = por_veiculo.setdefault(vid, {
+            "veiculo_id": vid,
+            "veiculo": _as_str(row.get("veiculo_nome")) or f"Veículo {vid}",
+            "placa": _as_str(row.get("placa")),
+            "modelo": _as_str(row.get("modelo")),
+            "abastecimentos": 0,
+            "km_total_rodado": 0,
+            "litros_totais_usados": 0.0,
+            "litros_diesel_s500": 0.0,
+            "litros_diesel_s10": 0.0,
+            "litros_arla": 0.0,
+            "litros_com_rodagem": 0.0,
+        })
+        entry["abastecimentos"] += 1
+        entry["litros_totais_usados"] += litros
+        if combustivel == "diesel_500":
+            entry["litros_diesel_s500"] += litros
+        elif combustivel == "diesel_s10":
+            entry["litros_diesel_s10"] += litros
+        else:
+            entry["litros_arla"] += litros
+        if combustivel != "arla" and metrica.get("km_l") is not None and metrica.get("km_l") > 0:
+            entry["km_total_rodado"] += _as_int(metrica.get("km_rodado"), 0)
+            entry["litros_com_rodagem"] += litros
+
+    def finalizar(item):
+        km_total = _as_int(item.get("km_total_rodado"), 0)
+        litros_totais = _as_float(item.get("litros_totais_usados"), 0.0)
+        litros_media = _as_float(item.get("litros_com_rodagem"), 0.0)
+        return {
+            **item,
+            "km_total_rodado": km_total,
+            "litros_totais_usados": round(litros_totais, 3),
+            "litros_diesel_s500": round(_as_float(item.get("litros_diesel_s500"), 0.0), 3),
+            "litros_diesel_s10": round(_as_float(item.get("litros_diesel_s10"), 0.0), 3),
+            "litros_arla": round(_as_float(item.get("litros_arla"), 0.0), 3),
+            "litros_com_rodagem": round(litros_media, 3),
+            "media_geral_km_l": round(km_total / litros_media, 3) if litros_media > 0 else None,
+        }
+
+    itens = sorted(
+        (finalizar(item) for item in por_veiculo.values()),
+        key=lambda item: (item.get("veiculo") or "", item.get("placa") or ""),
+    )
+    km_total = sum(_as_int(item.get("km_total_rodado"), 0) for item in itens)
+    litros_totais = sum(_as_float(item.get("litros_totais_usados"), 0.0) for item in itens)
+    litros_diesel_s500 = sum(_as_float(item.get("litros_diesel_s500"), 0.0) for item in itens)
+    litros_diesel_s10 = sum(_as_float(item.get("litros_diesel_s10"), 0.0) for item in itens)
+    litros_arla = sum(_as_float(item.get("litros_arla"), 0.0) for item in itens)
+    litros_media = sum(_as_float(item.get("litros_com_rodagem"), 0.0) for item in itens)
+    veiculos_opcoes = [{
+        "id": _as_int(item.get("id"), 0),
+        "nome": _as_str(item.get("nome")),
+        "placa": _as_str(item.get("placa")),
+        "modelo": _as_str(item.get("modelo")),
+    } for item in (veiculos or [])]
+    return {
+        "periodo": {
+            "inicio": inicio.isoformat(),
+            "fim": fim.isoformat(),
+            "label": f"{inicio.strftime('%d/%m/%Y')} a {fim.strftime('%d/%m/%Y')}",
+        },
+        "filtros": {"veiculo_id": veiculo_id or None},
+        "resumo": {
+            "veiculos": len(itens),
+            "abastecimentos": sum(_as_int(item.get("abastecimentos"), 0) for item in itens),
+            "km_total_rodado": km_total,
+            "litros_totais_usados": round(litros_totais, 3),
+            "litros_diesel_s500": round(litros_diesel_s500, 3),
+            "litros_diesel_s10": round(litros_diesel_s10, 3),
+            "litros_arla": round(litros_arla, 3),
+            "litros_com_rodagem": round(litros_media, 3),
+            "media_geral_km_l": round(km_total / litros_media, 3) if litros_media > 0 else None,
+        },
+        "veiculos": veiculos_opcoes,
+        "itens": itens,
+    }
 
 
 def _montar_frota_relatorio_mensal(rows, mes="", veiculos=None, veiculo_id=0):
@@ -42025,6 +42178,126 @@ def relatorio_frota_mensal():
         conn.close()
 
 
+@app.route("/api/frota_relatorio/consumo-rodagem", methods=["GET"])
+def relatorio_frota_consumo_rodagem():
+    try:
+        inicio, fim = _frota_consumo_periodo(
+            request.args.get("data_inicio"),
+            request.args.get("data_fim"),
+        )
+    except ValueError as exc:
+        return jsonify({"erro": str(exc)}), 400
+    veiculo_id = _as_int(request.args.get("veiculo_id"), 0)
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    try:
+        data_expr = "COALESCE(a.data_abastecimento, a.data_liberacao)"
+        where = [
+            "LOWER(COALESCE(a.status, '')) = 'abastecido'",
+            f"{data_expr} IS NOT NULL",
+            f"{data_expr} < %s",
+            """LOWER(COALESCE(v.combustivel_padrao, 'diesel_500')) IN (
+                'diesel_s10', 'diesel s10', 's10', 's-10',
+                'diesel_500', 'diesel_s500', 'diesel 500', 'diesel s500', 's500', 's-500'
+            )""",
+        ]
+        params = [fim + datetime.timedelta(days=1)]
+        if veiculo_id > 0:
+            where.append("a.veiculo_id = %s")
+            params.append(veiculo_id)
+        cur.execute(
+            f"""
+            SELECT
+                {data_expr} AS data_evento,
+                a.id,
+                a.veiculo_id,
+                a.km,
+                a.combustivel_tipo,
+                a.quantidade_litros,
+                a.status,
+                v.nome AS veiculo_nome,
+                v.placa,
+                v.modelo
+            FROM abastecimentos a
+            LEFT JOIN veiculos v ON v.id = a.veiculo_id
+            WHERE {" AND ".join(where)}
+            ORDER BY a.veiculo_id ASC, a.km ASC, a.id ASC
+            """,
+            tuple(params),
+        )
+        rows = cur.fetchall() or []
+        cur.execute("""
+            SELECT id, nome, placa, modelo, combustivel_padrao
+            FROM veiculos
+            WHERE LOWER(COALESCE(combustivel_padrao, 'diesel_500')) IN (
+                'diesel_s10', 'diesel s10', 's10', 's-10',
+                'diesel_500', 'diesel_s500', 'diesel 500', 'diesel s500', 's500', 's-500'
+            )
+            ORDER BY nome ASC, placa ASC, id ASC
+        """)
+        veiculos = cur.fetchall() or []
+        payload = _montar_frota_consumo_rodagem(
+            rows,
+            data_inicio=inicio.isoformat(),
+            data_fim=fim.isoformat(),
+            veiculos=veiculos,
+            veiculo_id=veiculo_id,
+        )
+    finally:
+        cur.close()
+        conn.close()
+
+    if _as_str(request.args.get("formato")).lower() != "pdf":
+        return jsonify(payload)
+
+    headers = ["Veículo", "KM total rodado", "Diesel S500", "Diesel S10", "ARLA", "Litros totais usados", "Média geral KM/L"]
+    pdf_rows = [[
+        " - ".join(part for part in (item.get("placa"), item.get("veiculo")) if part) or "-",
+        str(_as_int(item.get("km_total_rodado"), 0)),
+        _fmt_litros_br(item.get("litros_diesel_s500")),
+        _fmt_litros_br(item.get("litros_diesel_s10")),
+        _fmt_litros_br(item.get("litros_arla")),
+        _fmt_litros_br(item.get("litros_totais_usados")),
+        _fmt_decimal_br(item.get("media_geral_km_l"), 2) if item.get("media_geral_km_l") is not None else "-",
+    ] for item in payload.get("itens") or []]
+    filtros_pdf = [f"Período: {payload['periodo']['label']}"]
+    if veiculo_id > 0:
+        veiculo = next(
+            (item for item in payload.get("veiculos") or [] if _as_int(item.get("id"), 0) == veiculo_id),
+            None,
+        ) or {}
+        veiculo_label = " - ".join(
+            part for part in (_as_str(veiculo.get("placa")), _as_str(veiculo.get("nome"))) if part
+        ) or f"#{veiculo_id}"
+        filtros_pdf.append(f"Veículo: {veiculo_label}")
+    arquivo = _build_frota_report_pdf(
+        "Relatório de Consumo e Rodagem",
+        headers,
+        pdf_rows,
+        "consumo_rodagem",
+        filtros_pdf,
+        totais=[
+            ("Veículos", str(_as_int(payload["resumo"].get("veiculos"), 0))),
+            ("KM total", f"{_as_int(payload['resumo'].get('km_total_rodado'), 0)} km"),
+            ("Diesel S500", f"{_fmt_litros_br(payload['resumo'].get('litros_diesel_s500'))} L"),
+            ("Diesel S10", f"{_fmt_litros_br(payload['resumo'].get('litros_diesel_s10'))} L"),
+            ("ARLA", f"{_fmt_litros_br(payload['resumo'].get('litros_arla'))} L"),
+            ("Litros totais", f"{_fmt_litros_br(payload['resumo'].get('litros_totais_usados'))} L"),
+            (
+                "Média geral",
+                f"{_fmt_decimal_br(payload['resumo'].get('media_geral_km_l'), 2)} km/L"
+                if payload["resumo"].get("media_geral_km_l") is not None else "-",
+            ),
+        ],
+    )
+    return send_file(
+        arquivo,
+        as_attachment=False,
+        download_name="consumo_rodagem.pdf",
+        mimetype="application/pdf",
+    )
+
+
 @app.route("/api/frota_relatorio", methods=["GET"])
 def relatorio_frota_pdf():
     tipo = _as_str(request.args.get("tipo")).lower() or "resumo"
@@ -42443,6 +42716,7 @@ def dashboard_frota():
     ultima_manut = {}
     ultima_manut_tipo = {}
     media_km_l = {}
+    km_total_rodado = {}
 
     # Trocas de óleo
     try:
@@ -42479,41 +42753,33 @@ def dashboard_frota():
     except Exception:
         pass
 
-    # Abastecimentos: calcula média KM/L do histórico por veículo.
-    # Regra: para cada abastecimento concluído, usa distância desde o abastecimento anterior
-    # e divide pela quantidade abastecida no abastecimento atual.
+    # Abastecimentos: calcula rodagem total e média geral ponderada por veículo.
+    # Regra: soma as distâncias válidas e divide pelos litros correspondentes.
     try:
         cur.execute("""
-            SELECT veiculo_id, km, quantidade_litros, combustivel_tipo
+            SELECT id, veiculo_id, km, quantidade_litros, combustivel_tipo, status
             FROM abastecimentos
             WHERE status = 'abastecido'
             ORDER BY veiculo_id ASC, km ASC, id ASC
         """)
         rows = cur.fetchall() or []
-        by = {}
+        metricas = _calcular_metricas_abastecimentos(rows)
+        consumo_por_veiculo = {}
         for r in rows:
             vid = _as_int(r.get("veiculo_id"), 0)
             if not _combustivel_move_veiculo(r.get("combustivel_tipo")):
                 continue
-            by.setdefault(vid, []).append({
-                "km": _as_int(r.get("km"), 0),
-                "litros": _as_float(r.get("quantidade_litros"), 0.0),
-            })
+            metrica = metricas.get(_as_int(r.get("id"), 0)) or {}
+            if metrica.get("km_l") is None or metrica.get("km_l") <= 0:
+                continue
+            entry = consumo_por_veiculo.setdefault(vid, {"km": 0, "litros": 0.0})
+            entry["km"] += _as_int(metrica.get("km_rodado"), 0)
+            entry["litros"] += _as_float(r.get("quantidade_litros"), 0.0)
 
-        for vid, seq in by.items():
-            metricas = []
-            prev_km = None
-            for item in seq:
-                km_atual = item["km"]
-                litros = item["litros"]
-                if prev_km is not None:
-                    dist = km_atual - prev_km
-                    if dist > 0 and litros > 0:
-                        metricas.append(dist / litros)
-                prev_km = km_atual
-            if metricas:
-                # Usa apenas a última medição válida de KM/L
-                media_km_l[vid] = metricas[-1]
+        for vid, consumo in consumo_por_veiculo.items():
+            if consumo["litros"] > 0:
+                media_km_l[vid] = consumo["km"] / consumo["litros"]
+                km_total_rodado[vid] = consumo["km"]
     except Exception:
         pass
 
@@ -42556,6 +42822,7 @@ def dashboard_frota():
             "ultimo_oleo_km": u_oleo,
             "ultima_manut_km": u_manut,
             "media_km": media_km_l.get(vid),
+            "km_total_rodado": km_total_rodado.get(vid, 0),
             "falta_manut_km": falta_manut,
             "falta_oleo_km": falta_oleo,
             "alerta": True if (falta_manut <= 0 or falta_oleo <= 0) else False

@@ -29,6 +29,7 @@
       <button class="tab" data-view="compras">Compras</button>
       <button class="tab" data-view="pagar">Contas a Pagar</button>
       <button class="tab" data-view="receber">Contas a Receber</button>
+      <button class="tab" data-view="contabilidade">Plano de contas</button>
       <button class="tab" data-view="config">Config</button>
     </nav>
   </header>
@@ -951,6 +952,105 @@
         </div>
       </div>
     </div>
+
+    <!-- PLANO DE CONTAS E AMARRACOES -->
+    <section class="view hidden" id="view-contabilidade">
+      <div class="accountingHero card">
+        <div class="cardhead">
+          <div>
+            <h2>Plano de contas e amarrações</h2>
+            <div class="muted">Cadastro contábil único para Financeiro, Estoque e fornecedores de entrada.</div>
+          </div>
+          <div class="row gap wrap">
+            <button class="btn" id="btnAtualizarContabilidade">Atualizar</button>
+            <button class="btn primary" id="btnNovaContaContabil">+ Nova conta contábil</button>
+          </div>
+        </div>
+        <div class="kpis accountingKpis">
+          <div class="kpi"><div class="kpiLabel">Contas no plano</div><div class="kpiValue" id="contabilTotalContas">0</div></div>
+          <div class="kpi"><div class="kpiLabel">Cadastros verificados</div><div class="kpiValue" id="contabilTotalCadastros">0</div></div>
+          <div class="kpi"><div class="kpiLabel">Vinculados</div><div class="kpiValue" id="contabilTotalVinculados">0</div></div>
+          <div class="kpi"><div class="kpiLabel">Pendentes</div><div class="kpiValue" id="contabilTotalPendentes">0</div></div>
+        </div>
+        <div id="contabilAvisos" class="statusBox hidden"></div>
+      </div>
+
+      <div class="card accountingPlanCard">
+        <div class="cardhead">
+          <div>
+            <h2>Plano de contas</h2>
+            <div class="muted">Contas sintéticas organizam a árvore; somente contas analíticas e ativas recebem vínculos.</div>
+          </div>
+          <input type="search" id="contabilBuscaConta" placeholder="Buscar código ou conta...">
+        </div>
+        <div class="tableWrap">
+          <table class="table accountingPlanTable">
+            <thead><tr><th>Código / conta</th><th>Classificação</th><th>Natureza</th><th>Uso</th><th>Status</th><th class="right">Ações</th></tr></thead>
+            <tbody id="tbPlanoContas"><tr><td colspan="6" class="muted">Carregando plano de contas...</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card accountingBindingsCard">
+        <div class="cardhead">
+          <div>
+            <h2>Amarração dos cadastros</h2>
+            <div class="muted">Todo item sem vínculo fica marcado como pendente para uso contábil.</div>
+          </div>
+          <div class="row gap wrap">
+            <select id="contabilFiltroModulo"><option value="ALL">Todos os módulos</option><option value="financeiro">Financeiro</option><option value="riob">Estoque e compras</option></select>
+            <select id="contabilFiltroStatus"><option value="PENDING">Somente pendentes</option><option value="ALL">Todos</option><option value="LINKED">Somente vinculados</option></select>
+            <input type="search" id="contabilBuscaCadastro" placeholder="Buscar cadastro...">
+          </div>
+        </div>
+        <div class="accountingBulk row gap wrap">
+          <span class="muted" id="contabilSelecionados">0 selecionados</span>
+          <select id="contabilContaLote"><option value="">Escolha a conta para aplicar em lote</option></select>
+          <button class="btn primary" id="btnAplicarContaLote">Aplicar aos selecionados</button>
+        </div>
+        <div class="tableWrap">
+          <table class="table accountingBindingsTable">
+            <thead><tr><th><input type="checkbox" id="contabilSelecionarTodos" aria-label="Selecionar todos os cadastros visíveis"></th><th>Módulo</th><th>Tipo / cadastro</th><th>Conta contábil vinculada</th><th>Status</th></tr></thead>
+            <tbody id="tbVinculosContabeis"><tr><td colspan="5" class="muted">Carregando cadastros...</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="modal hidden" id="modalContaContabil">
+        <div class="modalBox">
+          <div class="modalHead">
+            <h3 id="modalContaContabilTitle">Nova conta contábil</h3>
+            <button class="iconBtn" id="btnFecharContaContabil">×</button>
+          </div>
+          <div class="formGrid">
+            <label>Código
+              <input type="text" id="contabilCodigo" maxlength="60" placeholder="Ex.: 1.1.01.001">
+            </label>
+            <label>Nome
+              <input type="text" id="contabilNome" maxlength="180" placeholder="Ex.: Caixa geral">
+            </label>
+            <label>Classificação
+              <select id="contabilClassificacao"></select>
+            </label>
+            <label>Natureza
+              <select id="contabilNatureza"></select>
+            </label>
+            <label class="span2">Conta pai
+              <select id="contabilContaPai"><option value="">Sem conta pai</option></select>
+            </label>
+            <label class="span2">Descrição
+              <textarea id="contabilDescricao" maxlength="500" placeholder="Finalidade e orientação de uso desta conta."></textarea>
+            </label>
+            <label class="checkLine"><input type="checkbox" id="contabilAnalitica" checked> Conta analítica (aceita vínculos)</label>
+            <label class="checkLine"><input type="checkbox" id="contabilAtiva" checked> Conta ativa</label>
+          </div>
+          <div class="row end gap">
+            <button class="btn" id="btnCancelarContaContabil">Cancelar</button>
+            <button class="btn primary" id="btnSalvarContaContabil">Salvar conta</button>
+          </div>
+        </div>
+      </div>
+    </section>
 
     <!-- CONFIG -->
     <section class="view hidden" id="view-config">

@@ -2,6 +2,25 @@
 
 Portal Flask + MySQL para centralizar apps instalados dinamicamente.
 
+## SPED Fiscal
+
+O modulo **SPED Fiscal** processa arquivos EFD ICMS/IPI em TXT no navegador e
+persiste no servidor somente a base analitica resultante, com painel multianual,
+registros detalhados, comparativo, transacoes, tributos e agrupamentos. O TXT nao
+e armazenado nem incluido no deploy; o resumo dos itens de entrada C170 pode ser sincronizado com o Custo do produto,
+mediante acesso `riob:custo_produto`. O perfil Rio Branco contrata o app e cada tarefa possui recurso
+proprio em **Config > Usuarios e acessos**, sem concessao automatica. Consulte
+[SPED Fiscal](apps/sped/README.md) para limites, persistencia e acessos.
+
+## Plano de contas central
+
+O Financeiro possui em **Config > Plano de contas e amarrações** um cadastro
+hierárquico único para integrar contas e categorias financeiras, favorecidos,
+grupos/produtos de estoque e fornecedores. Os itens sem conta aparecem como
+pendentes para uso contábil. O recurso de acesso é
+`financeiro:contabilidade`; detalhes técnicos e APIs estão em
+[Financeiro](apps/financeiro/README.md#plano-de-contas-e-amarrações).
+
 ## Acesso inicial
 
 Gestao > Tecnologia > Rede inclui busca manual de dispositivos online nao
@@ -82,11 +101,11 @@ filtros de periodo; o dashboard
 diario fica restrito ao mes corrente (America/Sao_Paulo).
 O recurso continua `riob:vendas`, com bloqueios individuais para cada atalho.
 Detalhes em [API de vendas](apps/riob/source/docs/API_E_DADOS.md#51-vendas-e-cache-de-importacao).
-O SELLOUT mensal dos relatorios combina as bases IND3 e INDB em uma unica carga
-atomica; vendedores presentes nas duas origens conservam todas as suas vendas.
-Pedidos manuais aguardam em fila quando a leitura TXT/PDF esta ocupada. TXT e
-PDF confirmados sao removidos das pastas de entrada para evitar acumulo; fontes
-com erro e os CSV SELLOUT sao preservados.
+Desde 20/10/2026, vendas e relatorios usam exclusivamente `SELLOUT_D.CSV`,
+unificando IND3 e INDB em uma carga atomica com datas reais. O mesmo conjunto
+alimenta consultas diarias, mensais e anuais. `SELLOUT_M`, TXT e PDF nao fazem
+mais parte da importacao de Vendas Diario; dados historicos ja gravados sao
+preservados, mas nao recebem novas cargas por esses formatos.
 Veja [SELLOUT automatico](apps/riob/source/docs/SELLOUT_AUTOMATICO.md).
 
 De fora do Docker, use:
@@ -223,6 +242,14 @@ nao operam Docker local nesse perfil. O Git seguro valida e envia somente o
 codigo no Render. Nos perfis locais, `up.sh` inicia o banco com `--no-recreate`,
 `down.sh` para apenas as aplicacoes e `update.sh` nao opera bancos.
 
+No Rio Branco, o servidor Windows das importacoes pode ficar indisponivel em
+qualquer horario e nunca bloqueia `up.sh`, `update.sh` ou a validacao do Git.
+A indisponibilidade gera aviso operacional, sem criar uma pasta local vazia. O
+Compose monta somente o pai `/media` como leitura e com propagacao `rslave`,
+mantendo o automount `/media/serverwin` visivel dentro do RioB assim que o
+Windows voltar. Caminhos de importacao customizados fora de `/media/serverwin`
+continuam obrigatorios para evitar mascarar configuracao incorreta.
+
 O Open WebUI e um servico externo e nao faz parte desses comandos nem do deploy
 canonico. Quando ele usa o Ollama opcional deste servidor, a API deve ser
 publicada somente no IP Tailscale. Consulte
@@ -299,7 +326,9 @@ periodicidade e retenção, enquanto um agente instalado na máquina responsáve
 gera dumps MySQL/MariaDB e troca configurações e resultados em JSON. Essa rotina
 é independente de `up.sh` e `update.sh`; senhas permanecem somente na máquina
 executora. A instalação e o fluxo diário/semanal/mensal estão documentados no
-README do módulo.
+README do módulo. Administradores podem usar **Forçar novo backup** diretamente
+no monitoramento ou nos planos; a solicitação aguarda o agente e não mascara
+falha de contato ou indisponibilidade do disco de destino.
 
 O modulo **Impressoras** integra as filas do CUPS da maquina fisica, mostra
 estado, usuario, documento, paginas, copias, data e hora e oferece uma fila
@@ -481,7 +510,7 @@ classificar seu grupo e recurso no manifest e verificar o menu de usuario restri
 
 ## Menu do Rio Branco (setembro de 2026)
 
-O cliente `rio-branco` usa o perfil dos manifests definido em [Menu conforme PDF](docs/MENU_RIO_BRANCO_PDF.md): DASHBOARD, WORKFLOW, GESTAO, CADASTRO, RELATORIOS, DADOS, ESTOQUE, MONITOR, CONFIGURAR e DOCUMENTOS, com os modulos identificados dentro de cada menu. Os demais clientes mantem a navegacao por modulo. Financeiro, Ponto, Store, Cameras e ESXi estao temporariamente desativados apenas no Rio Branco. Contagem, relatorio de orcamentos e backup de e-mails possuem recursos proprios em Config > Usuarios e acessos; acessos individuais nao sao ampliados automaticamente.
+O cliente `rio-branco` usa o perfil dos manifests definido em [Menu conforme PDF](docs/MENU_RIO_BRANCO_PDF.md): DASHBOARD, WORKFLOW, GESTAO, CADASTRO, RELATORIOS, DADOS, ESTOQUE, MONITOR, CONFIGURAR e DOCUMENTOS, com os modulos identificados dentro de cada menu. Os demais clientes mantem a navegacao por modulo. Desde 20/10/2026, o Financeiro esta habilitado no Rio Branco; Ponto, Store, Cameras e ESXi permanecem desativados somente nesse cliente. Os recursos do Financeiro e das demais funcoes aparecem em Config > Usuarios e acessos, sem ampliar automaticamente as concessoes individuais.
 
 ## Auditoria dos atalhos do Rio Branco
 
@@ -589,26 +618,68 @@ arquivos; nenhuma permissao individual e concedida automaticamente.
 
 ## Custo do produto
 
-GESTAO > RioB > Custo do produto cadastra formulas por produto PET/retornavel,
-com quantidades para 1000 litros, preco automatico da ultima compra de cada item
-e estimativa por litro e por garrafa.
+GESTAO > RioB > Custo do produto cadastra formulas por produto agua/PET/retornavel,
+com PET/garrafa, tampa, rotulo e demais itens informados por uma unidade pronta,
+preco automatico da ultima compra fiscal por NF-e ou SPED, ou valor
+provisorio enquanto nao existe referencia valida, agua quente em litros e R$/L, e estimativa
+por litro e por garrafa.
 Reutiliza o cadastro de estoque e exige `riob:custo_produto` em Config > Usuarios
 e acessos, sem conceder permissoes automaticamente. Veja
 [Custo do produto](apps/riob/source/docs/CUSTO_PRODUTO.md).
 
-Custo do produto tambem oferece uma receita compartilhada de **xarope**, com
-rendimento e custo por litro. Cada produto informa sua dose de xarope por
-1000 litros de bebida; os ingredientes sao selecionados no cadastro existente.
+Custo do produto tambem oferece uma receita de **xarope base** e compostos por
+sabor, com rendimento e custo por litro. Cada composto informa quanto de base
+entra no lote e quantos litros de bebida pronta o lote produz. O custo por 1000
+litros e derivado automaticamente por `custo do lote * 1000 / rendimento`; as
+apresentacoes PET/retornavel herdam esse custo. Agua nao exige xarope.
 Alterar a base recalcula as estimativas. O recurso continua `riob:custo_produto`,
-identificado como Custo do produto e base de xarope em Usuarios e acessos.
+identificado como Custo do produto: formulas, vinculo explicito pela descricao
+SPED do cadastro de produto, autocomplete de apresentacoes PET por sabor, embalagens por unidade, conversoes
+XML, pacotes, valores provisorios, rateios, caldeira por hora e combustivel por
+44 h semanais em Usuarios e acessos.
+Quando uma apresentacao PET de um sabor ja possui formula, as apresentacoes
+faltantes de 200 ml, 600 ml e 2 L podem ser preenchidas para revisao com o mesmo
+xarope composto, a tampa existente e preforma/rotulo unicos do volume correto.
+O rateio de combustivel tambem pode usar automaticamente todos os
+abastecimentos concluidos do mes mais recente com lancamentos. O total e
+dividido pelo volume mensal de producao e o card identifica periodo, registros,
+litros abastecidos e custo por litro produzido.
 
-DASHBOARD > RioB > Custo do produto compara o custo atual e mensal por sabor,
-com filtros e grafico. Usa a formula atual com os precos disponiveis ate cada
-mes; nao representa receitas historicas de producao. O recurso de consulta
+DASHBOARD > RioB > Custo do produto mostra somente o custo atual dos itens com
+formula de producao. Cards apresentam xarope base, compostos, rateios e os
+grupos Agua, PET e Retornavel por sabor, separando custo sem e com rateio por
+unidade/pacote e detalhando PET/garrafa, tampa e rotulo por garrafa, pacote e
+1.000 L. Para 2 L, a tela explicita 500 garrafas/1.000 L. Os compostos mostram
+separadamente os ingredientes do sabor e o sabor com a base por litro de bebida
+pronta; a base pura continua em R$/L de xarope. Nao ha serie
+diaria ou historica. O recurso de consulta
 `riob:custo_produto_dashboard` e independente do cadastro. Precos vem das NF-e de
-fornecedores importadas; embalagens sem conversao conhecida exigem capacidade.
-Sem compra ou conversao, a estimativa fica pendente. Nenhum acesso e concedido
-automaticamente.
+fornecedores importadas ou dos resumos C170 sincronizados pelo SPED; em empate de
+data, a NF-e confirmada tem prioridade. Embalagens sem conversao conhecida exigem capacidade.
+Descricoes SPED fortemente compativeis e nao ambiguas podem completar o preco de
+um ingrediente antigo cadastrado manualmente. A metodologia preferencial para
+itens sem vinculo XML e preencher **Descricao exata no SPED** em Cadastros >
+Produtos; o valor do 0200/C170 e ligado ao produto por igualdade normalizada e
+nao pode ser repetido em outro cadastro ativo. Por exemplo,
+`CONCENTRADO P/REFRI FRAMBOESA BD25 C/C` pode ser amarrado a
+`Concentrado liquido para ref. framboesa`. Um nome tecnico unico como DIATOMITA
+continua reconhecendo a descricao fiscal mais longa apenas como compatibilidade
+para produtos ainda nao revisados.
+Unidades internas sao resolvidas pelo 0190; quando o C170 informa saco sem a
+capacidade, o custo solicita o fracionamento real em kg por saco.
+Rotulos truncados e preformas tambem podem ser ligados por assinaturas unicas de
+sabor/dimensao ou cor/faixa de peso; qualquer duplicidade permanece pendente.
+Sem compra/conversao nem valor provisorio, a estimativa fica pendente. Nenhum
+acesso e concedido automaticamente.
+
+RELATORIOS > RioB > Custo produto abre a memoria dos mesmos valores do
+dashboard. O PDF separa uma folha por sabor e demonstra a formacao do xarope
+base, os ingredientes do composto, as apresentacoes e os rateios. Cada item
+identifica a fonte XML/NF-e, SPED ou provisoria, numero e data da nota, unidade e
+valor de compra, conversao aplicada e custo usado na formula, alem do fechamento
+por 1.000 L, litro, unidade e pacote. Possui filtros de linha/produto e impressao
+ou salvamento em PDF pelo navegador. Reutiliza a permissao somente leitura
+`riob:custo_produto_dashboard`; nao libera edicao de formulas.
 
 Custo do produto reaproveita os vinculos confirmados entre XML e estoque para
 resolver ingredientes renomeados e consultar o ultimo valor sem exigir pedido
@@ -616,14 +687,15 @@ em Compras. Codigo/fornecedor ou codigo/descricao historica devem identificar
 um unico produto. Acucar em venda a ordem entra na referencia; TO/tonelada
 converte para kg e capacidade de saco ja cadastrada e reutilizada quando a
 apresentacao confirmada corresponde. O catalogo identifica o recurso existente
-`custo_produto` como Custo do produto, xarope e precos do XML; dashboard conserva
+`custo_produto` como Custo do produto: formulas, pacotes, valores provisorios,
+rateios, caldeira por hora e combustivel dos abastecimentos; dashboard conserva
 `custo_produto_dashboard`. APIs e bloqueios individuais mantem a autorizacao,
 sem novas concessoes. Detalhes e limites no documento CUSTO_PRODUTO.md do RioB.
 
 Em 23/09/2026, GESTAO > Custos diarios por grupo (`#custoDiario`, recurso
 `custo_diario`) passa a informar producao real, pessoal e despesas por grupo.
 Dashboard de custo do produto mantem o recurso `custo_produto_dashboard` e
-oferece custo diario por litro, garrafa e pacote, alem da comparacao mensal.
+oferece somente o custo padrao atual por garrafa e pacote.
 Gastos compartilhados sao rateados pelos litros. Desperdicio vem exclusivamente
 das faltas em contagens finalizadas, agrupadas por setor/grupo de estoque;
 perdas especificas de producao ficam para uma etapa futura. As APIs
@@ -674,3 +746,31 @@ preserva campos incertos e linhas repetidas e evita duplicidade na reimportacao.
 As notas entram na fila de conferencia antes do cadastro definitivo. O acesso
 continua no item Manutencoes (`frota`), sem novas concessoes. Consulte
 [formatos, API e validacao](apps/riob/source/docs/IMPORTACAO_TXT_MANUTENCAO.md).
+
+## Relatorio mensal de frota (21/10/2026)
+
+Relatorios > Frota apresenta abastecimentos por mes e veiculo, com litros,
+valor, preco medio, quilometragem apurada e media ponderada de KM/L. O primeiro
+abastecimento do periodo usa o ultimo registro anterior como base. ARLA integra
+os custos e litros, mas fica fora da media de rendimento. A mesma tela abre o
+PDF do periodo. O acesso continua no recurso `riob:frota` e no item individual
+de relatorios de frota, sem novas concessoes. Detalhes em
+[API e dados do RioB](apps/riob/source/docs/API_E_DADOS.md#get-apifrota_relatoriomensal).
+
+O dashboard de frota tambem exibe, por veiculo, os KM totais rodados apurados
+em todo o historico e a media geral ponderada. Em Relatorios > Frota, Consumo e
+rodagem permite filtrar um periodo inclusivo e um veiculo, consultar KM total,
+litros totais de combustivel usados, litros com intervalo valido e media geral,
+alem de abrir o mesmo resultado em PDF. ARLA permanece fora dessa apuracao de
+rodagem e rendimento. O recurso continua `riob:frota`, sem novas concessoes.
+
+## Posicao de estoque do dia por grupo (22/10/2026)
+
+Relatorios > Posicao de estoque do dia permite escolher uma data e um grupo
+para consultar saldo inicial, entradas, saidas e saldo final de cada produto,
+com totais por grupo e PDF. Produtos mostram pacotes/caixas e o total em
+unidades-base; o agrupamento usa o cadastro exato para não misturar bebida,
+rótulo e insumo com nomes parecidos. A fotografia usa todos os movimentos registrados
+ate o fim do dia selecionado. O acesso permanece no recurso `riob:estoque`, com
+controle individual do item de relatorio e sem novas concessoes. Detalhes em
+[Posicao de estoque do dia](apps/riob/source/docs/RELATORIO_POSICAO_ESTOQUE_DIA.md).

@@ -686,13 +686,30 @@ class TecnologiaIntegrationTests(unittest.TestCase):
         )
 
     def test_backup_dashboard_exposes_force_action(self):
+        html = (PROJECT_DIR / "apps" / "tecnologia" / "source" / "index.html").read_text(encoding="utf-8")
         script = (PROJECT_DIR / "apps" / "tecnologia" / "source" / "app.js").read_text(encoding="utf-8")
+        manifest = json.loads((PROJECT_DIR / "apps" / "tecnologia" / "app.json").read_text(encoding="utf-8"))
+        self.assertIn("<th>Ação</th>", html)
+        self.assertIn('$("#backupHealthTable").addEventListener("click"', script)
         self.assertIn('data-backup-run="${job.id}"', script)
+        self.assertIn('"Forçar novo backup"', script)
         self.assertIn('request(`/backup/jobs/${id}/run-now`', script)
+        backup_resource = next(item for item in manifest["access_resources"] if item["recurso"] == "backup")
+        self.assertIn("solicitacao manual", backup_resource["nome"])
         self.assertIn(
             "/apps/tecnologia/api/backup/jobs/<int:backup_id>/run-now",
             {rule.rule for rule in portal.app.url_map.iter_rules()},
         )
+
+    def test_forced_backup_route_rejects_non_admin(self):
+        user = {"id": 42, "perfil": "usuario"}
+        with portal.app.test_request_context(
+            "/apps/tecnologia/api/backup/jobs/1/run-now", method="POST"
+        ), mock.patch.object(portal, "current_user_or_logout", return_value=user):
+            response, status = portal.tecnologia_backup_run_now_api.__wrapped__(1)
+
+        self.assertEqual(403, status)
+        self.assertEqual("somente administradores podem alterar o monitoramento", response.get_json()["erro"])
 
     def test_forced_backup_reports_request_identifier(self):
         with tempfile.TemporaryDirectory(prefix="tecnologia-force-") as temp_dir:
@@ -1466,6 +1483,7 @@ class TecnologiaIntegrationTests(unittest.TestCase):
         html = (PROJECT_DIR / "apps/tecnologia/source/index.html").read_text(encoding="utf-8")
         javascript = (PROJECT_DIR / "apps/tecnologia/source/app.js").read_text(encoding="utf-8")
         css = (PROJECT_DIR / "apps/tecnologia/source/styles.css").read_text(encoding="utf-8")
+        manifest = json.loads((PROJECT_DIR / "apps/tecnologia/app.json").read_text(encoding="utf-8"))
 
         self.assertIn("Visao geral da rede", html)
         self.assertIn("Descobrir impressoras", html)
@@ -1477,9 +1495,15 @@ class TecnologiaIntegrationTests(unittest.TestCase):
         self.assertIn("deviceDetailsModal", html)
         self.assertIn("Atualizar agora", html)
         self.assertIn("Alertas por e-mail", html)
+        self.assertIn("Configuração do link e alertas", html)
+        self.assertIn("Dados do link contratado", html)
         self.assertIn("O que será notificado", html)
         self.assertIn("Consumo dos equipamentos monitorados", html)
-        self.assertIn("Consumo de Internet", html)
+        self.assertIn("Último teste de velocidade", html)
+        self.assertIn("Consumo instantâneo", html)
+        self.assertIn("Ocupação instantânea", html)
+        self.assertIn("linkSpeedMeasuredAt", javascript)
+        self.assertIn("linkInternetUsageAt", javascript)
         self.assertIn("Tráfego LAN/Wi-Fi", html)
         self.assertIn("deviceInternetInterfaces", html)
         self.assertIn("deviceInternalInterfaces", html)
@@ -1493,6 +1517,12 @@ class TecnologiaIntegrationTests(unittest.TestCase):
         self.assertIn("Enviar e-mail de teste", html)
         self.assertIn("Remetente:", javascript)
         self.assertIn('request("/alerts/config"', javascript)
+        config_resource = next(item for item in manifest["access_resources"] if item["recurso"] == "config")
+        self.assertEqual("Configuracao do link contratado e alertas", config_resource["nome"])
+        self.assertEqual(
+            "Configuracao do link e alertas",
+            manifest["menu_profiles"]["rio-branco"]["config_groups"]["config"][0]["nome"],
+        )
         self.assertIn("identityName: button.dataset.computerName", javascript)
         self.assertIn("Impressões das últimas 4 semanas", javascript)
         self.assertIn("/print-usage", javascript)

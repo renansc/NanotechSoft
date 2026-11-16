@@ -227,7 +227,7 @@ portal, um conjunto inicial pode incluir:
 
 ```text
 usuarios,portal_config,installed_apps,usuario_app_permissoes,
-financeiro_registros,financeiro_config,
+financeiro_registros,financeiro_config,contabil_plano_contas,contabil_vinculos,
 tecnologia_dispositivos,tecnologia_velocidade,tecnologia_metricas,
 tecnologia_alertas_recursos,
 chamados,chamados_intervencoes,chamados_documentos

@@ -166,7 +166,8 @@
               <th>Motorista atual</th>
               <th>Frete atual</th>
               <th>Status do Caminhão</th>
-              <th>Última média KM/L</th>
+              <th>KM total rodado</th>
+              <th>Média geral KM/L</th>
               <th>Falta p/ Manutenção</th>
               <th>Falta p/ Óleo</th>
             </tr>
@@ -174,7 +175,7 @@
           <tbody id="dashFrotaBody"></tbody>
         </table>
       </div>
-      <small class="hint">Linhas em vermelho indicam manutenção ou óleo vencidos (KM ≤ 0). Passe o mouse ou toque na linha vermelha para ver o que está vencido/vencendo e o tipo.</small>
+      <small class="hint">KM total rodado e média geral usam os intervalos válidos entre abastecimentos de combustível de propulsão; ARLA fica fora. Linhas em vermelho indicam manutenção ou óleo vencidos (KM ≤ 0). Passe o mouse ou toque na linha vermelha para ver o que está vencido/vencendo e o tipo.</small>
     </div>
 
     <div id="dashViewEstoque" class="dash-view hidden">
@@ -2434,6 +2435,42 @@
 
     <div id="gestaoViewRelatorios" class="dash-view hidden">
       <h3>Relatorios</h3>
+      <div class="boxFrota frota-relatorio-mensal">
+        <div class="frota-relatorio-mensal-head">
+          <div>
+            <h4>Consumo e rodagem</h4>
+            <p class="relatorio-frete-hint">Somente veiculos com Diesel S500, Diesel S10 ou ARLA. Os totais separam cada produto; ARLA entra no volume total, mas nao na media de KM/L.</p>
+          </div>
+          <div class="frota-relatorio-mensal-filtros frota-relatorio-consumo-filtros">
+            <label class="relatorio-frete-field">
+              <span>Data inicial</span>
+              <input type="date" id="frotaConsumoDataInicio" onchange="carregarRelatorioConsumoRodagem()">
+            </label>
+            <label class="relatorio-frete-field">
+              <span>Data final</span>
+              <input type="date" id="frotaConsumoDataFim" onchange="carregarRelatorioConsumoRodagem()">
+            </label>
+            <label class="relatorio-frete-field">
+              <span>Veiculo</span>
+              <select id="frotaConsumoVeiculo" onchange="carregarRelatorioConsumoRodagem()">
+                <option value="">Todos os veiculos</option>
+              </select>
+            </label>
+            <button type="button" onclick="carregarRelatorioConsumoRodagem(true)">Atualizar</button>
+            <button type="button" class="btn-secondary" onclick="imprimirRelatorioConsumoRodagem()">Imprimir PDF</button>
+          </div>
+        </div>
+        <div id="frotaConsumoStatus" class="hint" aria-live="polite">Selecione o periodo para consultar.</div>
+        <div id="frotaConsumoResumo" class="frota-relatorio-mensal-cards"></div>
+        <div class="frota-relatorio-mensal-tabela">
+          <div class="tableWrap">
+            <table>
+              <thead><tr><th>Veiculo</th><th>KM total rodado</th><th>Diesel S500</th><th>Diesel S10</th><th>ARLA</th><th>Litros totais usados</th><th>Media geral KM/L</th></tr></thead>
+              <tbody id="frotaConsumoBody"><tr><td colspan="7">Carregando...</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
       <div class="boxFrota frota-relatorio-mensal">
         <div class="frota-relatorio-mensal-head">
           <div>

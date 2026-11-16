@@ -52,7 +52,8 @@ do menu, inclusive no perfil Nanotech. Subtelas de backup sao exigidas uma a uma
 
 - Tecnologia: cadastro/edicao de equipamento, detalhes e impressoes, descoberta
   manual, coleta e teste de velocidade, alertas, relatorio de ocupacao, plano de
-  backup, forcar backup, editar, novo JSON, exclusao e instaladores.
+  backup, **Forçar novo backup** no monitoramento e nos planos, editar, novo JSON,
+  exclusao e instaladores. A solicitacao manual continua exclusiva de administrador.
 - Automacao: detalhes e edicao de motores/drivers, tags, leituras de maquinas,
   guias e PDFs continuam acessiveis pelas telas de origem.
 - Chamados: fila, indicadores, agenda, historico e documentos; detalhes,

@@ -88,6 +88,12 @@ Esta revisao da documentacao passa a registrar explicitamente:
 - a remocao do Git de bancos e segmentos HLS gerados pelo monitor de cameras, mantendo esses dados apenas no volume `cameras_data`
 - a regra de seguranca que impede novo versionamento de chaves privadas e certificados com chave
 - o cadastro e os relatorios de lavagens, alem do PDF consolidado de frota por tipo de relatorio
+- o relatorio mensal de frota com filtro por veiculo, abastecimentos, litros,
+  valores, preco medio e media ponderada de KM/L, mantendo ARLA fora do calculo
+  de rendimento
+- o relatorio de consumo e rodagem por periodo, com KM total, litros de
+  combustivel, media geral ponderada por veiculo e PDF; o dashboard mostra a
+  rodagem total do historico junto da media geral
 - o portal `/docs/index.html`, com redirecionamento preservando host e porta customizada no Nginx
 - o script `deploy/sync-production-to-homolog.sh`, seus cuidados operacionais e os artefatos gerados em `sync-backups/`
 - os snapshots operacionais versionados em `sync-import/`, usados como referencia/importacao manual e nao como volume automatico do deploy
@@ -122,8 +128,17 @@ Veja [SELLOUT_AUTOMATICO.md](SELLOUT_AUTOMATICO.md).
 - [Finalizacao de contagem, desperdicio e sobras](CONTAGEM_ESTOQUE.md): conferencia,
   ajuste transacional e relatorio com recursos separados de leitura e escrita.
 
-- [Custo do produto](CUSTO_PRODUTO.md): formulas PET/retornavel por 1000 litros,
-  ultima compra dos itens, xarope por produto e estimativa por garrafa; dashboard
-  atual/mensal com recurso proprio de consulta.
+- [Posicao de estoque do dia por grupo](RELATORIO_POSICAO_ESTOQUE_DIA.md):
+  fotografia histórica com saldo inicial, entradas, saídas, saldo final e PDF.
+
+- [Aprovação de XML e PDF no estoque](APROVACAO_DOCUMENTOS_ESTOQUE.md): fila
+  única de aceite, rejeição auditável de cargas antigas, prévia da conversão em
+  unidades e bloqueio de baixa duplicada entre NF-e de saída e PDF da carga.
+
+- [Custo do produto](CUSTO_PRODUTO.md): formulas Agua/PET/retornavel com
+  PET/garrafa, tampa e rotulo por unidade pronta, ultima compra ou valor
+  provisorio, xarope base e compostos por sabor, agua quente e custos com/sem
+  rateio por garrafa/pacote; dashboard atual em cards com recurso proprio de
+  consulta.
 
 - [Custo diario por grupo](CUSTO_DIARIO.md): producao real, pessoal, despesas e faltas de inventario; custo por litro, garrafa e pacote.

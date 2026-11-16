@@ -68,6 +68,37 @@ class VendasCargaPdfTest(unittest.TestCase):
         self.assertEqual(["062601", "072601"], [item["mapa"] for item in cargas])
         self.assertEqual([1, 3], [item["pagina"] for item in cargas])
 
+    @mock.patch("vendas_carga_pdf.PdfReader")
+    @mock.patch("builtins.open", new_callable=mock.mock_open, read_data=b"pdf-test")
+    def test_merges_continuation_page_without_date_or_map(self, _open, reader_mock):
+        first = (
+            "quinta-feira, 15 de outubro de 2026\n"
+            "Mapa: 151501 [MAPA NAO ASSOCIADO] Placa: Rota: 514 - ROTA TESTE  \n"
+            "Grupo C.: PET 2LT\n"
+            "7000      GUARANA TESTE 6X2LT                                      10 PT\n"
+            "Numero Entregas: 2\n"
+            "Valor Total Liquido: 250,00\n"
+            "Peso Total: 125,000\n"
+        )
+        continuation = (
+            "RESUMO DAS CIDADES ATENDIDAS\n"
+            "CIDADE                         UF PESO ENTREGAS VOLUMES\n"
+            "MARIPA                         PR 125,000 2 10,000\n"
+            "Total dos Volumes: 10,000\n"
+        )
+        reader_mock.return_value.pages = [
+            mock.Mock(extract_text=mock.Mock(return_value=first)),
+            mock.Mock(extract_text=mock.Mock(return_value=continuation)),
+        ]
+
+        cargas = parse_cargas_pdf("carga-com-continuacao.pdf")
+
+        self.assertEqual(1, len(cargas))
+        self.assertEqual("151501", cargas[0]["mapa"])
+        self.assertEqual(1, cargas[0]["pagina"])
+        self.assertEqual("MARIPA", cargas[0]["cidades"][0]["cidade"])
+        self.assertAlmostEqual(10.0, cargas[0]["volumes_total"])
+
 
 if __name__ == "__main__":
     unittest.main()

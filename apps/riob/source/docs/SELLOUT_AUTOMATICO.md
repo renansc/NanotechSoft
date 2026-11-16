@@ -1,4 +1,36 @@
-# SELLOUT mensal automatico
+# SELLOUT diario automatico
+
+## Regra vigente desde 20/10/2026
+
+Vendas Diario e os relatorios de vendas usam somente `SELLOUT_D.CSV` das bases
+IND3 e INDB. O arquivo possui `Data` real e contem as informacoes necessarias
+para consultas diarias, mensais e anuais. `SELLOUT_M.CSV`, TXT de pedidos e PDF
+de carga nao participam mais da importacao nem aparecem na interface.
+
+As fontes atuais sao:
+
+- `/imports/sellout/IND3/SELLOUT_D.CSV`;
+- `/imports/sellout/INDB/SELLOUT_D.CSV`.
+
+A leitura conjunta valida cabecalho, competencia e data de cada linha, elimina
+somente duplicatas integrais entre origens e grava tudo em uma transacao. Os
+periodos presentes no `_D` substituem a competencia correspondente; meses
+historicos ausentes no arquivo permanecem preservados. A base continua usa o
+identificador historico `sellout-mensal-continuo` apenas por compatibilidade,
+com `source_type=sellout_diario_auto`.
+
+O botao **Atualizar pelo SELLOUT diario** executa a leitura imediatamente. O
+agendador das 08:00 e o monitor da janela operacional observam somente os dois
+arquivos `_D`. Upload TXT retorna 400; carga PDF e correcao TXT/PDF retornam 410.
+No Compose, `RB_SELLOUT_D_AUTO=1` habilita a rotina;
+`RB_SELLOUT_D_HOST_DIR_IND3` e `RB_SELLOUT_D_HOST_DIR_INDB` definem as pastas do
+host, e `RB_SELLOUT_D_ARQUIVOS` informa os dois caminhos dentro do container.
+Fora do Compose, `RB_SELLOUT_D_ARQUIVO` permanece disponivel para uma fonte
+unica. Nomes de ambiente `_M` nao controlam mais a rotina vigente.
+O restante deste documento descreve a evolucao historica da carga mensal e nao
+deve ser usado como regra operacional atual.
+
+## Historico anterior: SELLOUT mensal
 
 O RioB consulta e unifica estas duas fontes em cada leitura:
 
@@ -17,7 +49,7 @@ linhas antes de escrever. O primeiro dia do mes em `data_ref` representa somente
 a competencia; `data_texto` registra `MM/AAAA (mensal)`. Essa fonte nao confirma
 cards diarios nem permite relatorios de volume por dia.
 
-## Operacao
+## Operacao historica anterior a 20/10/2026
 
 - `RB_SELLOUT_M_AUTO=1` habilita a rotina no Compose local do RioB.
 - `RB_SELLOUT_M_HOST_DIR_IND3` e `RB_SELLOUT_M_HOST_DIR_INDB` definem as duas
@@ -151,6 +183,14 @@ com erro de leitura, erro em qualquer pagina ou falha de importacao permanecem
 na origem para correcao e nova tentativa. A remocao valida que o arquivo esta
 dentro da pasta configurada. As duas fontes SELLOUT continuam montadas em modo
 somente leitura e nunca entram nessa limpeza.
+
+Quando ha falha TXT/PDF, **Arquivos com erro** mostra nome, pagina e mensagem.
+**Tentar novamente** reprocessa o arquivo preservado; para PDF, **Corrigir
+vendedor** permite selecionar o responsavel antes da reimportacao. O TXT aceita
+o relatorio Pocket PC/WCE alem de Conferencia de Pedidos. No PDF, paginas sem
+novo numero de mapa sao anexadas a carga anterior. O processamento permanece
+idempotente: uma carga ativa do mesmo vendedor e reconhecida como ja importada,
+mesmo ligada a frete; vendedor diferente gera conflito e nao altera o vinculo.
 
 ## Acessos da leitura manual
 

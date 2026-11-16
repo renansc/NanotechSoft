@@ -186,6 +186,15 @@ percentuais só são calculados quando as capacidades de download e upload estã
 informadas na Configuração. O detalhamento por dispositivo continua sendo uma
 estimativa e não equivale à atribuição WAN por IP.
 
+Em **Configuração do link e alertas**, informe as capacidades contratadas de
+download e upload. O **Monitoramento de link** apresenta lado a lado esses
+valores, o último teste de velocidade, o consumo instantâneo medido na WAN e a
+ocupação percentual. O horário do teste e o da coleta de consumo são exibidos
+separadamente porque as duas medições não são necessariamente simultâneas.
+O recurso `config` em Config > Usuários e acessos controla a entrada da tela;
+salvar continua restrito a administradores no servidor e não concede acesso
+automaticamente a nenhum usuário.
+
 Alguns NVRs não implementam a tabela moderna `ifXTable`, embora respondam
 normalmente ao SNMP. Nesses casos, a coleta usa automaticamente a `ifTable`
 clássica para nomes, velocidade e contadores de rede e ignora respostas
@@ -412,9 +421,11 @@ impedindo a recuperação tardia fora do expediente. Backups de arquivos usam o
 repositório incremental; planos MySQL/MariaDB continuam com `mysqldump`
 completo.
 
-O botão **Forçar backup** cria uma solicitação persistente no portal; o agente a
-recebe na próxima consulta, normalmente em até um minuto, e executa mesmo fora
-do horário programado. Se uma execução agendada ou forçada falhar, o agente
+O botão **Forçar novo backup** aparece por plano tanto em **Monitoramento de
+backups** quanto em **Planos de backup**. A ação é exclusiva de administrador e
+cria uma solicitação persistente no portal; o agente a recebe na próxima
+consulta, normalmente em até um minuto, e executa mesmo fora do horário
+programado. Se uma execução agendada ou forçada falhar, o agente
 aguarda dez minutos antes da nova tentativa. Uma execução agendada continua
 tentando até o fim do mesmo dia, mesmo depois da janela normal; a solicitação
 forçada só é baixada depois do sucesso. O intervalo de repetição fica salvo no
@@ -428,9 +439,11 @@ com falha. O prazo e calculado em UTC, independentemente do fuso do servidor.
 Um sucesso anterior permanece no historico, sem representar a saude atual.
 Falha ao atualizar a consulta tambem gera alerta de dados desatualizados.
 Contato do agente nao verifica a integridade ou disponibilidade atual do disco.
-O recurso existente `tecnologia:backup` identifica estado atual e falhas em
-Config > Usuarios e acessos; as APIs mantem autorizacao e bloqueios individuais,
-sem concessoes novas. A visao de monitoramento nao inclui acoes administrativas.
+O recurso existente `tecnologia:backup` identifica estado atual, falhas e a
+solicitação manual em Config > Usuarios e acessos; as APIs mantem autorizacao e
+bloqueios individuais, sem concessoes novas. Usuários comuns com acesso ao
+monitoramento continuam sem autorização para solicitar uma execução; o servidor
+valida o perfil de administrador mesmo quando a rota é chamada diretamente.
 
 Para destino USB local, montagem no `fstab` durante boot nao garante retomada
 depois de desconexao. `BindsTo` interrompe o agente quando a montagem cai;
@@ -508,6 +521,7 @@ Rotas administrativas e do agente:
 
 - `GET|POST /apps/tecnologia/api/backup/jobs`;
 - `PUT|DELETE /apps/tecnologia/api/backup/jobs/<id>`;
+- `POST /apps/tecnologia/api/backup/jobs/<id>/run-now` (administrador);
 - `POST /apps/tecnologia/api/backup/jobs/<id>/rotate-token`;
 - `GET /apps/tecnologia/api/backup/agent-script`;
 - `GET /apps/tecnologia/api/backup/agent/<agent_id>/config` com Bearer token;
